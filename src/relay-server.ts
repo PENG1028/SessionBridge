@@ -9,12 +9,24 @@ import os from "os";
 
 import { checkRateLimit } from "./rate-limiter";
 import { CheckpointManager } from "./checkpoint-manager";
+import { InstanceManager } from "./instance-manager";
 
 // ─── Start Time ────────────────────────────────────────────────────
 const START_TIME = Date.now();
 
 // ─── Config ──────────────────────────────────────────────────────
 const PORT = parseInt(process.env.PORT || "8080", 10);
+
+// ─── Instance Manager ─────────────────────────────────────────────
+const instanceManager = new InstanceManager();
+const defaultInstance = instanceManager.create(process.cwd(), "default");
+defaultInstance.status = "running";
+instanceManager.setActive(defaultInstance.id);
+
+/** Get the currently active instance */
+function inst(): import("./instance-manager").InstanceData {
+  return instanceManager.getActive() || defaultInstance;
+}
 
 // ─── MIME ────────────────────────────────────────────────────────
 const MIME: Record<string, string> = {
@@ -36,59 +48,33 @@ function resolveClaude(): { cmd: string; args: string[] } {
   return { cmd: "claude", args: [] };
 }
 
-// ─── Checkpoint Manager ─────────────────────────────────────────
-const checkpointManager = new CheckpointManager(process.cwd());
+// ─── Instance-based shorthand accessors ───────────────────────
 
-// Shorthand: update root dir when ROOT_DIR changes
-function updateCheckpointRoot(dir: string) {
-  checkpointManager.setRootDir(dir);
-}
-
-const startNewTurn = () => checkpointManager.startNewTurn();
-const createCheckpoint = (...args: Parameters<CheckpointManager['createCheckpoint']>) => checkpointManager.createCheckpoint(...args);
-const rewindCurrentTurn = () => checkpointManager.rewindCurrentTurn();
-const rewindLastCheckpoint = () => checkpointManager.rewindLastCheckpoint();
-const clearCheckpoints = () => checkpointManager.clear();
-const countCurrentTurnCheckpoints = () => checkpointManager.countCurrentTurnCheckpoints();
-
-// ─── Block ID ─────────────────────────────────────────────────────
 let blockSeq = 0;
 const nextId = () => `blk_${++blockSeq}`;
 
-// ─── Block / Output Buffer (for reconnect persistence) ────────────
 const MAX_BLOCKS = 500;
-const blockBuffer: Record<string, unknown>[] = [];
-const outputBuffer: string[] = [];
-let outputSize = 0;
 
 function bufferBlock(block: Record<string, unknown>) {
-  blockBuffer.push(block);
-  if (blockBuffer.length > MAX_BLOCKS) blockBuffer.shift();
+  const i = inst();
+  i.blockBuffer.push(block);
+  if (i.blockBuffer.length > MAX_BLOCKS) i.blockBuffer.shift();
 }
 
 function bufferOutput(data: string) {
-  outputBuffer.push(data);
-  outputSize += data.length;
-  while (outputSize > 512 * 1024 && outputBuffer.length > 0) {
-    outputSize -= outputBuffer.shift()?.length ?? 0;
+  const i = inst();
+  i.outputBuffer.push(data);
+  i.outputSize += data.length;
+  while (i.outputSize > 512 * 1024 && i.outputBuffer.length > 0) {
+    i.outputSize -= i.outputBuffer.shift()?.length ?? 0;
   }
 }
 
 function flushBuffer(ws: WebSocket) {
-  for (const block of blockBuffer) send(ws, block);
-  for (const data of outputBuffer) send(ws, { type: "output", data });
+  const i = inst();
+  for (const block of i.blockBuffer) send(ws, block);
+  for (const data of i.outputBuffer) send(ws, { type: "output", data });
 }
-
-// ─── Claude Process Manager ───────────────────────────────────────
-let claudeProc: ReturnType<typeof spawn> | null = null;
-let currentModel: string | null = null;
-
-// Streaming state (reset per turn)
-let currentThinkingId: string | null = null;
-let currentThinkingText = "";
-let currentToolUseId: string | null = null;
-let currentToolResult = "";
-let textBuffer = "";
 
 // ─── WS Clients ──────────────────────────────────────────────────
 const clients = new Set<WebSocket>();
@@ -104,36 +90,44 @@ function broadcast(msg: unknown) {
 function sendBlock(block: Record<string, unknown>) {
   const msg = { type: "block", ...block, ts: Date.now() };
   broadcast(msg);
-  // Don't buffer user blocks — they come from history API on page refresh.
-  // Buffering them causes duplicates when flushBuffer replays them to new WS clients.
   if (block.blockType !== 'user') {
     bufferBlock(msg);
   }
 }
 
 function flushText() {
-  if (textBuffer) {
-    sendBlock({ blockType: "text", text: textBuffer });
-    textBuffer = "";
+  const i = inst();
+  if (i.textBuffer) {
+    sendBlock({ blockType: "text", text: i.textBuffer });
+    i.textBuffer = "";
   }
 }
 
 function resetStreamState() {
-  currentThinkingId = null;
-  currentThinkingText = "";
-  currentToolUseId = null;
-  currentToolResult = "";
-  textBuffer = "";
+  const i = inst();
+  i.thinkingId = null;
+  i.thinkingText = "";
+  i.toolUseId = null;
+  i.toolResult = "";
+  i.textBuffer = "";
 }
 
 // ─── Spawn / Kill Claude ──────────────────────────────────────────
-function spawnClaude() {
-  killClaude();
+function spawnClaude(instanceId?: string) {
+  const i = instanceId ? (instanceManager.get(instanceId) || inst()) : inst();
+  const prevId = instanceManager.activeId;
+  instanceManager.setActive(i.id);
 
-  // Clear stale blocks from previous session to prevent duplicate replay
-  blockBuffer.length = 0;
-  outputBuffer.length = 0;
-  outputSize = 0;
+  // Kill existing process for this instance
+  if (i.process) {
+    i.process.kill();
+    i.process = null;
+  }
+
+  // Clear stale blocks
+  i.blockBuffer.length = 0;
+  i.outputBuffer.length = 0;
+  i.outputSize = 0;
 
   broadcast({ type: "block", blockType: "status", text: "Spawning Claude process...", ts: Date.now() });
 
@@ -146,16 +140,21 @@ function spawnClaude() {
     "--include-partial-messages",
     "--dangerously-skip-permissions",
   ];
-  if (currentModel) allArgs.push("--model", currentModel);
+  if (i.model) allArgs.push("--model", i.model);
 
-  claudeProc = spawn(cmd, allArgs, { stdio: ["pipe", "pipe", "pipe"] });
+  i.process = spawn(cmd, allArgs, { stdio: ["pipe", "pipe", "pipe"] });
+  i.status = 'starting';
 
   // ── stdout: readline-based JSON event parsing ────────────
-  const rl = createInterface({ input: claudeProc.stdout! });
+  const rl = createInterface({ input: i.process.stdout! });
   rl.on("line", (line) => {
     if (!line.trim()) return;
     let ev: any;
     try { ev = JSON.parse(line); } catch { return; }
+
+    // Ensure we're operating on the right instance
+    const ii = instanceManager.get(i.id) || i;
+    ii.status = 'running';
 
     switch (ev.type) {
       case "system": {
@@ -204,13 +203,13 @@ function spawnClaude() {
           case "content_block_start": {
             const cb = e.content_block;
             if (cb?.type === "thinking") {
-              currentThinkingId = nextId();
-              currentThinkingText = "";
-              sendBlock({ id: currentThinkingId, blockType: "thinking", text: "", status: "running" });
+              ii.thinkingId = nextId();
+              ii.thinkingText = "";
+              sendBlock({ id: ii.thinkingId, blockType: "thinking", text: "", status: "running" });
             } else if (cb?.type === "tool_use") {
-              currentToolUseId = nextId();
+              ii.toolUseId = nextId();
               sendBlock({
-                id: currentToolUseId, blockType: "tool_use",
+                id: ii.toolUseId, blockType: "tool_use",
                 name: cb.name || "", args: "", status: "running",
               });
 
@@ -218,21 +217,24 @@ function spawnClaude() {
               const input = cb.input || ({} as Record<string, unknown>);
               if ((cb.name === "Edit" || cb.name === "Write") && typeof input.file_path === "string") {
                 const oldStr = typeof input.old_string === "string" ? input.old_string : undefined;
-                createCheckpoint(currentToolUseId, cb.name, input.file_path, oldStr);
+                ii.checkpointManager.createCheckpoint(ii.toolUseId, cb.name, input.file_path, oldStr);
               }
             }
             break;
           }
           case "content_block_delta": {
             const d = e.delta;
-            if (d?.type === "thinking_delta" && currentThinkingId) {
-              currentThinkingText += d.thinking;
-              if (currentThinkingText.split(/\s+/).length % 20 === 0) {
-                sendBlock({ id: currentThinkingId, blockType: "thinking", text: currentThinkingText, status: "running" });
+            if (d?.type === "thinking_delta" && ii.thinkingId) {
+              ii.thinkingText += d.thinking;
+              if (ii.thinkingText.split(/\s+/).length % 20 === 0) {
+                sendBlock({ id: ii.thinkingId, blockType: "thinking", text: ii.thinkingText, status: "running" });
               }
             } else if (d?.type === "text_delta") {
-              textBuffer += d.text || "";
-              if (textBuffer.length > 40) flushText();
+              ii.textBuffer += d.text || "";
+              if (ii.textBuffer.length > 40) {
+                const backup = inst();
+                if (backup.id === ii.id) flushText();
+              }
             }
             break;
           }
@@ -254,7 +256,7 @@ function spawnClaude() {
         for (const c of ev.message?.content || []) {
           if (c.type === "tool_result") {
             const rc = c.content;
-            currentToolResult = typeof rc === "string" ? rc
+            ii.toolResult = typeof rc === "string" ? rc
               : Array.isArray(rc) ? rc.map((x: any) => x.text || "").join("\n")
               : JSON.stringify(rc || "");
             break;
@@ -264,30 +266,36 @@ function spawnClaude() {
       }
 
       case "assistant": {
+        // Temporarily set active instance for flushText
+        const prevActive = instanceManager.activeId;
+        instanceManager.setActive(ii.id);
         flushText();
         // Finalize thinking
-        if (currentThinkingId) {
-          sendBlock({ id: currentThinkingId, blockType: "thinking", text: currentThinkingText, status: "done" });
-          currentThinkingId = null;
-          currentThinkingText = "";
+        if (ii.thinkingId) {
+          sendBlock({ id: ii.thinkingId, blockType: "thinking", text: ii.thinkingText, status: "done" });
+          ii.thinkingId = null;
+          ii.thinkingText = "";
         }
         // Finalize tool_use blocks from authoritative snapshot
         for (const c of ev.message?.content || []) {
           if (c.type === "tool_use") {
-            const id = currentToolUseId || nextId();
-            currentToolUseId = null;
+            const id = ii.toolUseId || nextId();
+            ii.toolUseId = null;
             sendBlock({
               id, blockType: "tool_use",
               name: c.name, args: JSON.stringify(c.input),
-              status: "done", result: currentToolResult || "",
+              status: "done", result: ii.toolResult || "",
             });
-            currentToolResult = "";
+            ii.toolResult = "";
           }
         }
+        if (prevActive) instanceManager.setActive(prevActive);
         break;
       }
 
       case "result": {
+        const prevActive = instanceManager.activeId;
+        instanceManager.setActive(ii.id);
         flushText();
         if (ev.cost || ev.tokens || ev.usage) {
           sendBlock({
@@ -300,48 +308,54 @@ function spawnClaude() {
           sendBlock({ blockType: "error", text: ev.error || "Unknown error" });
         }
         // Turn done — process next in queue
-        isProcessing = false;
-        processQueue();
+        ii.isProcessing = false;
+        processQueueForInstance(ii);
+        if (prevActive) instanceManager.setActive(prevActive);
         break;
       }
     }
   });
 
   // ── stderr → raw output ──────────────────────────────────
-  claudeProc.stderr?.on("data", (chunk: Buffer) => {
+  i.process.stderr?.on("data", (chunk: Buffer) => {
     const data = chunk.toString();
     broadcast({ type: "output", data });
     bufferOutput(data);
   });
 
-  claudeProc.on("error", (err) => {
+  i.process.on("error", (err) => {
     sendBlock({ blockType: "error", text: `Process error: ${err.message}` });
   });
 
-  claudeProc.on("close", (code) => {
+  i.process.on("close", (code) => {
     if (code !== null && code !== 0) {
       sendBlock({ blockType: "status", text: `Process exited (${code})` });
     }
-    claudeProc = null;
+    i.process = null;
+    i.status = 'stopped';
   });
 }
 
-function killClaude() {
-  if (claudeProc) {
-    claudeProc.kill();
-    claudeProc = null;
+function killClaude(instanceId?: string) {
+  const i = instanceId ? instanceManager.get(instanceId) : inst();
+  if (!i) return;
+  if (i.process) {
+    i.process.kill();
+    i.process = null;
   }
-  releaseQueue();
+  i.status = 'stopped';
+  releaseQueueForInstance(i);
 }
 
-function interruptClaude() {
-  if (!claudeProc?.pid) return false;
+function interruptClaude(instanceId?: string) {
+  const i = instanceId ? instanceManager.get(instanceId) : inst();
+  if (!i?.process?.pid) return false;
 
   // Broadcast that we're interrupting
   sendBlock({ blockType: "status", text: "Interrupting and rewinding changes..." });
 
   // Rewind all checkpoints from the current turn immediately
-  const rewindResult = rewindCurrentTurn();
+  const rewindResult = i.checkpointManager.rewindCurrentTurn();
   if (rewindResult.restored > 0) {
     sendBlock({ blockType: "status", text: `↩ Rewound ${rewindResult.restored} change(s) (${rewindResult.skipped} skipped)` });
   }
@@ -349,15 +363,16 @@ function interruptClaude() {
   try {
     // Send SIGINT on Unix, Ctrl+C equivalent on Windows
     if (process.platform === "win32") {
-      execSync(`taskkill //PID ${claudeProc.pid} //T`, { timeout: 3000 });
+      execSync(`taskkill //PID ${i.process.pid} //T`, { timeout: 3000 });
     } else {
-      process.kill(claudeProc.pid, "SIGINT");
+      process.kill(i.process.pid, "SIGINT");
     }
     // If Claude doesn't respond within 5s, force-kill + respawn
     setTimeout(() => {
-      if (claudeProc) {
-        killClaude();
-        spawnClaude();
+      if (i.process) {
+        i.process.kill();
+        i.process = null;
+        spawnClaude(i.id);
       }
     }, 5000);
     return true;
@@ -371,15 +386,16 @@ let currentPermissionMode: string = "default";
 let currentEffortLevel: string = "medium";
 
 // ─── Control Request Protocol (stdin JSON commands to Claude) ────
-function sendControlRequest(subtype: string, data: Record<string, unknown>): boolean {
-  if (!claudeProc?.stdin?.writable) return false;
+function sendControlRequest(subtype: string, data: Record<string, unknown>, instanceId?: string): boolean {
+  const i = instanceId ? (instanceManager.get(instanceId) || inst()) : inst();
+  if (!i.process?.stdin?.writable) return false;
   const requestId = `r${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
   const msg = JSON.stringify({
     type: "control_request",
     request_id: requestId,
     request: { subtype, ...data },
   }) + "\n";
-  claudeProc.stdin.write(msg);
+  i.process.stdin.write(msg);
   broadcast({ type: "control_sent", subtype, ...data, requestId });
   return true;
 }
@@ -398,89 +414,68 @@ function setThinkingLevel(level: "low" | "medium" | "high") {
 }
 
 // ─── Message Queue (sequential processing, source-locked) ──────────
-let isProcessing = false;
-const pendingQueue: string[] = [];
-/** Which source currently holds the queue lock */
-let queueLock: string | null = null;
-const QUEUE_LOCK_TIMEOUT = 5 * 60 * 1000; // 5 min auto-release
 
-function releaseQueueLock() {
-  queueLock = null;
-}
-
-function acquireQueueLock(source: string): boolean {
-  if (!queueLock || queueLock === source) {
-    queueLock = source;
-    return true;
-  }
-  return false;
-}
-
-function processQueue() {
-  if (isProcessing || pendingQueue.length === 0 || !claudeProc?.stdin?.writable) {
-    if (pendingQueue.length === 0) queueLock = null;
+function processQueueForInstance(i: import("./instance-manager").InstanceData) {
+  if (i.isProcessing || i.pendingQueue.length === 0 || !i.process?.stdin?.writable) {
+    if (i.pendingQueue.length === 0) i.queueLock = null;
     return;
   }
-  isProcessing = true;
-  const entry = pendingQueue.shift()!;
-  // Extract source from the stored entry (format: "source|text")
+  i.isProcessing = true;
+  const entry = i.pendingQueue.shift()!;
   const pipeIdx = entry.indexOf("|");
   const source = pipeIdx > 0 ? entry.slice(0, pipeIdx) : "terminal";
   const text = pipeIdx > 0 ? entry.slice(pipeIdx + 1) : entry;
 
-  // Broadcast which source is being processed
   broadcast({
     type: "queue_status",
     processing: true,
     source,
-    queueDepth: pendingQueue.length,
+    queueDepth: i.pendingQueue.length,
   });
 
   resetStreamState();
-  startNewTurn();
-  claudeProc.stdin.write(JSON.stringify({
+  i.checkpointManager.startNewTurn();
+  i.process.stdin.write(JSON.stringify({
     type: "user",
     message: { role: "user", content: [{ type: "text", text }] },
   }) + "\n");
-  // stdin stays open — process lives forever
+}
+
+function processQueue() {
+  const i = inst();
+  processQueueForInstance(i);
 }
 
 function enqueueInput(text: string, source: string = "terminal") {
-  // Enforce source lock: only one source can queue at a time
-  if (isProcessing && queueLock && queueLock !== source && !text.startsWith("/")) {
-    // Non-interrupt source trying to queue while another source is active
+  const i = inst();
+  if (i.isProcessing && i.queueLock && i.queueLock !== source && !text.startsWith("/")) {
     broadcast({
       type: "system",
       subtype: "queue_blocked",
-      message: `Cannot send — ${queueLock} is currently processing. Wait or interrupt first.`,
+      message: `Cannot send — ${i.queueLock} is currently processing. Wait or interrupt first.`,
       blockedSource: source,
-      activeSource: queueLock,
+      activeSource: i.queueLock,
     });
     return;
   }
 
-  // Acquire lock if free
-  if (!queueLock) queueLock = source;
+  if (!i.queueLock) i.queueLock = source;
+  i.pendingQueue.push(`${source}|${text}`);
 
-  // Store source prefix so we can route output back
-  pendingQueue.push(`${source}|${text}`);
-
-  // Notify all clients of queue state
   broadcast({
     type: "queue_status",
-    processing: isProcessing,
-    source: queueLock,
-    queueDepth: pendingQueue.length,
+    processing: i.isProcessing,
+    source: i.queueLock,
+    queueDepth: i.pendingQueue.length,
   });
 
-  processQueue();
+  processQueueForInstance(i);
 }
 
-/** Force-release the queue lock (e.g., on interrupt) */
-function releaseQueue() {
-  pendingQueue.length = 0;
-  queueLock = null;
-  isProcessing = false;
+function releaseQueueForInstance(i: import("./instance-manager").InstanceData) {
+  i.pendingQueue.length = 0;
+  i.queueLock = null;
+  i.isProcessing = false;
   broadcast({
     type: "queue_status",
     processing: false,
@@ -489,9 +484,14 @@ function releaseQueue() {
   });
 }
 
+function releaseQueue() {
+  const i = inst();
+  releaseQueueForInstance(i);
+}
+
 // ─── HTTP Server ──────────────────────────────────────────────────
 const OUT_DIR = join(__dirname, "../out");
-let ROOT_DIR = process.cwd();
+let ROOT_DIR = inst().dir;
 
 const httpServer = createServer((req, res) => {
   const url = new URL(req.url!, `http://${req.headers.host}`);
@@ -958,7 +958,7 @@ const httpServer = createServer((req, res) => {
 
   // ── API: Rewind last checkpoint ────────────
   if (path === "/api/rewind" && req.method === "POST") {
-    const { success, checkpoint } = rewindLastCheckpoint();
+    const { success, checkpoint } = inst().checkpointManager.rewindLastCheckpoint();
     if (success) {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ success: true, filePath: checkpoint?.filePath }));
@@ -971,12 +971,13 @@ const httpServer = createServer((req, res) => {
 
   // ── API: List checkpoints ──────────────────
   if (path === "/api/checkpoints") {
-    const currentTurnCps = checkpointManager.getCurrentTurnCheckpoints();
+    const cm = inst().checkpointManager;
+    const currentTurnCps = cm.getCurrentTurnCheckpoints();
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({
-      total: checkpointManager.totalCheckpoints(),
+      total: cm.totalCheckpoints(),
       currentTurn: currentTurnCps.length,
-      turnStartIndex: checkpointManager.getTurnStartIndex(),
+      turnStartIndex: cm.getTurnStartIndex(),
       checkpoints: currentTurnCps.map(c => ({
         id: c.id,
         toolName: c.toolName,
@@ -990,7 +991,7 @@ const httpServer = createServer((req, res) => {
 
   // ── API: Rewind all (current turn) ────────
   if (path === "/api/rewind-all" && req.method === "POST") {
-    const result = rewindCurrentTurn();
+    const result = inst().checkpointManager.rewindCurrentTurn();
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(result));
     return;
@@ -998,11 +999,12 @@ const httpServer = createServer((req, res) => {
 
   // ── API: Queue status ────────────────────────
   if (path === "/api/queue") {
+    const qi = inst();
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({
-      isProcessing,
-      queueDepth: pendingQueue.length,
-      queue: pendingQueue.slice(0, 10).map((t, i) => ({ pos: i + 1, text: t.slice(0, 100) })),
+      isProcessing: qi.isProcessing,
+      queueDepth: qi.pendingQueue.length,
+      queue: qi.pendingQueue.slice(0, 10).map((t, i) => ({ pos: i + 1, text: t.slice(0, 100) })),
     }));
     return;
   }
@@ -1029,24 +1031,94 @@ const httpServer = createServer((req, res) => {
           res.writeHead(400); res.end(JSON.stringify({ error: "Directory not found" }));
           return;
         }
-        // Kill Claude, change dir, restart
-        killClaude();
-        process.chdir(targetDir);
+        // Create a new instance for the target directory
+        const newInst = instanceManager.create(targetDir, basename(targetDir));
+        instanceManager.setActive(newInst.id);
         ROOT_DIR = targetDir;
-        updateCheckpointRoot(targetDir);
-        // Clear buffers and checkpoints for new session
-        clearCheckpoints();
-        blockBuffer.length = 0;
-        outputBuffer.length = 0;
-        outputSize = 0;
-        currentModel = null;
-        spawnClaude();
+        spawnClaude(newInst.id);
+        broadcast({ type: "instance_added", instance: { id: newInst.id, dir: newInst.dir, label: newInst.label, status: newInst.status } });
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ success: true, cwd: targetDir }));
+        res.end(JSON.stringify({ success: true, cwd: targetDir, instanceId: newInst.id }));
       } catch (err) {
         res.writeHead(500); res.end(JSON.stringify({ error: String(err) }));
       }
     });
+    return;
+  }
+
+  // ── API: List instances ────────────────────────────────
+  if (path === "/api/instances") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({
+      instances: instanceManager.toJSON(),
+      activeId: instanceManager.activeId,
+    }));
+    return;
+  }
+
+  // ── API: Create instance ───────────────────────────────
+  if (path === "/api/instances" && req.method === "POST") {
+    let body = "";
+    req.on("data", (c) => body += c);
+    req.on("end", () => {
+      try {
+        const { dir, label } = JSON.parse(body);
+        const targetDir = resolve(process.cwd(), dir);
+        if (!existsSync(targetDir)) {
+          res.writeHead(400); res.end(JSON.stringify({ error: "Directory not found" }));
+          return;
+        }
+        const newInst = instanceManager.create(targetDir, label);
+        spawnClaude(newInst.id);
+        broadcast({ type: "instance_added", instance: { id: newInst.id, dir: newInst.dir, label: newInst.label, status: newInst.status } });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: true, instance: { id: newInst.id, dir: newInst.dir, label: newInst.label } }));
+      } catch (err) {
+        res.writeHead(500); res.end(JSON.stringify({ error: String(err) }));
+      }
+    });
+    return;
+  }
+
+  // ── API: Delete (kill) instance ────────────────────────
+  if (path.startsWith("/api/instances/") && req.method === "DELETE") {
+    const instId = path.replace("/api/instances/", "");
+    const target = instanceManager.get(instId);
+    if (!target) {
+      res.writeHead(404); res.end(JSON.stringify({ error: "Instance not found" }));
+      return;
+    }
+    killClaude(instId);
+    instanceManager.kill(instId);
+    broadcast({ type: "instance_removed", instanceId: instId });
+    // If we killed the active instance, switch to another
+    if (instanceManager.activeId === instId || !instanceManager.getActive()) {
+      const remaining = instanceManager.list();
+      if (remaining.length > 0) {
+        instanceManager.setActive(remaining[0].id);
+        ROOT_DIR = remaining[0].dir;
+      } else {
+        instanceManager.setActive(null);
+      }
+    }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ success: true }));
+    return;
+  }
+
+  // ── API: Activate (switch to) instance ─────────────────
+  if (path.startsWith("/api/instances/") && req.method === "POST" && path.endsWith("/activate")) {
+    const instId = path.replace("/api/instances/", "").replace("/activate", "");
+    const target = instanceManager.get(instId);
+    if (!target) {
+      res.writeHead(404); res.end(JSON.stringify({ error: "Instance not found" }));
+      return;
+    }
+    instanceManager.setActive(instId);
+    ROOT_DIR = target.dir;
+    broadcast({ type: "instance_switched", instanceId: instId });
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ success: true, instanceId: instId }));
     return;
   }
 
@@ -1055,17 +1127,18 @@ const httpServer = createServer((req, res) => {
     const mem = memoryUsage();
     const heartbeatAlive = heartbeatTimer !== undefined;
     res.writeHead(200, { "Content-Type": "application/json" });
+    const hi = inst();
     res.end(JSON.stringify({
-      status: claudeProc ? "ok" : "degraded",
+      status: hi.process ? "ok" : "degraded",
       uptime: Date.now() - START_TIME,
       claude: {
-        alive: claudeProc !== null,
-        pid: claudeProc?.pid || null,
-        model: currentModel,
+        alive: hi.process !== null,
+        pid: hi.process?.pid || null,
+        model: hi.model,
       },
       queue: {
-        depth: pendingQueue.length,
-        processing: isProcessing,
+        depth: hi.pendingQueue.length,
+        processing: hi.isProcessing,
       },
       connections: wss.clients.size,
       memory: {
@@ -1084,9 +1157,8 @@ const httpServer = createServer((req, res) => {
       },
       mode: currentPermissionMode,
       effort: currentEffortLevel,
-      blocksBuffered: blockBuffer.length,
-      outputBuffered: outputBuffer.length,
-      outputSizeKB: Math.round(outputSize / 1024),
+      activeInstanceId: instanceManager.activeId,
+      instances: instanceManager.toJSON(),
     }));
     return;
   }
@@ -1143,19 +1215,25 @@ wss.on("connection", (ws) => {
     heartbeatMap.set(ws, true);
   });
 
-  // Start Claude on first connection
-  if (!claudeProc) spawnClaude();
+  // Start Claude for active instance on first connection
+  const activeInst = inst();
+  if (!activeInst.process) spawnClaude();
 
   // Flush history to reconnecting client
   flushBuffer(ws);
 
   // Immediately authenticate (no token needed — local mode)
-  send(ws, { type: "auth_result", success: true, sessionId: "default" });
+  send(ws, { type: "auth_result", success: true, sessionId: activeInst.id, instances: instanceManager.toJSON() });
   send(ws, { type: "workspace_connected" });
 
   ws.on("message", (raw) => {
     let msg: any;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
+
+    // Route to target instance if specified
+    const targetInst = msg.instanceId ? (instanceManager.get(msg.instanceId) || inst()) : inst();
+    const prevActive = instanceManager.activeId;
+    instanceManager.setActive(targetInst.id);
 
     switch (msg.type) {
       case "direct":
@@ -1172,9 +1250,9 @@ wss.on("connection", (ws) => {
 
       case "command": {
         if (msg.name === "clear" || msg.name === "restart") {
-          if (msg.args?.model) currentModel = msg.args.model;
-          clearCheckpoints();
-          spawnClaude();
+          if (msg.args?.model) targetInst.model = msg.args.model;
+          targetInst.checkpointManager.clear();
+          spawnClaude(targetInst.id);
           sendBlock({
             blockType: "status",
             text: msg.name === "restart" && msg.args?.model
@@ -1182,17 +1260,16 @@ wss.on("connection", (ws) => {
               : "Session cleared — starting fresh...",
           });
         } else if (msg.name === "interrupt") {
-          interruptClaude();
-          // interruptClaude already broadcasts rewind status
+          interruptClaude(targetInst.id);
         } else if (msg.name === "rewind") {
-          const { success, checkpoint } = rewindLastCheckpoint();
+          const { success, checkpoint } = targetInst.checkpointManager.rewindLastCheckpoint();
           if (success) {
             sendBlock({ blockType: "status", text: `Rewound: ${checkpoint?.filePath ?? "unknown"}` });
           } else {
             sendBlock({ blockType: "status", text: "Nothing to rewind" });
           }
         } else if (msg.name === "rewind-all") {
-          const result = rewindCurrentTurn();
+          const result = targetInst.checkpointManager.rewindCurrentTurn();
           sendBlock({ blockType: "status", text: `Rewound ${result.restored} change(s) (${result.skipped} skipped, ${result.failed} failed)` });
         } else if (msg.name === "setMode") {
           const mode = msg.args?.mode;
@@ -1206,9 +1283,23 @@ wss.on("connection", (ws) => {
             setThinkingLevel(level);
             sendBlock({ blockType: "status", text: `Thinking effort: ${level}` });
           }
+        } else if (msg.name === "switch-instance") {
+          const target = msg.args?.instanceId;
+          if (target && instanceManager.get(target)) {
+            instanceManager.setActive(target);
+            sendBlock({ blockType: "status", text: `Switched to instance: ${target}` });
+            send(ws, { type: "instance_switched", instanceId: target });
+          }
+        } else if (msg.name === "list-instances") {
+          send(ws, { type: "instance_list", instances: instanceManager.toJSON(), activeId: instanceManager.activeId });
         }
         break;
       }
+    }
+
+    // Restore previous active instance if routing was temporary
+    if (msg.instanceId && prevActive) {
+      instanceManager.setActive(prevActive);
     }
   });
 
@@ -1225,11 +1316,14 @@ function shutdown(signal: string) {
   // Notify clients
   broadcast({ type: "system", subtype: "shutdown", message: "Server is shutting down..." });
 
-  // Kill Claude process
-  if (claudeProc) {
-    claudeProc.kill();
-    claudeProc = null;
+  // Kill all Claude processes
+  for (const inst of instanceManager.list()) {
+    if (inst.process) {
+      inst.process.kill();
+      inst.process = null;
+    }
   }
+  instanceManager.stopAll();
 
   // Clear timers
   clearInterval(heartbeatTimer);
