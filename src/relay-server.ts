@@ -1373,11 +1373,12 @@ export function startRelayServer(port?: number) {
   httpServer.listen(p, () => {
     console.log(`\n  ┌──────────────────────────────────────┐`);
     console.log(`  │  SessionBridge Relay Server         │`);
-    console.log(`  │  Persistent Claude process mode     │`);
     console.log(`  │                                      │`);
-    console.log(`  │  http://0.0.0.0:${String(p).padEnd(5)}              │`);
-    console.log(`  │  Claude spawns on first connection  │`);
-    console.log(`  │  Health:  http://0.0.0.0:${String(p).padEnd(5)}/api/health  │`);
+    console.log(`  │  Server:    http://localhost:${String(p).padEnd(5)}            │`);
+    console.log(`  │  Web UI:    http://localhost:${String(p).padEnd(5)} (static frontend) │`);
+    console.log(`  │  Health:    http://localhost:${String(p).padEnd(5)}/api/health  │`);
+    console.log(`  │                                      │`);
+    console.log(`  │  Claude spawns on first connection   │`);
     console.log(`  └──────────────────────────────────────┘\n`);
   });
 }
