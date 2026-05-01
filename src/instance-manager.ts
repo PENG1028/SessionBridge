@@ -87,7 +87,11 @@ export class InstanceManager {
    * Returns false if not found, true on removal.
    */
   kill(id: string): boolean {
-    return this.instances.delete(id);
+    const existed = this.instances.delete(id);
+    if (existed && this._activeId === id) {
+      this._activeId = null;
+    }
+    return existed;
   }
 
   /** List all registered instances */
