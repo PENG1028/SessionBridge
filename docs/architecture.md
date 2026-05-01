@@ -1,341 +1,253 @@
-# SessionBridge — 系统架构文档
+# SessionBridge — 架构文档
 
-## 产品定位
-
-SessionBridge 是 **Claude Code 的增强 shell**。
-
-不是通用终端桥接工具，而是：
-
-> 给 Claude Code 包一层更好的交互界面，让本地和远程都能用上它。
-
-未来在此基础上扩展对其他终端类型的支持（SSH、Docker 等），但第一优先永远是 Claude Code 的使用体验。
+> 最后更新: 2026-05-01
 
 ---
 
-## 核心设计理念
+## 一、项目定位
 
-### 1. Web UI 是主要界面
+SessionBridge 是 **Claude Code 的 Web 前端 + 远程网关**。
 
-不是"本地终端 + 远程网页"，而是：
-
-```
-无论本地还是远程，用户都通过 Web UI 操作 Claude Code
-```
-
-本地使用时浏览器打开 `localhost`，远程时手机扫码，**用的是同一套界面**。
-
-### 2. 不破坏 Claude Code 原生能力
-
-- slash commands (`/help` `/config` 等) 全部透传
-- 不解析、不修改、不拦截 agent 逻辑
-- 只在输入输出层做代理
-
-### 3. Claude Code 优先，但架构可扩展
-
-- 默认就是 `session-bridge` → 启动 Claude Code
-- SessionAdapter 抽象保证未来能接入 SSH、Docker、tmux
-- 但所有设计从 Claude Code 的使用场景出发
+不是终端桥接工具，不是 SSH 客户端。目标是在手机浏览器上操作 Claude Code，不管 Claude 跑在哪——VPS 上、家里电脑上、还是两者都有。
 
 ---
 
-## 架构图
+## 二、部署场景
+
+两种部署模式，`npm start` 同一套代码，区别在于 Claude 跑在哪。
+
+### 场景 A：VPS 本地执行（主要场景）
 
 ```
-                         ┌──────────────────────────────────────┐
-                         │        手机 / 远程浏览器              │
-                         │   Web UI (xterm.js)                   │
-                         └──────────────┬───────────────────────┘
-                                        │ WebSocket (wss://)
-                                        ▼
-┌──────────────────────────────────────────────────────────────────┐
-│                    Relay Server (可选)                             │
-│                    会话路由: token → Bridge                       │
-└──────────────────────────────────┬───────────────────────────────┘
-                                   │ WebSocket (ws://)
-                                   ▼
-┌──────────────────────────────────────────────────────────────────┐
-│  session-bridge (本机 CLI)                                      │
-│                                                                  │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │  本地 HTTP + WebSocket 服务器 (:3000)                     │    │
-│  │  ├── 提供 Web UI (Next.js 静态页面)                      │    │
-│  │  ├── WebSocket 端点供浏览器连接                          │    │
-│  │  └── /remote 时连接 Relay Server                         │    │
-│  └──────────────────────────┬──────────────────────────────┘    │
-│                             │                                    │
-│  ┌──────────────────────────┴──────────────────────────────┐    │
-│  │  SessionAdapter (抽象接口)                               │    │
-│  │  ┌──────────────────────────────────────────────────┐   │    │
-│  │  │  PTYSession (node-pty)                           │   │    │
-│  │  │     ↓ spawn                                      │   │    │
-│  │  │  Claude Code CLI                                 │   │    │
-│  │  └──────────────────────────────────────────────────┘   │    │
-│  └─────────────────────────────────────────────────────────┘    │
-│                                                                  │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │  浏览器自动打开 → http://localhost:3000                   │    │
-│  └─────────────────────────────────────────────────────────┘    │
-└──────────────────────────────────────────────────────────────────┘
+手机浏览器 ──▶ Cloudflare CDN ──▶ VPS :443
+                                       nginx
+                                       ├─ /* 静态资源 → CDN 缓存
+                                       ├─ /api/*  ──▶ relay :8080
+                                       └─ /ws     ──▶ relay :8080
+                                                            │
+                                                            ├─ 提供 Web UI (out/)
+                                                            ├─ REST API
+                                                            ├─ WebSocket
+                                                            └─ 管理 Claude 子进程
 ```
 
-### 两条使用路径
+Claude 直接跑在 VPS 上。手机通过网页操控 VPS 上的 Claude，代码和文件都在 VPS 上。
 
-| 场景 | 路径 | 说明 |
-|------|------|------|
-| 本地使用 | 浏览器 → localhost:3000 → Bridge WS → PTY → Claude Code | 默认方式，打开即用 |
-| 远程接入 | 手机 → Relay Server → Bridge WS Client → PTY → Claude Code | Web UI 中输入 `/remote` |
+### 场景 B：远程中继到家里电脑
+
+```
+手机浏览器 ──▶ Cloudflare CDN ──▶ VPS :443
+                                       nginx
+                                       ├─ /agent/ws ◀── 家里电脑 agent 主动连接
+                                       ├─ /api/*  ──▶ relay :8080
+                                       └─ /ws     ──▶ relay :8080
+                                                            │
+                                                     InstanceManager
+                                                     ├─ [local] VPS 本地实例
+                                                     └─ [remote] 家里电脑实例
+                                                                            │
+                                                              家里电脑 agent
+                                                              (主动连上 VPS)
+                                                                     │
+                                                                  Claude 进程
+```
+
+家里电脑主动连上 VPS 的 WebSocket（不需要公网 IP，不需要隧道），VPS 把它注册为一个远程实例。手机在 UI 上切换实例即可选择在哪执行。
+
+### 场景选择
+
+| | 场景 A | 场景 B |
+|---|---|---|
+| Claude 跑在哪 | VPS 上 | 家里电脑上 |
+| 需公网 IP | VPS 需要 | 不需要（agent 主动连出） |
+| 延迟 | 低 | 取决于家庭网络 |
+| 适用场景 | 代码在 VPS 上 | 要用家里电脑的资源/环境 |
+
+两种场景可以并存——VPS 上可以同时有本地实例和远程实例。
 
 ---
 
-## 数据流
-
-### 本地模式
+## 三、当前架构
 
 ```
-用户键盘输入
-    ↓
-Web UI (xterm.js.onData)
-    ↓ JSON { type: "input", data: "npm test\n" }
-WebSocket (ws://localhost:3000)
-    ↓
-Bridge 本地 WS 服务器
-    ↓
-PTYSession.write("npm test\n")
-    ↓
-Claude Code ⬅ 收到输入
-
-Claude Code 输出
-    ↓
-PTY.onData → "[32mHello[0m\n"
-    ↓
-Bridge 广播给所有连接的 WS 客户端
-    ↓ JSON { type: "output", data: "[32mHello[0m\n" }
-Web UI xterm.write()
+┌─────────────────────────────────────────────────────────┐
+│  relay 服务器 (:8080)                                    │
+│                                                         │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │  HTTP 服务器                                        │   │
+│  │  ├─ 静态文件 (out/)  ← next build 产物             │   │
+│  │  ├─ REST API (文件树/实例/checkpoint)               │   │
+│  │  └─ WebSocket                                      │   │
+│  └──────────────────────────────────────────────────┘   │
+│                                                         │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │  InstanceManager                                   │   │
+│  │  ├─ 管理多个 Claude 实例                          │   │
+│  │  ├─ 每个实例有独立的进程/缓冲/checkpoint           │   │
+│  │  └─ 支持本地实例 + 远程 agent 实例                │   │
+│  └──────────────────────────────────────────────────┘   │
+│                                                         │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │  Claude 实例 (子进程 spawn)                        │   │
+│  │  ├─ stdin (stream-json 输入)                      │   │
+│  │  ├─ stdout (流式 JSON 解析)                       │   │
+│  │  └─ 心跳 + 队列管理                               │   │
+│  └──────────────────────────────────────────────────┘   │
+│                                                         │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │  CheckpointManager                                │   │
+│  │  ├─ 每次 tool 调用前创建 checkpoint               │   │
+│  │  ├─ 文件级快照 (备份被修改的文件)                 │   │
+│  │  └─ 每个实例独立                                  │   │
+│  └──────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────┘
+         │
+         │ WebSocket
+         ▼
+┌─────────────────────────────────────────────────────────┐
+│  Web UI (Next.js 静态导出 → out/)                        │
+│                                                         │
+│  功能:                                                   │
+│  ├─ 终端输出 (ANSI 解析)                                │
+│  ├─ 工具调用可视化 (文件编辑/bash 等)                    │
+│  ├─ 文件树浏览/打开                                     │
+│  ├─ 实例管理面板 (切换/创建/删除)                       │
+│  ├─ 消息日志                                            │
+│  └─ Checkpoint 回滚                                     │
+└─────────────────────────────────────────────────────────┘
 ```
-
-### 远程模式（`/remote` 后）
-
-```
-用户手机键盘输入
-    ↓
-Web UI (xterm.js)
-    ↓ JSON { type: "input", data: "npm test\n" }
-WebSocket (wss://relay-server)
-    ↓
-Relay Server (按 token 路由)
-    ↓ JSON { type: "input", data: "npm test\n" }
-Bridge 的 Relay WS Client
-    ↓
-PTYSession.write("npm test\n")
-    ↓
-Claude Code ⬅ 收到输入
-```
-
-两条路径的输入最终写入同一个 PTY，输出也从同一个 PTY 广播给所有客户端。
 
 ---
 
-## 核心模块
+## 四、目录结构
 
-### 1. CLI 入口 (`src/index.ts`)
-
-```bash
-session-bridge           # 默认: 启动本地服务器 + Claude Code
-session-bridge server    # 启动中继服务器 (Relay Server)
-session-bridge --relay ws://host:8080  # 启动并连接远程中继
 ```
-
-### 2. Bridge (`src/bridge/`)
-
-| 文件 | 职责 |
-|------|------|
-| `session.ts` | `SessionAdapter` 接口 + `PTYSession` 实现 |
-| `server.ts` | 本地 WS 服务器（接受浏览器连接） |
-| `client.ts` | WS 客户端（连接 Relay Server，用于远程）|
-| `index.ts` | Bridge 管理器 — 整合 PTY + 本地 WS + 可选远程 WS |
-
-### 3. Relay Server (`src/server/`)
-
-职责：消息路由中心，维护 Bridge 与 Client 之间的连接映射。
-
-- 纯 WebSocket 服务（+ HTTP 静态文件托管作为 convenience）
-- 内存会话存储，无数据库
-
-### 4. Web Client (`web/`)
-
-| 文件 | 职责 |
-|------|------|
-| `page.tsx` | 主页面，token 校验 + 终端加载 |
-| `components/Terminal.tsx` | xterm.js 终端 + 状态栏 + 命令面板 |
-| `lib/ws-client.ts` | WebSocket 客户端封装 |
+sessionBridge/
+├── src/
+│   ├── index.ts              # CLI 入口
+│   ├── relay-server.ts       # 主服务器 (HTTP + WS + Claude 管理)
+│   ├── instance-manager.ts   # 多实例管理
+│   ├── checkpoint-manager.ts # 文件级 checkpoint
+│   ├── rate-limiter.ts       # API 频率限制
+│   ├── ansi.ts               # ANSI 转义解析
+│   └── i18n.ts               # 多语言
+├── app/
+│   └── page.tsx              # Web UI (React/Next.js)
+├── lib/
+│   ├── ws-client.ts          # WebSocket 客户端封装
+│   ├── use-ws.ts             # React hook
+│   └── session-store.ts      # IndexedDB 持久化
+├── docs/
+│   ├── architecture.md       # ← 本文档
+│   ├── protocol.md           # 通信协议
+│   └── development.md        # 开发指南
+├── tests/
+│   ├── unit/                 # 单元测试
+│   ├── integration/          # 集成测试
+│   ├── cross/                # 跨模块测试
+│   └── helpers/              # 测试工具
+├── out/                      # next build 产物 (gitignored)
+├── content/                  # 会话数据目录
+├── package.json
+├── next.config.js
+└── tsconfig.json
+```
 
 ---
 
-## SessionAdapter 接口
+## 五、核心模块
+
+### relay-server.ts
+
+单一入口，负责所有 HTTP 请求、WebSocket 连接和 Claude 进程管理。
+
+```
+请求路由:
+  GET  /api/health          → 健康检查
+  GET  /api/info            → 项目信息
+  GET  /api/files           → 文件树
+  GET  /api/read-file       → 读取文件
+  POST /api/write-file      → 写入文件 (checkpoint 回滚)
+  GET  /api/checkpoints     → 列出 checkpoints
+  POST /api/checkpoint/rewind → 回滚 checkpoint
+  GET  /api/sessions        → 工作区会话列表
+  POST /api/spawn           → 派生新会话
+  POST /api/session/switch  → 切换目录
+  GET  /api/instances       → 实例列表
+  POST /api/instances       → 创建实例
+  DELETE /api/instances/:id → 删除实例
+  POST /api/instances/:id/activate → 切换实例
+  GET  /api/queue           → 队列状态
+  POST /api/interrupt       → 中断当前操作
+  /*                        → 静态文件 (out/)
+```
+
+### instance-manager.ts
+
+管理多个 Claude 实例，每个实例有独立状态。
 
 ```typescript
-interface SessionAdapter {
-  write(data: string): void;           // 写入输入
-  resize(cols: number, rows: number): void; // 调整终端尺寸
-  kill(): void;                         // 终止会话
-  onData(cb: (data: string) => void): void;  // 注册输出回调
-  onExit(cb: (result: { exitCode: number; signal?: number }) => void): void;
+InstanceData {
+  id, dir, label, status     // 基本信息
+  process                     // Claude 子进程
+  model                       // 当前模型
+  thinkingId, toolUseId, ...  // 流式解析状态
+  blockBuffer, outputBuffer   // 输出缓存
+  checkpointManager           // 独立 checkpoint
+  isProcessing, pendingQueue  // 队列状态
 }
 ```
 
-| 实现 | 用途 | 依赖 |
-|------|------|------|
-| `PTYSession` | Claude Code / 本地进程 | node-pty |
-| `SSHSession` (未来) | 远程服务器 | ssh2 |
-| `DockerSession` (未来) | 容器 exec | dockerode |
-| `TmuxSession` (未来) | tmux 会话 | tmux |
+支持扩展远程 agent：只需在 `process` 字段放一个 WS 连接对象代替子进程即可。
+
+### Web UI (app/page.tsx)
+
+单页应用，所有功能在一个页面：
+
+- 左侧: 文件树 / 实例面板 / 操作按钮
+- 中间: 终端输出 + 工具调用卡片 + 回滚按钮
+- 底部: 消息日志
 
 ---
 
-## Bridge 内部设计
+## 六、数据流
 
-```typescript
-class Bridge {
-  private pty: SessionAdapter;           // Claude Code 进程
-  private localServer: LocalServer;      // 本地 WS 服务器
-  private relayClient: RelayClient | null; // 远程连接
-
-  async start(port: number): Promise<void> {
-    // 1. 启动 Claude Code
-    this.pty = new PTYSession('claude', []);
-    
-    // 2. 启动本地服务器
-    this.localServer = new LocalServer(port);
-    this.localServer.onConnection((ws) => {
-      ws.on('message', (msg) => this.handleMessage(msg));
-    });
-    
-    // 3. PTY 输出 → 广播给所有客户端
-    this.pty.onData((data) => this.broadcast(data));
-    
-    // 4. 打开浏览器
-    openBrowser(`http://localhost:${port}`);
-  }
-
-  async enableRemote(relayUrl: string): Promise<RemoteInfo> {
-    // 连接中继服务器，返回 token + URL
-    this.relayClient = new RelayClient(relayUrl);
-    const info = await this.relayClient.register();
-    
-    // Relay 消息也路由到同一个 PTY
-    this.relayClient.onMessage((msg) => this.handleMessage(msg));
-    
-    return info; // { token, webUrl }
-  }
-
-  private broadcast(data: string) {
-    // 同时发给本地客户端 + 远程中继
-    this.localServer.broadcast({ type: 'output', data });
-    this.relayClient?.send({ type: 'output', data });
-  }
-
-  private handleMessage(msg: Message) {
-    // 统一处理输入（不管来自本地还是远程）
-    if (msg.type === 'input') this.pty.write(msg.data);
-    if (msg.type === 'resize') this.pty.resize(msg.cols, msg.rows);
-    if (msg.type === 'command') this.handleCommand(msg);
-  }
-
-  private async handleCommand(msg: CommandMessage) {
-    if (msg.name === 'remote') {
-      const info = await this.enableRemote(msg.args.relay ?? DEFAULT_RELAY);
-      this.localServer.broadcast({
-        type: 'command_result',
-        name: 'remote',
-        data: { token: info.token, webUrl: info.webUrl },
-      });
-    }
-  }
-}
+```
+用户输入 (浏览器)
+    ↓
+WebSocket → relay-server
+    ↓
+InstanceManager 路由到目标实例
+    ↓
+Claude 进程 stdin (stream-json)
+    ↓
+Claude 进程 stdout (流式 JSON)
+    ↓
+relay-server 解析 (thinking/tool_use/tool_result/text)
+    ↓
+WebSocket 推送回浏览器
+    ↓
+UI 渲染 (终端 / 工具卡片 / 状态更新)
 ```
 
 ---
 
-## 通信协议
-
-### 消息类型
-
-| 类型 | 方向 | 说明 |
-|------|------|------|
-| `input` | Client → Bridge | 键盘输入 |
-| `output` | Bridge → Client | PTY 输出 |
-| `resize` | Client → Bridge | 终端尺寸变更 |
-| `command` | Client → Bridge | 内置命令 (`/remote`) |
-| `command_result` | Bridge → Client | 命令结果 |
-| `register` | Bridge → Relay | 注册会话 |
-| `registered` | Relay → Bridge | 注册成功，含 token |
-| `auth` | Phone → Relay | 认证 |
-| `auth_result` | Relay → Phone | 认证结果 |
+## 七、通信协议
 
 详见 [protocol.md](./protocol.md)。
 
----
-
-## 鉴权
-
-### 本地模式
-无鉴权。`localhost` 本身就是安全边界。
-
-### 远程模式
-```
-Bridge → Relay: register → 获得 token
-Web UI: 显示二维码（含 token 的 URL）
-手机: 扫码 → WebSocket 连接 → auth(token)
-Relay: 校验 token → 绑定会话
-```
-
-- token 一次性使用
-- 无用户系统，无数据库
+核心消息类型：`auth` / `input` / `output` / `block` / `command_result` / `queue_status` / 实例管理消息。
 
 ---
 
-## 启动方式
+## 八、与旧架构的关系
 
-```bash
-# 本地使用 Claude Code（推荐）
-npm start
-# → 启动 Claude Code + 本地服务器
-# → 自动打开浏览器 http://localhost:3000
+本项目的 v0.1-v0.4 使用 Bridge/PTYSession/node-pty 架构，v0.5 重写为现在的 relay + InstanceManager 架构。
 
-# 需要远程接入时，在 Web UI 中输入 /remote
-# → 扫码即可从手机操作
-
-# 启动 Relay Server（云服务器）
-npm run server
-
-# 开发模式
-npm run dev:bridge    # Bridge 热重载
-npm run dev:web       # Next.js 开发服务器 (localhost:3000)
-npm run dev:server    # Relay 热重载
-```
-
----
-
-## 未来扩展路线
-
-### Phase 1: Claude Code Shell ✅（当前）
-- Web UI 作为主要界面
-- 本地 + 远程接入
-- `/remote` 命令
-
-### Phase 2: 输出结构化
-- 解析 Claude Code 输出
-- 代码块语法高亮
-- 文件 diff 可视化
-- 对话历史记录
-
-### Phase 3: 多终端支持
-- SSH 会话接入（管理远程服务器）
-- Docker 容器接入
-- tmux 会话接入
-- 同一套 Web UI 管理所有终端类型
-
-### Phase 4: AI 调度
-- 多会话管理
-- 智能路由（根据输入选择目标会话）
-- 自动化任务编排
+| 旧架构 | 新架构 | 原因 |
+|--------|--------|------|
+| PTYSession (node-pty) | 直接 spawn Claude 子进程 | 减少依赖，简化流式解析 |
+| Bridge 管理器 | relay-server 直接处理 | 去掉抽象层，减少 indirection |
+| LocalServer + RelayClient | 统一 relay 服务器 | 单端口部署更方便 |
+| `/remote` 命令模式 | 实例选择 + agent 连接 | 支持多实例和远程中继 |
+| `web/` 子目录 | `app/` + `lib/` 根目录 | Next.js App Router 约定 |

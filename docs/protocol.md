@@ -1,135 +1,188 @@
-# SessionBridge — 通信协议
+# SessionBridge — WebSocket 通信协议
 
-所有消息均为 JSON 格式，通过 WebSocket 传输。
+所有消息均为 JSON 格式，WebSocket 传输。
 
 ---
 
-## 1. 本地模式（Client → Bridge）
+## 1. 连接阶段
 
-### 键盘输入
+### 客户端 → 服务器
 
 ```json
-{ "type": "input", "data": "npm test\n" }
+// token 认证（远程模式）
+{ "type": "auth", "token": "..." }
+
+// 直连模式（无 token，本地局域网）
+{ "type": "direct", "workspace": false, "cols": 120, "rows": 40 }
 ```
 
-### 尺寸变更
+### 服务器 → 客户端
 
 ```json
-{ "type": "resize", "cols": 80, "rows": 24 }
+{ "type": "auth_result", "success": true, "sessionId": "inst_1_xxx" }
+
+// 工作区模式连接成功
+{ "type": "workspace_connected" }
 ```
 
-### 内置命令
+---
+
+## 2. 数据传输
+
+### 客户端 → 服务器
 
 ```json
-{ "type": "command", "name": "remote", "args": { "relay": "ws://example.com:8080" } }
+// 输入（多行文本/命令）
+{ "type": "input", "data": "npm test\n", "sessionId": "...", "instanceId": "..." }
+
+// 调整终端尺寸
+{ "type": "resize", "cols": 120, "rows": 40 }
+
+// 发送命令（非 Claude 指令，框架内部命令）
+{ "type": "command", "name": "switch-instance", "args": { "instanceId": "..." } }
 ```
 
-当前支持的命令：
-
-| 命令 | 参数 | 说明 |
-|------|------|------|
-| `remote` | relay (可选) | 启用远程接入，生成二维码 |
-
-## 2. 本地模式（Bridge → Client）
-
-### 输出
+### 服务器 → 客户端
 
 ```json
+// 原始终端输出
 { "type": "output", "data": "[32mHello[0m\n" }
+
+// 结构化 block（解析后的 Claude 消息）
+{
+  "type": "block",
+  "blockType": "tool_use",
+  "name": "Bash",
+  "input": { "command": "npm test" },
+  "text": "",
+  "sessionId": "...",
+  "instanceId": "..."
+}
+
+// 命令执行结果
+{ "type": "command_result", "name": "switch-instance", "success": true, "data": {} }
+
+// 队列状态
+{ "type": "queue_status", "processing": true, "source": "user", "queueDepth": 2 }
+
+// 错误
+{ "type": "error", "message": "..." }
 ```
 
-### 命令结果
+### Block 类型
+
+Block 是服务器对 Claude stream-json 输出的结构化解析结果。
+
+| blockType | 说明 | 关键字段 |
+|-----------|------|---------|
+| `thinking` | 模型思考过程 | `text` |
+| `tool_use` | 工具调用 | `name`, `input` |
+| `tool_result` | 工具执行结果 | `text`, `isError` |
+| `text` | 文本回复 | `text` |
+| `status` | 状态信息 | `text` |
+
+---
+
+## 3. 实例管理
+
+### 客户端请求
+
+```json
+{ "type": "command", "name": "switch-instance", "args": { "instanceId": "inst_1_xxx" } }
+{ "type": "command", "name": "list-instances" }
+```
+
+### 服务器推送
+
+```json
+// 实例列表（初始 / 刷新）
+{ "type": "instance_list", "instances": [...], "activeId": "inst_1_xxx" }
+
+// 新实例创建
+{ "type": "instance_added", "instance": { "id": "...", "dir": "...", ... } }
+
+// 实例被删除
+{ "type": "instance_removed", "instanceId": "inst_1_xxx" }
+
+// 活动实例切换
+{ "type": "instance_switched", "instanceId": "inst_2_xxx" }
+```
+
+### InstanceInfo 格式
 
 ```json
 {
-  "type": "command_result",
-  "name": "remote",
-  "success": true,
-  "data": {
-    "token": "a1b2c3d4e5f6...",
-    "webUrl": "http://example.com:8080/?token=a1b2c3d4e5f6..."
-  }
+  "id": "inst_1_xxx",
+  "dir": "/home/user/project",
+  "label": "my-project",
+  "status": "running",
+  "model": "deepseek-v4-flash",
+  "blockCount": 15,
+  "outputSize": 48291,
+  "checkpointCount": 3,
+  "createdAt": 1714512345678
 }
 ```
 
-### 错误
+---
+
+## 4. 工作区模式
+
+### 服务器 → 客户端
 
 ```json
-{ "type": "error", "message": "Failed to connect to relay" }
+// 会话列表
+{ "type": "sessions_list", "sessions": [...] }
+
+// 新会话加入
+{ "type": "session_added", "id": "...", "directory": "...", ... }
+
+// 会话移除
+{ "type": "session_removed", "sessionId": "..." }
 ```
 
-## 3. 远程模式（Bridge ↔ Relay）
-
-### 注册
-
-```json
-{ "type": "register" }
-```
-
-### 注册成功
+### SessionInfo 格式
 
 ```json
 {
-  "type": "registered",
-  "sessionId": "a1b2c3",
-  "token": "a1b2c3d4e5f6...",
-  "webUrl": "http://relay-server:8080/?token=a1b2c3d4e5f6..."
+  "id": "...",
+  "directory": "/home/user/project",
+  "label": "project",
+  "hasBridge": true,
+  "hasClient": false,
+  "webUrl": "http://..."
 }
 ```
 
-### 输入转发（Phone → Relay → Bridge）
+---
 
-```json
-{ "type": "input", "data": "/help\n" }
-```
-
-### 输出转发（Bridge → Relay → Phone）
-
-```json
-{ "type": "output", "data": "[32mHelp[0m\n" }
-```
-
-## 4. 远程模式（Phone ↔ Relay）
-
-### 认证
-
-```json
-{ "type": "auth", "token": "a1b2c3d4e5f6..." }
-```
-
-### 认证结果
-
-```json
-{ "type": "auth_result", "success": true, "sessionId": "a1b2c3" }
-```
-
-### 输入/输出
-
-与本地模式相同 — `input` 和 `output` 格式完全一致。
-
-## 消息分类
-
-| 类别 | 消息类型 | 可靠性 | 说明 |
-|------|----------|--------|------|
-| 控制 | register, auth, command | 可靠 | 单次，影响状态 |
-| 数据 | input, output | 允许丢 | 持续流式，重传无意义 |
-| 通知 | command_result, auth_result, error | 可靠 | 单次响应 |
-| 配置 | resize | 允许丢 | 按需发送，最终一致 |
-
-## 生命周期
+## 5. 生命周期
 
 ```
-本地浏览器                  Bridge                    Relay Server              手机
-    │                        │                          │                       │
-    │── WebSocket 连接 ─────→│                          │                       │
-    │←─ output (PTY 输出) ───│                          │                       │
-    │── input (键盘) ───────→│                          │                       │
-    │── command: remote ────→│── register ─────────────→│                       │
-    │                        │←─ registered (token) ────│                       │
-    │←─ command_result ──────│                          │                       │
-    │  (含 token + URL)      │                          │ 扫码                   │
-    │                        │                          │←── auth(token) ───────│
-    │                        │                          │── auth_result ───────→│
-    │                        │←── input ────────────────│←── input ────────────│
-    │                        │── output ───────────────→│── output ────────────→│
+浏览器                    relay 服务器
+  │                          │
+  │── WebSocket 连接 ───────→│
+  │── auth/direct ──────────→│
+  │←─ auth_result/workspace ─│
+  │                          │
+  │── input ────────────────→│── stdin ──→ Claude 进程
+  │←─ output ◀──────────────│←─ stdout ◀─
+  │←─ block ◀───────────────│
+  │                          │
+  │── command ──────────────→│
+  │←─ command_result ◀──────│
+  │                          │
+  │── 断开 ─────────────────→│── kill → Claude 进程
 ```
+
+## 6. 消息分类
+
+| 类别 | 消息类型 | 说明 |
+|------|----------|------|
+| 连接 | auth, direct, auth_result, workspace_connected | 连接生命周期 |
+| 数据 | input, output | 流式持续传输 |
+| 结构化 | block | 解析后的 Claude 输出 |
+| 控制 | command, command_result | 框架指令（非 Claude） |
+| 状态 | queue_status, error | 运行状态通知 |
+| 实例 | instance_list, instance_added, instance_removed, instance_switched | 实例 CRUD |
+| 工作区 | sessions_list, session_added, session_removed | 多会话管理 |

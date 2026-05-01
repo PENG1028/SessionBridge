@@ -7,3 +7,7 @@ out/
 *.current
 relay.log
 memory/
+content/sessions/
+content/site/
+.env
+.env.local
