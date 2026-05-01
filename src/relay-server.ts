@@ -7,44 +7,14 @@ import { createInterface } from "readline";
 import { memoryUsage } from "process";
 import os from "os";
 
+import { checkRateLimit } from "./rate-limiter";
+import { CheckpointManager } from "./checkpoint-manager";
 
 // ─── Start Time ────────────────────────────────────────────────────
 const START_TIME = Date.now();
 
 // ─── Config ──────────────────────────────────────────────────────
 const PORT = parseInt(process.env.PORT || "8080", 10);
-
-// ─── Rate Limiter (per-IP sliding window) ────────────────────────
-const RATE_LIMIT_WINDOW = 60_000; // 1 minute
-const RATE_LIMIT_MAX = 60;        // 60 requests per minute
-const rateLimitMap = new Map<string, number[]>();
-
-function checkRateLimit(ip: string): boolean {
-  const now = Date.now();
-  const windowStart = now - RATE_LIMIT_WINDOW;
-  let timestamps = rateLimitMap.get(ip);
-  if (!timestamps) {
-    timestamps = [];
-    rateLimitMap.set(ip, timestamps);
-  }
-  // Prune old entries
-  while (timestamps.length > 0 && timestamps[0] < windowStart) {
-    timestamps.shift();
-  }
-  if (timestamps.length >= RATE_LIMIT_MAX) return false;
-  timestamps.push(now);
-  return true;
-}
-
-// Periodic cleanup of stale rate-limit entries
-setInterval(() => {
-  const now = Date.now();
-  const windowStart = now - RATE_LIMIT_WINDOW;
-  for (const [ip, timestamps] of rateLimitMap) {
-    while (timestamps.length > 0 && timestamps[0] < windowStart) timestamps.shift();
-    if (timestamps.length === 0) rateLimitMap.delete(ip);
-  }
-}, 120_000);
 
 // ─── MIME ────────────────────────────────────────────────────────
 const MIME: Record<string, string> = {
@@ -66,122 +36,20 @@ function resolveClaude(): { cmd: string; args: string[] } {
   return { cmd: "claude", args: [] };
 }
 
-// ─── Checkpoint System ────────────────────────────────────────────
-// Snapshot files before Edit/Write tool execution for rewind support.
+// ─── Checkpoint Manager ─────────────────────────────────────────
+const checkpointManager = new CheckpointManager(process.cwd());
 
-interface FileSnapshot {
-  filePath: string;
-  content: string;
-  exists: boolean;
+// Shorthand: update root dir when ROOT_DIR changes
+function updateCheckpointRoot(dir: string) {
+  checkpointManager.setRootDir(dir);
 }
 
-interface Checkpoint {
-  id: string;
-  turnNumber: number;
-  toolUseId: string;
-  toolName: string;
-  filePath: string;
-  snapshots: FileSnapshot[];
-  timestamp: number;
-  /** Text we expect to find in the file (for Edit tools — verifies this checkpoint is still valid) */
-  expectedText?: string;
-}
-
-let checkpoints: Checkpoint[] = [];
-/** Index in checkpoints[] where the current turn started */
-let turnStartIndex = 0;
-const MAX_CHECKPOINTS = 100;
-
-function startNewTurn() {
-  turnStartIndex = checkpoints.length;
-}
-
-function snapshotFile(absPath: string): FileSnapshot | null {
-  try {
-    if (!absPath.startsWith(ROOT_DIR)) return null;
-    const exists = existsSync(absPath);
-    const content = exists ? readFileSync(absPath, "utf8") : "";
-    return { filePath: absPath, content, exists };
-  } catch {
-    return null;
-  }
-}
-
-function createCheckpoint(toolUseId: string, toolName: string, filePath: string, oldString?: string): Checkpoint | null {
-  const absPath = isAbsolute(filePath) ? filePath : resolve(ROOT_DIR, filePath);
-  const snap = snapshotFile(absPath);
-  if (!snap) return null;
-
-  const cp: Checkpoint = {
-    id: "cp_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
-    turnNumber: checkpoints.filter(c => c.turnNumber <= (checkpoints[turnStartIndex]?.turnNumber ?? 0)).length,
-    toolUseId,
-    toolName,
-    filePath: absPath,
-    snapshots: [snap],
-    timestamp: Date.now(),
-    expectedText: oldString,
-  };
-
-  checkpoints.push(cp);
-  if (checkpoints.length > MAX_CHECKPOINTS) {
-    const removed = checkpoints.splice(0, checkpoints.length - MAX_CHECKPOINTS);
-    turnStartIndex = Math.max(0, turnStartIndex - removed.length);
-  }
-
-  return cp;
-}
-
-function restoreCheckpoint(cp: Checkpoint): boolean {
-  try {
-    // Verify the old string still exists (Edit tools only — skip if already overwritten)
-    if (cp.expectedText && existsSync(cp.filePath)) {
-      const current = readFileSync(cp.filePath, "utf8");
-      if (!current.includes(cp.expectedText)) return false; // Already overwritten
-    }
-
-    for (const snap of cp.snapshots) {
-      if (snap.exists) {
-        writeFileSync(snap.filePath, snap.content, "utf8");
-      } else {
-        // File was created by this tool — remove it
-        if (existsSync(snap.filePath)) unlinkSync(snap.filePath);
-      }
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Rewind all checkpoints from the current turn */
-function rewindCurrentTurn(): { restored: number; failed: number; skipped: number } {
-  let restored = 0, failed = 0, skipped = 0;
-  while (checkpoints.length > turnStartIndex) {
-    const cp = checkpoints.pop()!;
-    if (restoreCheckpoint(cp)) restored++;
-    else if (cp.expectedText) skipped++; // Already overwritten by a later tool
-    else failed++;
-  }
-  return { restored, failed, skipped };
-}
-
-/** Rewind the single most recent checkpoint */
-function rewindLastCheckpoint(): { success: boolean; checkpoint?: Checkpoint } {
-  if (checkpoints.length === 0 || checkpoints.length <= turnStartIndex) return { success: false };
-  const cp = checkpoints.pop()!;
-  const ok = restoreCheckpoint(cp);
-  return { success: ok, checkpoint: cp };
-}
-
-function countCurrentTurnCheckpoints(): number {
-  return checkpoints.length - turnStartIndex;
-}
-
-function clearCheckpoints() {
-  checkpoints = [];
-  turnStartIndex = 0;
-}
+const startNewTurn = () => checkpointManager.startNewTurn();
+const createCheckpoint = (...args: Parameters<CheckpointManager['createCheckpoint']>) => checkpointManager.createCheckpoint(...args);
+const rewindCurrentTurn = () => checkpointManager.rewindCurrentTurn();
+const rewindLastCheckpoint = () => checkpointManager.rewindLastCheckpoint();
+const clearCheckpoints = () => checkpointManager.clear();
+const countCurrentTurnCheckpoints = () => checkpointManager.countCurrentTurnCheckpoints();
 
 // ─── Block ID ─────────────────────────────────────────────────────
 let blockSeq = 0;
@@ -1103,12 +971,12 @@ const httpServer = createServer((req, res) => {
 
   // ── API: List checkpoints ──────────────────
   if (path === "/api/checkpoints") {
-    const currentTurnCps = checkpoints.slice(turnStartIndex);
+    const currentTurnCps = checkpointManager.getCurrentTurnCheckpoints();
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({
-      total: checkpoints.length,
+      total: checkpointManager.totalCheckpoints(),
       currentTurn: currentTurnCps.length,
-      turnStartIndex: turnStartIndex,
+      turnStartIndex: checkpointManager.getTurnStartIndex(),
       checkpoints: currentTurnCps.map(c => ({
         id: c.id,
         toolName: c.toolName,
