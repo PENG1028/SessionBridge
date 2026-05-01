@@ -118,7 +118,7 @@ describe('Relay Server WebSocket', () => {
   it('establishes WebSocket connection', async () => {
     const ws = await server.wsConnect();
     expect(ws).toBeDefined();
-    expect(ws.readyState).toBe(0); // WebSocket.CONNECTING or OPEN
+    expect(ws.readyState).toBe(1); // WebSocket.OPEN
     ws.close();
   });
 
@@ -134,12 +134,13 @@ describe('Relay Server WebSocket', () => {
   it('handles multiple messages', async () => {
     const ws = await server.wsConnect();
     ws.send(JSON.stringify({ type: 'auth', token: 'test-token' }));
-    await ws.waitForMessage((m: string) => m.includes('auth_result'), 3000);
+    const authMsg = await ws.waitForMessage((m: string) => m.includes('auth_result'), 3000);
+    expect(authMsg).toContain('auth_result');
 
-    // Exchange multiple messages
+    // Send another message and expect a response
     ws.send(JSON.stringify({ type: 'ping' }));
-    const responses = await ws.collectMessages(2, 3000);
-    expect(responses.length).toBe(2);
+    const responses = await ws.collectMessages(1, 3000);
+    expect(responses.length).toBe(1);
     ws.close();
   });
 

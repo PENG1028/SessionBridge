@@ -220,6 +220,9 @@ export async function startTestServer(): Promise<TestServer> {
         const parsed = JSON.parse(msg);
         if (parsed.type === 'auth') {
           ws.send(JSON.stringify({ type: 'auth_result', success: true }));
+        } else {
+          // Echo non-auth messages
+          ws.send(JSON.stringify({ type: 'echo', original: parsed }));
         }
       } catch { /* ignore non-JSON messages */ }
     });
@@ -241,7 +244,17 @@ export async function startTestServer(): Promise<TestServer> {
         },
         wsConnect: () => {
           const tws = new TestWebSocket(`${wsHost}/ws`);
-          return Promise.resolve(tws);
+          return new Promise<TestWebSocket>((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error('WebSocket connection timeout')), 3000);
+            tws.onopen = () => {
+              clearTimeout(timeout);
+              resolve(tws);
+            };
+            tws.onerror = (err) => {
+              clearTimeout(timeout);
+              reject(err);
+            };
+          });
         },
         close: () => {
           wss.close();
