@@ -33,13 +33,17 @@ src/
 ├── index.ts              # CLI 入口（解析参数 + 启动 relay）
 ├── relay-server.ts       # 主服务器（HTTP + WS + Claude 管理）
 ├── instance-manager.ts   # 多实例管理
+├── stream-parser.ts      # Claude stream-json 解析器（本地/远程共用）
 ├── checkpoint-manager.ts # 文件级 checkpoint
 ├── rate-limiter.ts       # API 频率限制
+├── agent.ts              # 远程 agent（家里电脑主动连 VPS）
+├── protocol.ts           # 消息信封格式
 ├── ansi.ts               # ANSI 解析
+├── browser.ts            # 跨平台打开浏览器
 └── i18n.ts               # 多语言
 
 app/
-├── page.tsx              # Web UI（~3000 行单页应用）
+├── page.tsx              # Web UI（单页应用）
 ├── layout.tsx
 └── globals.css
 

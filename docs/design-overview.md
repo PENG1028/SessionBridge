@@ -79,11 +79,17 @@ VPS 做中继，家里电脑主动连上 VPS，手机操控家里的 Claude。�
 - [x] Checkpoint / 回滚
 - [x] API（文件系统 / 队列 / 会话）
 - [x] 静态文件服务（out/）
-- [x] 单元测试 + 集成测试（72 项）
+- [x] 单元测试 + 集成测试
+- [x] 远程 agent 支持（家里电脑连 VPS）
+- [x] 源锁定队列（多窗口防冲突）
+- [x] 会话搜索 / 历史浏览
+- [x] 独立 Shell 终端
+- [x] 权限模式切换（default / acceptEdits / plan）
+- [x] 思考力度控制（low / medium / high）
 
 ### 🔜 下一步
 
-- [ ] 远程 agent 支持（家里电脑连 VPS）
 - [ ] Cloudflare Tunnel 集成
 - [ ] 认证系统（访问令牌）
 - [ ] 文件上传/下载
+- [ ] TodoWrite / EnterPlanMode 协议识别（方案已就绪，见 [todo-plan-implementation.md](./todo-plan-implementation.md)）

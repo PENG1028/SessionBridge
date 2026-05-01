@@ -127,12 +127,18 @@ sessionBridge/
 │   ├── index.ts              # CLI 入口
 │   ├── relay-server.ts       # 主服务器 (HTTP + WS + Claude 管理)
 │   ├── instance-manager.ts   # 多实例管理
+│   ├── stream-parser.ts      # Claude stream-json 解析器 (本地/远程共用)
 │   ├── checkpoint-manager.ts # 文件级 checkpoint
 │   ├── rate-limiter.ts       # API 频率限制
+│   ├── agent.ts              # 远程 agent (家里电脑主动连 VPS)
+│   ├── protocol.ts           # 消息信封 (v1 信封格式)
 │   ├── ansi.ts               # ANSI 转义解析
+│   ├── browser.ts            # 跨平台打开浏览器
 │   └── i18n.ts               # 多语言
 ├── app/
-│   └── page.tsx              # Web UI (React/Next.js)
+│   ├── page.tsx              # Web UI (React/Next.js)
+│   ├── layout.tsx
+│   └── globals.css
 ├── lib/
 │   ├── ws-client.ts          # WebSocket 客户端封装
 │   ├── use-ws.ts             # React hook
@@ -140,7 +146,9 @@ sessionBridge/
 ├── docs/
 │   ├── architecture.md       # ← 本文档
 │   ├── protocol.md           # 通信协议
-│   └── development.md        # 开发指南
+│   ├── development.md        # 开发指南
+│   ├── design-overview.md    # 设计总览
+│   └── todo-plan-implementation.md  # TodoWrite/EnterPlanMode 实现方案
 ├── tests/
 │   ├── unit/                 # 单元测试
 │   ├── integration/          # 集成测试
@@ -150,7 +158,8 @@ sessionBridge/
 ├── content/                  # 会话数据目录
 ├── package.json
 ├── next.config.js
-└── tsconfig.json
+├── tsconfig.json
+└── tsconfig.server.json
 ```
 
 ---
@@ -163,23 +172,26 @@ sessionBridge/
 
 ```
 请求路由:
-  GET  /api/health          → 健康检查
-  GET  /api/info            → 项目信息
-  GET  /api/files           → 文件树
-  GET  /api/read-file       → 读取文件
-  POST /api/write-file      → 写入文件 (checkpoint 回滚)
-  GET  /api/checkpoints     → 列出 checkpoints
-  POST /api/checkpoint/rewind → 回滚 checkpoint
-  GET  /api/sessions        → 工作区会话列表
-  POST /api/spawn           → 派生新会话
-  POST /api/session/switch  → 切换目录
-  GET  /api/instances       → 实例列表
-  POST /api/instances       → 创建实例
-  DELETE /api/instances/:id → 删除实例
-  POST /api/instances/:id/activate → 切换实例
-  GET  /api/queue           → 队列状态
-  POST /api/interrupt       → 中断当前操作
-  /*                        → 静态文件 (out/)
+  GET  /api/health                  → 健康检查 (含实例/队列/内存详情)
+  GET  /api/info                    → 项目信息
+  GET  /api/list?dir=               → 文件树
+  GET  /api/read-file?path=         → 读取文件
+  POST /api/write                   → 写入文件 (checkpoint 回滚用)
+  GET  /api/checkpoints             → 列出 checkpoints
+  POST /api/rewind                  → 回滚上一个 checkpoint
+  POST /api/rewind-all              → 回滚当前 turn 所有 checkpoint
+  GET  /api/sessions/search?q=      → 搜索 Claude 历史会话
+  GET  /api/sessions/detail?id=     → 会话详情
+  GET  /api/sessions/current        → 当前工作区会话
+  POST /api/session/switch          → 切换目录 (创建新实例)
+  GET  /api/instances               → 实例列表
+  POST /api/instances               → 创建实例
+  DELETE /api/instances/:id         → 删除实例
+  POST /api/instances/:id/activate  → 切换实例
+  GET  /api/queue                   → 队列状态
+  GET  /api/mode                    → 权限模式 / 思考力度
+  POST /api/interrupt               → 中断 + 自动回滚
+  /*                                → 静态文件 (out/)
 ```
 
 ### instance-manager.ts
