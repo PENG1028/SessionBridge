@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { sessionStore } from '../lib/session-store';
 
 // ==========================================
 // Types
@@ -280,6 +281,45 @@ export default function Page() {
     }).catch(() => {});
   }, []);
 
+  // ── Session persistence (IndexedDB) ──────────
+  const [isRestoring, setIsRestoring] = useState(true);
+
+  // Restore messages from IndexedDB on mount (complete path)
+  useEffect(() => {
+    const activeId = sessionStore.getActiveSessionId();
+    if (activeId) {
+      sessionStore.loadMessages(activeId).then(msgs => {
+        if (msgs.length > 0) {
+          setMessagesBySession(prev => ({ ...prev, [activeId]: msgs }));
+        }
+        setIsRestoring(false);
+      }).catch(() => setIsRestoring(false));
+    } else {
+      setIsRestoring(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Persist messages to IndexedDB (debounced) + localStorage fast path
+  const idbDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (isRestoring) return;
+    if (idbDebounceRef.current) clearTimeout(idbDebounceRef.current);
+    idbDebounceRef.current = setTimeout(() => {
+      // Fast path: full-map localStorage cache
+      try {
+        localStorage.setItem('sb-messages', JSON.stringify(messagesBySession));
+      } catch {}
+      // Complete path: per-session IndexedDB writes
+      for (const [sid, msgs] of Object.entries(messagesBySession)) {
+        if (msgs.length > 0) {
+          sessionStore.replaceMessages(sid, msgs).catch(() => {});
+        }
+      }
+    }, 500);
+    return () => { if (idbDebounceRef.current) clearTimeout(idbDebounceRef.current); };
+  }, [messagesBySession, isRestoring]);
+
   // ── History loading (state+ref declarations only) ──
   const historyLoadedRef = useRef(false);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -429,6 +469,13 @@ export default function Page() {
   const handleNewSession = useCallback(() => {
     const sk = sessionKey;
     updateSession(sk, () => []);
+    // Clear persisted data for this session
+    sessionStore.clearMessages(sk).catch(() => {});
+    try {
+      const cached = JSON.parse(localStorage.getItem('sb-messages') || '{}');
+      delete cached[sk];
+      localStorage.setItem('sb-messages', JSON.stringify(cached));
+    } catch {}
     setPhase('idle');
     setCurrentActivity(null);
     setTotalTokens({});
@@ -475,6 +522,17 @@ export default function Page() {
 
   // ── Switch project directory ─────────────
   const handleSwitchDir = useCallback(async (dir: string) => {
+    // Persist current session messages before switching directory
+    const prevKey = projectInfo?.cwd ? projectInfo.cwd.replace(/[/\\:]/g, '_') : 'default';
+    const prevMsgs = messagesRef.current;
+    if (prevMsgs?.length > 0) {
+      sessionStore.replaceMessages(prevKey, prevMsgs).catch(() => {});
+      try {
+        const cached = JSON.parse(localStorage.getItem('sb-messages') || '{}');
+        cached[prevKey] = prevMsgs;
+        localStorage.setItem('sb-messages', JSON.stringify(cached));
+      } catch {}
+    }
     setSwitching(true);
     try {
       await fetch('/api/session/switch', {
@@ -1532,7 +1590,16 @@ export default function Page() {
 
           <div className="flex-1 overflow-y-auto" ref={scrollContainerRef}>
             <div className="px-4 py-4">
-            {messages.length === 0 ? (
+            {isRestoring ? (
+              <div className="flex items-center justify-center h-full">
+                <div className="text-center text-gray-600 text-xs space-y-2">
+                  <div className="w-8 h-8 mx-auto relative">
+                    <div className="absolute inset-0 border-2 border-purple-500/30 border-t-purple-500 rounded-full animate-spin" />
+                  </div>
+                  <p className="text-purple-400 animate-pulse">Restoring session...</p>
+                </div>
+              </div>
+            ) : messages.length === 0 ? (
               <div className="flex items-center justify-center h-full">
                 <div className="text-center text-gray-600 text-xs space-y-2">
                   {historyLoading ? (
