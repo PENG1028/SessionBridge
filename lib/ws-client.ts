@@ -20,6 +20,7 @@ export type InstanceInfo = {
   dir: string;
   label: string;
   status: string;
+  source: string;
   model: string | null;
   blockCount: number;
   outputSize: number;
@@ -60,6 +61,11 @@ export type WSCallback = {
   onInstanceSwitched?: (instanceId: string) => void;
 };
 
+/** Envelope helper for client-side sends. */
+function env(type: string, body: Record<string, unknown> = {}) {
+  return JSON.stringify({ v: 1, ts: Date.now(), type, body });
+}
+
 export class WSClient {
   private ws: WebSocket | null = null;
   private url: string;
@@ -79,28 +85,50 @@ export class WSClient {
     this.ws = new WebSocket(this.url);
 
     this.ws.onopen = () => {
-      if (this.token) {
-        this.ws!.send(JSON.stringify({ type: 'auth', token: this.token }));
-      } else {
-        this.ws!.send(JSON.stringify({
-          type: 'direct',
-          workspace: workspace ?? false,
-          cols: cols ?? 120,
-          rows: rows ?? 40,
-        }));
-      }
+      // Send hello for capability negotiation
+      this.ws!.send(env("hello", {
+        role: "browser",
+        version: "0.5.0",
+        features: ["claude_chat", "instance_list", "shell"],
+        ...(this.token ? {} : { workspace: workspace ?? false }),
+        cols: cols ?? 120,
+        rows: rows ?? 40,
+      }));
     };
 
     this.ws.onmessage = (ev) => {
       let msg: any;
       try {
-        msg = JSON.parse(ev.data);
+        const parsed = JSON.parse(ev.data);
+        // Handle both v1 envelope and legacy format
+        if (parsed.v === 1 && parsed.body) {
+          msg = { type: parsed.type, ...parsed.body };
+        } else {
+          msg = parsed;
+        }
       } catch {
         return;
       }
 
       switch (msg.type) {
-        case 'auth_result':
+        case "welcome":
+          this.cb.onStatusChange({
+            authenticated: true,
+            sessionId: msg.sessionId,
+          });
+          if (msg.instances) {
+            this.cb.onInstanceList?.(msg.instances, msg.sessionId || null);
+          }
+          break;
+
+        case "workspace_connected":
+          this.workspaceMode = true;
+          this.cb.onWorkspaceConnected?.();
+          this.cb.onStatusChange({ authenticated: true });
+          break;
+
+        // Legacy auth_result (backward compat)
+        case "auth_result":
           this.cb.onStatusChange({
             authenticated: msg.success,
             sessionId: msg.sessionId,
@@ -108,39 +136,32 @@ export class WSClient {
           if (!msg.success) {
             this.cb.onError(msg.error ?? 'Authentication failed');
           }
-          // Handle instances in auth_result (sent by relay-server on connect)
           if (msg.instances) {
             this.cb.onInstanceList?.(msg.instances, msg.sessionId || null);
           }
           break;
 
-        case 'workspace_connected':
-          this.workspaceMode = true;
-          this.cb.onWorkspaceConnected?.();
-          this.cb.onStatusChange({ authenticated: true });
-          break;
-
-        case 'sessions_list':
+        case "session.list":
           this.cb.onSessionsList?.(msg.sessions);
           break;
 
-        case 'session_added':
+        case "session.added":
           this.cb.onSessionAdded?.(msg);
           break;
 
-        case 'session_removed':
+        case "session.removed":
           this.cb.onSessionRemoved?.(msg.sessionId);
           break;
 
-        case 'output':
+        case "claude.output":
           this.cb.onOutput(msg.data);
           break;
 
-        case 'block':
+        case "claude.block":
           this.cb.onBlock?.(msg);
           break;
 
-        case 'command_result':
+        case "claude.command_result":
           this.cb.onCommandResult({
             name: msg.name,
             success: msg.success,
@@ -149,7 +170,7 @@ export class WSClient {
           });
           break;
 
-        case 'queue_status':
+        case "queue.status":
           this.cb.onQueueStatus?.({
             processing: msg.processing || false,
             source: msg.source || null,
@@ -157,24 +178,78 @@ export class WSClient {
           });
           break;
 
-        case 'error':
+        case "error":
           this.cb.onError(msg.message);
           break;
 
-        // Instance management messages
-        case 'instance_list':
+        // Instance management
+        case "instance.list":
           this.cb.onInstanceList?.(msg.instances, msg.activeId);
           break;
 
-        case 'instance_added':
+        case "instance.added":
           this.cb.onInstanceAdded?.(msg.instance);
           break;
 
-        case 'instance_removed':
+        case "instance.removed":
           this.cb.onInstanceRemoved?.(msg.instanceId);
           break;
 
-        case 'instance_switched':
+        case "instance.switched":
+          this.cb.onInstanceSwitched?.(msg.instanceId);
+          break;
+
+        // Legacy types (backward compat with old relay)
+        case "sessions_list":
+          this.cb.onSessionsList?.(msg.sessions);
+          break;
+
+        case "session_added":
+          this.cb.onSessionAdded?.(msg);
+          break;
+
+        case "session_removed":
+          this.cb.onSessionRemoved?.(msg.sessionId);
+          break;
+
+        case "output":
+          this.cb.onOutput(msg.data);
+          break;
+
+        case "block":
+          this.cb.onBlock?.(msg);
+          break;
+
+        case "command_result":
+          this.cb.onCommandResult({
+            name: msg.name,
+            success: msg.success,
+            data: msg.data,
+            error: msg.error,
+          });
+          break;
+
+        case "queue_status":
+          this.cb.onQueueStatus?.({
+            processing: msg.processing || false,
+            source: msg.source || null,
+            queueDepth: msg.queueDepth || 0,
+          });
+          break;
+
+        case "instance_list":
+          this.cb.onInstanceList?.(msg.instances, msg.activeId);
+          break;
+
+        case "instance_added":
+          this.cb.onInstanceAdded?.(msg.instance);
+          break;
+
+        case "instance_removed":
+          this.cb.onInstanceRemoved?.(msg.instanceId);
+          break;
+
+        case "instance_switched":
           this.cb.onInstanceSwitched?.(msg.instanceId);
           break;
       }
@@ -194,31 +269,31 @@ export class WSClient {
 
   sendInput(data: string, sessionId?: string, instanceId?: string) {
     if (this.ws?.readyState === WebSocket.OPEN) {
-      const payload: any = { type: 'input', data };
-      if (sessionId) payload.sessionId = sessionId;
-      if (instanceId) payload.instanceId = instanceId;
-      this.ws.send(JSON.stringify(payload));
+      const body: Record<string, unknown> = { data };
+      if (sessionId) body.sessionId = sessionId;
+      if (instanceId) body.instanceId = instanceId;
+      this.ws.send(env("claude.input", body));
     }
   }
 
   sendCommand(name: string, args?: Record<string, string>, sessionId?: string, instanceId?: string) {
     if (this.ws?.readyState === WebSocket.OPEN) {
-      const payload: any = { type: 'command', name, args };
-      if (sessionId) payload.sessionId = sessionId;
-      if (instanceId) payload.instanceId = instanceId;
-      this.ws.send(JSON.stringify(payload));
+      const body: Record<string, unknown> = { name, args };
+      if (sessionId) body.sessionId = sessionId;
+      if (instanceId) body.instanceId = instanceId;
+      this.ws.send(env("claude.command", body));
     }
   }
 
   sendResize(cols: number, rows: number) {
     if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+      this.ws.send(env("claude.resize", { cols, rows }));
     }
   }
 
   requestSessions() {
     if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: 'list_sessions' }));
+      this.ws.send(env("session.list_req", {}));
     }
   }
 

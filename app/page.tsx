@@ -10,6 +10,7 @@ import {
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { sessionStore } from '../lib/session-store';
+import ShellTerminal from './shell-terminal';
 
 // ==========================================
 // Types
@@ -37,6 +38,8 @@ interface Block {
   expanded: boolean;
   /** Raw JSON for unknown fallback */
   rawData: string;
+  /** Persistence-only: whether tool result is fully captured */
+  isComplete?: boolean;
 }
 
 interface Message {
@@ -83,6 +86,31 @@ interface TaskInfo {
   lastToolName?: string;
   summary?: string;
   usage?: { totalTokens?: number; toolUses?: number; durationMs?: number };
+}
+
+/** Convert persisted messages from session-store into app UI messages. */
+function toAppMessages(sessionId: string, msgs: import('../lib/session-store').Message[]): Message[] {
+  return msgs.map((m, i) => ({
+    id: `${sessionId}_${i}`,
+    role: m.role,
+    content: m.content,
+    timestamp: typeof m.timestamp === 'number'
+      ? new Date(m.timestamp).toLocaleTimeString()
+      : m.timestamp || getTime(),
+    blocks: (m.blocks || []) as Block[],
+    isPending: false,
+    isCompactSummary: (m as any).isCompactSummary,
+  }));
+}
+
+/** Strip UI-only fields before persisting to session-store IndexedDB. */
+function toStorageMessages(msgs: Message[]): import('../lib/session-store').Message[] {
+  return msgs.map(m => ({
+    role: m.role,
+    content: m.content,
+    timestamp: Date.parse(m.timestamp) || Date.now(),
+    blocks: m.blocks as import('../lib/session-store').Block[],
+  }));
 }
 
 // ==========================================
@@ -221,6 +249,7 @@ export default function Page() {
   const [inputValue, setInputValue] = useState('');
   // ── No virtual window — render all messages ──
   const [terminalTab, setTerminalTab] = useState<'log' | 'raw'>('log');
+  const [viewMode, setViewMode] = useState<'ai' | 'terminal'>('ai');
   const [showCommands, setShowCommands] = useState(false);
   const [totalTokens, setTotalTokens] = useState<{input?: number; output?: number; [k:string]: any}>({});
   const [totalCost, setTotalCost] = useState<string>('');
@@ -292,7 +321,7 @@ export default function Page() {
     if (activeId) {
       sessionStore.loadMessages(activeId).then(msgs => {
         if (msgs.length > 0) {
-          setMessagesBySession(prev => ({ ...prev, [activeId]: msgs }));
+          setMessagesBySession(prev => ({ ...prev, [activeId]: toAppMessages(activeId, msgs) }));
         }
         setIsRestoring(false);
       }).catch(() => setIsRestoring(false));
@@ -315,7 +344,7 @@ export default function Page() {
       // Complete path: per-session IndexedDB writes
       for (const [sid, msgs] of Object.entries(messagesBySession)) {
         if (msgs.length > 0) {
-          sessionStore.replaceMessages(sid, msgs).catch(() => {});
+          sessionStore.replaceMessages(sid, toStorageMessages(msgs)).catch(() => {});
         }
       }
     }, 500);
@@ -530,7 +559,7 @@ export default function Page() {
     const prevKey = projectInfo?.cwd ? projectInfo.cwd.replace(/[/\\:]/g, '_') : 'default';
     const prevMsgs = messagesRef.current;
     if (prevMsgs?.length > 0) {
-      sessionStore.replaceMessages(prevKey, prevMsgs).catch(() => {});
+      sessionStore.replaceMessages(prevKey, toStorageMessages(prevMsgs)).catch(() => {});
       try {
         const cached = JSON.parse(localStorage.getItem('sb-messages') || '{}');
         cached[prevKey] = prevMsgs;
@@ -1314,6 +1343,19 @@ export default function Page() {
           )}
         </div>
         <div className="flex items-center space-x-4 text-xs">
+          {/* View mode toggle */}
+          <button
+            onClick={() => setViewMode(m => m === 'ai' ? 'terminal' : 'ai')}
+            className={`flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] transition-colors ${
+              viewMode === 'terminal'
+                ? 'bg-purple-900/20 border-purple-700 text-purple-300'
+                : 'bg-[#1a1a1a] border-gray-700 text-gray-400 hover:text-gray-200'
+            }`}
+            title={viewMode === 'terminal' ? 'Switch to AI panel' : 'Switch to system terminal'}
+          >
+            <Terminal className="w-3 h-3" />
+            {viewMode === 'terminal' ? 'AI' : 'TERM'}
+          </button>
           {parsed.cost && <span className="text-gray-400 hidden sm:inline">TOKENS: <span className="text-gray-200">{parsed.cost}</span></span>}
           {/* Project info */}
           <div className="flex items-center gap-2 relative">
@@ -1383,6 +1425,13 @@ export default function Page() {
             </div>
           </div>
       </header>
+
+      {/* ═══ FULL-SCREEN TERMINAL MODE ════ */}
+      {viewMode === 'terminal' && (
+        <div className="absolute inset-0 z-50" style={{ top: '44px' }}>
+          <ShellTerminal wsUrl={wsUrl} />
+        </div>
+      )}
 
       {/* ═══ SEARCH SESSIONS PANEL (overlay) ════ */}
       {showSearch && (
@@ -1510,6 +1559,11 @@ export default function Page() {
                     >
                       <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusColor}`} />
                       <span className="truncate flex-1">{inst.label}</span>
+                      {inst.source === 'remote' ? (
+                        <span className="text-[8px] px-1 bg-blue-900/50 text-blue-300 rounded font-medium">REMOTE</span>
+                      ) : (
+                        <span className="text-[8px] px-1 bg-gray-700 text-gray-300 rounded font-medium">LOCAL</span>
+                      )}
                       <span className="text-[9px] text-gray-600 truncate max-w-[80px]">{basename(inst.dir)}</span>
                       {!isActive && instances.length > 1 && (
                         <button
