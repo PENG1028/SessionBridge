@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useCallback, useMemo, useState } from 'react';
-import { WSClient, SessionInfo, QueueStatus } from './ws-client';
+import { WSClient, SessionInfo, QueueStatus, InstanceInfo } from './ws-client';
 
 export interface ConnStatus {
   status: 'connecting' | 'connected' | 'disconnected' | 'error';
@@ -54,6 +54,11 @@ export function useSession(
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const activeSessionIdRef = useRef<string | null>(null);
   const isWorkspace = !token; // workspace mode when no token
+
+  // Instance management state
+  const [instances, setInstances] = useState<InstanceInfo[]>([]);
+  const [activeInstanceId, setActiveInstanceId] = useState<string | null>(null);
+  const activeInstanceIdRef = useRef<string | null>(null);
 
   const appendOutput = useCallback((data: string) => {
     outputRef.current += data;
@@ -139,13 +144,15 @@ export function useSession(
 
   const sendInput = useCallback((text: string, sessionId?: string) => {
     const sid = sessionId || activeSessionIdRef.current || undefined;
-    clientRef.current?.sendInput(text, sid);
+    const iid = activeInstanceIdRef.current || undefined;
+    clientRef.current?.sendInput(text, sid, iid);
     addMsgLog('input', text);
   }, [addMsgLog]);
 
   const sendCommand = useCallback((name: string, args?: Record<string, string>, sessionId?: string) => {
     const sid = sessionId || activeSessionIdRef.current || undefined;
-    clientRef.current?.sendCommand(name, args, sid);
+    const iid = activeInstanceIdRef.current || undefined;
+    clientRef.current?.sendCommand(name, args, sid, iid);
     addMsgLog('command', name);
   }, [addMsgLog]);
 
@@ -225,6 +232,31 @@ export function useSession(
       onWorkspaceConnected: () => {
         setConnStatus({ status: 'connected', sessionId: 'workspace' });
       },
+      // Instance management callbacks
+      onInstanceList: (list, activeId) => {
+        setInstances(list);
+        if (activeId) {
+          activeInstanceIdRef.current = activeId;
+          setActiveInstanceId(activeId);
+        }
+      },
+      onInstanceAdded: (instance) => {
+        setInstances(prev => {
+          const exists = prev.find(i => i.id === instance.id);
+          return exists ? prev : [...prev, instance];
+        });
+      },
+      onInstanceRemoved: (id) => {
+        setInstances(prev => prev.filter(i => i.id !== id));
+        if (activeInstanceIdRef.current === id) {
+          activeInstanceIdRef.current = null;
+          setActiveInstanceId(null);
+        }
+      },
+      onInstanceSwitched: (id) => {
+        activeInstanceIdRef.current = id;
+        setActiveInstanceId(id);
+      },
     });
 
     ws.connect(initialCols, initialRows, isWorkspace);
@@ -236,15 +268,62 @@ export function useSession(
     };
   }, [wsUrl, token, appendOutput, addMsgLog, parseOutput, initialCols, initialRows]);
 
-  // Sync ref with state
+  // Sync refs with state
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId;
   }, [activeSessionId]);
+
+  useEffect(() => {
+    activeInstanceIdRef.current = activeInstanceId;
+  }, [activeInstanceId]);
 
   const activateSession = useCallback((id: string) => {
     activeSessionIdRef.current = id;
     setActiveSessionId(id);
   }, []);
+
+  // Instance management functions
+  const activateInstance = useCallback((id: string) => {
+    activeInstanceIdRef.current = id;
+    setActiveInstanceId(id);
+    clientRef.current?.sendCommand('switch-instance', { instanceId: id });
+  }, []);
+
+  const createInstance = useCallback(async (dir: string, label?: string) => {
+    const httpBase = wsUrl.replace(/^ws/, 'http');
+    try {
+      const res = await fetch(`${httpBase}/api/instances`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dir, label }),
+      });
+      const result = await res.json();
+      addMsgLog('system', `Created instance in ${dir}: ${result.success ? 'OK' : result.error}`);
+      if (result.success && result.instance) {
+        setInstances(prev => {
+          const exists = prev.find(i => i.id === result.instance.id);
+          return exists ? prev : [...prev, result.instance];
+        });
+      }
+      return result;
+    } catch (err) {
+      addMsgLog('error', `Create instance failed: ${err}`);
+      return { success: false, error: String(err) };
+    }
+  }, [wsUrl, addMsgLog]);
+
+  const killInstance = useCallback(async (id: string) => {
+    const httpBase = wsUrl.replace(/^ws/, 'http');
+    try {
+      const res = await fetch(`${httpBase}/api/instances/${id}`, { method: 'DELETE' });
+      const result = await res.json();
+      addMsgLog('system', `Killed instance ${id}: ${result.success ? 'OK' : result.error}`);
+      return result;
+    } catch (err) {
+      addMsgLog('error', `Kill instance failed: ${err}`);
+      return { success: false, error: String(err) };
+    }
+  }, [wsUrl, addMsgLog]);
 
   const spawnSession = useCallback(async (directory: string, label?: string) => {
     const httpBase = wsUrl.replace(/^ws/, 'http');
@@ -287,5 +366,11 @@ export function useSession(
     spawnSession,
     activeBlocks,
     isWorkspace,
+    // Instance management
+    instances,
+    activeInstanceId,
+    activateInstance,
+    createInstance,
+    killInstance,
   };
 }

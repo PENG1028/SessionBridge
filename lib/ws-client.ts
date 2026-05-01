@@ -15,6 +15,18 @@ export type SessionInfo = {
   webUrl: string;
 };
 
+export type InstanceInfo = {
+  id: string;
+  dir: string;
+  label: string;
+  status: string;
+  model: string | null;
+  blockCount: number;
+  outputSize: number;
+  checkpointCount: number;
+  createdAt: number;
+};
+
 export type CommandResult = {
   name: string;
   success: boolean;
@@ -41,6 +53,11 @@ export type WSCallback = {
   onSessionAdded?: (session: SessionInfo) => void;
   onSessionRemoved?: (sessionId: string) => void;
   onWorkspaceConnected?: () => void;
+  // Instance management callbacks
+  onInstanceList?: (instances: InstanceInfo[], activeId: string | null) => void;
+  onInstanceAdded?: (instance: InstanceInfo) => void;
+  onInstanceRemoved?: (instanceId: string) => void;
+  onInstanceSwitched?: (instanceId: string) => void;
 };
 
 export class WSClient {
@@ -91,6 +108,10 @@ export class WSClient {
           if (!msg.success) {
             this.cb.onError(msg.error ?? 'Authentication failed');
           }
+          // Handle instances in auth_result (sent by relay-server on connect)
+          if (msg.instances) {
+            this.cb.onInstanceList?.(msg.instances, msg.sessionId || null);
+          }
           break;
 
         case 'workspace_connected':
@@ -139,6 +160,23 @@ export class WSClient {
         case 'error':
           this.cb.onError(msg.message);
           break;
+
+        // Instance management messages
+        case 'instance_list':
+          this.cb.onInstanceList?.(msg.instances, msg.activeId);
+          break;
+
+        case 'instance_added':
+          this.cb.onInstanceAdded?.(msg.instance);
+          break;
+
+        case 'instance_removed':
+          this.cb.onInstanceRemoved?.(msg.instanceId);
+          break;
+
+        case 'instance_switched':
+          this.cb.onInstanceSwitched?.(msg.instanceId);
+          break;
       }
     };
 
@@ -154,18 +192,20 @@ export class WSClient {
     };
   }
 
-  sendInput(data: string, sessionId?: string) {
+  sendInput(data: string, sessionId?: string, instanceId?: string) {
     if (this.ws?.readyState === WebSocket.OPEN) {
       const payload: any = { type: 'input', data };
       if (sessionId) payload.sessionId = sessionId;
+      if (instanceId) payload.instanceId = instanceId;
       this.ws.send(JSON.stringify(payload));
     }
   }
 
-  sendCommand(name: string, args?: Record<string, string>, sessionId?: string) {
+  sendCommand(name: string, args?: Record<string, string>, sessionId?: string, instanceId?: string) {
     if (this.ws?.readyState === WebSocket.OPEN) {
       const payload: any = { type: 'command', name, args };
       if (sessionId) payload.sessionId = sessionId;
+      if (instanceId) payload.instanceId = instanceId;
       this.ws.send(JSON.stringify(payload));
     }
   }
