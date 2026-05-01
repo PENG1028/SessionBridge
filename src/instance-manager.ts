@@ -4,17 +4,21 @@
 
 import { CheckpointManager } from "./checkpoint-manager";
 import type { ChildProcess } from "child_process";
+import type { WebSocket } from "ws";
 
 // ─── Types ─────────────────────────────────────────────────
 
 export type InstanceStatus = 'starting' | 'running' | 'stopped' | 'error';
+export type InstanceSource = 'local' | 'remote';
 
 export interface InstanceData {
   id: string;
   dir: string;
   label: string;
   status: InstanceStatus;
+  source: InstanceSource;
   process: ChildProcess | null;
+  agentConnection: WebSocket | null;
   model: string | null;
 
   // Streaming state (reset per turn)
@@ -49,14 +53,16 @@ export class InstanceManager {
   private idCounter = 0;
 
   /** Create a new instance and register it */
-  create(dir: string, label?: string): InstanceData {
+  create(dir: string, label?: string, source?: InstanceSource): InstanceData {
     const id = `inst_${++this.idCounter}_${Date.now().toString(36)}`;
     const instance: InstanceData = {
       id,
       dir,
       label: label || labelFromDir(dir),
       status: 'starting',
+      source: source || 'local',
       process: null,
+      agentConnection: null,
       model: null,
       thinkingId: null,
       thinkingText: "",
@@ -133,6 +139,7 @@ export class InstanceManager {
       dir: inst.dir,
       label: inst.label,
       status: inst.status,
+      source: inst.source,
       model: inst.model,
       blockCount: inst.blockBuffer.length,
       outputSize: inst.outputSize,
