@@ -3,18 +3,20 @@
 /**
  * session-bridge — CLI entry point.
  *
- * Starts the combined relay server with built-in persistent Claude process.
- * No separate agent process needed — the relay manages Claude directly.
- *
  * Commands:
- *   (no args)         Start relay server (with integrated Claude management)
- *   server            Same as no args (backwards compat)
- *   --directory <dir> Working directory (passed to Claude as cwd)
- *   --port     <num>  Server port (default: 8080)
- *   --help            Show help
+ *   session-bridge [relay]    Start relay server (default)
+ *   session-bridge agent ...  Start agent mode (connects to relay)
  *
- * Environment:
- *   PORT  Server port (default: 8080)
+ * Options:
+ *   --port <num>      Relay server port (default: 8080)
+ *   --directory <dir> Working directory for Claude (relay mode)
+ *
+ * Agent options:
+ *   --relay <url>     Relay WebSocket URL (required for agent mode)
+ *   --dir    <path>   Working directory for local Claude
+ *   --label  <name>   Instance label shown in UI
+ *   --log-file <path> Write agent log to file
+ *   --pid-file <path> Write PID file
  */
 
 async function main() {
@@ -25,22 +27,46 @@ async function main() {
   session-bridge — Claude Code remote shell
 
   Usage:
-    session-bridge [server]   Start relay server with integrated Claude
-    session-bridge --port 3001  Start on custom port
+    session-bridge [relay]          Start relay server
+    session-bridge agent --relay <url> --dir <path>   Start agent
 
-  Options:
-    --directory <dir>  Set Claude working directory
-    --port     <num>   Server port (default: 8080)
+  Relay options:
+    --port <num>        Server port (default: 8080)
+    --directory <dir>   Set Claude working directory
 
-  The relay server:
-    • Spawns Claude as a persistent process (--input-format stream-json)
-    • Serves Web UI and WebSocket on the same port
-    • No cold starts — Claude is always ready
+  Agent options:
+    --relay <url>       Relay server WebSocket URL (required)
+    --dir <path>        Working directory for Claude (default: cwd)
+    --label <name>      Instance label shown in UI
+    --log-file <path>   Write log output to file
+    --pid-file <path>   Write PID to file (for service management)
 `);
     return;
   }
 
-  // Parse --port
+  // ─── Agent mode ───────────────────────────────────────────────
+  if (args[0] === "agent") {
+    const { startAgent } = await import("./agent");
+
+    function arg(name: string, fallback: string): string {
+      const idx = args.indexOf(`--${name}`);
+      if (idx >= 0 && args[idx + 1]) return args[idx + 1];
+      const eq = args.find(a => a.startsWith(`--${name}=`));
+      if (eq) return eq.slice(`--${name}=`.length);
+      return fallback;
+    }
+
+    startAgent({
+      relay: arg("relay", "ws://localhost:8080"),
+      dir: arg("dir", process.cwd()),
+      label: arg("label", ""),
+      logFile: arg("log-file", ""),
+      pidFile: arg("pid-file", ""),
+    });
+    return;
+  }
+
+  // ─── Relay mode (default) ─────────────────────────────────────
   const portIdx = args.indexOf("--port");
   if (portIdx >= 0) {
     const p = parseInt(args[portIdx + 1], 10);
@@ -49,14 +75,13 @@ async function main() {
 
   const { startRelayServer } = await import("./relay-server");
 
-  // Parse --directory (changes cwd before spawning Claude)
   const dirIdx = args.indexOf("--directory");
   if (dirIdx >= 0) {
     const dir = args[dirIdx + 1];
     if (dir) process.chdir(dir);
   }
 
-  startRelayServer();
+  void startRelayServer();
 }
 
 main().catch((err) => {
