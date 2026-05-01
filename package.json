@@ -4,13 +4,18 @@
   "private": true,
   "description": "Claude Code remote shell — persistent process architecture with web UI",
   "scripts": {
-    "start": "next build && tsx src/index.ts",
+    "start": "next build && npm run build:server && node dist/index.js",
+    "start:quick": "npm run build:server && node dist/index.js",
     "dev": "next build && tsx watch src/index.ts",
     "dev:web": "next dev",
     "build": "next build",
+    "build:server": "tsc -p tsconfig.server.json",
+    "start:agent": "node dist/agent.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "lucide-react": "^1.14.0",
     "next": "^16.2.4",
     "react": "^19.2.5",

@@ -1,0 +1,26 @@
+[Unit]
+Description=SessionBridge Relay Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/session-bridge/node dist/index.js relay \
+  --port 8080
+WorkingDirectory=/opt/session-bridge
+Restart=always
+RestartSec=5
+User=sessionbridge
+
+# Logging
+StandardOutput=append:/var/log/session-bridge/relay.log
+StandardError=append:/var/log/session-bridge/relay.log
+
+# Security hardening
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
