@@ -1,0 +1,18 @@
+{
+  "sessions": [],
+  "defaults": {
+    "command": "claude",
+    "shell": "xterm-256color",
+    "cols": 80,
+    "rows": 24
+  },
+  "relay": {
+    "defaultUrl": "ws://localhost:8080",
+    "reconnectDelayMs": 3000,
+    "maxReconnectAttempts": 5
+  },
+  "server": {
+    "port": 3000,
+    "host": "localhost"
+  }
+}
