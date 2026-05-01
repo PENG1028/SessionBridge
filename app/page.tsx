@@ -110,6 +110,8 @@ const getTime = () => {
   return `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
 };
 
+const basename = (p: string) => p.replace(/\\/g, '/').split('/').filter(Boolean).pop() || p;
+
 const genId = () => Math.random().toString(36).substring(2, 11);
 
 /** Extract detail string from tool args */
@@ -372,7 +374,7 @@ export default function Page() {
   const messagesCacheRef = useRef<Record<string, Message[]>>({});
   const messagesRef = useRef<Message[]>([]);
 
-  const { connStatus, parsed, msgLog, sendInput, sendCommand, serverBlocks, sessions, activeSessionId, activateSession, spawnSession, isWorkspace, queueStatus } = useSession(wsUrl, token ?? undefined);
+  const { connStatus, parsed, msgLog, sendInput, sendCommand, serverBlocks, sessions, activeSessionId, activateSession, spawnSession, isWorkspace, queueStatus, instances, activeInstanceId, activateInstance, createInstance, killInstance } = useSession(wsUrl, token ?? undefined);
 
   const addLog = useCallback((msg: string) => setLogs(prev => [...prev, msg]), []);
 
@@ -439,10 +441,12 @@ export default function Page() {
   }, [projectInfo?.cwd, addLog]);
 
   // ── Session-aware message helpers ────────
-  // Use project directory as message bucket key so each project has its own history
+  // Use instance ID (multi-instance mode) or project directory (legacy) as key
   const sessionKey = isWorkspace
     ? (activeSessionId || 'default')
-    : (projectInfo?.cwd ? projectInfo.cwd.replace(/[/\\:]/g, '_') : 'default');
+    : activeInstanceId
+      ? activeInstanceId
+      : (projectInfo?.cwd ? projectInfo.cwd.replace(/[/\\:]/g, '_') : 'default');
   const messages = messagesBySession[sessionKey] || [];
 
   const updateSession = useCallback((session: string, updater: (prev: Message[]) => Message[]) => {
@@ -1464,6 +1468,63 @@ export default function Page() {
                 }}
               />
             )}
+          </div>
+
+          {/* Instances panel */}
+          <div className="border-t border-gray-800 bg-[#111]">
+            <div className="px-3 py-2 text-[10px] font-bold text-gray-500 flex items-center justify-between tracking-wider">
+              <span className="flex items-center gap-1.5">
+                <Cpu className="w-3 h-3" />
+                INSTANCES
+              </span>
+              <button
+                onClick={() => {
+                  const dir = prompt('Directory for new instance:', projectInfo?.cwd || '.');
+                  if (dir) createInstance(dir);
+                }}
+                className="text-[9px] px-1.5 py-0.5 bg-gray-800 hover:bg-gray-700 hover:text-white rounded border border-gray-700 transition-colors"
+                title="Create new instance"
+              >
+                + New
+              </button>
+            </div>
+            <div className="max-h-32 overflow-y-auto px-1 pb-2 text-[11px]">
+              {instances.length === 0 ? (
+                <div className="text-gray-700 text-[10px] px-2 py-1 italic">No instances</div>
+              ) : (
+                instances.map(inst => {
+                  const isActive = inst.id === activeInstanceId;
+                  const statusColor = inst.status === 'running' ? 'bg-green-500'
+                    : inst.status === 'starting' ? 'bg-yellow-500'
+                    : inst.status === 'error' ? 'bg-red-500'
+                    : 'bg-gray-500';
+                  return (
+                    <div
+                      key={inst.id}
+                      onClick={() => activateInstance(inst.id)}
+                      className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors ${
+                        isActive
+                          ? 'bg-purple-900/30 text-purple-200'
+                          : 'hover:bg-gray-800 text-gray-400 hover:text-gray-200'
+                      }`}
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusColor}`} />
+                      <span className="truncate flex-1">{inst.label}</span>
+                      <span className="text-[9px] text-gray-600 truncate max-w-[80px]">{basename(inst.dir)}</span>
+                      {!isActive && instances.length > 1 && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); killInstance(inst.id); }}
+                          className="text-gray-700 hover:text-red-400 transition-colors text-[10px]"
+                          title="Kill instance"
+                        >
+                          ×
+                        </button>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>
 
           {/* Quick actions */}
