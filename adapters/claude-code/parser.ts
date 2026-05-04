@@ -2,7 +2,7 @@
 // Claude stream-json line processor, extracted from spawnClaude()
 // so local (ChildProcess stdout) and remote (agent WS) can share it.
 
-import type { InstanceData } from "./instance-manager";
+import type { InstanceData } from "../../src/instance-manager";
 
 export type StreamParserDeps = {
   sendBlock: (block: Record<string, unknown>) => void;
@@ -83,11 +83,12 @@ export function processStreamLine(
         case "content_block_start": {
           const cb = e.content_block;
           if (cb?.type === "thinking") {
-            ii.thinkingId = deps.nextId();
+            ii.thinkingId = (cb as any).id || deps.nextId();
             ii.thinkingText = "";
             deps.sendBlock({ id: ii.thinkingId, blockType: "thinking", text: "", status: "running" });
           } else if (cb?.type === "tool_use") {
-            ii.toolUseId = deps.nextId();
+            // Use the API's own tool_use_id for stable correlation across multi-tool turns
+            ii.toolUseId = (cb as any).id || deps.nextId();
             deps.sendBlock({
               id: ii.toolUseId, blockType: "tool_use",
               name: cb.name || "", args: "", status: "running",
@@ -98,7 +99,7 @@ export function processStreamLine(
               const input = cb.input || ({} as Record<string, unknown>);
               if ((cb.name === "Edit" || cb.name === "Write") && typeof input.file_path === "string") {
                 const oldStr = typeof input.old_string === "string" ? input.old_string : undefined;
-                ii.checkpointManager.createCheckpoint(ii.toolUseId, cb.name, input.file_path, oldStr);
+                ii.checkpointManager.createCheckpoint(ii.toolUseId!, cb.name, input.file_path, oldStr);
               }
             }
           }

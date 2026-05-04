@@ -46,7 +46,7 @@ async function main() {
 
   // ─── Agent mode ───────────────────────────────────────────────
   if (args[0] === "agent") {
-    const { startAgent } = await import("./agent");
+    const { startAgent } = await import("../adapters/claude-code/agent");
 
     function arg(name: string, fallback: string): string {
       const idx = args.indexOf(`--${name}`);

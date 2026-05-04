@@ -1,6 +1,9 @@
 // ─── Instance Manager ───────────────────────────────────────
-// Manages multiple Claude process instances, each with its own
-// working directory, buffers, streaming state, and checkpoint manager.
+// Manages multiple agent instances, each with its own working
+// directory, buffers, adapter state, and checkpoint manager.
+//
+// Originally built for Claude, now supports any adapter via
+// the `adapterState` generic state bag.
 
 import { CheckpointManager } from "./checkpoint-manager";
 import type { ChildProcess } from "child_process";
@@ -21,7 +24,7 @@ export interface InstanceData {
   agentConnection: WebSocket | null;
   model: string | null;
 
-  // Streaming state (reset per turn)
+  // Streaming state — maintained for backward compat, prefer adapterState
   thinkingId: string | null;
   thinkingText: string;
   toolUseId: string | null;
@@ -41,8 +44,12 @@ export interface InstanceData {
   pendingQueue: string[];
   queueLock: string | null;
 
+  // Adapter-agnostic state bag (for adapter-specific data)
+  adapterState: Record<string, unknown>;
+
   // Metadata
   createdAt: number;
+  adapterId?: string;  // which adapter owns this instance
 }
 
 // ─── InstanceManager ───────────────────────────────────────
@@ -53,7 +60,7 @@ export class InstanceManager {
   private idCounter = 0;
 
   /** Create a new instance and register it */
-  create(dir: string, label?: string, source?: InstanceSource): InstanceData {
+  create(dir: string, label?: string, source?: InstanceSource, adapterId?: string): InstanceData {
     const id = `inst_${++this.idCounter}_${Date.now().toString(36)}`;
     const instance: InstanceData = {
       id,
@@ -61,6 +68,7 @@ export class InstanceManager {
       label: label || labelFromDir(dir),
       status: 'starting',
       source: source || 'local',
+      adapterId: adapterId || 'shell',
       process: null,
       agentConnection: null,
       model: null,
@@ -76,6 +84,7 @@ export class InstanceManager {
       isProcessing: false,
       pendingQueue: [],
       queueLock: null,
+      adapterState: {},
       createdAt: Date.now(),
     };
     this.instances.set(id, instance);
@@ -140,6 +149,7 @@ export class InstanceManager {
       label: inst.label,
       status: inst.status,
       source: inst.source,
+      adapterId: inst.adapterId || 'claude-code',
       model: inst.model,
       blockCount: inst.blockBuffer.length,
       outputSize: inst.outputSize,
@@ -154,4 +164,14 @@ export class InstanceManager {
 function labelFromDir(dir: string): string {
   const parts = dir.replace(/\\/g, "/").split("/").filter(Boolean);
   return parts[parts.length - 1] || dir;
+}
+
+/** Type-safe getter for adapter-specific state */
+export function getAdapterState<T = Record<string, unknown>>(inst: InstanceData, key: string, fallback?: T): T {
+  return (inst.adapterState[key] as T) ?? fallback!;
+}
+
+/** Type-safe setter for adapter-specific state */
+export function setAdapterState<T = unknown>(inst: InstanceData, key: string, value: T): void {
+  inst.adapterState[key] = value;
 }

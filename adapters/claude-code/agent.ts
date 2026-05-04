@@ -8,7 +8,7 @@ import { spawn } from "child_process";
 import { resolve } from "path";
 import { createWriteStream, writeFileSync, unlinkSync, existsSync } from "fs";
 import WebSocket from "ws";
-import { envelope, parseMsg } from "./protocol";
+import { envelope, parseMsg } from "../../src/protocol";
 
 // ─── Options ────────────────────────────────────────────────────
 export interface AgentOptions {

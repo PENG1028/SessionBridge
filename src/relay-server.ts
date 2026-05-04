@@ -10,8 +10,12 @@ import os from "os";
 import { checkRateLimit } from "./rate-limiter";
 import { CheckpointManager } from "./checkpoint-manager";
 import { InstanceManager } from "./instance-manager";
-import { processStreamLine } from "./stream-parser";
+import { processStreamLine } from "../adapters/claude-code/parser";
+import { resolveClaudeCommand, isClaudeAvailable, getClaudeDataDir, getClaudeProjectsDir, getClaudeSessionPath, getClaudeHistoryPath, getProjectSlug } from "../adapters/claude-code/runtime";
 import { envelope, parseMsg } from "./protocol";
+import { registerAdapter, adapterRegistry } from "../adapters/registry";
+import { claudeCodeAdapter } from "../adapters/claude-code";
+import { shellAdapter } from "../adapters/shell";
 
 // ─── Start Time ────────────────────────────────────────────────────
 const START_TIME = Date.now();
@@ -21,8 +25,9 @@ const PORT = parseInt(process.env.PORT || "8080", 10);
 
 // ─── Instance Manager ─────────────────────────────────────────────
 const instanceManager = new InstanceManager();
-const defaultInstance = instanceManager.create(process.cwd(), "default");
+const defaultInstance = instanceManager.create(process.cwd(), "shell");
 defaultInstance.status = "running";
+defaultInstance.adapterId = "shell";  // default = terminal, Claude is a plugin
 instanceManager.setActive(defaultInstance.id);
 
 /** Get the currently active instance */
@@ -36,19 +41,6 @@ const MIME: Record<string, string> = {
   ".js": "application/javascript",
   ".css": "text/css",
 };
-
-// ─── Claude binary resolution (Windows .cmd support) ──────────────
-function resolveClaude(): { cmd: string; args: string[] } {
-  if (process.platform === "win32") {
-    try {
-      const out = execSync("where claude", { encoding: "utf8", timeout: 5000 });
-      const cmdPath = out.split("\n")[0].trim();
-      if (cmdPath) return { cmd: "cmd.exe", args: ["/c", cmdPath] };
-    } catch { /* fall through */ }
-    return { cmd: "cmd.exe", args: ["/c", "claude"] };
-  }
-  return { cmd: "claude", args: [] };
-}
 
 // ─── Instance-based shorthand accessors ───────────────────────
 
@@ -66,7 +58,7 @@ function bufferBlock(block: Record<string, unknown>) {
 function flushBuffer(ws: WebSocket) {
   const i = inst();
   for (const block of i.blockBuffer) send(ws, block);
-  for (const data of i.outputBuffer) send(ws, envelope("claude.output", { data }));
+  for (const data of i.outputBuffer) send(ws, envelope("instance.output", { data }));
 }
 
 // ─── WS Clients ──────────────────────────────────────────────────
@@ -81,7 +73,7 @@ function broadcast(msg: unknown) {
 }
 
 function sendBlock(block: Record<string, unknown>) {
-  const msg = envelope("claude.block", { ...block, ts: Date.now() });
+  const msg = envelope("instance.block", { ...block, ts: Date.now() });
   broadcast(msg);
   if (block.blockType !== 'user') {
     bufferBlock(msg);
@@ -98,9 +90,8 @@ function resetStreamState() {
 }
 
 // ─── Spawn / Kill Claude ──────────────────────────────────────────
-function spawnClaude(instanceId?: string) {
+function spawnInstance(instanceId?: string) {
   const i = instanceId ? (instanceManager.get(instanceId) || inst()) : inst();
-  const prevId = instanceManager.activeId;
   instanceManager.setActive(i.id);
 
   // Kill existing process for this instance
@@ -114,34 +105,37 @@ function spawnClaude(instanceId?: string) {
   i.outputBuffer.length = 0;
   i.outputSize = 0;
 
-  broadcast(envelope("claude.block", { blockType: "status", text: "Spawning Claude process..." }));
+  const adapter = adapterRegistry.get(i.adapterId || 'shell') || adapterRegistry.get('shell')!;
+  const cap = adapter.getCapabilities();
+  const adapterName = adapter.displayName;
 
-  const { cmd, args: prefix } = resolveClaude();
-  const allArgs = [
-    ...prefix,
-    "--output-format", "stream-json",
-    "--input-format", "stream-json",
-    "--verbose",
-    "--include-partial-messages",
-    "--dangerously-skip-permissions",
-  ];
-  if (i.model) allArgs.push("--model", i.model);
+  broadcast(envelope("instance.block", { blockType: "status", text: `Spawning ${adapterName} instance...` }));
 
-  i.process = spawn(cmd, allArgs, { stdio: ["pipe", "pipe", "pipe"] });
-  i.status = 'starting';
+  const { cmd, args } = adapter.resolveSpawnCommand({ model: i.model });
 
-  // ── stdout: shared stream parser ───────────────────────────
-  const parserDeps = parserDepsFor(i);
+  i.process = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"] });
+  i.status = 'running';
 
-  const rl = createInterface({ input: i.process.stdout! });
-  rl.on("line", (line) => processStreamLine(i, line, parserDeps));
+  if (cap.structuredEvents) {
+    // Structured adapter (Claude): JSONL stream parser
+    const parserDeps = parserDepsFor(i);
+    const rl = createInterface({ input: i.process.stdout! });
+    rl.on("line", (line) => processStreamLine(i, line, parserDeps));
 
-  // ── stderr → raw output ──────────────────────────────────
-  i.process.stderr?.on("data", (chunk: Buffer) => {
-    const data = chunk.toString();
-    broadcast(envelope("claude.output", { data }));
-    bufferOutputFor(i, data);
-  });
+    i.process.stderr?.on("data", (chunk: Buffer) => {
+      const data = chunk.toString();
+      broadcast(envelope("instance.output", { data }));
+      bufferOutputFor(i, data);
+    });
+  } else {
+    // Raw adapter (Shell): broadcast stdout/stderr directly
+    i.process.stdout?.on("data", (chunk: Buffer) => {
+      broadcast(envelope("instance.output", { data: chunk.toString() }));
+    });
+    i.process.stderr?.on("data", (chunk: Buffer) => {
+      broadcast(envelope("instance.output", { data: chunk.toString() }));
+    });
+  }
 
   i.process.on("error", (err) => {
     sendBlock({ blockType: "error", text: `Process error: ${err.message}` });
@@ -156,7 +150,7 @@ function spawnClaude(instanceId?: string) {
   });
 }
 
-function killClaude(instanceId?: string) {
+function killInstance(instanceId?: string) {
   const i = instanceId ? instanceManager.get(instanceId) : inst();
   if (!i) return;
   if (i.process) {
@@ -167,7 +161,7 @@ function killClaude(instanceId?: string) {
   releaseQueueForInstance(i);
 }
 
-function interruptClaude(instanceId?: string) {
+function interruptInstance(instanceId?: string) {
   const i = instanceId ? instanceManager.get(instanceId) : inst();
   if (!i) return false;
   if (i.source === 'remote') {
@@ -192,7 +186,7 @@ function interruptClaude(instanceId?: string) {
       if (i.process) {
         i.process.kill();
         i.process = null;
-        spawnClaude(i.id);
+        spawnInstance(i.id);
       }
     }, 5000);
     return true;
@@ -217,7 +211,7 @@ function sendControlRequest(subtype: string, data: Record<string, unknown>, inst
       request: { subtype, ...data },
     }) + "\n";
     send(i.agentConnection, envelope("agent.stdin", { instanceId: i.id, data: msg }));
-    broadcast(envelope("claude.control_sent", { subtype, ...data, requestId }));
+    broadcast(envelope("instance.control_sent", { subtype, ...data, requestId }));
     return true;
   }
   if (!i.process?.stdin?.writable) return false;
@@ -228,7 +222,7 @@ function sendControlRequest(subtype: string, data: Record<string, unknown>, inst
     request: { subtype, ...data },
   }) + "\n";
   i.process.stdin.write(msg);
-  broadcast(envelope("claude.control_sent", { subtype, ...data, requestId }));
+  broadcast(envelope("instance.control_sent", { subtype, ...data, requestId }));
   return true;
 }
 
@@ -279,12 +273,20 @@ function processQueueForInstance(i: import("./instance-manager").InstanceData) {
     queueDepth: i.pendingQueue.length,
   }));
 
-  resetStreamState();
-  if (i.source !== 'remote') i.checkpointManager.startNewTurn();
-  sendStdin(i, JSON.stringify({
-    type: "user",
-    message: { role: "user", content: [{ type: "text", text }] },
-  }) + "\n");
+  if (i.adapterId === 'shell') {
+    // Shell: send raw text to stdin
+    sendStdin(i, text + "\n");
+    i.isProcessing = false;
+    processQueueForInstance(i);
+  } else {
+    // Claude: JSONL-encoded user message
+    resetStreamState();
+    if (i.source !== 'remote') i.checkpointManager.startNewTurn();
+    sendStdin(i, JSON.stringify({
+      type: "user",
+      message: { role: "user", content: [{ type: "text", text }] },
+    }) + "\n");
+  }
 }
 
 function processQueue() {
@@ -333,12 +335,12 @@ function releaseQueue() {
 
 /**
  * Create parser deps for any instance (local or remote).
- * Used by both spawnClaude() and agent message handlers.
+ * Used by both spawnInstance() and agent message handlers.
  */
-function parserDepsFor(i: import("./instance-manager").InstanceData): import("./stream-parser").StreamParserDeps {
+function parserDepsFor(i: import("./instance-manager").InstanceData): import("../adapters/claude-code/parser").StreamParserDeps {
   return {
     sendBlock: (block: Record<string, unknown>) => {
-      const msg = envelope("claude.block", { ...block, ts: Date.now() });
+      const msg = envelope("instance.block", { ...block, ts: Date.now() });
       broadcast(msg);
       if (block.blockType !== 'user') {
         i.blockBuffer.push(msg);
@@ -494,11 +496,46 @@ const httpServer = createServer((req, res) => {
     return;
   }
 
+  // ── Read compaction count from a session file ────────────
+  const compactionCountCache = new Map<string, number>();
+  function getCompactionCount(claudeDir: string, project: string, sessionId: string): number {
+    const cacheKey = sessionId;
+    if (compactionCountCache.has(cacheKey)) return compactionCountCache.get(cacheKey)!;
+    try {
+      const slug = project.replace(/[\\\/: ]/g, "-");
+      const f = getClaudeSessionPath(slug, sessionId);
+      if (!existsSync(f)) { compactionCountCache.set(cacheKey, 0); return 0; }
+      const c = readFileSync(f, "utf8");
+      const count = (c.match(/"isCompactSummary":true/g) || []).length;
+      compactionCountCache.set(cacheKey, count);
+      return count;
+    } catch { compactionCountCache.set(cacheKey, 0); return 0; }
+  }
+
+  // ── Group consecutive assistant entries ──────────────────
+  // Claude Code splits a single assistant turn across multiple JSONL entries
+  // (one per content block: thinking, tool_use, text). Merge them back.
+  function groupConsecutiveAssistantEntries(messages: any[]): any[] {
+    const grouped: any[] = [];
+    for (const msg of messages) {
+      const last = grouped[grouped.length - 1];
+      if (last && last.role === 'assistant' && msg.role === 'assistant') {
+        last.blocks.push(...msg.blocks);
+        if (msg.text) last.text = (last.text + ' ' + msg.text).trim().slice(0, 5000);
+        if (msg.timestamp) last.timestamp = msg.timestamp;
+        if (msg.isCompactSummary) last.isCompactSummary = true;
+      } else {
+        grouped.push({ ...msg, blocks: [...msg.blocks] });
+      }
+    }
+    return grouped;
+  }
+
   // ── API: Search Sessions (Claude Code history) ──────────
   if (path === "/api/sessions/search" && req.method === "GET") {
     const query = (url.searchParams.get("q") || "").toLowerCase().trim();
-    const claudeDir = join(process.env.HOME || process.env.USERPROFILE || "~", ".claude");
-    const historyFile = join(claudeDir, "history.jsonl");
+    const claudeDir = getClaudeDataDir();
+    const historyFile = getClaudeHistoryPath();
     const results: any[] = [];
 
     try {
@@ -518,10 +555,11 @@ const httpServer = createServer((req, res) => {
           const inProject = query ? project.toLowerCase().includes(query) : false;
 
           if (query && !inDisplay && !inProject) {
-            const projectSlug = project.replace(/[\\/:]/g, "-");
-            const sessionFile = join(claudeDir, "projects", projectSlug, sessionId + ".jsonl");
-            if (existsSync(sessionFile)) {
-              try {
+            const projectSlug = project.replace(/[\\\/: ]/g, "-");
+            const sessionFile = getClaudeSessionPath(projectSlug, sessionId);
+            try {
+              const st = statSync(sessionFile);
+              if (st.size > 0 && st.size <= 100 * 1024) {  // skip large files to avoid OOM
                 const sessionContent = readFileSync(sessionFile, "utf8");
                 if (sessionContent.toLowerCase().includes(query)) {
                   const idx = sessionContent.toLowerCase().indexOf(query);
@@ -534,11 +572,12 @@ const httpServer = createServer((req, res) => {
                     timestamp: ts,
                     matchedIn: "content",
                     snippet: sessionContent.slice(start, end).replace(/\n/g, " ").trim(),
+                    compactionCount: (sessionContent.match(/"isCompactSummary":true/g) || []).length,
                   });
                   continue;
                 }
-              } catch {}
-            }
+              }
+            } catch {}
           }
 
           if (!query || inDisplay || inProject) {
@@ -555,7 +594,18 @@ const httpServer = createServer((req, res) => {
       }
 
       results.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-      const limited = results.slice(0, 50);
+      // Deduplicate by sessionId (keep most recent entry per session)
+      const seen = new Set<string>();
+      const deduped = results.filter(r => {
+        if (seen.has(r.sessionId)) return false;
+        seen.add(r.sessionId);
+        return true;
+      });
+      const limited = deduped.slice(0, 50);
+      // Compute compaction count for all limited results
+      for (const r of limited) {
+        r.compactionCount = getCompactionCount(claudeDir, r.project, r.sessionId);
+      }
 
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ results: limited }));
@@ -570,7 +620,7 @@ const httpServer = createServer((req, res) => {
   if (path === "/api/sessions/detail" && req.method === "GET") {
     const sessionId = url.searchParams.get("id") || "";
     const project = url.searchParams.get("project") || "";
-    const claudeDir = join(process.env.HOME || process.env.USERPROFILE || "~", ".claude");
+    const claudeDir = getClaudeDataDir();
 
     if (!sessionId) {
       res.writeHead(400, { "Content-Type": "application/json" });
@@ -581,19 +631,19 @@ const httpServer = createServer((req, res) => {
     try {
       let sessionContent = "";
       if (project) {
-        const projectSlug = project.replace(/[\\/:]/g, "-");
-        const sessionFile = join(claudeDir, "projects", projectSlug, sessionId + ".jsonl");
+        const projectSlug = project.replace(/[\\\/: ]/g, "-");
+        const sessionFile = getClaudeSessionPath(projectSlug, sessionId);
         if (existsSync(sessionFile)) {
           sessionContent = readFileSync(sessionFile, "utf8");
         }
       }
 
       if (!sessionContent) {
-        const projectsDir = join(claudeDir, "projects");
+        const projectsDir = getClaudeProjectsDir();
         if (existsSync(projectsDir)) {
           const projectDirs = readdirSync(projectsDir);
           for (const pdir of projectDirs) {
-            const candidateFile = join(projectsDir, pdir, sessionId + ".jsonl");
+            const candidateFile = getClaudeSessionPath(pdir, sessionId);
             if (existsSync(candidateFile)) {
               sessionContent = readFileSync(candidateFile, "utf8");
               break;
@@ -605,6 +655,18 @@ const httpServer = createServer((req, res) => {
       const messages: any[] = [];
       if (sessionContent) {
         const lines = sessionContent.split("\n").filter(Boolean);
+
+        // Pre-scan: queue-operation enqueue content → used to detect system-generated user messages
+        const systemContents = new Set<string>();
+        for (const line of lines) {
+          try {
+            const p = JSON.parse(line);
+            if (p.type === "queue-operation" && p.operation === "enqueue" && typeof p.content === "string") {
+              systemContents.add(p.content.slice(0, 200));
+            }
+          } catch {}
+        }
+
         for (const line of lines) {
           try {
             const parsed = JSON.parse(line);
@@ -639,6 +701,10 @@ const httpServer = createServer((req, res) => {
                   });
                   combinedText += `[${c.name}] `;
                   break;
+                case "plan":
+                  blocks.push({ type: "plan", text: c.plan || c.text || "" });
+                  combinedText += "[Plan] ";
+                  break;
                 case "tool_result": {
                   const resultText = typeof c.content === "string" ? c.content
                     : Array.isArray(c.content) ? c.content.map((x: any) => x.text || x.content || "").join("\n")
@@ -654,35 +720,52 @@ const httpServer = createServer((req, res) => {
               combinedText = textContent;
             }
 
+            const isSystem = role === "user" && textContent && systemContents.has(textContent.slice(0, 200));
+
             messages.push({
               role,
               blocks,
               text: combinedText.trim().slice(0, 5000),
               timestamp: parsed.timestamp || 0,
-              isCompactSummary: parsed.isCompactSummary === true,
+              isCompactSummary: parsed.isCompactSummary === true || message.isCompactSummary === true,
+              isSystem,
             });
           } catch {}
         }
       }
 
+      const groupedMessages = groupConsecutiveAssistantEntries(messages);
       const mergedMessages: any[] = [];
-      for (const msg of messages) {
+      for (const msg of groupedMessages) {
         if (msg.role === "user" && msg.blocks.length > 0 && msg.blocks.every((b: any) => b.type === "tool_result")) {
           if (mergedMessages.length > 0) {
             const prev = mergedMessages[mergedMessages.length - 1];
+            // Distribute tool_results in order to unmatched tool_use blocks
+            let ti = 0;
             for (const block of msg.blocks) {
               if (block.type === "tool_result") {
-                for (let i = prev.blocks.length - 1; i >= 0; i--) {
-                  if (prev.blocks[i].type === "tool_use") {
+                let found = false;
+                for (let i = ti; i < prev.blocks.length; i++) {
+                  if (prev.blocks[i].type === "tool_use" && !prev.blocks[i].output) {
                     prev.blocks[i].output = block.text.slice(0, 3000);
+                    ti = i + 1;
+                    found = true;
                     break;
+                  }
+                }
+                if (!found) {
+                  for (let i = prev.blocks.length - 1; i >= 0; i--) {
+                    if (prev.blocks[i].type === "tool_use") {
+                      prev.blocks[i].output = (prev.blocks[i].output || '') + '\n' + block.text.slice(0, 3000);
+                      break;
+                    }
                   }
                 }
               }
             }
           }
         } else {
-          mergedMessages.push({ role: msg.role, blocks: msg.blocks, text: msg.text, timestamp: msg.timestamp, isCompactSummary: msg.isCompactSummary });
+          mergedMessages.push({ role: msg.role, blocks: msg.blocks, text: msg.text, timestamp: msg.timestamp, isCompactSummary: msg.isCompactSummary, isSystem: msg.isSystem });
         }
       }
 
@@ -698,10 +781,9 @@ const httpServer = createServer((req, res) => {
   // ── API: Current session detail ──────────────────────────
   if (path === "/api/sessions/current") {
     try {
-      const userHome = process.env.HOME || process.env.USERPROFILE || "~";
-      const claudeDir = join(userHome, ".claude");
+      const claudeDir = getClaudeDataDir();
       const projectSlug = ROOT_DIR.replace(/[^a-zA-Z0-9-]/g, "-");
-      const projectsDir = join(claudeDir, "projects", projectSlug);
+      const projectsDir = join(getClaudeProjectsDir(), projectSlug);
       let latestFile = "";
       let latestTime = 0;
 
@@ -715,7 +797,7 @@ const httpServer = createServer((req, res) => {
       }
 
       if (!latestFile) {
-        const debugInfo = { ROOT_DIR, projectSlug, projectsDir, userHome, dirExists: existsSync(projectsDir) };
+        const debugInfo = { ROOT_DIR, projectSlug, projectsDir, claudeDir: getClaudeDataDir(), dirExists: existsSync(projectsDir) };
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ sessionId: "", messages: [], found: false, debug: debugInfo }));
         return;
@@ -725,6 +807,18 @@ const httpServer = createServer((req, res) => {
       const sessionContent = readFileSync(latestFile, "utf8");
 
       const lines = sessionContent.split("\n").filter(Boolean);
+
+      // Pre-scan: queue-operation enqueue content → used to detect system-generated user messages
+      const systemContents = new Set<string>();
+      for (const line of lines) {
+        try {
+          const p = JSON.parse(line);
+          if (p.type === "queue-operation" && p.operation === "enqueue" && typeof p.content === "string") {
+            systemContents.add(p.content.slice(0, 200));
+          }
+        } catch {}
+      }
+
       const messages: any[] = [];
       for (const line of lines) {
         try {
@@ -755,6 +849,10 @@ const httpServer = createServer((req, res) => {
                 blocks.push({ type: "tool_use", name: c.name || "", input: JSON.stringify(c.input || {}) });
                 combinedText += `[${c.name}] `;
                 break;
+              case "plan":
+                blocks.push({ type: "plan", text: c.plan || c.text || "" });
+                combinedText += "[Plan] ";
+                break;
               case "tool_result": {
                 const resultText = typeof c.content === "string" ? c.content
                   : Array.isArray(c.content) ? c.content.map((x: any) => x.text || x.content || "").join("\n")
@@ -770,33 +868,50 @@ const httpServer = createServer((req, res) => {
             combinedText = textContent;
           }
 
+          const isSystem = role === "user" && textContent && systemContents.has(textContent.slice(0, 200));
+
           messages.push({
             role, blocks,
             text: combinedText.trim().slice(0, 5000),
             timestamp: parsed.timestamp || 0,
-            isCompactSummary: parsed.isCompactSummary === true,
+            isCompactSummary: parsed.isCompactSummary === true || message.isCompactSummary === true,
+            isSystem,
           });
         } catch {}
       }
 
+      const groupedMessages = groupConsecutiveAssistantEntries(messages);
       const mergedMessages: any[] = [];
-      for (const msg of messages) {
+      for (const msg of groupedMessages) {
         if (msg.role === "user" && msg.blocks.length > 0 && msg.blocks.every((b: any) => b.type === "tool_result")) {
           if (mergedMessages.length > 0) {
             const prev = mergedMessages[mergedMessages.length - 1];
+            // Distribute tool_results in order to unmatched tool_use blocks
+            let ti = 0;
             for (const block of msg.blocks) {
               if (block.type === "tool_result") {
-                for (let i = prev.blocks.length - 1; i >= 0; i--) {
-                  if (prev.blocks[i].type === "tool_use") {
+                let found = false;
+                for (let i = ti; i < prev.blocks.length; i++) {
+                  if (prev.blocks[i].type === "tool_use" && !prev.blocks[i].output) {
                     prev.blocks[i].output = block.text.slice(0, 3000);
+                    ti = i + 1;
+                    found = true;
                     break;
+                  }
+                }
+                if (!found) {
+                  for (let i = prev.blocks.length - 1; i >= 0; i--) {
+                    if (prev.blocks[i].type === "tool_use") {
+                      prev.blocks[i].output = (prev.blocks[i].output || '') + '\n' + block.text.slice(0, 3000);
+                      break;
+                    }
                   }
                 }
               }
             }
           }
         } else {
-          mergedMessages.push({ role: msg.role, blocks: msg.blocks, text: msg.text, timestamp: msg.timestamp, isCompactSummary: msg.isCompactSummary });
+          mergedMessages.push({ role: msg.role, blocks: msg.blocks, text: msg.text, timestamp: msg.timestamp, isCompactSummary: msg.isCompactSummary, isSystem: msg.isSystem });
         }
       }
 
@@ -811,7 +926,7 @@ const httpServer = createServer((req, res) => {
 
   // ── API: Interrupt ──────────────────────────────────────
   if (path === "/api/interrupt" && req.method === "POST") {
-    interruptClaude();
+    interruptInstance();
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ success: true, message: "Interrupt sent" }));
     return;
@@ -895,7 +1010,7 @@ const httpServer = createServer((req, res) => {
         const newInst = instanceManager.create(targetDir, basename(targetDir));
         instanceManager.setActive(newInst.id);
         ROOT_DIR = targetDir;
-        spawnClaude(newInst.id);
+        spawnInstance(newInst.id);
         broadcast(envelope("instance.added", { instance: { id: newInst.id, dir: newInst.dir, label: newInst.label, status: newInst.status } }));
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ success: true, cwd: targetDir, instanceId: newInst.id }));
@@ -922,14 +1037,14 @@ const httpServer = createServer((req, res) => {
     req.on("data", (c) => body += c);
     req.on("end", () => {
       try {
-        const { dir, label } = JSON.parse(body);
+        const { dir, label, adapterId } = JSON.parse(body);
         const targetDir = resolve(process.cwd(), dir);
         if (!existsSync(targetDir)) {
           res.writeHead(400); res.end(JSON.stringify({ error: "Directory not found" }));
           return;
         }
-        const newInst = instanceManager.create(targetDir, label);
-        spawnClaude(newInst.id);
+        const newInst = instanceManager.create(targetDir, label, undefined, adapterId);
+        spawnInstance(newInst.id);
         broadcast(envelope("instance.added", { instance: { id: newInst.id, dir: newInst.dir, label: newInst.label, status: newInst.status } }));
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ success: true, instance: { id: newInst.id, dir: newInst.dir, label: newInst.label } }));
@@ -948,7 +1063,7 @@ const httpServer = createServer((req, res) => {
       res.writeHead(404); res.end(JSON.stringify({ error: "Instance not found" }));
       return;
     }
-    killClaude(instId);
+    killInstance(instId);
     instanceManager.kill(instId);
     broadcast(envelope("instance.removed", { instanceId: instId }));
     if (instanceManager.activeId === instId || !instanceManager.getActive()) {
@@ -1087,7 +1202,7 @@ wss.on("connection", (ws) => {
       // Start Claude on first browser connection (skip in test mode)
       if (role === "browser" && !process.env.SB_TEST_MODE) {
         const activeInst = inst();
-        if (!activeInst.process) spawnClaude();
+        if (!activeInst.process) spawnInstance();
       }
 
       // Flush history
@@ -1096,7 +1211,7 @@ wss.on("connection", (ws) => {
       // Respond with welcome
       send(ws, envelope("welcome", {
         version: "0.5.0",
-        features: ["agent_registration", "shell", "multi_instance", "claude_chat", "queue"],
+        features: ["agent_registration", "shell", "multi_instance", "structured_chat", "queue"],
         sessionId: inst().id,
         serverTime: Date.now(),
         instances: instanceManager.toJSON(),
@@ -1108,7 +1223,7 @@ wss.on("connection", (ws) => {
     if (msg.type === "auth" || msg.type === "direct") {
       if (!process.env.SB_TEST_MODE) {
         const activeInst = inst();
-        if (!activeInst.process) spawnClaude();
+        if (!activeInst.process) spawnInstance();
       }
       flushBuffer(ws);
       send(ws, { type: "auth_result", success: true, sessionId: inst().id, instances: instanceManager.toJSON() });
@@ -1173,7 +1288,7 @@ wss.on("connection", (ws) => {
         return;
       }
       const data = msg.data;
-      broadcast(envelope("claude.output", { data }));
+      broadcast(envelope("instance.output", { data }));
       remoteInst.outputBuffer.push(data);
       remoteInst.outputSize += data.length;
       while (remoteInst.outputSize > 512 * 1024 && remoteInst.outputBuffer.length > 0) {
@@ -1232,20 +1347,20 @@ wss.on("connection", (ws) => {
         // Already handled above — no-op (except "direct" falls through)
         break;
 
-      case "claude.input":
+      case "instance.input":
       case "input": {
         sendBlock({ blockType: "user", text: msg.data });
         enqueueInput(msg.data, "web");
         break;
       }
 
-      case "claude.command":
+      case "instance.command":
       case "command": {
         const name = msg.name;
         if (name === "clear" || name === "restart") {
           if (msg.args?.model) targetInst.model = msg.args.model;
           targetInst.checkpointManager.clear();
-          spawnClaude(targetInst.id);
+          spawnInstance(targetInst.id);
           sendBlock({
             blockType: "status",
             text: name === "restart" && msg.args?.model
@@ -1253,7 +1368,7 @@ wss.on("connection", (ws) => {
               : "Session cleared — starting fresh...",
           });
         } else if (name === "interrupt") {
-          interruptClaude(targetInst.id);
+          interruptInstance(targetInst.id);
         } else if (name === "rewind") {
           const { success, checkpoint } = targetInst.checkpointManager.rewindLastCheckpoint();
           if (success) {
@@ -1365,16 +1480,20 @@ process.on("SIGINT", () => shutdown("SIGINT"));
 export function startRelayServer(port?: number): Promise<{ close: () => void; port: number }> {
   const p = port ?? PORT;
 
-  // ── Environment validation ──────────────────────────────
-  try {
-    const { cmd, args: prefix } = resolveClaude();
-    execSync(`"${prefix.length ? prefix.join(" ") : cmd}" --version`, { timeout: 10000, stdio: "pipe" });
-    console.log(`  ✓ Claude binary resolved: ${cmd} ${prefix.join(" ")}`);
-  } catch {
+  // ── Adapter environment validation ──────────────────────
+  if (isClaudeAvailable()) {
+    const { cmd, args } = resolveClaudeCommand();
+    console.log(`  ✓ Claude binary resolved: ${cmd} ${args.join(' ')}`);
+  } else {
     console.warn(`  ⚠ Claude binary not found or not responding.`);
     console.warn(`    The server will start but Claude will not be available.`);
     console.warn(`    Install Claude Code: npm install -g @anthropic-ai/claude-code\n`);
   }
+
+  // ── Register adapters ────────────────────────────────────
+  registerAdapter(claudeCodeAdapter);
+  registerAdapter(shellAdapter);
+  console.log(`  ✓ Adapters registered: ${[claudeCodeAdapter, shellAdapter].map(a => a.id).join(', ')}`);
 
   // ── Port validation (0 = random port, skip check) ──────
   if (p !== 0 && (p < 1 || p > 65535)) {
@@ -1392,7 +1511,7 @@ export function startRelayServer(port?: number): Promise<{ close: () => void; po
       console.log(`  │  Web UI:    http://localhost:${String(addr.port).padEnd(5)} (static frontend) │`);
       console.log(`  │  Health:    http://localhost:${String(addr.port).padEnd(5)}/api/health  │`);
       console.log(`  │                                      │`);
-      console.log(`  │  Claude spawns on first connection   │`);
+      console.log(`  │  Instance spawns on first connection   │`);
       console.log(`  └──────────────────────────────────────┘\n`);
       resolve({
         close: () => {
