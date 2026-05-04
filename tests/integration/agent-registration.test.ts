@@ -90,7 +90,7 @@ function normalize(msg: any): any {
     // Observer should receive the parsed blocks via broadcast (new format)
     const output = normalize(await waitForMessage(observer, (m: any) => {
       const n = normalize(m);
-      return n.type === 'claude.block' && n.blockType === 'token_usage';
+      return n.type === 'instance.block' && n.blockType === 'token_usage';
     }));
     expect(output.model).toBe('parse-test');
     expect(output.tokens).toBe(50);

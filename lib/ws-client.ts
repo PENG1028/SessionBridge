@@ -21,6 +21,7 @@ export type InstanceInfo = {
   label: string;
   status: string;
   source: string;
+  adapterId?: string;
   model: string | null;
   blockCount: number;
   outputSize: number;
@@ -89,7 +90,7 @@ export class WSClient {
       this.ws!.send(env("hello", {
         role: "browser",
         version: "0.5.0",
-        features: ["claude_chat", "instance_list", "shell"],
+        features: ["structured_chat", "instance_list", "shell"],
         ...(this.token ? {} : { workspace: workspace ?? false }),
         cols: cols ?? 120,
         rows: rows ?? 40,
@@ -153,15 +154,15 @@ export class WSClient {
           this.cb.onSessionRemoved?.(msg.sessionId);
           break;
 
-        case "claude.output":
+        case "instance.output":
           this.cb.onOutput(msg.data);
           break;
 
-        case "claude.block":
+        case "instance.block":
           this.cb.onBlock?.(msg);
           break;
 
-        case "claude.command_result":
+        case "instance.command_result":
           this.cb.onCommandResult({
             name: msg.name,
             success: msg.success,
@@ -272,7 +273,7 @@ export class WSClient {
       const body: Record<string, unknown> = { data };
       if (sessionId) body.sessionId = sessionId;
       if (instanceId) body.instanceId = instanceId;
-      this.ws.send(env("claude.input", body));
+      this.ws.send(env("instance.input", body));
     }
   }
 
@@ -281,13 +282,13 @@ export class WSClient {
       const body: Record<string, unknown> = { name, args };
       if (sessionId) body.sessionId = sessionId;
       if (instanceId) body.instanceId = instanceId;
-      this.ws.send(env("claude.command", body));
+      this.ws.send(env("instance.command", body));
     }
   }
 
   sendResize(cols: number, rows: number) {
     if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(env("claude.resize", { cols, rows }));
+      this.ws.send(env("shell.resize", { cols, rows }));
     }
   }
 

@@ -84,62 +84,27 @@ export function useSession(
     });
   }, []);
 
-  // Parse output for structured info
+  // Parse output for structured info — delegates to adapter-specific parser
   const parseOutput = useCallback((data: string) => {
-    // Try to extract model name from Claude Code header
-    // Format: "ClaudeCode v2.1.123 deepseek-v4-flash · API Usage Billing <cwd>"
-    // or     "Claude Code v2.1.123 deepseek-v4-flash · API Usage Billing <cwd>"
-    const headerMatch = data.match(/(?:Claude\s*Code)\s+(v[\d.]+)\s+([\w.-]+)/);
-    if (headerMatch) {
-      setParsed(prev => ({ ...prev, version: headerMatch[1], model: headerMatch[2] }));
-    }
-    // Extract cwd from status line: "· API Usage Billing F:\path"
-    // or just "Billing F:\path"
-    const cwdMatch = data.match(/Billing\s+((?:[A-Za-z]:)?[\\\/][^\s\x1B[?]*[^\s\x1B[?;,])/);
-    if (cwdMatch) {
-      const cwd = cwdMatch[1].trim();
-      if (cwd.length > 2) setParsed(prev => ({ ...prev, cwd }));
-    }
-    // Try extracting from the header line if Billing pattern didn't work
-    if (!cwdMatch) {
-      const altCwd = data.match(/(?:API\s*Usage|Billing)\s+((?:[A-Za-z]:)?[\\\/][^\x1B\r\n\x1B[?]{2,}?)/);
-      if (altCwd) {
-        const cwd = altCwd[1].replace(/[\x1B\[\]\d;]+$/, '').trim();
-        if (cwd.length > 2) setParsed(prev => ({ ...prev, cwd }));
+    // Dynamic import to avoid hardcoding Claude-specific parsing here.
+    // The actual parser is in adapters/claude-code/parse-output.ts
+    import('../adapters/claude-code/parse-output').then(({ parseClaudeOutputLine }) => {
+      setParsed(prev => {
+        const update = parseClaudeOutputLine(data, prev);
+        return Object.keys(update).length > 0 ? { ...prev, ...update } : prev;
+      });
+      // Tool history from output
+      if (data.includes('●') || /(?:Read|Edit|Bash|Glob|Grep|Tool)\s+/.test(data)) {
+        const toolMatch = data.match(/(Read|Edit|Bash|Glob|Grep|Tool)\s+(.+?)(?:\n|$)/);
+        if (toolMatch) {
+          toolHistRef.current = [
+            ...toolHistRef.current.slice(-49),
+            { tool: toolMatch[1], args: toolMatch[2].trim().slice(0, 80), time: new Date().toISOString().slice(11, 19) },
+          ];
+          setToolHistory(toolHistRef.current);
+        }
       }
-    }
-    // Try to extract tool calls from output
-    if (data.includes('●') || data.includes('Read ') || data.includes('Edit ') || data.includes('Bash ') || data.includes('Tool ')) {
-      const toolMatch = data.match(/(Read|Edit|Bash|Glob|Grep|Tool)\s+(.+?)(?:\n|$)/);
-      if (toolMatch) {
-        const toolName = toolMatch[1];
-        const toolArgs = toolMatch[2].trim();
-        setParsed(prev => ({
-          ...prev,
-          tool: toolName,
-          toolArgs: toolArgs.length > 80 ? toolArgs.slice(0, 80) + '...' : toolArgs,
-        }));
-        toolHistRef.current = [
-          ...toolHistRef.current.slice(-49),
-          { tool: toolName, args: toolArgs, time: new Date().toISOString().slice(11, 19) },
-        ];
-        setToolHistory(toolHistRef.current);
-      }
-    }
-    // Try to extract task description
-    const taskMatch = data.match(/^#️⃣\s*(.+?)$/m) || data.match(/^##\s*(.+?)$/m) || data.match(/^(.{10,80}?)\s*\.\.\./m);
-    if (taskMatch) {
-      setParsed(prev => ({ ...prev, task: taskMatch[1].trim() }));
-    }
-    // Extract token info from status bar
-    const tokenMatch = data.match(/(\d+[KMB]?)\s*tokens?/i);
-    if (tokenMatch) {
-      setParsed(prev => ({ ...prev, inputTokens: parseInt(tokenMatch[1]) }));
-    }
-    const costMatch = data.match(/\$([\d.]+)/);
-    if (costMatch) {
-      setParsed(prev => ({ ...prev, cost: '$' + costMatch[1] }));
-    }
+    }).catch(() => {});
   }, []);
 
   const sendInput = useCallback((text: string, sessionId?: string) => {
@@ -289,13 +254,13 @@ export function useSession(
     clientRef.current?.sendCommand('switch-instance', { instanceId: id });
   }, []);
 
-  const createInstance = useCallback(async (dir: string, label?: string) => {
+  const createInstance = useCallback(async (dir: string, label?: string, adapterId?: string) => {
     const httpBase = wsUrl.replace(/^ws/, 'http');
     try {
       const res = await fetch(`${httpBase}/api/instances`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dir, label }),
+        body: JSON.stringify({ dir, label, adapterId }),
       });
       const result = await res.json();
       addMsgLog('system', `Created instance in ${dir}: ${result.success ? 'OK' : result.error}`);
