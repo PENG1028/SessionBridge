@@ -18,6 +18,7 @@ import { ConsoleHeader } from './console/shell/console-header';
 import { ForkDialog } from './console/shell/fork-dialog';
 import { SearchResultsPanel } from './console/shell/search-results-panel';
 import { ClaudeChatView } from './console/main/claude-chat-view';
+import { adapterToViewId } from './console/main/view-registry';
 import { sessionStore } from '../lib/session-store';
 
 // ==========================================
@@ -368,8 +369,7 @@ export default function Page() {
 
   const { connStatus, parsed, msgLog, sendInput, sendCommand, serverBlocks, sessions, activeSessionId, activateSession, spawnSession, isWorkspace, queueStatus, instances, activeInstanceId, activateInstance, createInstance, killInstance } = useSession(wsUrl, token ?? undefined);
   const activeAdapterId = instances.find(i => i.id === activeInstanceId)?.adapterId || 'shell';
-  const isClaude = activeAdapterId === 'claude-code';
-  const isShell = activeAdapterId === 'shell';
+  const viewId = adapterToViewId[activeAdapterId] || 'terminal';
 
   const addLog = useCallback((msg: string) => setLogs(prev => [...prev, msg]), []);
 
@@ -847,7 +847,7 @@ export default function Page() {
   // ── Context menu handler ───────────────
   const handleCtx = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
-    const items: ContextMenuItem[] = isShell ? [
+    const items: ContextMenuItem[] = viewId === 'terminal' ? [
       { label: 'New Terminal', shortcut: '⌘T', action: () => createInstance(projectInfo?.cwd || '.', undefined, 'shell') },
       { label: 'Kill Instance', shortcut: '⌘W', action: () => activeInstanceId && killInstance(activeInstanceId), danger: true },
       { label: '', divider: true, action: () => {} },
@@ -865,7 +865,7 @@ export default function Page() {
       }},
     ];
     setCtxMenu({ x: e.clientX, y: e.clientY, items });
-  }, [isShell, activeInstanceId, projectInfo, messages, createInstance, killInstance, setShowTerminal]);
+  }, [viewId, activeInstanceId, projectInfo, messages, createInstance, killInstance, setShowTerminal]);
 
   const handleCommandClick = useCallback((cmd: string) => {
     setInputValue(cmd + ' ');
@@ -1009,7 +1009,7 @@ export default function Page() {
           onActivateInstance={activateInstance}
           onCreateInstance={createInstance}
           onKillInstance={killInstance}
-          isShell={isShell}
+          isShell={viewId === 'terminal'}
           onQuickAction={handleQuickAction}
           onRewind={() => { sendCommand('rewind'); addLog('[System] Rewinding last change...'); }}
           projectCwd={projectInfo?.cwd || '.'}
@@ -1098,12 +1098,12 @@ export default function Page() {
           </div>
 
           {/* Shell instance: full terminal view */}
-          <div className={isShell ? "flex-1" : "hidden"}>
+          <div className={viewId === 'terminal' ? "flex-1" : "hidden"}>
             <TerminalView wsUrl={wsUrl} />
           </div>
 
           {/* Claude instance: chat view */}
-          <div className={isClaude ? "flex-1 flex flex-col" : "hidden"}>
+          <div className={viewId === 'claude-chat' ? "flex-1 flex flex-col" : "hidden"}>
             <ClaudeChatView
               messages={messages}
               turns={turns}
@@ -1153,7 +1153,7 @@ export default function Page() {
         </main>
 
         <RightSidebar
-          isClaude={isClaude}
+          isClaude={viewId === 'claude-chat'}
           activeTasks={activeTasks}
           queueInfo={queueInfo}
           onNewSession={handleNewSession}
