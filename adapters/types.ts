@@ -71,6 +71,12 @@ export interface StartInstanceInput {
   adapterId: string;
   /** Optional adapter-specific config */
   config?: Record<string, unknown>;
+  /** Server-side: callback for structured output blocks (Claude) */
+  onBlock?: (block: Record<string, unknown>) => void;
+  /** Server-side: callback for raw stdout/stderr output */
+  onOutput?: (data: string) => void;
+  /** Server-side: callback when process exits */
+  onExit?: (code: number | null) => void;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -141,6 +147,8 @@ export interface AgentAdapter {
 
   /** Get the main view component for this adapter */
   getView(): ComponentType<AdapterViewProps>;
+  /** View component identifier for client-side routing */
+  readonly viewId: string;
 
   /** Get optional side panels for this adapter */
   getSidePanels(): SidePanelDef[];

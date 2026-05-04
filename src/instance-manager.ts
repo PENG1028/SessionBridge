@@ -47,6 +47,9 @@ export interface InstanceData {
   // Adapter-agnostic state bag (for adapter-specific data)
   adapterState: Record<string, unknown>;
 
+  // Adapter start handle (set by spawnInstance via adapter.start())
+  handle?: import('../adapters/types').InstanceHandle;
+
   // Metadata
   createdAt: number;
   adapterId?: string;  // which adapter owns this instance

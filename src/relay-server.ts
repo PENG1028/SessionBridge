@@ -89,12 +89,16 @@ function resetStreamState() {
   i.textBuffer = "";
 }
 
-// ─── Spawn / Kill Claude ──────────────────────────────────────────
-function spawnInstance(instanceId?: string) {
+// ─── Spawn / Kill Instance ──────────────────────────────────────
+async function spawnInstance(instanceId?: string) {
   const i = instanceId ? (instanceManager.get(instanceId) || inst()) : inst();
   instanceManager.setActive(i.id);
 
-  // Kill existing process for this instance
+  // Kill existing process via handle
+  if (i.handle) {
+    i.handle.stop().catch(() => {});
+    i.handle = undefined;
+  }
   if (i.process) {
     i.process.kill();
     i.process = null;
@@ -106,53 +110,51 @@ function spawnInstance(instanceId?: string) {
   i.outputSize = 0;
 
   const adapter = adapterRegistry.get(i.adapterId || 'shell') || adapterRegistry.get('shell')!;
-  const cap = adapter.getCapabilities();
   const adapterName = adapter.displayName;
 
   broadcast(envelope("instance.block", { blockType: "status", text: `Spawning ${adapterName} instance...` }));
 
-  const { cmd, args } = adapter.resolveSpawnCommand({ model: i.model });
-
-  i.process = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"] });
-  i.status = 'running';
-
-  if (cap.structuredEvents) {
-    // Structured adapter (Claude): JSONL stream parser
-    const parserDeps = parserDepsFor(i);
-    const rl = createInterface({ input: i.process.stdout! });
-    rl.on("line", (line) => processStreamLine(i, line, parserDeps));
-
-    i.process.stderr?.on("data", (chunk: Buffer) => {
-      const data = chunk.toString();
+  // Delegate to adapter.start() — adapter owns process lifecycle
+  i.handle = await adapter.start({
+    workspaceId: i.id,
+    directory: i.dir,
+    label: i.label,
+    adapterId: i.adapterId || 'shell',
+    config: { model: i.model },
+    onBlock: (block: Record<string, unknown>) => {
+      const msg = envelope("instance.block", { ...block, ts: Date.now() });
+      broadcast(msg);
+      if (block.blockType !== 'user') {
+        i.blockBuffer.push(msg);
+        if (i.blockBuffer.length > 2000) i.blockBuffer.shift();
+      }
+    },
+    onOutput: (data: string) => {
       broadcast(envelope("instance.output", { data }));
-      bufferOutputFor(i, data);
-    });
-  } else {
-    // Raw adapter (Shell): broadcast stdout/stderr directly
-    i.process.stdout?.on("data", (chunk: Buffer) => {
-      broadcast(envelope("instance.output", { data: chunk.toString() }));
-    });
-    i.process.stderr?.on("data", (chunk: Buffer) => {
-      broadcast(envelope("instance.output", { data: chunk.toString() }));
-    });
-  }
-
-  i.process.on("error", (err) => {
-    sendBlock({ blockType: "error", text: `Process error: ${err.message}` });
+      i.outputBuffer.push(data);
+      if (i.outputBuffer.length > 2000) i.outputBuffer.shift();
+      i.outputSize += data.length;
+    },
+    onExit: (code: number | null) => {
+      if (code !== null && code !== 0) {
+        sendBlock({ blockType: "status", text: `Process exited (${code})` });
+      }
+      i.handle = undefined;
+      i.process = null;
+      i.status = 'stopped';
+    },
   });
 
-  i.process.on("close", (code) => {
-    if (code !== null && code !== 0) {
-      sendBlock({ blockType: "status", text: `Process exited (${code})` });
-    }
-    i.process = null;
-    i.status = 'stopped';
-  });
+  i.status = 'running';
 }
 
 function killInstance(instanceId?: string) {
   const i = instanceId ? instanceManager.get(instanceId) : inst();
   if (!i) return;
+  if (i.handle) {
+    i.handle.stop().catch(() => {});
+    i.handle = undefined;
+  }
   if (i.process) {
     i.process.kill();
     i.process = null;
@@ -214,6 +216,12 @@ function sendControlRequest(subtype: string, data: Record<string, unknown>, inst
     broadcast(envelope("instance.control_sent", { subtype, ...data, requestId }));
     return true;
   }
+  // Prefer adapter handle for local instances
+  if (i.handle) {
+    i.handle.sendCommand(subtype, data).catch(() => {});
+    broadcast(envelope("instance.control_sent", { subtype, ...data }));
+    return true;
+  }
   if (!i.process?.stdin?.writable) return false;
   const requestId = `r${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
   const msg = JSON.stringify({
@@ -246,6 +254,11 @@ function sendStdin(i: import("./instance-manager").InstanceData, data: string): 
   if (i.source === 'remote') {
     if (!i.agentConnection || i.agentConnection.readyState !== WebSocket.OPEN) return false;
     send(i.agentConnection, envelope("agent.stdin", { instanceId: i.id, data }));
+    return true;
+  }
+  // Prefer adapter handle for local instances
+  if (i.handle) {
+    i.handle.send(data).catch(() => {});
     return true;
   }
   if (!i.process?.stdin?.writable) return false;

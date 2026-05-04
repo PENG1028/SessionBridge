@@ -2,6 +2,7 @@
 // Implements AgentAdapter for raw shell (bash/powershell/cmd).
 // Simple PTY wrapper — no structured events, just terminal I/O.
 
+import { spawn } from 'child_process';
 import type {
   AgentAdapter, AdapterCapabilities, AdapterViewProps,
   InstanceHandle, StartInstanceInput, SidePanelDef, RuntimeInfo,
@@ -23,35 +24,62 @@ export class ShellAdapter implements AgentAdapter {
   name = 'shell';
   displayName = 'Shell';
   icon = 'terminal';
+  viewId = 'terminal';
 
   getCapabilities(): AdapterCapabilities {
     return { ...SHELL_CAPABILITIES };
   }
 
-  /** Always available on any machine with a shell */
   async detect(_runtime: RuntimeInfo): Promise<boolean> {
-    // Shell is a fallback: always available
     return true;
   }
 
-  /**
-   * Start a shell instance.
-   * Delegates to the relay server's PTY spawning logic.
-   */
-  async start(_input: StartInstanceInput): Promise<InstanceHandle> {
-    throw new Error(
-      'ShellAdapter.start() requires integration with relay-server.\n' +
-      'This will be refactored in Step 5.'
-    );
+  async start(input: StartInstanceInput): Promise<InstanceHandle> {
+    const { cmd, args, cwd } = this.resolveSpawnCommand(input.config);
+    const proc = spawn(cmd, args, {
+      cwd: cwd || input.directory,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    proc.stdout?.on('data', (chunk: Buffer) => {
+      input.onOutput?.(chunk.toString());
+    });
+    proc.stderr?.on('data', (chunk: Buffer) => {
+      input.onOutput?.(chunk.toString());
+    });
+    proc.on('close', (code) => {
+      input.onExit?.(code);
+    });
+
+    return {
+      instance: {
+        id: input.workspaceId,
+        workspaceId: input.workspaceId,
+        adapterId: this.id,
+        label: input.label || 'Shell',
+        status: 'running',
+        source: 'local',
+        createdAt: Date.now(),
+        runtime: { type: 'child_process', pid: proc.pid },
+      },
+      send: async (data: string) => {
+        if (proc.stdin?.writable) proc.stdin.write(data);
+      },
+      sendCommand: async (_cmd: string, _args?: Record<string, unknown>) => {},
+      stop: async () => {
+        proc.kill();
+      },
+      onBlock: (_handler: (block: import('../types').OutputBlock) => void) => {
+        return () => {};
+      },
+    };
   }
 
-  /** Raw terminal view (reuses existing ShellTerminal component) */
   getView(): React.ComponentType<AdapterViewProps> {
     const PlaceholderView: React.ComponentType<AdapterViewProps> = () => null;
     return PlaceholderView;
   }
 
-  /** Shell has no side panels */
   getSidePanels(): SidePanelDef[] {
     return [];
   }
@@ -64,5 +92,4 @@ export class ShellAdapter implements AgentAdapter {
   }
 }
 
-/** Singleton adapter instance */
 export const shellAdapter = new ShellAdapter();
