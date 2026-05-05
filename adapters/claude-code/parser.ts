@@ -2,7 +2,20 @@
 // Claude stream-json line processor, extracted from spawnClaude()
 // so local (ChildProcess stdout) and remote (agent WS) can share it.
 
-import type { InstanceData } from "../../src/instance-manager";
+export interface ParserInstance {
+  id: string;
+  status: string;
+  source: string;
+  thinkingId: string | null;
+  thinkingText: string;
+  toolUseId: string | null;
+  toolResult: string;
+  textBuffer: string;
+  checkpointManager: {
+    createCheckpoint: (id: string, name: string, filePath: string, oldStr?: string) => void;
+  };
+  isProcessing: boolean;
+}
 
 export type StreamParserDeps = {
   sendBlock: (block: Record<string, unknown>) => void;
@@ -11,7 +24,7 @@ export type StreamParserDeps = {
   nextId: () => string;
   setActive: (id: string | null) => void;
   getActiveId: () => string | null;
-  processQueueForInstance: (inst: InstanceData) => void;
+  processQueueForInstance: (inst: ParserInstance) => void;
   sendControlRequest: (subtype: string, data: Record<string, unknown>, instanceId?: string) => boolean;
   getEffortLevel: () => string;
 };
@@ -24,7 +37,7 @@ export type StreamParserDeps = {
  * - WS message handler receiving agent_stdout (remote instances)
  */
 export function processStreamLine(
-  i: InstanceData,
+  i: ParserInstance,
   line: string,
   deps: StreamParserDeps,
 ): void {

@@ -12,7 +12,7 @@ import { CheckpointManager } from "./checkpoint-manager";
 import { InstanceManager } from "./instance-manager";
 import { processStreamLine } from "../adapters/claude-code/parser";
 import { resolveClaudeCommand, isClaudeAvailable, getClaudeDataDir, getClaudeProjectsDir, getClaudeSessionPath, getClaudeHistoryPath, getProjectSlug } from "../adapters/claude-code/runtime";
-import { envelope, parseMsg } from "./protocol";
+import { envelope, parseMsg } from "../adapters/protocol";
 import { registerAdapter, adapterRegistry } from "../adapters/registry";
 import { claudeCodeAdapter } from "../adapters/claude-code";
 import { shellAdapter } from "../adapters/shell";
@@ -286,19 +286,20 @@ function processQueueForInstance(i: import("./instance-manager").InstanceData) {
     queueDepth: i.pendingQueue.length,
   }));
 
-  if (i.adapterId === 'shell') {
-    // Shell: send raw text to stdin
-    sendStdin(i, text + "\n");
-    i.isProcessing = false;
-    processQueueForInstance(i);
-  } else {
-    // Claude: JSONL-encoded user message
+  const cap = adapterRegistry.get(i.adapterId || 'shell')?.getCapabilities();
+  if (cap?.structuredEvents) {
+    // Structured adapter: JSONL-encoded user message
     resetStreamState();
     if (i.source !== 'remote') i.checkpointManager.startNewTurn();
     sendStdin(i, JSON.stringify({
       type: "user",
       message: { role: "user", content: [{ type: "text", text }] },
     }) + "\n");
+  } else {
+    // Terminal adapter: send raw text to stdin
+    sendStdin(i, text + "\n");
+    i.isProcessing = false;
+    processQueueForInstance(i);
   }
 }
 
@@ -367,7 +368,7 @@ function parserDepsFor(i: import("./instance-manager").InstanceData): import("..
     nextId,
     setActive: (id: string | null) => instanceManager.setActive(id),
     getActiveId: () => instanceManager.activeId,
-    processQueueForInstance: (inst: import("./instance-manager").InstanceData) => {
+    processQueueForInstance: (inst: any) => {
       processQueueForInstance(inst);
     },
     sendControlRequest,
