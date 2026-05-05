@@ -1,8 +1,9 @@
 'use client';
 
-import { Cpu, Terminal as TerminalIcon, Sparkles, X, Plus } from 'lucide-react';
+import { Cpu, X, Plus } from 'lucide-react';
 
 import type { InstanceInfo } from '../../../lib/ws-client';
+import { getAdapterMeta } from '../main/view-registry';
 export type { InstanceInfo };
 
 interface InstanceListProps {
@@ -11,14 +12,6 @@ interface InstanceListProps {
   onActivate: (id: string) => void;
   onCreate: () => void;
   onKill: (id: string) => void;
-}
-
-/** Get icon for instance based on adapter type */
-function getInstanceIcon(inst: InstanceInfo) {
-  const aid = inst.adapterId || '';
-  if (aid === 'shell') return <TerminalIcon className="w-3 h-3 text-orange-400" />;
-  if (aid === 'claude-code') return <Sparkles className="w-3 h-3 text-purple-400" />;
-  return <Cpu className="w-3 h-3 text-gray-400" />;
 }
 
 /** Status dot color */
@@ -61,7 +54,7 @@ export function InstanceList({ instances, activeInstanceId, onActivate, onCreate
                 }`}
               >
                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusColor(inst.status)}`} />
-                {getInstanceIcon(inst)}
+                {(() => { const Icon = getAdapterMeta(inst.adapterId).icon; return <Icon className="w-3 h-3" />; })()}
                 <span className="truncate flex-1">{inst.label}</span>
                 {inst.source === 'remote' ? (
                   <span className="text-[8px] bg-cyan-900/30 text-cyan-400 px-1 rounded shrink-0">REMOTE</span>

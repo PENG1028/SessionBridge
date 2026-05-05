@@ -19,6 +19,7 @@ import { ForkDialog } from './console/shell/fork-dialog';
 import { SearchResultsPanel } from './console/shell/search-results-panel';
 import { ClaudeChatView } from './console/main/claude-chat-view';
 import { adapterToViewId } from './console/main/view-registry';
+import { InstanceTabBar } from './console/main/instance-tab-bar';
 import { sessionStore } from '../lib/session-store';
 
 // ==========================================
@@ -223,7 +224,6 @@ export default function Page() {
   const [queueInfo, setQueueInfo] = useState<{isProcessing: boolean; queueDepth: number; queue: any[]}>({isProcessing: false, queueDepth: 0, queue: []});
   const [ctxMenu, setCtxMenu] = useState<{x:number; y:number; items:ContextMenuItem[]}|null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [showNewMenu, setShowNewMenu] = useState(false);
   // Timer to refresh task durations and queue every 5s
   useEffect(() => {
     if (activeTasks.size === 0 && !phase) return;
@@ -605,14 +605,6 @@ export default function Page() {
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [showSearch]);
-
-  // Close new instance dropdown on outside click
-  useEffect(() => {
-    if (!showNewMenu) return;
-    const handler = () => setShowNewMenu(false);
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [showNewMenu]);
 
   // Close mode picker on outside click
   useEffect(() => {
@@ -1009,7 +1001,7 @@ export default function Page() {
           onActivateInstance={activateInstance}
           onCreateInstance={createInstance}
           onKillInstance={killInstance}
-          isShell={viewId === 'terminal'}
+          activeViewId={viewId}
           onQuickAction={handleQuickAction}
           onRewind={() => { sendCommand('rewind'); addLog('[System] Rewinding last change...'); }}
           projectCwd={projectInfo?.cwd || '.'}
@@ -1018,47 +1010,15 @@ export default function Page() {
         {/* ═══ CENTER: Message Stream ════════ */}
         <main className="flex-1 flex flex-col relative bg-black min-w-0">
           <div className="px-2 py-1.5 border-b border-gray-800 text-[10px] font-bold text-gray-500 flex justify-between items-center bg-[#0a0a0a] shrink-0 tracking-wider">
-            {/* ── Instance Tab Bar ── */}
-            <div className="flex items-center border-b border-gray-800 bg-[#0a0a0a] shrink-0">
-              <div className="flex-1 flex items-center overflow-x-auto">
-                {instances.map(inst => {
-                  const isActive = inst.id === activeInstanceId;
-                  const icon = inst.adapterId === 'shell' ? '⌨' : '💬';
-                  const label = inst.adapterId === 'shell' ? 'Terminal' : inst.adapterId === 'claude-code' ? 'Claude' : inst.label;
-                  return (
-                    <button key={inst.id} onClick={() => activateInstance(inst.id)}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] border-r border-gray-800 transition-colors shrink-0 ${
-                        isActive ? 'bg-[#111] text-gray-200 border-b-2 border-b-purple-500' : 'text-gray-500 hover:text-gray-300 hover:bg-[#0d0d0d]'
-                      }`}>
-                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                        inst.status === 'running' ? 'bg-emerald-500/80' : inst.status === 'starting' ? 'bg-yellow-500' : 'bg-gray-600'
-                      }`} />
-                      <span>{icon} {label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="relative">
-                <button onClick={() => setShowNewMenu(v => !v)}
-                  className="px-2.5 text-[10px] text-gray-500 hover:text-gray-200 hover:bg-[#0d0d0d] border-l border-gray-800 shrink-0 transition-colors h-full">+ New</button>
-                {showNewMenu && (
-                  <div className="absolute top-full right-0 mt-1 z-50 bg-[#1a1a1a] border border-gray-700 rounded-lg shadow-2xl shadow-black/50 overflow-hidden min-w-[160px]">
-                    <button onClick={() => { createInstance(projectInfo?.cwd || '.', undefined, 'shell'); setShowNewMenu(false); }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-[11px] text-gray-300 hover:bg-gray-800 transition-colors">
-                      <span>⌨</span> Terminal (Shell)
-                    </button>
-                    <button onClick={() => { createInstance(projectInfo?.cwd || '.', undefined, 'claude-code'); setShowNewMenu(false); }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-[11px] text-gray-300 hover:bg-gray-800 transition-colors">
-                      <span>💬</span> Claude Code
-                    </button>
-                  </div>
-                )}
-              </div>
-              <button onClick={() => setShowTerminal(v => !v)}
-                className={`px-2.5 text-[10px] border-l border-gray-800 shrink-0 transition-colors h-full ${
-                  showTerminal ? 'bg-orange-900/20 text-orange-300' : 'text-gray-500 hover:text-gray-200 hover:bg-[#0d0d0d]'
-                }`}>▢</button>
-            </div>
+            <InstanceTabBar
+              instances={instances}
+              activeInstanceId={activeInstanceId}
+              onActivate={activateInstance}
+              onCreate={(dir, adapterId) => createInstance(dir, undefined, adapterId)}
+              showTerminal={showTerminal}
+              onToggleTerminal={() => setShowTerminal(v => !v)}
+              projectCwd={projectInfo?.cwd || '.'}
+            />
             <span className="flex items-center gap-2">
               MESSAGE STREAM
               {activeExternalSession && (
