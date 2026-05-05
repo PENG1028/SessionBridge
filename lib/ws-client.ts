@@ -60,6 +60,8 @@ export type WSCallback = {
   onInstanceAdded?: (instance: InstanceInfo) => void;
   onInstanceRemoved?: (instanceId: string) => void;
   onInstanceSwitched?: (instanceId: string) => void;
+  /** Catch-all for unhandled message types (e.g., system.notification) */
+  onSystemMessage?: (msg: any) => void;
 };
 
 /** Envelope helper for client-side sends. */
@@ -87,14 +89,19 @@ export class WSClient {
 
     this.ws.onopen = () => {
       // Send hello for capability negotiation
-      this.ws!.send(env("hello", {
+      const helloBody: Record<string, unknown> = {
         role: "browser",
         version: "0.5.0",
         features: ["structured_chat", "instance_list", "shell"],
-        ...(this.token ? {} : { workspace: workspace ?? false }),
         cols: cols ?? 120,
         rows: rows ?? 40,
-      }));
+      };
+      if (this.token) {
+        helloBody.token = this.token;
+      } else {
+        helloBody.workspace = workspace ?? false;
+      }
+      this.ws!.send(env("hello", helloBody));
     };
 
     this.ws.onmessage = (ev) => {
@@ -252,6 +259,10 @@ export class WSClient {
 
         case "instance_switched":
           this.cb.onInstanceSwitched?.(msg.instanceId);
+          break;
+
+        default:
+          this.cb.onSystemMessage?.(msg);
           break;
       }
     };

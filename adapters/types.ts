@@ -61,6 +61,106 @@ export interface RuntimeInfo {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// AgentCapabilityHost — abstract capabilities provided by the agent
+// runtime to adapters. Adapters use these instead of raw system calls,
+// so permissions can be enforced at one choke point.
+// When running on the relay server (no agent), host is undefined.
+// ═══════════════════════════════════════════════════════════════════
+
+export interface AgentCapabilityHost {
+  fs: FileSystemCapability;
+  process: ProcessCapability;
+  terminal: TerminalCapability;
+  permissions: PermissionState;
+  notifications: NotificationCapability;
+}
+
+export interface FileSystemCapability {
+  read(path: string): Promise<string>;
+  write(path: string, content: string): Promise<void>;
+  list(dir: string): Promise<FileEntry[]>;
+  exists(path: string): Promise<boolean>;
+  delete(path: string): Promise<void>;
+}
+
+export interface FileEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+  size: number;
+  modifiedAt: number;
+}
+
+export interface ProcessCapability {
+  spawn(cmd: string, args: string[], opts?: SpawnOptions): import('child_process').ChildProcess;
+  list(): Promise<ProcessInfo[]>;
+  kill(pid: number): Promise<void>;
+}
+
+export interface ProcessInfo {
+  pid: number;
+  ppid: number;
+  name: string;
+  command: string;
+  cpu: number;
+  memory: number;
+  state: string;
+  user: string;
+}
+
+export interface SpawnOptions {
+  cwd?: string;
+  env?: Record<string, string | undefined>;
+  stdio?: ('pipe' | 'ignore' | 'inherit')[];
+}
+
+export interface TerminalCapability {
+  spawn(cmd: string, args: string[], opts?: TerminalOptions): TerminalHandle;
+}
+
+export interface TerminalOptions {
+  cwd?: string;
+  env?: Record<string, string>;
+  cols?: number;
+  rows?: number;
+}
+
+export interface TerminalHandle {
+  pid: number;
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  onData(handler: (data: string) => void): () => void;
+  dispose(): void;
+}
+
+export type PermissionCategory =
+  | 'fileRead' | 'fileWrite'
+  | 'network'
+  | 'processManagement'
+  | 'shellAccess';
+
+export interface PermissionState {
+  grants: Record<PermissionCategory, boolean>;
+  check(category: PermissionCategory, context?: Record<string, unknown>): { allowed: boolean; reason?: string };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// NotificationCapability — adapter-callable notification system
+// Each adapter declares its own scenarios; users toggle them in the dashboard.
+// ═══════════════════════════════════════════════════════════════════
+
+export interface NotificationScenario {
+  id: string;           // unique: "session.ended", "agent.connected"
+  label: string;        // display: "会话结束"
+  description: string;  // "Claude 对话结束时通知"
+  source: 'system' | string; // 'system' or adapterId
+}
+
+export interface NotificationCapability {
+  notify(scenarioId: string, title: string, detail?: string): void;
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // StartInstanceInput — what adapters need to start
 // ═══════════════════════════════════════════════════════════════════
 
@@ -77,6 +177,8 @@ export interface StartInstanceInput {
   onOutput?: (data: string) => void;
   /** Server-side: callback when process exits */
   onExit?: (code: number | null) => void;
+  /** Agent-side: abstract capability host (undefined on relay server) */
+  host?: AgentCapabilityHost;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -155,6 +257,9 @@ export interface AgentAdapter {
 
   /** Resolve the spawn command + args for this adapter (bridging step — used by relay-server until start() is fully integrated) */
   resolveSpawnCommand(config?: Record<string, unknown>): { cmd: string; args: string[]; cwd?: string; env?: Record<string, string> };
+
+  /** Optional: notification scenarios this adapter can emit */
+  getNotificationScenarios?(): NotificationScenario[];
 }
 
 // ═══════════════════════════════════════════════════════════════════

@@ -222,6 +222,12 @@ export function useSession(
         activeInstanceIdRef.current = id;
         setActiveInstanceId(id);
       },
+      onSystemMessage: (msg: any) => {
+        // Route system notifications
+        if (msg.type === 'system.notification') {
+          addMsgLog('system', msg);
+        }
+      },
     });
 
     ws.connect(initialCols, initialRows, isWorkspace);

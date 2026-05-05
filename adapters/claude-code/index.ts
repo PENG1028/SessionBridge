@@ -6,6 +6,7 @@ import { createInterface } from 'readline';
 import type {
   AgentAdapter, AdapterCapabilities, AdapterViewProps,
   OutputBlock, InstanceHandle, StartInstanceInput, SidePanelDef, RuntimeInfo,
+  NotificationScenario,
 } from '../types';
 import { resolveClaudeCommand, buildClaudeArgs } from './runtime';
 import { processStreamLine } from './parser';
@@ -63,11 +64,9 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
   async start(input: StartInstanceInput): Promise<InstanceHandle> {
     const { cmd, args, cwd } = this.resolveSpawnCommand(input.config);
-    const proc = spawn(cmd, args, {
-      cwd: cwd || input.directory,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env },
-    });
+    const proc = input.host
+      ? input.host.process.spawn(cmd, args, { cwd: cwd || input.directory, env: { ...process.env } })
+      : spawn(cmd, args, { cwd: cwd || input.directory, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env } });
 
     const state = createStreamState();
     const pendingInput: string[] = [];
@@ -175,6 +174,14 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       { id: 'files',    title: 'Files',    icon: 'folder-tree',  component: SidePanelStub, defaultVisible: true },
       { id: 'logs',     title: 'Logs',     icon: 'scroll-text',  component: SidePanelStub, defaultVisible: false },
       { id: 'terminal', title: 'Terminal', icon: 'terminal',     component: SidePanelStub, defaultVisible: false },
+    ];
+  }
+
+  getNotificationScenarios(): NotificationScenario[] {
+    return [
+      { id: 'claude.session.ended', label: '会话结束', description: 'Claude 对话结束时通知', source: 'claude-code' },
+      { id: 'claude.error',         label: '运行错误', description: 'Claude 执行出错时通知', source: 'claude-code' },
+      { id: 'claude.tool.approval', label: '工具审批', description: '需要人工审批工具调用时', source: 'claude-code' },
     ];
   }
 }

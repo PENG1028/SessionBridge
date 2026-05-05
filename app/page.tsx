@@ -20,6 +20,7 @@ import { SearchResultsPanel } from './console/shell/search-results-panel';
 import { ClaudeChatView } from './console/main/claude-chat-view';
 import { adapterToViewId } from './console/main/view-registry';
 import { InstanceTabBar } from './console/main/instance-tab-bar';
+import { useNotification } from './console/shared/notification-context';
 import { sessionStore } from '../lib/session-store';
 
 // ==========================================
@@ -212,6 +213,7 @@ export default function Page() {
   const [logs, setLogs] = useState<string[]>(['[$] session-bridge connected']);
   const [inputValue, setInputValue] = useState('');
   // ── No virtual window — render all messages ──
+  const [loginInput, setLoginInput] = useState("");
   const [terminalTab, setTerminalTab] = useState<'log' | 'raw'>('log');
   const [showCommands, setShowCommands] = useState(false);
   const [showTerminal, setShowTerminal] = useState(false);
@@ -370,6 +372,27 @@ export default function Page() {
   const { connStatus, parsed, msgLog, sendInput, sendCommand, serverBlocks, sessions, activeSessionId, activateSession, spawnSession, isWorkspace, queueStatus, instances, activeInstanceId, activateInstance, createInstance, killInstance } = useSession(wsUrl, token ?? undefined);
   const activeAdapterId = instances.find(i => i.id === activeInstanceId)?.adapterId || 'shell';
   const viewId = adapterToViewId[activeAdapterId] || 'terminal';
+
+  const { notify } = useNotification();
+
+  // ── Instance lifecycle → notifications ──
+  const prevInstanceIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const currentIds = new Set(instances.map((i: any) => i.id));
+    const prevIds = prevInstanceIdsRef.current;
+    for (const id of currentIds) {
+      if (!prevIds.has(id) && prevIds.size > 0) {
+        const inst = instances.find((i: any) => i.id === id);
+        if (inst) notify({ type: 'success', title: 'Instance connected', message: inst.label });
+      }
+    }
+    for (const id of prevIds) {
+      if (!currentIds.has(id)) {
+        notify({ type: 'info', title: 'Instance removed', message: id });
+      }
+    }
+    prevInstanceIdsRef.current = currentIds;
+  }, [instances, notify]);
 
   const addLog = useCallback((msg: string) => setLogs(prev => [...prev, msg]), []);
 
@@ -676,6 +699,7 @@ export default function Page() {
     setCurrentActivity,
     addLog,
     setActiveTasks,
+    onNotify: notify,
   });
 
   // ── Turn grouping for sticky headers ──────
@@ -902,6 +926,38 @@ export default function Page() {
   // ==========================================
   // Render
   // ==========================================
+  if (!token) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-[#0a0a0a] text-gray-300 font-mono">
+        <div className="w-full max-w-sm p-8 bg-[#111] border border-gray-800 rounded-lg">
+          <h1 className="text-lg font-bold mb-2">SessionBridge</h1>
+          <p className="text-xs text-gray-500 mb-6">Enter your access token to connect.</p>
+          <form onSubmit={(e) => {
+            e.preventDefault();
+            if (loginInput.trim()) {
+              window.location.href = `?token=${encodeURIComponent(loginInput.trim())}`;
+            }
+          }}>
+            <input
+              type="password"
+              value={loginInput}
+              onChange={(e) => setLoginInput(e.target.value)}
+              placeholder="SB_TOKEN"
+              className="w-full bg-[#1a1a1a] border border-gray-700 rounded px-3 py-2 text-sm text-gray-200 placeholder-gray-600 outline-none focus:border-purple-500 mb-4"
+              autoFocus
+            />
+            <button
+              type="submit"
+              className="w-full bg-purple-700 hover:bg-purple-600 text-white rounded px-3 py-2 text-sm font-semibold transition-colors"
+            >
+              Connect
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-screen bg-[#0a0a0a] text-gray-300 font-mono text-sm overflow-hidden selection:bg-purple-900 selection:text-white relative" onContextMenu={handleCtx}>
       <ConsoleHeader
@@ -1057,10 +1113,17 @@ export default function Page() {
             </span>
           </div>
 
-          {/* Shell instance: full terminal view */}
-          <div className={viewId === 'terminal' ? "flex-1" : "hidden"}>
-            <TerminalView wsUrl={wsUrl} />
-          </div>
+          {/* Shell instances — all kept mounted, inactive hidden */}
+          {instances.filter((i: any) => (i.adapterId || 'shell') === 'shell').map((inst: any) => (
+            <div key={inst.id} className={inst.id === activeInstanceId ? "flex-1" : "hidden"}>
+              <TerminalView wsUrl={wsUrl} instanceId={inst.id} token={token ?? undefined} />
+            </div>
+          ))}
+          {instances.filter((i: any) => (i.adapterId || 'shell') === 'shell').length === 0 && (
+            <div className={viewId === 'terminal' ? "flex-1" : "hidden"}>
+              <TerminalView wsUrl={wsUrl} token={token ?? undefined} />
+            </div>
+          )}
 
           {/* Claude instance: chat view */}
           <div className={viewId === 'claude-chat' ? "flex-1 flex flex-col" : "hidden"}>
@@ -1107,7 +1170,7 @@ export default function Page() {
           {/* ── Terminal drawer ── */}
           {showTerminal && (
             <div className="border-t border-gray-700 shrink-0" style={{ height: '180px' }}>
-              <TerminalView wsUrl={wsUrl} />
+              <TerminalView wsUrl={wsUrl} token={token ?? undefined} />
             </div>
           )}
         </main>

@@ -53,6 +53,7 @@ export interface InstanceData {
   // Metadata
   createdAt: number;
   adapterId?: string;  // which adapter owns this instance
+  agentVersion?: string; // agent version reported during registration (remote only)
 }
 
 // ─── InstanceManager ───────────────────────────────────────
@@ -157,6 +158,7 @@ export class InstanceManager {
       blockCount: inst.blockBuffer.length,
       outputSize: inst.outputSize,
       checkpointCount: inst.checkpointManager.totalCheckpoints(),
+      agentVersion: inst.agentVersion || null,
       createdAt: inst.createdAt,
     }));
   }

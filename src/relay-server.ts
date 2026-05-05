@@ -1,4 +1,5 @@
-import { createServer } from "http";
+import { createServer as createHttpServer } from "http";
+import { createServer as createHttpsServer } from "https";
 import { readFileSync, readdirSync, statSync, existsSync, writeFileSync, unlinkSync } from "fs";
 import { join, extname, basename, resolve, isAbsolute, relative } from "path";
 import { WebSocketServer, WebSocket } from "ws";
@@ -20,8 +21,14 @@ import { shellAdapter } from "../adapters/shell";
 // ─── Start Time ────────────────────────────────────────────────────
 const START_TIME = Date.now();
 
+// ─── Server Version ────────────────────────────────────────────────
+const SERVER_VERSION = "0.6.0";
+
 // ─── Config ──────────────────────────────────────────────────────
 const PORT = parseInt(process.env.PORT || "8080", 10);
+const SB_TOKEN = process.env.SB_TOKEN || "";
+const SB_KEY = process.env.SB_KEY || "";
+const SB_CERT = process.env.SB_CERT || "";
 
 // ─── Instance Manager ─────────────────────────────────────────────
 const instanceManager = new InstanceManager();
@@ -63,6 +70,9 @@ function flushBuffer(ws: WebSocket) {
 
 // ─── WS Clients ──────────────────────────────────────────────────
 const clients = new Set<WebSocket>();
+const authenticatedSockets = new Set<WebSocket>();
+const shellWsMap = new Map<WebSocket, Set<string>>();
+const agentVersionMap = new Map<WebSocket, string>();
 
 function send(ws: WebSocket, msg: unknown) {
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
@@ -161,6 +171,64 @@ function killInstance(instanceId?: string) {
   }
   i.status = 'stopped';
   releaseQueueForInstance(i);
+}
+
+async function spawnShellForWs(ws: WebSocket, instanceId?: string): Promise<import("./instance-manager").InstanceData> {
+  let i: import("./instance-manager").InstanceData;
+  if (instanceId) {
+    const existing = instanceManager.get(instanceId);
+    i = existing || instanceManager.create(process.cwd(), "shell", "local", "shell");
+  } else {
+    i = instanceManager.create(process.cwd(), "shell", "local", "shell");
+  }
+
+  // Track ownership
+  if (!shellWsMap.has(ws)) shellWsMap.set(ws, new Set());
+  shellWsMap.get(ws)!.add(i.id);
+
+  // Remote instances: shell already runs on the agent, don't spawn locally
+  if (i.source === 'remote') {
+    i.status = 'running';
+    send(ws, envelope("shell.output", { data: `\x1b[36mConnected to remote shell on ${i.label || i.id}\x1b[0m\r\n`, stream: "stdout" }));
+    // Send newline to trigger a fresh prompt from the remote shell
+    sendStdin(i, '\n');
+    return i;
+  }
+
+  // Kill existing handle if re-spawning
+  if (i.handle) {
+    await i.handle.stop().catch(() => {});
+    i.handle = undefined;
+  }
+
+  // Clear output buffer for fresh spawn
+  i.outputBuffer.length = 0;
+  i.outputSize = 0;
+
+  const adapter = adapterRegistry.get("shell")!;
+  i.handle = await adapter.start({
+    workspaceId: i.id,
+    directory: i.dir,
+    label: i.label || "Shell",
+    adapterId: "shell",
+    config: {},
+    onOutput: (data: string) => {
+      send(ws, envelope("shell.output", { data, stream: "stdout" }));
+      i.outputBuffer.push(data);
+      i.outputSize += data.length;
+      while (i.outputSize > 512 * 1024 && i.outputBuffer.length > 0) {
+        i.outputSize -= i.outputBuffer.shift()?.length ?? 0;
+      }
+    },
+    onExit: (code: number | null) => {
+      send(ws, envelope("shell.exit", { code }));
+      i.handle = undefined;
+      i.status = "stopped";
+    },
+  });
+
+  i.status = "running";
+  return i;
 }
 
 function interruptInstance(instanceId?: string) {
@@ -388,7 +456,7 @@ function bufferOutputFor(i: import("./instance-manager").InstanceData, data: str
 const OUT_DIR = join(__dirname, "../out");
 let ROOT_DIR = inst().dir;
 
-const httpServer = createServer((req, res) => {
+const serverRequestHandler = (req: import("http").IncomingMessage, res: import("http").ServerResponse) => {
   const url = new URL(req.url!, `http://${req.headers.host}`);
   const path = url.pathname;
   const clientIp = req.socket.remoteAddress || "unknown";
@@ -1170,7 +1238,18 @@ const httpServer = createServer((req, res) => {
       res.end("Not found");
     }
   }
-});
+};
+
+// ─── HTTP/HTTPS Server ──────────────────────────────────────────
+let httpServer: ReturnType<typeof createHttpServer>;
+if (SB_KEY && SB_CERT) {
+  httpServer = createHttpsServer({
+    key: readFileSync(SB_KEY, "utf8"),
+    cert: readFileSync(SB_CERT, "utf8"),
+  }, serverRequestHandler);
+} else {
+  httpServer = createHttpServer(serverRequestHandler);
+}
 
 // ─── WebSocket Server ─────────────────────────────────────────────
 const wss = new WebSocketServer({ server: httpServer });
@@ -1210,8 +1289,16 @@ wss.on("connection", (ws) => {
 
     // ── Lifecycle: hello/welcome handshake ────────────────
     if (msg.type === "hello") {
+      const token = msg.token || "";
       const role = msg.role || "browser";
-      const version = msg.version || "unknown";
+
+      // Authentication check
+      if (SB_TOKEN && token !== SB_TOKEN) {
+        send(ws, envelope("error", { code: "UNAUTHORIZED", message: "Invalid or missing token" }));
+        setTimeout(() => ws.close(4001, "Unauthorized"), 100);
+        return;
+      }
+      authenticatedSockets.add(ws);
 
       // Start Claude on first browser connection (skip in test mode)
       if (role === "browser" && !process.env.SB_TEST_MODE) {
@@ -1219,13 +1306,18 @@ wss.on("connection", (ws) => {
         if (!activeInst.process) spawnInstance();
       }
 
+      // Track agent version for update notification
+      if (role === "agent" && msg.version) {
+        agentVersionMap.set(ws, msg.version);
+      }
+
       // Flush history
       flushBuffer(ws);
 
       // Respond with welcome
       send(ws, envelope("welcome", {
-        version: "0.5.0",
-        features: ["agent_registration", "shell", "multi_instance", "structured_chat", "queue"],
+        version: SERVER_VERSION,
+        features: ["agent_registration", "shell", "multi_instance", "structured_chat", "queue", "update_notification"],
         sessionId: inst().id,
         serverTime: Date.now(),
         instances: instanceManager.toJSON(),
@@ -1235,6 +1327,14 @@ wss.on("connection", (ws) => {
 
     // Backward compat: legacy auth / direct (no hello handshake)
     if (msg.type === "auth" || msg.type === "direct") {
+      const token = msg.token || "";
+      if (SB_TOKEN && token !== SB_TOKEN) {
+        send(ws, envelope("error", { code: "UNAUTHORIZED", message: "Invalid or missing token" }));
+        setTimeout(() => ws.close(4001, "Unauthorized"), 100);
+        return;
+      }
+      authenticatedSockets.add(ws);
+
       if (!process.env.SB_TEST_MODE) {
         const activeInst = inst();
         if (!activeInst.process) spawnInstance();
@@ -1243,7 +1343,6 @@ wss.on("connection", (ws) => {
       send(ws, { type: "auth_result", success: true, sessionId: inst().id, instances: instanceManager.toJSON() });
       send(ws, { type: "workspace_connected" });
 
-      if (msg.type === "auth" && msg.type === "direct") return; // don't fall through
       if (msg.type === "auth") return;
       // For "direct", fall through to the instance routing below
     }
@@ -1262,14 +1361,31 @@ wss.on("connection", (ws) => {
     if (msg.type === "agent.register" || msg.type === "agent_register") {
       const dir = msg.dir || process.cwd();
       const label = msg.label || `remote-${Date.now().toString(36)}`;
-      const remoteInst = instanceManager.create(dir, label, 'remote');
+      const agentVersion = agentVersionMap.get(ws) || "unknown";
+      const remoteInst = instanceManager.create(dir, label, 'remote', 'shell');
       remoteInst.agentConnection = ws;
+      remoteInst.agentVersion = agentVersion;
       remoteInst.status = 'running';
       (ws as any)._isAgent = true;
       clients.delete(ws);
       send(ws, envelope("agent.registered", { instanceId: remoteInst.id, sessionId: remoteInst.id }));
       const entry = instanceManager.toJSON().find(i => i.id === remoteInst.id);
       broadcast(envelope("instance.added", { instance: entry }));
+      broadcast(envelope("system.notification", { type: 'success', title: `Agent connected: ${label}` }));
+
+      // Version mismatch notification — only send to browser clients
+      if (agentVersion !== "unknown" && agentVersion !== SERVER_VERSION) {
+        const verNote = {
+          type: 'warning',
+          title: `Agent "${label}" version mismatch`,
+          detail: `Agent v${agentVersion} vs Server v${SERVER_VERSION}. Consider running --update on the agent.`,
+        };
+        for (const c of authenticatedSockets) {
+          if (!(c as any)._isAgent) {
+            send(c, envelope("system.notification", verNote));
+          }
+        }
+      }
       return;
     }
 
@@ -1280,7 +1396,14 @@ wss.on("connection", (ws) => {
         agentInst.status = 'stopped';
         instanceManager.kill(agentInst.id);
         broadcast(envelope("instance.removed", { instanceId: agentInst.id }));
+        broadcast(envelope("system.notification", { type: 'warning', title: `Agent disconnected: ${agentInst.label}` }));
       }
+      return;
+    }
+
+    // ── Auth guard for all subsequent handlers ──
+    if (SB_TOKEN && !authenticatedSockets.has(ws)) {
+      send(ws, envelope("error", { code: "UNAUTHORIZED", message: "Authentication required — send hello first" }));
       return;
     }
 
@@ -1291,7 +1414,14 @@ wss.on("connection", (ws) => {
         return;
       }
       remoteInst.status = 'running';
-      processStreamLine(remoteInst, msg.line, parserDepsFor(remoteInst));
+      if (remoteInst.adapterId === 'shell') {
+        // Raw shell output → terminal view
+        broadcast(envelope("shell.output", { data: msg.line, stream: "stdout" }));
+        remoteInst.outputBuffer.push(msg.line);
+        remoteInst.outputSize += (msg.line as string).length;
+      } else {
+        processStreamLine(remoteInst, msg.line, parserDepsFor(remoteInst));
+      }
       return;
     }
 
@@ -1302,7 +1432,12 @@ wss.on("connection", (ws) => {
         return;
       }
       const data = msg.data;
-      broadcast(envelope("instance.output", { data }));
+      if (remoteInst.adapterId === 'shell') {
+        // Raw shell stderr → terminal view
+        broadcast(envelope("shell.output", { data, stream: "stderr" }));
+      } else {
+        broadcast(envelope("instance.output", { data }));
+      }
       remoteInst.outputBuffer.push(data);
       remoteInst.outputSize += data.length;
       while (remoteInst.outputSize > 512 * 1024 && remoteInst.outputBuffer.length > 0) {
@@ -1311,37 +1446,69 @@ wss.on("connection", (ws) => {
       return;
     }
 
+    // ── Agent notification → forward to browsers ──────────
+    if (msg.type === "agent.notification" || msg.type === "agent_notification") {
+      const title = msg.title || 'Notification';
+      const detail = msg.detail || '';
+      for (const c of authenticatedSockets) {
+        if (!(c as any)._isAgent) {
+          send(c, envelope("system.notification", { type: 'info', title, detail }));
+        }
+      }
+      return;
+    }
+
+    // ── Agent spawns a sub-instance (bridge run) ─────────
+    if (msg.type === "agent.instance.spawn") {
+      const dir = msg.dir || process.cwd();
+      const label = msg.label || 'Shell';
+      const remoteInst = instanceManager.create(dir, label, 'remote', 'shell');
+      remoteInst.agentConnection = ws;
+      remoteInst.status = 'running';
+      send(ws, envelope("agent.instance.spawned", {
+        requestId: msg.requestId,
+        instanceId: remoteInst.id,
+      }));
+      const entry = instanceManager.toJSON().find(i => i.id === remoteInst.id);
+      broadcast(envelope("instance.added", { instance: entry }));
+      return;
+    }
+
+    // ── Agent kills a sub-instance ───────────────────────
+    if (msg.type === "agent.instance.exit") {
+      const remoteInst = msg.instanceId ? instanceManager.get(msg.instanceId) : null;
+      if (remoteInst && remoteInst.source === 'remote') {
+        remoteInst.status = 'stopped';
+        instanceManager.kill(remoteInst.id);
+        broadcast(envelope("instance.removed", { instanceId: remoteInst.id }));
+      }
+      return;
+    }
+
     // ── Shell terminal ────────────────────────────────────
     if (msg.type === "shell.spawn" || msg.type === "shell_spawn") {
-      const shellCmd = process.platform === "win32" ? "cmd.exe" : "bash";
-      const shellProcess = spawn(shellCmd, [], {
-        stdio: ["pipe", "pipe", "pipe"],
-        env: { ...process.env, TERM: "xterm-256color" },
-      });
-      (ws as any)._shellProcess = shellProcess;
-
-      shellProcess.stdout.on("data", (chunk: Buffer) => {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify(envelope("shell.output", { data: chunk.toString(), stream: "stdout" })));
-        }
-      });
-      shellProcess.stderr.on("data", (chunk: Buffer) => {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify(envelope("shell.output", { data: chunk.toString(), stream: "stderr" })));
-        }
-      });
-      shellProcess.on("exit", (code) => {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify(envelope("shell.exit", { code })));
-        }
-        (ws as any)._shellProcess = null;
+      spawnShellForWs(ws, msg.instanceId).catch((err) => {
+        send(ws, envelope("error", { code: "INTERNAL_ERROR", message: `Shell spawn failed: ${err}` }));
       });
       return;
     }
     if (msg.type === "shell.input" || msg.type === "shell_input") {
-      const shellProcess = (ws as any)._shellProcess;
-      if (shellProcess?.stdin?.writable) {
-        shellProcess.stdin.write(msg.data);
+      const instId = msg.instanceId;
+      const target = instId ? instanceManager.get(instId) : null;
+      const i = target || (() => {
+        const owned = shellWsMap.get(ws);
+        if (owned && owned.size > 0) {
+          const firstId = [...owned][0];
+          return instanceManager.get(firstId);
+        }
+        return null;
+      })();
+      if (i) {
+        if (i.source === 'remote') {
+          sendStdin(i, msg.data);
+        } else if (i.handle) {
+          i.handle.send(msg.data).catch(() => {});
+        }
       }
       return;
     }
@@ -1432,9 +1599,18 @@ wss.on("connection", (ws) => {
 
   ws.on("close", () => {
     clients.delete(ws);
-    // Kill shell process if any
-    const shellProc = (ws as any)._shellProcess;
-    if (shellProc) { shellProc.kill(); (ws as any)._shellProcess = null; }
+    authenticatedSockets.delete(ws);
+    agentVersionMap.delete(ws);
+    // Kill all shell instances owned by this WS
+    const ownedShells = shellWsMap.get(ws);
+    if (ownedShells) {
+      for (const instId of ownedShells) {
+        killInstance(instId);
+        instanceManager.kill(instId);
+        broadcast(envelope("instance.removed", { instanceId: instId }));
+      }
+      shellWsMap.delete(ws);
+    }
     // Auto-unregister agent connections
     if ((ws as any)._isAgent) {
       for (const inst of instanceManager.list()) {
@@ -1457,8 +1633,9 @@ function shutdown(signal: string) {
   // Notify clients
   broadcast(envelope("system.shutdown", { message: "Server is shutting down..." }));
 
-  // Kill all Claude processes
+  // Stop all adapter handles (shell + claude)
   for (const inst of instanceManager.list()) {
+    if (inst.handle) { inst.handle.stop().catch(() => {}); }
     if (inst.process) {
       inst.process.kill();
       inst.process = null;
@@ -1518,12 +1695,13 @@ export function startRelayServer(port?: number): Promise<{ close: () => void; po
   return new Promise((resolve) => {
     httpServer.listen(p, () => {
       const addr = httpServer.address() as import("net").AddressInfo;
+      const proto = SB_KEY && SB_CERT ? "https" : "http";
       console.log(`\n  ┌──────────────────────────────────────┐`);
       console.log(`  │  SessionBridge Relay Server         │`);
       console.log(`  │                                      │`);
-      console.log(`  │  Server:    http://localhost:${String(addr.port).padEnd(5)}            │`);
-      console.log(`  │  Web UI:    http://localhost:${String(addr.port).padEnd(5)} (static frontend) │`);
-      console.log(`  │  Health:    http://localhost:${String(addr.port).padEnd(5)}/api/health  │`);
+      console.log(`  │  Server:    ${proto}://localhost:${String(addr.port).padEnd(5)}            │`);
+      console.log(`  │  Web UI:    ${proto}://localhost:${String(addr.port).padEnd(5)} (static frontend) │`);
+      console.log(`  │  Health:    ${proto}://localhost:${String(addr.port).padEnd(5)}/api/health  │`);
       console.log(`  │                                      │`);
       console.log(`  │  Instance spawns on first connection   │`);
       console.log(`  └──────────────────────────────────────┘\n`);
@@ -1531,6 +1709,7 @@ export function startRelayServer(port?: number): Promise<{ close: () => void; po
         close: () => {
           clearInterval(heartbeatTimer);
           for (const inst of instanceManager.list()) {
+            if (inst.handle) { inst.handle.stop().catch(() => {}); }
             if (inst.process) { inst.process.kill(); inst.process = null; }
           }
           instanceManager.stopAll();

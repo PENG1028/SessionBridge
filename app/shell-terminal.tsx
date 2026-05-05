@@ -7,6 +7,8 @@ import '@xterm/xterm/css/xterm.css';
 
 interface ShellTerminalProps {
   wsUrl: string;
+  instanceId?: string;
+  token?: string;
 }
 
 /** Envelope helper matching the v1 protocol. */
@@ -14,7 +16,7 @@ function env(type: string, body: Record<string, unknown> = {}) {
   return JSON.stringify({ v: 1, ts: Date.now(), type, body });
 }
 
-export default function ShellTerminal({ wsUrl }: ShellTerminalProps) {
+export default function ShellTerminal({ wsUrl, instanceId, token }: ShellTerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -67,8 +69,10 @@ export default function ShellTerminal({ wsUrl }: ShellTerminalProps) {
     ws.onopen = () => {
       term.focus();
       // Hello + spawn shell
-      ws.send(env("hello", { role: "browser", features: ["shell"] }));
-      ws.send(env("shell.spawn"));
+      const helloBody: Record<string, unknown> = { role: "browser", features: ["shell"] };
+      if (token) helloBody.token = token;
+      ws.send(env("hello", helloBody));
+      ws.send(env("shell.spawn", instanceId ? { instanceId } : {}));
       // Initial resize
       const dims = fitAddon.proposeDimensions();
       if (dims) {
@@ -127,7 +131,7 @@ export default function ShellTerminal({ wsUrl }: ShellTerminalProps) {
       term.dispose();
       wsRef.current = null;
     };
-  }, [wsUrl]);
+  }, [wsUrl, token]);
 
   return (
     <div

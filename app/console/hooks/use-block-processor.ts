@@ -101,6 +101,8 @@ export interface UseBlockProcessorConfig {
   setCurrentActivity: (a: string | null) => void;
   addLog: (msg: string) => void;
   setActiveTasks: React.Dispatch<React.SetStateAction<Map<string, TaskInfo>>>;
+  /** Optional: fire app notification for task lifecycle events */
+  onNotify?: (n: { type: 'info' | 'success' | 'warning' | 'error'; title: string; message?: string }) => void;
 }
 
 export function useBlockProcessor({
@@ -114,6 +116,7 @@ export function useBlockProcessor({
   setCurrentActivity,
   addLog,
   setActiveTasks,
+  onNotify,
 }: UseBlockProcessorConfig) {
   useEffect(() => {
     try {
@@ -288,6 +291,7 @@ export function useBlockProcessor({
             });
           }
           addLog(`[System] ✓ ${block.text || 'Task completed'}`);
+          onNotify?.({ type: 'success', title: 'Task completed', message: block.text });
           continue;
         }
 
@@ -324,6 +328,7 @@ export function useBlockProcessor({
             startTime: Date.now(),
           }));
           addLog(`[Task] Started: ${block.description || block.taskId}`);
+          onNotify?.({ type: 'info', title: 'Background task started', message: block.description });
           continue;
         }
 
@@ -350,6 +355,7 @@ export function useBlockProcessor({
             return next;
           });
           addLog(`[Task] Completed: ${block.taskId}`);
+          onNotify?.({ type: 'success', title: 'Background task done', message: block.taskId });
           continue;
         }
 
