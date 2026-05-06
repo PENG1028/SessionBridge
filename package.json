@@ -1,16 +1,36 @@
 {
   "name": "session-bridge",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
   "description": "Claude Code remote shell — persistent process architecture with web UI",
+  "files": [
+    "dist/",
+    ".next/",
+    "adapters/",
+    "lib/",
+    "src/",
+    "app/",
+    "public/",
+    "scripts/",
+    "package.json",
+    "package-lock.json",
+    "tsconfig.json",
+    "tsconfig.server.json",
+    "next.config.ts",
+    "tailwind.config.ts",
+    "postcss.config.mjs"
+  ],
+  "bin": {
+    "bridge": "./dist/index.js"
+  },
   "scripts": {
     "start": "next build && npm run build:server && node dist/index.js",
     "start:quick": "npm run build:server && node dist/index.js",
+    "start:leaf": "node dist/index.js --role leaf",
     "dev": "next build && tsx watch src/index.ts",
     "dev:web": "next dev",
     "build": "next build",
     "build:server": "tsc -p tsconfig.server.json",
-    "start:agent": "node dist/agent.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

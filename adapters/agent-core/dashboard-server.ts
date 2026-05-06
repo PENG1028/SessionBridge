@@ -9,6 +9,7 @@ import type { PermissionModel } from './permissions';
 import type { NotificationModel } from './notifications';
 import type { RelayConnection } from './relay-connection';
 import { dashboardHtml } from './dashboard-page';
+import { VERSION } from '../version';
 import { getSystemState, listProcesses, listProcessesSorted, type AgentIntrospection } from './introspection';
 
 const LOG_CAP = 200;
@@ -84,7 +85,7 @@ export function writeToShellByRelayId(relayInstanceId: string, data: string): bo
 function buildIntrospection(): AgentIntrospection {
   const adapters = state?.adapters ?? [];
   return {
-    version: '0.6.0',
+    version: VERSION,
     label: state?.config.label ?? '',
     pid: process.pid,
     uptime: state ? (Date.now() - state.startTime) / 1000 : 0,

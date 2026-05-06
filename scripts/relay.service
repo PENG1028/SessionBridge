@@ -1,20 +1,24 @@
 [Unit]
-Description=SessionBridge Relay Server
+Description=SessionBridge Node (Relay)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/opt/session-bridge/node dist/index.js relay \
-  --port 8080
+ExecStart=node /opt/session-bridge/dist/index.js \
+  --role relay \
+  --relay-port 8080 \
+  --dashboard-port 9843 \
+  --log-file /var/log/session-bridge/node.log \
+  --pid-file /var/run/session-bridge/node.pid
 WorkingDirectory=/opt/session-bridge
 Restart=always
 RestartSec=5
 User=sessionbridge
 
 # Logging
-StandardOutput=append:/var/log/session-bridge/relay.log
-StandardError=append:/var/log/session-bridge/relay.log
+StandardOutput=append:/var/log/session-bridge/node.log
+StandardError=append:/var/log/session-bridge/node.log
 
 # Security hardening
 NoNewPrivileges=true

@@ -6,7 +6,8 @@
 import WebSocket from 'ws';
 import { EventEmitter } from 'events';
 import { envelope, parseMsg } from '../protocol';
-import type { AgentConfig } from './config';
+import { VERSION } from '../version';
+import type { NodeConfig } from './config';
 
 export interface RelayConnectionEvents {
   registered: (instanceId: string) => void;
@@ -14,6 +15,7 @@ export interface RelayConnectionEvents {
   instanceSpawned: (requestId: string, instanceId: string) => void;
   instanceExit: (instanceId: string) => void;
   control: (requestId: string, request: string) => void;
+  notification: (type: string, title: string, detail: string) => void;
   error: (code: string, message: string) => void;
   close: () => void;
 }
@@ -25,23 +27,28 @@ export class RelayConnection extends EventEmitter {
   private closing = false;
   private _instanceId: string | null = null;
 
-  constructor(private config: AgentConfig) {
+  constructor(private config: NodeConfig) {
     super();
   }
 
   get instanceId(): string | null { return this._instanceId; }
 
+  /** Current WebSocket send buffer size (bytes). Used for backpressure control. */
+  get bufferedAmount(): number {
+    return this.ws?.bufferedAmount ?? 0;
+  }
+
   connect(): void {
     if (this.closing) return;
 
-    this.ws = new WebSocket(this.config.relayUrl);
+    this.ws = new WebSocket(this.config.upstreamRelay || `ws://127.0.0.1:${this.config.relayPort}`);
 
     this.ws.on('open', () => {
       this.reconnectDelay = 1000;
       // Send hello with capability negotiation
       this.ws!.send(JSON.stringify(envelope('hello', {
         role: 'agent',
-        version: '0.6.0',
+        version: VERSION,
         features: ['agent_register', 'structured_events', 'shell', 'system_info'],
         ...(this.config.relayToken ? { token: this.config.relayToken } : {}),
       })));
@@ -85,6 +92,10 @@ export class RelayConnection extends EventEmitter {
           this.ws!.send(JSON.stringify(envelope('pong', {})));
           break;
 
+        case 'system.notification':
+          this.emit('notification', msg.type || 'info', msg.title || '', msg.detail || '');
+          break;
+
         case 'error':
           this.emit('error', msg.code || '', msg.message || '');
           break;
@@ -103,18 +114,38 @@ export class RelayConnection extends EventEmitter {
     });
   }
 
+  private static readonly MAX_CHUNK = 65536; // 64KB per chunk
+  private _chunkSeq = 0;
+
+  /** Split a large payload into chunked messages to avoid WebSocket frame limits. */
+  private sendChunked(type: string, instanceId: string, field: string, payload: string): void {
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    if (payload.length <= RelayConnection.MAX_CHUNK) {
+      this.ws.send(JSON.stringify(envelope(type, { instanceId, [field]: payload })));
+      return;
+    }
+    const msgId = `${instanceId}-${++this._chunkSeq}`;
+    const total = Math.ceil(payload.length / RelayConnection.MAX_CHUNK);
+    for (let seq = 0; seq < total; seq++) {
+      const chunk = payload.slice(seq * RelayConnection.MAX_CHUNK, (seq + 1) * RelayConnection.MAX_CHUNK);
+      this.ws.send(JSON.stringify(envelope(type, {
+        instanceId,
+        [field]: chunk,
+        chunk: { msgId, seq, total },
+      })));
+    }
+  }
+
   /** Send stdout data from a local adapter to relay. */
   sendStdout(line: string): void {
-    if (this.ws?.readyState === WebSocket.OPEN && this._instanceId) {
-      this.ws.send(JSON.stringify(envelope('agent.stdout', { instanceId: this._instanceId, line })));
-    }
+    if (!this._instanceId) return;
+    this.sendChunked('agent.stdout', this._instanceId, 'line', line);
   }
 
   /** Send stderr data to relay. */
   sendStderr(data: string): void {
-    if (this.ws?.readyState === WebSocket.OPEN && this._instanceId) {
-      this.ws.send(JSON.stringify(envelope('agent.stderr', { instanceId: this._instanceId, data })));
-    }
+    if (!this._instanceId) return;
+    this.sendChunked('agent.stderr', this._instanceId, 'data', data);
   }
 
   /** Send a notification to the relay (for forwarding to browsers). */
@@ -133,16 +164,12 @@ export class RelayConnection extends EventEmitter {
 
   /** Send stdout for a specific sub-instance. */
   sendStdoutForInstance(instanceId: string, line: string): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(envelope('agent.stdout', { instanceId, line })));
-    }
+    this.sendChunked('agent.stdout', instanceId, 'line', line);
   }
 
   /** Send stderr for a specific sub-instance. */
   sendStderrForInstance(instanceId: string, data: string): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(envelope('agent.stderr', { instanceId, data })));
-    }
+    this.sendChunked('agent.stderr', instanceId, 'data', data);
   }
 
   /** Notify relay that a sub-instance has exited. */

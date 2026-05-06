@@ -1,14 +1,17 @@
-// ─── Remote Agent (受控端) ──────────────────────────────────────
-// Lightweight bridge that connects a home-PC Claude process to a
-// SessionBridge relay server via outbound WebSocket.
+// ─── Remote Agent (standalone) ───────────────────────────────────
+// Lightweight bridge that connects a Claude process to a SessionBridge
+// relay server via outbound WebSocket. Prefer the unified `bridge` CLI
+// for most use cases; use this standalone script only when you need a
+// minimal agent without the full node runtime.
 //
-// Usage: node dist/agent.js --relay ws://vps:8080 --dir /home/user/project
+// Usage: node dist/adapters/claude-code/agent.js --relay ws://vps:8080 --dir /home/user/project
 
 import { spawn } from "child_process";
 import { resolve } from "path";
 import { createWriteStream, writeFileSync, unlinkSync, existsSync } from "fs";
 import WebSocket from "ws";
 import { envelope, parseMsg } from "../protocol";
+import { VERSION } from "../version";
 
 // ─── Options ────────────────────────────────────────────────────
 export interface AgentOptions {
@@ -105,7 +108,7 @@ export function startAgent(opts: AgentOptions) {
       // Capability negotiation
       ws!.send(JSON.stringify(envelope("hello", {
         role: "agent",
-        version: "0.5.0",
+        version: VERSION,
         features: ["agent_register"],
       })));
     });
@@ -229,7 +232,7 @@ if (require.main === module) {
   SessionBridge Remote Agent
 
   Usage:
-    node dist/agent.js --relay <url> --dir <path> [options]
+    node dist/adapters/claude-code/agent.js --relay <url> --dir <path> [options]
 
   Options:
     --relay <url>       Relay server WebSocket URL (required)

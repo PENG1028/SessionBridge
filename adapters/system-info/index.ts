@@ -105,6 +105,30 @@ export class SystemInfoAdapter implements AgentAdapter {
 
 export const systemInfoAdapter = new SystemInfoAdapter();
 
+/**
+ * Detect whether this node can act as a relay (can bind to 0.0.0.0).
+ *
+ * NOTE: This only checks TCP bind permission — NOT actual network reachability.
+ * A node behind NAT may successfully bind but still not be reachable from the
+ * internet. Use --role flag to override auto-detection when you know the
+ * network topology (e.g., --role leaf for devices behind CGNAT).
+ */
+export async function detectNetworkCapability(): Promise<'relay' | 'leaf'> {
+  return new Promise((resolve) => {
+    try {
+      const { createServer } = require('net');
+      const s = createServer();
+      s.on('error', () => resolve('leaf'));
+      s.listen(0, '0.0.0.0', () => {
+        try { s.close(); } catch {}
+        resolve('relay');
+      });
+    } catch {
+      resolve('leaf');
+    }
+  });
+}
+
 function formatBytes(b: number): string {
   const gb = b / 1e9;
   return gb >= 1 ? `${gb.toFixed(1)} GB` : `${(b / 1e6).toFixed(0)} MB`;

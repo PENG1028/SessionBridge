@@ -1,9 +1,9 @@
-# SessionBridge Agent — Windows Scheduled Task installer (user-level)
+# SessionBridge Node (leaf) — Windows Scheduled Task installer (user-level)
 # Run as current user (no admin required):
 #   powershell -ExecutionPolicy Bypass .\install-agent.ps1 -RelayUrl "ws://10.0.0.1:8080"
 #
-# Registers the agent as a user scheduled task that starts at logon.
-# Agent code installed to %LOCALAPPDATA%\session-bridge\
+# Registers the node as a user scheduled task that starts at logon.
+# Node code installed to %LOCALAPPDATA%\session-bridge\
 
 param(
     [Parameter(Mandatory=$true)]
@@ -19,13 +19,13 @@ param(
 
     [string]$InstallDir = "$env:LOCALAPPDATA\session-bridge",
 
-    [string]$TaskName = "SessionBridgeAgent"
+    [string]$TaskName = "SessionBridgeNode"
 )
 
 $ErrorActionPreference = "Stop"
 
-# ── Install agent code ──────────────────────────────
-Write-Host "==> Installing agent to $InstallDir" -ForegroundColor Cyan
+# ── Install node code ────────────────────────────────
+Write-Host "==> Installing node (leaf) to $InstallDir" -ForegroundColor Cyan
 $null = New-Item -ItemType Directory -Path $InstallDir -Force
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -40,17 +40,17 @@ if ($LASTEXITCODE -ge 8) {
 
 # Install dependencies
 Set-Location $InstallDir
-npm install --production --no-audit --no-fund 2>&1 | Select-Object -Last 1
+npm install --omit=dev --no-audit --no-fund 2>&1 | Select-Object -Last 1
 
-$logFile   = "$InstallDir\agent.log"
-$pidFile   = "$InstallDir\agent.pid"
-$entryPoint = "$InstallDir\dist\src\index.js"
+$logFile   = "$InstallDir\node.log"
+$pidFile   = "$InstallDir\node.pid"
+$entryPoint = "$InstallDir\dist\index.js"
 
-# ── Agent run arguments ─────────────────────────────
-$agentArgs = @(
+# ── Node run arguments ───────────────────────────────
+$nodeArgs = @(
     $entryPoint,
-    "agent",
-    "--relay", $RelayUrl,
+    "--role", "leaf",
+    "--upstream", $RelayUrl,
     "--dir", $ProjectDir,
     "--label", $Label,
     "--dashboard-port", $DashboardPort,
@@ -58,7 +58,7 @@ $agentArgs = @(
     "--pid-file", $pidFile
 )
 
-# ── Register scheduled task (user-level) ────────────
+# ── Register scheduled task (user-level) ──────────────
 # First unregister if exists
 $existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 if ($existing) {
@@ -67,7 +67,7 @@ if ($existing) {
 
 $action = New-ScheduledTaskAction `
     -Execute $NodePath `
-    -Argument ($agentArgs -join ' ') `
+    -Argument ($nodeArgs -join ' ') `
     -WorkingDirectory $InstallDir
 
 $trigger = New-ScheduledTaskTrigger -AtLogon
@@ -93,7 +93,7 @@ Register-ScheduledTask `
     -Force | Out-Null
 
 Write-Host ""
-Write-Host "  Agent installed successfully" -ForegroundColor Green
+Write-Host "  Node (leaf) installed successfully" -ForegroundColor Green
 Write-Host "  Relay:    $RelayUrl"
 Write-Host "  Dir:      $ProjectDir"
 Write-Host "  Label:    $Label"

@@ -64,6 +64,8 @@ export type WSCallback = {
   onSystemMessage?: (msg: any) => void;
 };
 
+import { VERSION } from '../adapters/version';
+
 /** Envelope helper for client-side sends. */
 function env(type: string, body: Record<string, unknown> = {}) {
   return JSON.stringify({ v: 1, ts: Date.now(), type, body });
@@ -91,7 +93,7 @@ export class WSClient {
       // Send hello for capability negotiation
       const helloBody: Record<string, unknown> = {
         role: "browser",
-        version: "0.5.0",
+        version: VERSION,
         features: ["structured_chat", "instance_list", "shell"],
         cols: cols ?? 120,
         rows: rows ?? 40,

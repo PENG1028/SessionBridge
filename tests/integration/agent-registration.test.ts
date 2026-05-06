@@ -33,13 +33,13 @@ describe('Agent Registration', () => {
   let server: { close: () => void; port: number };
 
   beforeAll(async () => {
-    process.env.SB_TEST_MODE = '1';
+    process.env.BRIDGE_TEST_MODE = '1';
     const { startRelayServer } = await import('../../src/relay-server');
     server = await startRelayServer(0);
   });
 
   afterAll(() => {
-    process.env.SB_TEST_MODE = '';
+    process.env.BRIDGE_TEST_MODE = '';
     server.close();
   });
 

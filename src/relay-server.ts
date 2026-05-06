@@ -17,18 +17,24 @@ import { envelope, parseMsg } from "../adapters/protocol";
 import { registerAdapter, adapterRegistry } from "../adapters/registry";
 import { claudeCodeAdapter } from "../adapters/claude-code";
 import { shellAdapter } from "../adapters/shell";
+import { systemInfoAdapter } from "../adapters/system-info";
 
 // ─── Start Time ────────────────────────────────────────────────────
 const START_TIME = Date.now();
 
-// ─── Server Version ────────────────────────────────────────────────
-const SERVER_VERSION = "0.6.0";
+import { VERSION as SERVER_VERSION } from "../adapters/version";
+import { mismatchSeverity } from "../adapters/semver";
 
 // ─── Config ──────────────────────────────────────────────────────
 const PORT = parseInt(process.env.PORT || "8080", 10);
-const SB_TOKEN = process.env.SB_TOKEN || "";
-const SB_KEY = process.env.SB_KEY || "";
-const SB_CERT = process.env.SB_CERT || "";
+let SB_TOKEN = process.env.BRIDGE_TOKEN || process.env.SB_TOKEN || "";
+const SB_KEY = process.env.BRIDGE_SSL_KEY || process.env.SB_KEY || "";
+const SB_CERT = process.env.BRIDGE_SSL_CERT || process.env.SB_CERT || "";
+
+/** Allow runtime to set the relay token (overrides env var). */
+export function setRelayToken(token: string): void {
+  SB_TOKEN = token;
+}
 
 // ─── Instance Manager ─────────────────────────────────────────────
 const instanceManager = new InstanceManager();
@@ -73,6 +79,40 @@ const clients = new Set<WebSocket>();
 const authenticatedSockets = new Set<WebSocket>();
 const shellWsMap = new Map<WebSocket, Set<string>>();
 const agentVersionMap = new Map<WebSocket, string>();
+// Shell write-lock: instanceId → owning browser WebSocket
+const shellLockMap = new Map<string, WebSocket>();
+
+// Session persistence: clientToken → session data for reconnect recovery
+interface ClientSession { ws: WebSocket; shellIds: Set<string>; label: string; disconnectTime?: number }
+const clientSessionMap = new Map<string, ClientSession>();
+const wsToClientToken = new Map<WebSocket, string>();
+const SESSION_RECONNECT_GRACE_MS = 60000; // 60s grace period before cleanup
+
+// ─── Chunk reassembly ─────────────────────────────────────────────
+interface ChunkedBuffer { total: number; parts: string[]; ts: number }
+const chunkBuffers = new Map<string, ChunkedBuffer>();
+
+function reassembleChunk(msg: Record<string, any>): string | null {
+  const chunk = msg.chunk as { msgId?: string; seq?: number; total?: number } | undefined;
+  if (!chunk?.msgId) return msg.line || msg.data || null;
+  let buf = chunkBuffers.get(chunk.msgId);
+  if (!buf) {
+    buf = { total: chunk.total ?? 0, parts: [], ts: Date.now() };
+    chunkBuffers.set(chunk.msgId, buf);
+  }
+  buf.parts[chunk.seq ?? 0] = msg.line || msg.data || '';
+  if (buf.parts.filter(() => true).length < buf.total) return null; // incomplete
+  chunkBuffers.delete(chunk.msgId);
+  return buf.parts.join('');
+}
+
+// Clean up stale chunk buffers every 30s
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, buf] of chunkBuffers) {
+    if (now - buf.ts > 30000) chunkBuffers.delete(key);
+  }
+}, 30000);
 
 function send(ws: WebSocket, msg: unknown) {
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
@@ -1196,7 +1236,7 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
         depth: hi.pendingQueue.length,
         processing: hi.isProcessing,
       },
-      connections: wss.clients.size,
+      connections: wss?.clients.size ?? 0,
       memory: {
         rss: mem.rss,
         heapTotal: mem.heapTotal,
@@ -1241,24 +1281,30 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
 };
 
 // ─── HTTP/HTTPS Server ──────────────────────────────────────────
-let httpServer: ReturnType<typeof createHttpServer>;
-if (SB_KEY && SB_CERT) {
-  httpServer = createHttpsServer({
-    key: readFileSync(SB_KEY, "utf8"),
-    cert: readFileSync(SB_CERT, "utf8"),
-  }, serverRequestHandler);
-} else {
-  httpServer = createHttpServer(serverRequestHandler);
-}
-
-// ─── WebSocket Server ─────────────────────────────────────────────
-const wss = new WebSocketServer({ server: httpServer });
-
-// ── Heartbeat ────────────────────────────────────────────────
+let httpServer: ReturnType<typeof createHttpServer> | null = null;
+let wss: WebSocketServer | null = null;
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 const HEARTBEAT_INTERVAL = 30000;
 const heartbeatMap = new WeakMap<WebSocket, boolean>();
 
+function ensureServer(): void {
+  if (httpServer) return;
+  if (SB_KEY && SB_CERT) {
+    httpServer = createHttpsServer({
+      key: readFileSync(SB_KEY, "utf8"),
+      cert: readFileSync(SB_CERT, "utf8"),
+    }, serverRequestHandler);
+  } else {
+    httpServer = createHttpServer(serverRequestHandler);
+  }
+  wss = new WebSocketServer({ server: httpServer });
+  heartbeatTimer = setInterval(heartbeatPing, HEARTBEAT_INTERVAL);
+  wss.on("close", () => { if (heartbeatTimer) clearInterval(heartbeatTimer); });
+  setupWssHandlers();
+}
+
 function heartbeatPing() {
+  if (!wss) return;
   for (const ws of wss.clients) {
     if (ws.readyState !== WebSocket.OPEN) continue;
     if (heartbeatMap.get(ws) === false) {
@@ -1270,10 +1316,9 @@ function heartbeatPing() {
   }
 }
 
-const heartbeatTimer = setInterval(heartbeatPing, HEARTBEAT_INTERVAL);
-wss.on("close", () => clearInterval(heartbeatTimer));
-
-wss.on("connection", (ws) => {
+/** Register WebSocket connection handlers. Called from ensureServer(). */
+function setupWssHandlers(): void {
+  wss!.on("connection", (ws: WebSocket) => {
   heartbeatMap.set(ws, true);
   clients.add(ws);
 
@@ -1283,7 +1328,7 @@ wss.on("connection", (ws) => {
 
   // Don't start Claude until we know the client's intent
 
-  ws.on("message", (raw) => {
+  ws.on("message", (raw: Buffer) => {
     const msg = parseMsg(raw.toString());
     if (!msg) return;
 
@@ -1291,6 +1336,7 @@ wss.on("connection", (ws) => {
     if (msg.type === "hello") {
       const token = msg.token || "";
       const role = msg.role || "browser";
+      const clientToken = msg.clientToken || "";
 
       // Authentication check
       if (SB_TOKEN && token !== SB_TOKEN) {
@@ -1300,8 +1346,27 @@ wss.on("connection", (ws) => {
       }
       authenticatedSockets.add(ws);
 
+      // Session recovery: if browser reconnects with same clientToken, restore session
+      let restoredInstances: Record<string, unknown>[] = [];
+      if (role === "browser" && clientToken) {
+        const prevSession = clientSessionMap.get(clientToken);
+        if (prevSession && prevSession.disconnectTime) {
+          // Reconnect: reuse shell instances
+          const allInstances = instanceManager.toJSON();
+          for (const shellId of prevSession.shellIds) {
+            const match = allInstances.find(ji => ji.id === shellId);
+            if (match) restoredInstances.push(match);
+          }
+          prevSession.ws = ws;
+          prevSession.disconnectTime = undefined;
+        } else {
+          clientSessionMap.set(clientToken, { ws, shellIds: new Set(), label: msg.label || '' });
+        }
+        wsToClientToken.set(ws, clientToken);
+      }
+
       // Start Claude on first browser connection (skip in test mode)
-      if (role === "browser" && !process.env.SB_TEST_MODE) {
+      if (role === "browser" && !(process.env.BRIDGE_TEST_MODE || process.env.SB_TEST_MODE)) {
         const activeInst = inst();
         if (!activeInst.process) spawnInstance();
       }
@@ -1317,10 +1382,11 @@ wss.on("connection", (ws) => {
       // Respond with welcome
       send(ws, envelope("welcome", {
         version: SERVER_VERSION,
-        features: ["agent_registration", "shell", "multi_instance", "structured_chat", "queue", "update_notification"],
+        features: ["agent_registration", "shell", "multi_instance", "structured_chat", "queue", "update_notification", "session_recovery"],
         sessionId: inst().id,
         serverTime: Date.now(),
         instances: instanceManager.toJSON(),
+        ...(restoredInstances.length > 0 ? { restoredInstances } : {}),
       }));
       return;
     }
@@ -1335,7 +1401,7 @@ wss.on("connection", (ws) => {
       }
       authenticatedSockets.add(ws);
 
-      if (!process.env.SB_TEST_MODE) {
+      if (!(process.env.BRIDGE_TEST_MODE || process.env.SB_TEST_MODE)) {
         const activeInst = inst();
         if (!activeInst.process) spawnInstance();
       }
@@ -1357,6 +1423,13 @@ wss.on("connection", (ws) => {
       return;
     }
 
+    // ── Auth guard for all subsequent handlers ──
+    if (SB_TOKEN && !authenticatedSockets.has(ws)) {
+      send(ws, envelope("error", { code: "UNAUTHORIZED", message: "Authentication required — send hello first" }));
+      setTimeout(() => ws.close(4001, "Unauthorized"), 100);
+      return;
+    }
+
     // ── Agent registration ────────────────────────────────
     if (msg.type === "agent.register" || msg.type === "agent_register") {
       const dir = msg.dir || process.cwd();
@@ -1373,18 +1446,23 @@ wss.on("connection", (ws) => {
       broadcast(envelope("instance.added", { instance: entry }));
       broadcast(envelope("system.notification", { type: 'success', title: `Agent connected: ${label}` }));
 
-      // Version mismatch notification — only send to browser clients
-      if (agentVersion !== "unknown" && agentVersion !== SERVER_VERSION) {
+      // Version mismatch notification — semver-aware, notify both browsers and agent
+      const mismatch = mismatchSeverity(agentVersion, SERVER_VERSION);
+      if (mismatch) {
+        const severity = mismatch.diff === 'major' ? 'error' : 'warning';
         const verNote = {
-          type: 'warning',
+          type: severity,
           title: `Agent "${label}" version mismatch`,
-          detail: `Agent v${agentVersion} vs Server v${SERVER_VERSION}. Consider running --update on the agent.`,
+          detail: mismatch.message,
         };
+        // Notify browser clients
         for (const c of authenticatedSockets) {
           if (!(c as any)._isAgent) {
             send(c, envelope("system.notification", verNote));
           }
         }
+        // Notify the agent itself
+        send(ws, envelope("system.notification", verNote));
       }
       return;
     }
@@ -1401,13 +1479,11 @@ wss.on("connection", (ws) => {
       return;
     }
 
-    // ── Auth guard for all subsequent handlers ──
-    if (SB_TOKEN && !authenticatedSockets.has(ws)) {
-      send(ws, envelope("error", { code: "UNAUTHORIZED", message: "Authentication required — send hello first" }));
-      return;
-    }
-
     if (msg.type === "agent.stdout" || msg.type === "agent_stdout") {
+      // Reassemble chunked messages
+      const line = reassembleChunk(msg);
+      if (line === null) return; // chunk incomplete, wait for more
+
       const remoteInst = instanceManager.get(msg.instanceId);
       if (!remoteInst) {
         send(ws, envelope("error", { code: "NOT_FOUND", message: `Instance ${msg.instanceId} not found`, replyTo: msg._raw?.id }));
@@ -1415,28 +1491,34 @@ wss.on("connection", (ws) => {
       }
       remoteInst.status = 'running';
       if (remoteInst.adapterId === 'shell') {
-        // Raw shell output → terminal view
-        broadcast(envelope("shell.output", { data: msg.line, stream: "stdout" }));
-        remoteInst.outputBuffer.push(msg.line);
-        remoteInst.outputSize += (msg.line as string).length;
+        // Raw shell output → terminal view (cap line size for broadcast)
+        broadcast(envelope("shell.output", { data: line.slice(0, 65536), stream: "stdout" }));
+        remoteInst.outputBuffer.push(line);
+        remoteInst.outputSize += line.length;
+        while (remoteInst.outputSize > 512 * 1024 && remoteInst.outputBuffer.length > 0) {
+          remoteInst.outputSize -= remoteInst.outputBuffer.shift()?.length ?? 0;
+        }
       } else {
-        processStreamLine(remoteInst, msg.line, parserDepsFor(remoteInst));
+        processStreamLine(remoteInst, line, parserDepsFor(remoteInst));
       }
       return;
     }
 
     if (msg.type === "agent.stderr" || msg.type === "agent_stderr") {
+      // Reassemble chunked messages
+      const data = reassembleChunk(msg);
+      if (data === null) return; // chunk incomplete, wait for more
+
       const remoteInst = instanceManager.get(msg.instanceId);
       if (!remoteInst) {
         send(ws, envelope("error", { code: "NOT_FOUND", message: `Instance ${msg.instanceId} not found` }));
         return;
       }
-      const data = msg.data;
       if (remoteInst.adapterId === 'shell') {
         // Raw shell stderr → terminal view
-        broadcast(envelope("shell.output", { data, stream: "stderr" }));
+        broadcast(envelope("shell.output", { data: data.slice(0, 65536), stream: "stderr" }));
       } else {
-        broadcast(envelope("instance.output", { data }));
+        broadcast(envelope("instance.output", { data: data.slice(0, 65536) }));
       }
       remoteInst.outputBuffer.push(data);
       remoteInst.outputSize += data.length;
@@ -1487,7 +1569,14 @@ wss.on("connection", (ws) => {
 
     // ── Shell terminal ────────────────────────────────────
     if (msg.type === "shell.spawn" || msg.type === "shell_spawn") {
-      spawnShellForWs(ws, msg.instanceId).catch((err) => {
+      spawnShellForWs(ws, msg.instanceId).then((shellInst) => {
+        // Track shell in client session for reconnect recovery
+        const clientToken = wsToClientToken.get(ws);
+        if (clientToken) {
+          const session = clientSessionMap.get(clientToken);
+          if (session) session.shellIds.add(shellInst.id);
+        }
+      }).catch((err) => {
         send(ws, envelope("error", { code: "INTERNAL_ERROR", message: `Shell spawn failed: ${err}` }));
       });
       return;
@@ -1503,12 +1592,43 @@ wss.on("connection", (ws) => {
         }
         return null;
       })();
-      if (i) {
-        if (i.source === 'remote') {
-          sendStdin(i, msg.data);
-        } else if (i.handle) {
-          i.handle.send(msg.data).catch(() => {});
-        }
+      if (!i) return;
+
+      // Shell write-lock: only the lock owner can send input
+      const lockOwner = shellLockMap.get(i.id);
+      if (lockOwner && lockOwner !== ws) {
+        send(ws, envelope("shell.lock_status", { instanceId: i.id, locked: true, owner: "another-browser" }));
+        return;
+      }
+      // Auto-acquire lock on first input
+      if (!lockOwner) {
+        shellLockMap.set(i.id, ws);
+        broadcast(envelope("shell.lock_status", { instanceId: i.id, locked: true, owner: "browser" }));
+      }
+
+      if (i.source === 'remote') {
+        sendStdin(i, msg.data);
+      } else if (i.handle) {
+        i.handle.send(msg.data).catch(() => {});
+      }
+      return;
+    }
+    if (msg.type === "shell.lock") {
+      const instId = msg.instanceId || inst().id;
+      const owner = shellLockMap.get(instId);
+      if (owner && owner !== ws) {
+        send(ws, envelope("shell.lock_status", { instanceId: instId, locked: true, owner: "another-browser" }));
+      } else {
+        shellLockMap.set(instId, ws);
+        broadcast(envelope("shell.lock_status", { instanceId: instId, locked: true }));
+      }
+      return;
+    }
+    if (msg.type === "shell.unlock") {
+      const instId = msg.instanceId || inst().id;
+      if (shellLockMap.get(instId) === ws) {
+        shellLockMap.delete(instId);
+        broadcast(envelope("shell.lock_status", { instanceId: instId, locked: false }));
       }
       return;
     }
@@ -1601,7 +1721,35 @@ wss.on("connection", (ws) => {
     clients.delete(ws);
     authenticatedSockets.delete(ws);
     agentVersionMap.delete(ws);
-    // Kill all shell instances owned by this WS
+    // Release shell write-locks held by this WS
+    for (const [instId, owner] of shellLockMap) {
+      if (owner === ws) {
+        shellLockMap.delete(instId);
+        broadcast(envelope("shell.lock_status", { instanceId: instId, locked: false }));
+      }
+    }
+    // Session persistence: mark session as disconnected, don't kill shells immediately
+    const clientToken = wsToClientToken.get(ws);
+    wsToClientToken.delete(ws);
+    if (clientToken) {
+      const session = clientSessionMap.get(clientToken);
+      if (session && session.ws === ws) {
+        session.disconnectTime = Date.now();
+        // Schedule cleanup after grace period
+        setTimeout(() => {
+          const s = clientSessionMap.get(clientToken);
+          if (s?.disconnectTime && Date.now() - s.disconnectTime >= SESSION_RECONNECT_GRACE_MS) {
+            for (const shellId of s.shellIds) {
+              killInstance(shellId);
+              instanceManager.kill(shellId);
+            }
+            clientSessionMap.delete(clientToken);
+          }
+        }, SESSION_RECONNECT_GRACE_MS);
+        return; // Don't kill shells — keep them for reconnection
+      }
+    }
+    // Kill all shell instances owned by this WS (no session token)
     const ownedShells = shellWsMap.get(ws);
     if (ownedShells) {
       for (const instId of ownedShells) {
@@ -1624,7 +1772,8 @@ wss.on("connection", (ws) => {
       }
     }
   });
-});
+  });
+}
 
 // ─── Graceful Shutdown ───────────────────────────────────────────
 function shutdown(signal: string) {
@@ -1644,18 +1793,24 @@ function shutdown(signal: string) {
   instanceManager.stopAll();
 
   // Clear timers
-  clearInterval(heartbeatTimer);
+  if (heartbeatTimer) clearInterval(heartbeatTimer);
 
   // Close all WebSocket connections
-  for (const ws of wss.clients) {
-    ws.close(1001, "Server shutting down");
+  if (wss) {
+    for (const ws of wss.clients) {
+      ws.close(1001, "Server shutting down");
+    }
   }
 
   // Close HTTP server
-  httpServer.close(() => {
-    console.log(`  [${signal}] Server stopped.`);
+  if (httpServer) {
+    httpServer.close(() => {
+      console.log(`  [${signal}] Server stopped.`);
+      process.exit(0);
+    });
+  } else {
     process.exit(0);
-  });
+  }
 
   // Force exit after 5s
   setTimeout(() => {
@@ -1669,6 +1824,7 @@ process.on("SIGINT", () => shutdown("SIGINT"));
 
 // ─── Start ────────────────────────────────────────────────────────
 export function startRelayServer(port?: number): Promise<{ close: () => void; port: number }> {
+  ensureServer();
   const p = port ?? PORT;
 
   // ── Adapter environment validation ──────────────────────
@@ -1684,6 +1840,7 @@ export function startRelayServer(port?: number): Promise<{ close: () => void; po
   // ── Register adapters ────────────────────────────────────
   registerAdapter(claudeCodeAdapter);
   registerAdapter(shellAdapter);
+  registerAdapter(systemInfoAdapter);
   console.log(`  ✓ Adapters registered: ${[claudeCodeAdapter, shellAdapter].map(a => a.id).join(', ')}`);
 
   // ── Port validation (0 = random port, skip check) ──────
@@ -1693,8 +1850,8 @@ export function startRelayServer(port?: number): Promise<{ close: () => void; po
   }
 
   return new Promise((resolve) => {
-    httpServer.listen(p, () => {
-      const addr = httpServer.address() as import("net").AddressInfo;
+    httpServer!.listen(p, () => {
+      const addr = httpServer!.address() as import("net").AddressInfo;
       const proto = SB_KEY && SB_CERT ? "https" : "http";
       console.log(`\n  ┌──────────────────────────────────────┐`);
       console.log(`  │  SessionBridge Relay Server         │`);
@@ -1707,19 +1864,74 @@ export function startRelayServer(port?: number): Promise<{ close: () => void; po
       console.log(`  └──────────────────────────────────────┘\n`);
       resolve({
         close: () => {
-          clearInterval(heartbeatTimer);
+          if (heartbeatTimer) clearInterval(heartbeatTimer);
           for (const inst of instanceManager.list()) {
             if (inst.handle) { inst.handle.stop().catch(() => {}); }
             if (inst.process) { inst.process.kill(); inst.process = null; }
           }
           instanceManager.stopAll();
-          for (const ws of wss.clients) ws.close(1001, "Server shutting down");
-          httpServer.close();
+          if (wss) { for (const ws of wss.clients) ws.close(1001, "Server shutting down"); }
+          if (httpServer) httpServer.close();
         },
         port: addr.port,
       });
     });
   });
+}
+
+// ─── NodeRelayServer — class wrapper for NodeRuntime ═══════════
+export class NodeRelayServer {
+  private _port: number;
+  private _token: string;
+
+  constructor(port?: number, token?: string) {
+    this._port = port ?? PORT;
+    this._token = token || '';
+  }
+
+  /** Start the relay HTTP+WebSocket server. Returns the actual port. */
+  async start(): Promise<number> {
+    if (this._token) setRelayToken(this._token);
+    ensureServer();
+    // Validate port
+    if (this._port !== 0 && (this._port < 1 || this._port > 65535)) {
+      this._port = 8080;
+    }
+    // Register adapters
+    registerAdapter(claudeCodeAdapter);
+    registerAdapter(shellAdapter);
+    // Start listening
+    return new Promise((resolve, reject) => {
+      httpServer!.listen(this._port, () => {
+        const addr = httpServer!.address() as import("net").AddressInfo;
+        this._port = addr.port;
+        console.log(`[relay] Listening on ${addr.port}`);
+        if (!SB_TOKEN) {
+          console.warn('');
+          console.warn('  ⚠  SECURITY WARNING: Relay server running without a token.');
+          console.warn('  ⚠  Anyone who can reach this port can control connected agents.');
+          console.warn('  ⚠  Set a token: bridge setup --relay-token <token>');
+          console.warn('');
+        }
+        resolve(addr.port);
+      });
+      httpServer!.once('error', reject);
+    });
+  }
+
+  /** Shut down the relay server gracefully. */
+  async stop(): Promise<void> {
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    for (const inst of instanceManager.list()) {
+      if (inst.handle) { inst.handle.stop().catch(() => {}); }
+      if (inst.process) { inst.process.kill(); inst.process = null; }
+    }
+    instanceManager.stopAll();
+    if (wss) { for (const ws of wss.clients) ws.close(1001, "Server shutting down"); }
+    return new Promise((resolve) => {
+      if (httpServer) { httpServer.close(() => resolve()); } else { resolve(); }
+    });
+  }
 }
 
 // Auto-start when run directly (not imported)

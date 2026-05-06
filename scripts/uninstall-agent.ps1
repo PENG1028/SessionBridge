@@ -1,9 +1,9 @@
-# SessionBridge Agent — Windows Scheduled Task uninstaller (user-level)
+# SessionBridge Node — Windows Scheduled Task uninstaller (user-level)
 # Run as current user:
-#   powershell -ExecutionPolicy Bypass .\remove-agent.ps1
+#   powershell -ExecutionPolicy Bypass .\uninstall-agent.ps1
 
 param(
-    [string]$TaskName = "SessionBridgeAgent",
+    [string]$TaskName = "SessionBridgeNode",
 
     [string]$InstallDir = "$env:LOCALAPPDATA\session-bridge",
 
@@ -12,9 +12,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-Write-Host "==> Uninstalling SessionBridge agent..." -ForegroundColor Cyan
+Write-Host "==> Uninstalling SessionBridge node..." -ForegroundColor Cyan
 
-# ── Remove scheduled task ────────────────────────────
+# ── Remove scheduled task ──────────────────────────────
 $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 if ($task) {
     Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue | Out-Null
@@ -24,7 +24,7 @@ if ($task) {
     Write-Host "  No scheduled task found" -ForegroundColor Yellow
 }
 
-# ── Remove agent code ─────────────────────────────────
+# ── Remove node code ───────────────────────────────────
 if (-not $KeepCode -and (Test-Path $InstallDir)) {
     Remove-Item -Recurse -Force $InstallDir
     Write-Host "  Code removed: $InstallDir" -ForegroundColor Green
@@ -33,4 +33,4 @@ if (-not $KeepCode -and (Test-Path $InstallDir)) {
 }
 
 Write-Host ""
-Write-Host "  SessionBridge agent uninstalled." -ForegroundColor Green
+Write-Host "  SessionBridge node uninstalled." -ForegroundColor Green

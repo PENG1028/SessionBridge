@@ -7,14 +7,14 @@ INSTALL_DIR="${HOME}/.sessionbridge"
 
 usage() {
   cat <<'EOF'
-session-bridge agent uninstaller
+bridge node uninstaller
 
 Usage:
   ./uninstall-agent.sh [--install-dir <dir>] [--keep-code]
 
 Options:
-  --install-dir <dir>  Agent install directory (default: ~/.sessionbridge)
-  --keep-code          Remove service registration but keep agent code
+  --install-dir <dir>  Install directory (default: ~/.sessionbridge)
+  --keep-code          Remove service registration but keep node code
 EOF
   exit 0
 }
@@ -32,28 +32,28 @@ while [[ $# -gt 0 ]]; do
 done
 
 OS="$(uname -s)"
-echo "==> Uninstalling SessionBridge agent..."
+echo "==> Uninstalling SessionBridge node..."
 echo "    OS: ${OS}"
 
 # ── Platform-specific service removal ────────────────
 if [[ "${OS}" == "Darwin" ]]; then
   echo "==> Stopping launchd agent"
-  launchctl bootout gui/$(id -u)/com.sessionbridge.agent 2>/dev/null || true
-  rm -f "${HOME}/Library/LaunchAgents/com.sessionbridge.agent.plist"
+  launchctl bootout gui/$(id -u)/com.sessionbridge.node 2>/dev/null || true
+  rm -f "${HOME}/Library/LaunchAgents/com.sessionbridge.node.plist"
   echo "  ✓ launchd agent removed"
 
 elif [[ "${OS}" == "Linux" ]]; then
   echo "==> Stopping systemd user unit"
-  systemctl --user stop sessionbridge-agent 2>/dev/null || true
-  systemctl --user disable sessionbridge-agent 2>/dev/null || true
-  rm -f "${HOME}/.config/systemd/user/sessionbridge-agent.service"
+  systemctl --user stop sessionbridge-node 2>/dev/null || true
+  systemctl --user disable sessionbridge-node 2>/dev/null || true
+  rm -f "${HOME}/.config/systemd/user/sessionbridge-node.service"
   systemctl --user daemon-reload 2>/dev/null || true
   echo "  ✓ systemd user unit removed"
 fi
 
-# ── Remove agent code ─────────────────────────────────
+# ── Remove node code ──────────────────────────────────
 if [[ "${KEEP_CODE}" == "false" ]] && [[ -d "${INSTALL_DIR}" ]]; then
-  echo "==> Removing agent code: ${INSTALL_DIR}"
+  echo "==> Removing node code: ${INSTALL_DIR}"
   rm -rf "${INSTALL_DIR}"
   echo "  ✓ Code removed"
 elif [[ "${KEEP_CODE}" == "true" ]]; then
@@ -61,4 +61,4 @@ elif [[ "${KEEP_CODE}" == "true" ]]; then
 fi
 
 echo ""
-echo "  SessionBridge agent uninstalled."
+echo "  SessionBridge node uninstalled."

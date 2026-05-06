@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# SessionBridge Agent — cross-platform user-level installer
+# SessionBridge Node (leaf) — cross-platform user-level installer
+# Installs a bridge node in leaf mode, connecting to an upstream relay.
 # Linux: systemd user unit   macOS: launchd agent
 # Usage: ./install-agent.sh --relay ws://YOUR_HOST:8080 [--dir /path] [--label my-name]
 set -euo pipefail
@@ -12,19 +13,19 @@ INSTALL_DIR="${HOME}/.sessionbridge"
 
 usage() {
   cat <<'EOF'
-session-bridge agent installer
+bridge node installer (leaf mode)
 
 Usage:
   ./install-agent.sh --relay <url> [options]
 
 Required:
-  --relay <url>       Relay server WebSocket URL (e.g. ws://10.0.0.1:8080)
+  --relay <url>       Upstream relay WebSocket URL (e.g. ws://10.0.0.1:8080)
 
 Options:
   --dir <path>        Working directory (default: $HOME)
-  --label <name>      Instance label (default: hostname)
+  --label <name>      Node label (default: hostname)
   --dashboard-port N  Dashboard HTTP port (default: 9843)
-  --install-dir <dir> Agent install directory (default: ~/.sessionbridge)
+  --install-dir <dir> Install directory (default: ~/.sessionbridge)
   --node <path>       Path to node binary (default: auto-detect)
 
 Install examples:
@@ -87,21 +88,22 @@ fi
 
 # ── Install agent code ──────────────────────────────
 echo ""
-echo "==> Installing agent to ${INSTALL_DIR}"
+echo "==> Installing node (leaf) to ${INSTALL_DIR}"
 mkdir -p "${INSTALL_DIR}"
 # Copy source files (not node_modules or .next)
 rsync -a --exclude='node_modules' --exclude='.next' --exclude='.git' "${PROJECT_DIR}/" "${INSTALL_DIR}/"
 cd "${INSTALL_DIR}"
 npm install --production --no-audit --no-fund 2>&1 | tail -1
 
-# ── Agent run command ───────────────────────────────
-AGENT_CMD="${NODE_BIN} ${INSTALL_DIR}/dist/src/index.js agent \
---relay ${RELAY} \
+# ── Node run command ───────────────────────────────
+NODE_CMD="${NODE_BIN} ${INSTALL_DIR}/dist/index.js \
+--role leaf \
+--upstream ${RELAY} \
 --dir ${DIR} \
 --label ${LABEL} \
 --dashboard-port ${DASHBOARD_PORT} \
---log-file ${INSTALL_DIR}/agent.log \
---pid-file ${INSTALL_DIR}/agent.pid"
+--log-file ${INSTALL_DIR}/node.log \
+--pid-file ${INSTALL_DIR}/node.pid"
 
 # ── Platform-specific registration ──────────────────
 OS="$(uname -s)"
@@ -121,13 +123,14 @@ if [[ "${OS}" == "Darwin" ]]; then
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.sessionbridge.agent</string>
+  <string>com.sessionbridge.node</string>
   <key>ProgramArguments</key>
   <array>
     <string>${NODE_BIN}</string>
-    <string>${INSTALL_DIR}/dist/src/index.js</string>
-    <string>agent</string>
-    <string>--relay</string>
+    <string>${INSTALL_DIR}/dist/index.js</string>
+    <string>--role</string>
+    <string>leaf</string>
+    <string>--upstream</string>
     <string>${RELAY}</string>
     <string>--dir</string>
     <string>${DIR}</string>
@@ -136,9 +139,9 @@ if [[ "${OS}" == "Darwin" ]]; then
     <string>--dashboard-port</string>
     <string>${DASHBOARD_PORT}</string>
     <string>--log-file</string>
-    <string>${INSTALL_DIR}/agent.log</string>
+    <string>${INSTALL_DIR}/node.log</string>
     <string>--pid-file</string>
-    <string>${INSTALL_DIR}/agent.pid</string>
+    <string>${INSTALL_DIR}/node.pid</string>
   </array>
   <key>WorkingDirectory</key>
   <string>${INSTALL_DIR}</string>
@@ -147,15 +150,15 @@ if [[ "${OS}" == "Darwin" ]]; then
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>${INSTALL_DIR}/agent.log</string>
+  <string>${INSTALL_DIR}/node.log</string>
   <key>StandardErrorPath</key>
-  <string>${INSTALL_DIR}/agent.log</string>
+  <string>${INSTALL_DIR}/node.log</string>
 </dict>
 </plist>
 PLISTEOF
 
   # Unload if already loaded, then load
-  launchctl bootout gui/$(id -u)/com.sessionbridge.agent 2>/dev/null || true
+  launchctl bootout gui/$(id -u)/com.sessionbridge.node 2>/dev/null || true
   launchctl bootstrap gui/$(id -u) "${PLIST}"
   echo "  ✓ LaunchAgent installed and started"
 
@@ -168,26 +171,26 @@ elif [[ "${OS}" == "Linux" ]]; then
 
   cat > "${SERVICE}" <<SVCEOF
 [Unit]
-Description=SessionBridge Remote Agent
+Description=SessionBridge Node (Leaf)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=${AGENT_CMD}
+ExecStart=${NODE_CMD}
 WorkingDirectory=${INSTALL_DIR}
 Restart=always
 RestartSec=5
-StandardOutput=append:${INSTALL_DIR}/agent.log
-StandardError=append:${INSTALL_DIR}/agent.log
+StandardOutput=append:${INSTALL_DIR}/node.log
+StandardError=append:${INSTALL_DIR}/node.log
 
 [Install]
 WantedBy=default.target
 SVCEOF
 
   systemctl --user daemon-reload
-  systemctl --user enable sessionbridge-agent
-  systemctl --user restart sessionbridge-agent
+  systemctl --user enable sessionbridge-node
+  systemctl --user restart sessionbridge-node
   echo "  ✓ systemd user unit installed and started"
 
   # Enable lingering so the user service starts at boot
@@ -198,13 +201,13 @@ SVCEOF
 else
   echo "Warning: Unsupported OS '${OS}'. Code installed but no service registered."
   echo "Run manually:"
-  echo "  ${AGENT_CMD}"
+  echo "  ${NODE_CMD}"
 fi
 
 echo ""
 echo "──────────────────────────────────────────"
-echo "  Agent installed successfully"
+echo "  Node (leaf) installed successfully"
 echo "  Dashboard: http://localhost:${DASHBOARD_PORT}"
-echo "  Logs:      ${INSTALL_DIR}/agent.log"
+echo "  Logs:      ${INSTALL_DIR}/node.log"
 echo "  Config:    ${INSTALL_DIR}/agent.json"
 echo "──────────────────────────────────────────"
