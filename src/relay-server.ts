@@ -18,6 +18,11 @@ import { registerAdapter, adapterRegistry } from "../adapters/registry";
 import { claudeCodeAdapter } from "../adapters/claude-code";
 import { shellAdapter } from "../adapters/shell";
 import { systemInfoAdapter } from "../adapters/system-info";
+import { RelayEventBus } from "../adapters/agent-core/event-bus";
+import { AuditLogger } from "./audit-log";
+import { SessionPersistence } from "./session-persistence";
+import { registerApiRoutes } from "./api-routes";
+import { RelayConfigManager } from "../adapters/agent-core/config-sync";
 
 // ─── Start Time ────────────────────────────────────────────────────
 const START_TIME = Date.now();
@@ -36,8 +41,12 @@ export function setRelayToken(token: string): void {
   relayToken = token;
 }
 
-// ─── Instance Manager ─────────────────────────────────────────────
-const instanceManager = new InstanceManager();
+// ─── Core Services ────────────────────────────────────────────────
+const eventBus = new RelayEventBus();
+const instanceManager = new InstanceManager(eventBus);
+const auditLog = new AuditLogger(process.cwd());
+const sessionPersistence = new SessionPersistence(process.cwd(), eventBus);
+const relayConfigManager = new RelayConfigManager(eventBus);
 const defaultInstance = instanceManager.create(process.cwd(), "shell");
 defaultInstance.status = "running";
 defaultInstance.adapterId = "shell";  // default = terminal, Claude is a plugin
@@ -497,6 +506,9 @@ const OUT_DIR = join(__dirname, "../out");
 let ROOT_DIR = inst().dir;
 
 const serverRequestHandler = (req: import("http").IncomingMessage, res: import("http").ServerResponse) => {
+  // Delegate to structured API routes first
+  if (registerApiRoutes(req, res, { instanceManager, broadcast, auditLog })) return;
+
   const url = new URL(req.url!, `http://${req.headers.host}`);
   const path = url.pathname;
   const clientIp = req.socket.remoteAddress || "unknown";
@@ -1440,11 +1452,16 @@ function setupWssHandlers(): void {
       remoteInst.agentVersion = agentVersion;
       remoteInst.status = 'running';
       (ws as any)._isAgent = true;
+      (ws as any)._agentInstanceId = remoteInst.id;
+      (ws as any)._agentLabel = label;
       clients.delete(ws);
       send(ws, envelope("agent.registered", { instanceId: remoteInst.id, sessionId: remoteInst.id }));
       const entry = instanceManager.toJSON().find(i => i.id === remoteInst.id);
       broadcast(envelope("instance.added", { instance: entry }));
       broadcast(envelope("system.notification", { type: 'success', title: `Agent connected: ${label}` }));
+      auditLog.log('agent.registered', label, { version: agentVersion }, remoteInst.id);
+      instanceManager.startOperation(remoteInst.id, 'spawn', 'agent_register');
+      instanceManager.transitionOperation(remoteInst.id, instanceManager.getCurrentOperation(remoteInst.id)?.id || '', 'succeeded', { resultText: `Agent ${label} registered` });
 
       // Version mismatch notification — semver-aware, notify both browsers and agent
       const mismatch = mismatchSeverity(agentVersion, SERVER_VERSION);
@@ -1475,6 +1492,7 @@ function setupWssHandlers(): void {
         instanceManager.kill(agentInst.id);
         broadcast(envelope("instance.removed", { instanceId: agentInst.id }));
         broadcast(envelope("system.notification", { type: 'warning', title: `Agent disconnected: ${agentInst.label}` }));
+        auditLog.log('agent.unregistered', agentInst.label, {}, agentInst.id);
       }
       return;
     }
@@ -1540,6 +1558,13 @@ function setupWssHandlers(): void {
       return;
     }
 
+    // ── Config push → relay config manager receives ack ────
+    if (msg.type === "config.ack") {
+      relayConfigManager.ack((ws as any)._agentInstanceId || '', msg.applied || []);
+      auditLog.log('config.ack', (ws as any)._agentLabel || 'agent', { applied: msg.applied, rejected: msg.rejected });
+      return;
+    }
+
     // ── Agent spawns a sub-instance (bridge run) ─────────
     if (msg.type === "agent.instance.spawn") {
       const dir = msg.dir || process.cwd();
@@ -1553,6 +1578,7 @@ function setupWssHandlers(): void {
       }));
       const entry = instanceManager.toJSON().find(i => i.id === remoteInst.id);
       broadcast(envelope("instance.added", { instance: entry }));
+      auditLog.log('instance.spawned', label, { dir, requestId: msg.requestId }, remoteInst.id);
       return;
     }
 
@@ -1563,6 +1589,7 @@ function setupWssHandlers(): void {
         remoteInst.status = 'stopped';
         instanceManager.kill(remoteInst.id);
         broadcast(envelope("instance.removed", { instanceId: remoteInst.id }));
+        auditLog.log('instance.exited', remoteInst.label, { exitCode: msg.exitCode }, remoteInst.id);
       }
       return;
     }
@@ -1652,6 +1679,8 @@ function setupWssHandlers(): void {
       case "input": {
         sendBlock({ blockType: "user", text: msg.data });
         enqueueInput(msg.data, "web");
+        instanceManager.startOperation(targetInst.id, 'chat', msg.data?.slice(0, 200));
+        auditLog.log('instance.input', 'web', { text: msg.data?.slice(0, 200) }, targetInst.id);
         break;
       }
 
@@ -1668,6 +1697,8 @@ function setupWssHandlers(): void {
               ? `Model switched to ${msg.args.model}`
               : "Session cleared — starting fresh...",
           });
+          instanceManager.startOperation(targetInst.id, 'command', name);
+          instanceManager.transitionOperation(targetInst.id, instanceManager.getCurrentOperation(targetInst.id)?.id || '', 'succeeded', { resultText: name });
         } else if (name === "interrupt") {
           interruptInstance(targetInst.id);
         } else if (name === "rewind") {
@@ -1767,10 +1798,14 @@ function setupWssHandlers(): void {
           inst.status = 'stopped';
           instanceManager.kill(inst.id);
           broadcast(envelope("instance.removed", { instanceId: inst.id }));
+          auditLog.log('agent.auto_unregistered', inst.label, {}, inst.id);
+          instanceManager.cancelOperation(inst.id);
           break;
         }
       }
     }
+    // Persist session state
+    sessionPersistence.save(instanceManager);
   });
   });
 }
@@ -1781,6 +1816,10 @@ function shutdown(signal: string) {
 
   // Notify clients
   broadcast(envelope("system.shutdown", { message: "Server is shutting down..." }));
+
+  // Persist session before stopping
+  sessionPersistence.flush(instanceManager);
+  auditLog.log('server.shutdown', 'system', { signal, instanceCount: instanceManager.count });
 
   // Stop all adapter handles (shell + claude)
   for (const inst of instanceManager.list()) {
@@ -1900,6 +1939,20 @@ export class NodeRelayServer {
     // Register adapters
     registerAdapter(claudeCodeAdapter);
     registerAdapter(shellAdapter);
+    // Restore sessions from previous run
+    const snapshot = sessionPersistence.restore();
+    if (snapshot) {
+      for (const inst of snapshot.instances) {
+        const restored = instanceManager.create(inst.dir, inst.label, inst.source, inst.adapterId);
+        restored.agentVersion = inst.agentVersion;
+        console.log(`[relay] Restored session: ${restored.id} (${inst.label})`);
+        auditLog.log('session.restored', 'system', { originalId: inst.id }, restored.id);
+      }
+      if (snapshot.activeId) {
+        const match = instanceManager.list().find(i => i.label === snapshot.instances.find(p => p.id === snapshot.activeId)?.label);
+        if (match) instanceManager.setActive(match.id);
+      }
+    }
     // Start listening
     return new Promise((resolve, reject) => {
       httpServer!.listen(this._port, () => {
@@ -1922,6 +1975,8 @@ export class NodeRelayServer {
   /** Shut down the relay server gracefully. */
   async stop(): Promise<void> {
     if (heartbeatTimer) clearInterval(heartbeatTimer);
+    sessionPersistence.flush(instanceManager);
+    auditLog.log('server.shutdown', 'system', { instanceCount: instanceManager.count });
     for (const inst of instanceManager.list()) {
       if (inst.handle) { inst.handle.stop().catch(() => {}); }
       if (inst.process) { inst.process.kill(); inst.process = null; }

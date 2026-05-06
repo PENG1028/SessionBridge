@@ -8,11 +8,36 @@
 import { CheckpointManager } from "./checkpoint-manager";
 import type { ChildProcess } from "child_process";
 import type { WebSocket } from "ws";
+import type { RelayEventBus } from '../adapters/types';
 
 // ─── Types ─────────────────────────────────────────────────
 
 export type InstanceStatus = 'starting' | 'running' | 'stopped' | 'error';
 export type InstanceSource = 'local' | 'remote';
+
+export type OperationStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+export type OperationKind = 'command' | 'chat' | 'task' | 'spawn';
+
+export interface OperationState {
+  id: string;           // unique operation id
+  kind: OperationKind;
+  status: OperationStatus;
+  startedAt: number;
+  completedAt?: number;
+  command?: string;     // the input that triggered this
+  result?: string;      // brief result text
+  exitCode?: number;
+  error?: string;
+}
+
+// Valid transitions
+export const VALID_TRANSITIONS: Record<OperationStatus, OperationStatus[]> = {
+  pending: ['running', 'cancelled'],
+  running: ['succeeded', 'failed', 'cancelled'],
+  succeeded: [],
+  failed: [],
+  cancelled: ['pending'],  // can retry from cancelled back to pending
+};
 
 export interface InstanceData {
   id: string;
@@ -54,6 +79,10 @@ export interface InstanceData {
   createdAt: number;
   adapterId?: string;  // which adapter owns this instance
   agentVersion?: string; // agent version reported during registration (remote only)
+
+  // Operation state machine
+  currentOperation: OperationState | null;
+  operationHistory: OperationState[];  // last 20 operations
 }
 
 // ─── InstanceManager ───────────────────────────────────────
@@ -62,6 +91,9 @@ export class InstanceManager {
   private instances: Map<string, InstanceData> = new Map();
   private _activeId: string | null = null;
   private idCounter = 0;
+  private opCounter = 0;
+
+  constructor(private eventBus?: RelayEventBus) {}
 
   /** Create a new instance and register it */
   create(dir: string, label?: string, source?: InstanceSource, adapterId?: string): InstanceData {
@@ -90,6 +122,8 @@ export class InstanceManager {
       queueLock: null,
       adapterState: {},
       createdAt: Date.now(),
+      currentOperation: null,
+      operationHistory: [],
     };
     this.instances.set(id, instance);
     return instance;
@@ -145,6 +179,119 @@ export class InstanceManager {
     this._activeId = null;
   }
 
+  // ── Operation State Machine ─────────────────────────────────
+
+  /** Start a new operation for an instance. Returns the operation state, or null if instance not found. */
+  startOperation(instanceId: string, kind: OperationKind, command?: string): OperationState | null {
+    const inst = this.instances.get(instanceId);
+    if (!inst) return null;
+
+    // Push previous operation to history if any
+    if (inst.currentOperation) {
+      inst.operationHistory.push(inst.currentOperation);
+      if (inst.operationHistory.length > 20) {
+        inst.operationHistory.shift();
+      }
+    }
+
+    const op: OperationState = {
+      id: `op_${++this.opCounter}_${Date.now().toString(36)}`,
+      kind,
+      status: 'pending',
+      startedAt: Date.now(),
+      command,
+    };
+
+    inst.currentOperation = op;
+
+    // Emit events
+    this.eventBus?.emit('instance.status', {
+      instanceId: inst.id,
+      status: inst.status,
+      operationStatus: op.status,
+    } as unknown as Record<string, unknown>);
+    this.eventBus?.emit('instance.operation.started', {
+      instanceId: inst.id,
+      operationId: op.id,
+      kind: op.kind,
+      command: op.command,
+    } as unknown as Record<string, unknown>);
+
+    return op;
+  }
+
+  /** Transition an operation to a new status. Validates the transition. Returns false if invalid. */
+  transitionOperation(
+    instanceId: string,
+    opId: string,
+    newStatus: OperationStatus,
+    result?: { exitCode?: number; error?: string; resultText?: string },
+  ): boolean {
+    const inst = this.instances.get(instanceId);
+    if (!inst) return false;
+
+    const op = inst.currentOperation;
+    if (!op || op.id !== opId) return false;
+
+    // Validate transition
+    const allowed = VALID_TRANSITIONS[op.status];
+    if (!allowed.includes(newStatus)) return false;
+
+    // Apply transition
+    op.status = newStatus;
+
+    // Apply result data
+    if (result) {
+      if (result.exitCode !== undefined) op.exitCode = result.exitCode;
+      if (result.error !== undefined) op.error = result.error;
+      if (result.resultText !== undefined) op.result = result.resultText;
+    }
+
+    // Terminal state — move to history
+    const isTerminal = newStatus === 'succeeded' || newStatus === 'failed' || newStatus === 'cancelled';
+    if (isTerminal) {
+      op.completedAt = Date.now();
+      inst.operationHistory.push(op);
+      if (inst.operationHistory.length > 20) {
+        inst.operationHistory.shift();
+      }
+      inst.currentOperation = null;
+
+      this.eventBus?.emit('instance.operation.completed', {
+        instanceId: inst.id,
+        operationId: op.id,
+        kind: op.kind,
+        status: op.status,
+        exitCode: op.exitCode,
+        error: op.error,
+        result: op.result,
+      } as unknown as Record<string, unknown>);
+    }
+
+    // Emit status change
+    this.eventBus?.emit('instance.status', {
+      instanceId: inst.id,
+      status: inst.status,
+      operationStatus: op.status,
+    } as unknown as Record<string, unknown>);
+
+    return true;
+  }
+
+  /** Cancel the current operation (if any) for an instance. */
+  cancelOperation(instanceId: string): boolean {
+    const inst = this.instances.get(instanceId);
+    if (!inst || !inst.currentOperation) return false;
+
+    return this.transitionOperation(instanceId, inst.currentOperation.id, 'cancelled');
+  }
+
+  /** Get current operation for an instance. */
+  getCurrentOperation(instanceId: string): OperationState | null {
+    const inst = this.instances.get(instanceId);
+    return inst?.currentOperation ?? null;
+  }
+
   /** Serialise instance list for API responses (excludes process/buffer internals) */
   toJSON() {
     return this.list().map(inst => ({
@@ -160,6 +307,8 @@ export class InstanceManager {
       checkpointCount: inst.checkpointManager.totalCheckpoints(),
       agentVersion: inst.agentVersion || null,
       createdAt: inst.createdAt,
+      currentOperation: inst.currentOperation,
+      operationCount: inst.operationHistory.length,
     }));
   }
 }

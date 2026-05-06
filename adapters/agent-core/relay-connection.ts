@@ -17,6 +17,7 @@ export interface RelayConnectionEvents {
   control: (requestId: string, request: string) => void;
   notification: (type: string, title: string, detail: string) => void;
   error: (code: string, message: string) => void;
+  configPush: (entries: { key: string; value: unknown }[], requestId: string) => void;
   close: () => void;
 }
 
@@ -90,6 +91,10 @@ export class RelayConnection extends EventEmitter {
 
         case 'ping':
           this.ws!.send(JSON.stringify(envelope('pong', {})));
+          break;
+
+        case 'config.push':
+          this.emit('configPush', msg.entries || [], msg.requestId || '');
           break;
 
         case 'system.notification':
@@ -176,6 +181,13 @@ export class RelayConnection extends EventEmitter {
   sendInstanceExit(instanceId: string, exitCode: number): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(envelope('agent.instance.exit', { instanceId, exitCode })));
+    }
+  }
+
+  /** Send config ack back to relay after applying a config push. */
+  sendConfigAck(requestId: string, applied: string[], rejected: { key: string; reason: string }[]): void {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(envelope('config.ack', { requestId, applied, rejected })));
     }
   }
 

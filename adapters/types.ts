@@ -292,3 +292,13 @@ export interface SidePanelProps {
   instanceId: string;
   blocks: OutputBlock[];
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// RelayEventBus — cross-adapter event bus contract
+// ═══════════════════════════════════════════════════════════════════
+
+export interface RelayEventBus {
+  on(type: string, handler: (data: Record<string, unknown>) => void): () => void;
+  emit(type: string, data: Record<string, unknown>): void;
+  off(type: string, handler: (data: Record<string, unknown>) => void): void;
+}
