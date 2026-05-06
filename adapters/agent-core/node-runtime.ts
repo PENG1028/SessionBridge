@@ -58,10 +58,12 @@ export class NodeRuntime {
 
     // 2. Start relay server if this node can be a relay
     if (this.resolvedRole === 'relay') {
-      const { NodeRelayServer } = await import('../../src/relay-server');
+      const { NodeRelayServer, setNodeId } = await import('../../src/relay-server');
       this.relayServer = new NodeRelayServer(this.config.relayPort, this.config.relayToken);
       const actualPort = await this.relayServer.start();
-      addDashboardLog(`[node] Relay server on port ${actualPort}`);
+      // Inject persistent node identity into EventBus (for event routing / mesh / audit)
+      if (this.config.nodeId) setNodeId(this.config.nodeId);
+      addDashboardLog(`[node] Relay server on port ${actualPort}, nodeId: ${this.config.nodeId ? this.config.nodeId.slice(0, 8) + '…' : 'none'}`);
     }
 
     // 3. Always start dashboard

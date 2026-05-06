@@ -294,6 +294,27 @@ export interface SidePanelProps {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// SystemToast — structured notification message
+// ═══════════════════════════════════════════════════════════════════
+
+export interface SystemToast {
+  id: string;
+  severity: 'info' | 'success' | 'warning' | 'error';
+  title: string;
+  detail?: string;
+  sourceNodeId?: string;
+  /** Which nodes should display this: 'all' | 'admins' | node-specific role */
+  targetScope?: string;
+  /** Display duration in ms. 0 = persistent until dismissed. */
+  duration?: number;
+  /** Optional action buttons */
+  actions?: { label: string; value: string }[];
+  /** Underlying event type that triggered this toast */
+  triggerEvent?: string;
+  timestamp: number;
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // RelayEventBus — cross-adapter event bus contract
 // ═══════════════════════════════════════════════════════════════════
 

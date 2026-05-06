@@ -3,9 +3,10 @@
 // Loaded from (priority): CLI args, BRIDGE_CONFIG env var,
 // ~/.sessionbridge/agent.json, defaults.
 
-import { readFileSync, existsSync } from 'fs';
-import { join } from 'path';
+import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs';
+import { join, dirname } from 'path';
 import { homedir } from 'os';
+import { randomBytes } from 'crypto';
 import type { PermissionConfig } from './permissions';
 
 export interface NodeConfig {
@@ -13,6 +14,12 @@ export interface NodeConfig {
   label: string;
   role: 'auto' | 'relay' | 'leaf';
   workingDirectory: string;
+
+  /** Persistent node identifier (auto-generated on first start, survives restarts) */
+  nodeId?: string;
+
+  /** Node role tag for future mesh routing / permission scoping (e.g. "admin", "worker", "gateway") */
+  nodeRole?: string;
 
   // Relay server (active when role resolves to 'relay')
   relayPort: number;
@@ -35,6 +42,9 @@ export interface NodeConfig {
   // Persistence
   logFile?: string;
   pidFile?: string;
+
+  /** Extension bag — opaque config for devices / platforms / future features */
+  extensions?: Record<string, unknown>;
 }
 
 const DEFAULT_CONFIG: NodeConfig = {
@@ -84,7 +94,36 @@ export function resolveConfig(cliOverrides: Partial<NodeConfig> & { relayUrl?: s
     label: cliOverrides.label || (json.label as string) || '',
   };
 
+  // Auto-generate persistent nodeId on first start, save back to config
+  if (!merged.nodeId) {
+    merged.nodeId = generateNodeId();
+    persistNodeId(merged.nodeId);
+  }
+
   return merged;
+}
+
+/** Generate a unique node identifier (32 hex chars). */
+export function generateNodeId(): string {
+  return randomBytes(16).toString('hex');
+}
+
+/** Persist nodeId into the JSON config file so it survives restarts. */
+function persistNodeId(nodeId: string): void {
+  try {
+    const path = process.env.BRIDGE_CONFIG || join(configDir(), 'agent.json');
+    let existing: Record<string, unknown> = {};
+    try {
+      if (existsSync(path)) {
+        existing = JSON.parse(readFileSync(path, 'utf8'));
+      }
+    } catch { /* malformed — overwrite */ }
+    existing.nodeId = nodeId;
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify(existing, null, 2), 'utf8');
+  } catch (e) {
+    console.warn(`[config] Failed to persist nodeId: ${e}`);
+  }
 }
 
 // Backward compat re-export

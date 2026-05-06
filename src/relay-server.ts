@@ -41,6 +41,16 @@ export function setRelayToken(token: string): void {
   relayToken = token;
 }
 
+/** Allow runtime to set the node identity (injected by NodeRuntime). */
+export function setNodeId(id: string): void {
+  eventBus.setNodeId(id);
+}
+
+/** Get the current nodeId (empty string if not set yet). */
+export function getNodeId(): string {
+  return eventBus.nodeId;
+}
+
 // ─── Core Services ────────────────────────────────────────────────
 const eventBus = new RelayEventBus();
 const instanceManager = new InstanceManager(eventBus);
