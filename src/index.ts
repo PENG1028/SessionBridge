@@ -135,7 +135,7 @@ async function main() {
     }
 
     const { configDir } = await import("../adapters/agent-core/config");
-    const configPath = process.env.BRIDGE_CONFIG || process.env.SB_CONFIG || join(configDir(), 'agent.json');
+    const configPath = process.env.BRIDGE_CONFIG || join(configDir(), 'agent.json');
 
     let existing: Record<string, unknown> = {};
     try {

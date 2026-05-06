@@ -56,7 +56,7 @@ export function configDir(): string {
 
 function loadJsonConfig(): Record<string, unknown> {
   try {
-    const path = process.env.BRIDGE_CONFIG || process.env.SB_CONFIG || join(configDir(), 'agent.json');
+    const path = process.env.BRIDGE_CONFIG || join(configDir(), 'agent.json');
     if (existsSync(path)) {
       return JSON.parse(readFileSync(path, 'utf8'));
     }

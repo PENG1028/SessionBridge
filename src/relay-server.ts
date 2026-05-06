@@ -27,9 +27,9 @@ import { mismatchSeverity } from "../adapters/semver";
 
 // ─── Config ──────────────────────────────────────────────────────
 const PORT = parseInt(process.env.PORT || "8080", 10);
-let relayToken = process.env.BRIDGE_TOKEN || process.env.relayToken || "";
-const sslKey = process.env.BRIDGE_SSL_KEY || process.env.sslKey || "";
-const sslCert = process.env.BRIDGE_SSL_CERT || process.env.sslCert || "";
+let relayToken = process.env.BRIDGE_TOKEN || "";
+const sslKey = process.env.BRIDGE_SSL_KEY || "";
+const sslCert = process.env.BRIDGE_SSL_CERT || "";
 
 /** Allow runtime to set the relay token (overrides env var). */
 export function setRelayToken(token: string): void {
@@ -1366,7 +1366,7 @@ function setupWssHandlers(): void {
       }
 
       // Start Claude on first browser connection (skip in test mode)
-      if (role === "browser" && !(process.env.BRIDGE_TEST_MODE || process.env.SB_TEST_MODE)) {
+      if (role === "browser" && !process.env.BRIDGE_TEST_MODE) {
         const activeInst = inst();
         if (!activeInst.process) spawnInstance();
       }
@@ -1401,7 +1401,7 @@ function setupWssHandlers(): void {
       }
       authenticatedSockets.add(ws);
 
-      if (!(process.env.BRIDGE_TEST_MODE || process.env.SB_TEST_MODE)) {
+      if (!process.env.BRIDGE_TEST_MODE) {
         const activeInst = inst();
         if (!activeInst.process) spawnInstance();
       }
