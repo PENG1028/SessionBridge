@@ -28,9 +28,9 @@ export interface StoredSession {
 }
 
 // localStorage keys
-export const LS_ACTIVE_SESSION = 'sb-active-session';
-export const LS_SESSIONS_META = 'sb-sessions-metadata';
-export const LS_MESSAGES_CACHE = 'sb-messages';
+export const LS_ACTIVE_SESSION = 'bridge-active-session';
+export const LS_SESSIONS_META = 'bridge-sessions-metadata';
+export const LS_MESSAGES_CACHE = 'bridge-messages';
 
 const DB_NAME = 'sessionbridge-db';
 const DB_VERSION = 1;

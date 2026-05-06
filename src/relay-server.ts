@@ -27,13 +27,13 @@ import { mismatchSeverity } from "../adapters/semver";
 
 // ─── Config ──────────────────────────────────────────────────────
 const PORT = parseInt(process.env.PORT || "8080", 10);
-let SB_TOKEN = process.env.BRIDGE_TOKEN || process.env.SB_TOKEN || "";
-const SB_KEY = process.env.BRIDGE_SSL_KEY || process.env.SB_KEY || "";
-const SB_CERT = process.env.BRIDGE_SSL_CERT || process.env.SB_CERT || "";
+let relayToken = process.env.BRIDGE_TOKEN || process.env.relayToken || "";
+const sslKey = process.env.BRIDGE_SSL_KEY || process.env.sslKey || "";
+const sslCert = process.env.BRIDGE_SSL_CERT || process.env.sslCert || "";
 
 /** Allow runtime to set the relay token (overrides env var). */
 export function setRelayToken(token: string): void {
-  SB_TOKEN = token;
+  relayToken = token;
 }
 
 // ─── Instance Manager ─────────────────────────────────────────────
@@ -1289,10 +1289,10 @@ const heartbeatMap = new WeakMap<WebSocket, boolean>();
 
 function ensureServer(): void {
   if (httpServer) return;
-  if (SB_KEY && SB_CERT) {
+  if (sslKey && sslCert) {
     httpServer = createHttpsServer({
-      key: readFileSync(SB_KEY, "utf8"),
-      cert: readFileSync(SB_CERT, "utf8"),
+      key: readFileSync(sslKey, "utf8"),
+      cert: readFileSync(sslCert, "utf8"),
     }, serverRequestHandler);
   } else {
     httpServer = createHttpServer(serverRequestHandler);
@@ -1339,7 +1339,7 @@ function setupWssHandlers(): void {
       const clientToken = msg.clientToken || "";
 
       // Authentication check
-      if (SB_TOKEN && token !== SB_TOKEN) {
+      if (relayToken && token !== relayToken) {
         send(ws, envelope("error", { code: "UNAUTHORIZED", message: "Invalid or missing token" }));
         setTimeout(() => ws.close(4001, "Unauthorized"), 100);
         return;
@@ -1394,7 +1394,7 @@ function setupWssHandlers(): void {
     // Backward compat: legacy auth / direct (no hello handshake)
     if (msg.type === "auth" || msg.type === "direct") {
       const token = msg.token || "";
-      if (SB_TOKEN && token !== SB_TOKEN) {
+      if (relayToken && token !== relayToken) {
         send(ws, envelope("error", { code: "UNAUTHORIZED", message: "Invalid or missing token" }));
         setTimeout(() => ws.close(4001, "Unauthorized"), 100);
         return;
@@ -1424,7 +1424,7 @@ function setupWssHandlers(): void {
     }
 
     // ── Auth guard for all subsequent handlers ──
-    if (SB_TOKEN && !authenticatedSockets.has(ws)) {
+    if (relayToken && !authenticatedSockets.has(ws)) {
       send(ws, envelope("error", { code: "UNAUTHORIZED", message: "Authentication required — send hello first" }));
       setTimeout(() => ws.close(4001, "Unauthorized"), 100);
       return;
@@ -1852,7 +1852,7 @@ export function startRelayServer(port?: number): Promise<{ close: () => void; po
   return new Promise((resolve) => {
     httpServer!.listen(p, () => {
       const addr = httpServer!.address() as import("net").AddressInfo;
-      const proto = SB_KEY && SB_CERT ? "https" : "http";
+      const proto = sslKey && sslCert ? "https" : "http";
       console.log(`\n  ┌──────────────────────────────────────┐`);
       console.log(`  │  SessionBridge Relay Server         │`);
       console.log(`  │                                      │`);
@@ -1906,7 +1906,7 @@ export class NodeRelayServer {
         const addr = httpServer!.address() as import("net").AddressInfo;
         this._port = addr.port;
         console.log(`[relay] Listening on ${addr.port}`);
-        if (!SB_TOKEN) {
+        if (!relayToken) {
           console.warn('');
           console.warn('  ⚠  SECURITY WARNING: Relay server running without a token.');
           console.warn('  ⚠  Anyone who can reach this port can control connected agents.');

@@ -305,7 +305,7 @@ export default function Page() {
     idbDebounceRef.current = setTimeout(() => {
       // Fast path: full-map localStorage cache
       try {
-        localStorage.setItem('sb-messages', JSON.stringify(messagesBySession));
+        localStorage.setItem('bridge-messages', JSON.stringify(messagesBySession));
       } catch {}
       // Complete path: per-session IndexedDB writes
       for (const [sid, msgs] of Object.entries(messagesBySession)) {
@@ -486,9 +486,9 @@ export default function Page() {
     // Clear persisted data for this session
     sessionStore.clearMessages(sk).catch(() => {});
     try {
-      const cached = JSON.parse(localStorage.getItem('sb-messages') || '{}');
+      const cached = JSON.parse(localStorage.getItem('bridge-messages') || '{}');
       delete cached[sk];
-      localStorage.setItem('sb-messages', JSON.stringify(cached));
+      localStorage.setItem('bridge-messages', JSON.stringify(cached));
     } catch {}
     setPhase('idle');
     setCurrentActivity(null);
@@ -535,9 +535,9 @@ export default function Page() {
     if (prevMsgs?.length > 0) {
       sessionStore.replaceMessages(prevKey, toStorageMessages(prevMsgs)).catch(() => {});
       try {
-        const cached = JSON.parse(localStorage.getItem('sb-messages') || '{}');
+        const cached = JSON.parse(localStorage.getItem('bridge-messages') || '{}');
         cached[prevKey] = prevMsgs;
-        localStorage.setItem('sb-messages', JSON.stringify(cached));
+        localStorage.setItem('bridge-messages', JSON.stringify(cached));
       } catch {}
     }
     setSwitching(true);
@@ -942,7 +942,7 @@ export default function Page() {
               type="password"
               value={loginInput}
               onChange={(e) => setLoginInput(e.target.value)}
-              placeholder="SB_TOKEN"
+              placeholder="BRIDGE_TOKEN"
               className="w-full bg-[#1a1a1a] border border-gray-700 rounded px-3 py-2 text-sm text-gray-200 placeholder-gray-600 outline-none focus:border-purple-500 mb-4"
               autoFocus
             />
