@@ -6,15 +6,16 @@
 // Uses only Node.js built-in modules — no Express, no framework.
 
 import type { IncomingMessage, ServerResponse } from "http";
-import { existsSync, readFileSync } from "fs";
-import { basename, isAbsolute, resolve } from "path";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import { basename, isAbsolute, resolve, join } from "path";
 import os from "os";
 
 import type { InstanceManager, InstanceData } from "./instance-manager";
+import type { ConfigManager } from "./config";
+import type { RelayConfigManager } from "../adapters/agent-core/config-sync";
 import { envelope } from "../adapters/protocol";
-import {
-  getClaudeHistoryPath,
-} from "../adapters/claude-code/runtime";
+import { getClaudeHistoryPath } from "../adapters/claude-code/runtime";
+import type { PermissionCategory } from "../adapters/types";
 
 // ─── Types ─────────────────────────────────────────────────────
 
@@ -31,6 +32,16 @@ export interface ApiContext {
   auditLog?: AuditLogger;
   /** Relay's broadcast function — sends an envelope to every connected WebSocket client. */
   broadcast: (msg: Record<string, unknown>) => void;
+  /**
+   * Optional permission check. Return true if allowed, false (and
+   * send a 403 response) if denied. When absent, all operations
+   * are permitted (backward compat).
+   */
+  checkPermission?: (res: ServerResponse, category: PermissionCategory, context?: Record<string, unknown>) => boolean;
+  /** Config manager for reading/writing server config */
+  configManager?: ConfigManager;
+  /** Relay config manager for pushing live config changes to agents */
+  relayConfig?: RelayConfigManager;
 }
 
 // ─── Helpers ───────────────────────────────────────────────────
@@ -169,12 +180,11 @@ export function registerApiRoutes(
   }
 
   // ──────────────── POST /api/instances/:id/command ────────────
-  // Send a control command to an instance (clear, restart, interrupt,
-  // setMode, setEffort, etc.).  Written to stdin for local processes
-  // or forwarded via WebSocket for remote agents.
+  // Send a control command to an instance.
   {
     const p = matchPath(pathname, "/api/instances/:id/command");
     if (method === "POST" && p) {
+      if (ctx.checkPermission && !ctx.checkPermission(res, 'processManagement', { action: 'command', instanceId: p.id })) return true;
       const instanceId = p.id;
 
       readBody(req)
@@ -273,6 +283,7 @@ export function registerApiRoutes(
   // the relay server's spawn logic (or a subsequent API call) handles
   // that separately.
   if (method === "POST" && pathname === "/api/instances") {
+    if (ctx.checkPermission && !ctx.checkPermission(res, 'processManagement', { action: 'create_instance' })) return true;
     readBody(req)
       .then((body) => {
         let parsed: { dir?: string; label?: string; adapterId?: string };
@@ -336,12 +347,11 @@ export function registerApiRoutes(
   }
 
   // ──────────────── DELETE /api/instances/:id ──────────────────
-  // Stop and remove an instance.  Kills the underlying process /
-  // adapter handle, removes from the manager, and re-assigns the
-  // active instance if the deleted one was active.
+  // Stop and remove an instance.
   {
     const p = matchPath(pathname, "/api/instances/:id");
     if (method === "DELETE" && p) {
+      if (ctx.checkPermission && !ctx.checkPermission(res, 'processManagement', { action: 'delete_instance', instanceId: p.id })) return true;
       const instanceId = p.id;
       const inst = instanceManager.get(instanceId);
       if (!inst) {
@@ -479,6 +489,63 @@ export function registerApiRoutes(
       instances: instanceList,
     });
     return true;
+  }
+
+  // ──────────────── Config API ────────────────────────────
+  // GET /api/config — return full config
+  if (method === "GET" && pathname === "/api/config") {
+    if (!ctx.configManager) { json(res, 501, { error: "Config manager not available" }); return true; }
+    json(res, 200, ctx.configManager.getAll() as unknown as Record<string, unknown>);
+    return true;
+  }
+
+  // POST /api/config — merge partial config update
+  if (method === "POST" && pathname === "/api/config") {
+    if (!ctx.configManager) { json(res, 501, { error: "Config manager not available" }); return true; }
+    readBody(req).then((raw) => {
+      try {
+        const body = JSON.parse(raw);
+        ctx.configManager!.set(body);
+        ctx.auditLog?.log('config.update', 'api', { keys: Object.keys(body) });
+        // If ntfyTopic changed, push live to connected agents via config sync
+        const ntfyTopic = body.notifications?.ntfyTopic;
+        if (ntfyTopic !== undefined && ctx.relayConfig) {
+          ctx.relayConfig.set('ntfyTopic', ntfyTopic, 'relay');
+        }
+        json(res, 200, { success: true, config: ctx.configManager!.getAll() as unknown as Record<string, unknown> });
+      } catch (err) {
+        json(res, 400, { error: `Invalid config: ${(err as Error).message}` });
+      }
+    }).catch(() => json(res, 400, { error: "Failed to read request body" }));
+    return true;
+  }
+
+  // POST /api/config/connections — upsert a remote relay
+  if (method === "POST" && pathname === "/api/config/connections") {
+    if (!ctx.configManager) { json(res, 501, { error: "Config manager not available" }); return true; }
+    readBody(req).then((raw) => {
+      try {
+        const body = JSON.parse(raw);
+        const connections = ctx.configManager!.upsertConnection(body);
+        ctx.auditLog?.log('config.connection.upsert', 'api', { id: body.id, url: body.url });
+        json(res, 200, { success: true, connections });
+      } catch (err) {
+        json(res, 400, { error: (err as Error).message });
+      }
+    }).catch(() => json(res, 400, { error: "Failed to read request body" }));
+    return true;
+  }
+
+  // DELETE /api/config/connections/:id — remove a remote relay
+  {
+    const p = matchPath(pathname, "/api/config/connections/:id");
+    if (method === "DELETE" && p) {
+      if (!ctx.configManager) { json(res, 501, { error: "Config manager not available" }); return true; }
+      ctx.configManager.removeConnection(p.id);
+      ctx.auditLog?.log('config.connection.remove', 'api', { id: p.id });
+      json(res, 200, { success: true });
+      return true;
+    }
   }
 
   // No route matched — let the existing handler process the request.

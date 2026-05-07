@@ -35,6 +35,8 @@ export function useSession(
   initialCols?: number,
   initialRows?: number,
   onChunk?: (data: string) => void,
+  onSystemNotify?: (notification: { type: string; title: string; message?: string; scenarioId?: string; id?: string; duration?: number }) => void,
+  onSystemNotifyDismiss?: (id: string) => void,
 ) {
   const clientRef = useRef<WSClient | null>(null);
   const [connStatus, setConnStatus] = useState<ConnStatus>({ status: 'connecting' });
@@ -59,6 +61,9 @@ export function useSession(
   const [instances, setInstances] = useState<InstanceInfo[]>([]);
   const [activeInstanceId, setActiveInstanceId] = useState<string | null>(null);
   const activeInstanceIdRef = useRef<string | null>(null);
+
+  // Extension points state (from server welcome message)
+  const [extensionPointsData, setExtensionPointsData] = useState<Record<string, unknown> | null>(null);
 
   const appendOutput = useCallback((data: string) => {
     outputRef.current += data;
@@ -222,11 +227,13 @@ export function useSession(
         activeInstanceIdRef.current = id;
         setActiveInstanceId(id);
       },
+      onSystemNotify,
+      onSystemNotifyDismiss,
       onSystemMessage: (msg: any) => {
-        // Route system notifications
-        if (msg.type === 'system.notification') {
-          addMsgLog('system', msg);
-        }
+        addMsgLog('system', `${msg.title || msg.type || 'message'}: ${msg.detail || msg.message || ''}`);
+      },
+      onExtensionPoints: (eps) => {
+        setExtensionPointsData(eps);
       },
     });
 
@@ -237,7 +244,7 @@ export function useSession(
       ws.disconnect();
       clientRef.current = null;
     };
-  }, [wsUrl, token, appendOutput, addMsgLog, parseOutput, initialCols, initialRows]);
+  }, [wsUrl, token, appendOutput, addMsgLog, parseOutput, initialCols, initialRows, onSystemNotify]);
 
   // Sync refs with state
   useEffect(() => {
@@ -343,5 +350,7 @@ export function useSession(
     activateInstance,
     createInstance,
     killInstance,
+    // Extension points
+    extensionPointsData,
   };
 }

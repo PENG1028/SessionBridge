@@ -60,11 +60,18 @@ export type WSCallback = {
   onInstanceAdded?: (instance: InstanceInfo) => void;
   onInstanceRemoved?: (instanceId: string) => void;
   onInstanceSwitched?: (instanceId: string) => void;
-  /** Catch-all for unhandled message types (e.g., system.notification) */
+  /** Catch-all for unhandled message types */
   onSystemMessage?: (msg: any) => void;
+  /** System notifications routed to toast UI */
+  onSystemNotify?: (notification: { id?: string; type: string; title: string; message?: string; scenarioId?: string; duration?: number; action?: { label: string; onClick: () => void } }) => void;
+  /** Dismiss a previously shown notification by server-assigned ID */
+  onSystemNotifyDismiss?: (id: string) => void;
+  /** Extension points data from server (views, commands, menus, configs) */
+  onExtensionPoints?: (eps: Record<string, unknown>) => void;
 };
 
 import { VERSION } from '../adapters/version';
+import { createCryptoSession, type BrowserCryptoSession } from '../app/crypto-client';
 
 /** Envelope helper for client-side sends. */
 function env(type: string, body: Record<string, unknown> = {}) {
@@ -78,6 +85,7 @@ export class WSClient {
   private cb: WSCallback;
   private closed = false;
   private workspaceMode = false;
+  private _crypto: BrowserCryptoSession | null = null;
 
   constructor(url: string, token: string, cb: WSCallback) {
     this.url = url;
@@ -89,15 +97,21 @@ export class WSClient {
     if (this.closed) return;
     this.ws = new WebSocket(this.url);
 
-    this.ws.onopen = () => {
+    this.ws.onopen = async () => {
+      // Create crypto session for ECDH + AES-256-GCM encryption
+      this._crypto = await createCryptoSession();
+
       // Send hello for capability negotiation
       const helloBody: Record<string, unknown> = {
         role: "browser",
         version: VERSION,
-        features: ["structured_chat", "instance_list", "shell"],
+        features: ["crypto_v1", "structured_chat", "instance_list", "shell"],
         cols: cols ?? 120,
         rows: rows ?? 40,
       };
+      if (this._crypto) {
+        helloBody.ephemeralKey = this._crypto.localPublicKey;
+      }
       if (this.token) {
         helloBody.token = this.token;
       } else {
@@ -106,13 +120,21 @@ export class WSClient {
       this.ws!.send(env("hello", helloBody));
     };
 
-    this.ws.onmessage = (ev) => {
+    this.ws.onmessage = async (ev) => {
+      // Decrypt if crypto is established
+      let data = ev.data;
+      if (this._crypto?.isEstablished) {
+        const decrypted = await this._crypto.decrypt(data);
+        if (decrypted) data = decrypted;
+      }
+
       let msg: any;
       try {
-        const parsed = JSON.parse(ev.data);
+        const parsed = JSON.parse(data);
         // Handle both v1 envelope and legacy format
         if (parsed.v === 1 && parsed.body) {
-          msg = { type: parsed.type, ...parsed.body };
+          msg = { ...parsed.body, type: parsed.type };
+          if (parsed.body.type) msg.severity = parsed.body.type;
         } else {
           msg = parsed;
         }
@@ -122,12 +144,22 @@ export class WSClient {
 
       switch (msg.type) {
         case "welcome":
+          // Complete crypto handshake if server supports it
+          if (this._crypto && msg.staticKey && msg.ephemeralKey) {
+            await this._crypto.handshake(
+              msg.staticKey,
+              msg.ephemeralKey,
+            );
+          }
           this.cb.onStatusChange({
             authenticated: true,
             sessionId: msg.sessionId,
           });
           if (msg.instances) {
             this.cb.onInstanceList?.(msg.instances, msg.sessionId || null);
+          }
+          if (msg.extensionPoints) {
+            this.cb.onExtensionPoints?.(msg.extensionPoints);
           }
           break;
 
@@ -263,6 +295,34 @@ export class WSClient {
           this.cb.onInstanceSwitched?.(msg.instanceId);
           break;
 
+        case "system.notification":
+          this.cb.onSystemNotify?.({
+            id: msg.id,
+            type: msg.severity || 'info',
+            title: msg.title || '',
+            message: msg.detail || msg.message,
+            scenarioId: msg.scenarioId,
+            duration: msg.duration,
+          });
+          this.cb.onSystemMessage?.(msg);
+          break;
+
+        case "system.notification_dismiss":
+          this.cb.onSystemNotifyDismiss?.(msg.id);
+          break;
+
+        case "update.available":
+          this.cb.onSystemNotify?.({
+            type: 'warning',
+            title: `Update available: v${msg.latest}`,
+            message: `Current: v${msg.current}`,
+            scenarioId: 'update',
+            duration: 0, // persistent until dismissed
+            action: { label: 'Upgrade now', onClick: () => this.sendCommand('bridge-update') },
+          });
+          this.cb.onSystemMessage?.(msg);
+          break;
+
         default:
           this.cb.onSystemMessage?.(msg);
           break;
@@ -281,38 +341,42 @@ export class WSClient {
     };
   }
 
-  sendInput(data: string, sessionId?: string, instanceId?: string) {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      const body: Record<string, unknown> = { data };
-      if (sessionId) body.sessionId = sessionId;
-      if (instanceId) body.instanceId = instanceId;
-      this.ws.send(env("instance.input", body));
+  /** Send an envelope, encrypted if crypto is established. */
+  private async sendEnv(type: string, body: Record<string, unknown> = {}): Promise<void> {
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    const payload = env(type, body);
+    if (this._crypto?.isEstablished) {
+      this.ws.send(await this._crypto.encrypt(payload));
+    } else {
+      this.ws.send(payload);
     }
   }
 
-  sendCommand(name: string, args?: Record<string, string>, sessionId?: string, instanceId?: string) {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      const body: Record<string, unknown> = { name, args };
-      if (sessionId) body.sessionId = sessionId;
-      if (instanceId) body.instanceId = instanceId;
-      this.ws.send(env("instance.command", body));
-    }
+  async sendInput(data: string, sessionId?: string, instanceId?: string) {
+    const body: Record<string, unknown> = { data };
+    if (sessionId) body.sessionId = sessionId;
+    if (instanceId) body.instanceId = instanceId;
+    await this.sendEnv("instance.input", body);
   }
 
-  sendResize(cols: number, rows: number) {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(env("shell.resize", { cols, rows }));
-    }
+  async sendCommand(name: string, args?: Record<string, string>, sessionId?: string, instanceId?: string) {
+    const body: Record<string, unknown> = { name, args };
+    if (sessionId) body.sessionId = sessionId;
+    if (instanceId) body.instanceId = instanceId;
+    await this.sendEnv("instance.command", body);
   }
 
-  requestSessions() {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(env("session.list_req", {}));
-    }
+  async sendResize(cols: number, rows: number) {
+    await this.sendEnv("shell.resize", { cols, rows });
+  }
+
+  async requestSessions() {
+    await this.sendEnv("session.list_req", {});
   }
 
   disconnect() {
     this.closed = true;
+    this._crypto = null;
     this.ws?.close();
     this.ws = null;
   }

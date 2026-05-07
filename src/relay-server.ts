@@ -1,7 +1,7 @@
 import { createServer as createHttpServer } from "http";
 import { createServer as createHttpsServer } from "https";
-import { readFileSync, readdirSync, statSync, existsSync, writeFileSync, unlinkSync } from "fs";
-import { join, extname, basename, resolve, isAbsolute, relative } from "path";
+import { readFileSync, readdirSync, statSync, existsSync, writeFileSync, unlinkSync, mkdirSync } from "fs";
+import { join, extname, basename, resolve, isAbsolute, relative, dirname } from "path";
 import { WebSocketServer, WebSocket } from "ws";
 import { spawn, execSync } from "child_process";
 import { createInterface } from "readline";
@@ -11,18 +11,26 @@ import os from "os";
 import { checkRateLimit } from "./rate-limiter";
 import { CheckpointManager } from "./checkpoint-manager";
 import { InstanceManager } from "./instance-manager";
-import { processStreamLine } from "../adapters/claude-code/parser";
-import { resolveClaudeCommand, isClaudeAvailable, getClaudeDataDir, getClaudeProjectsDir, getClaudeSessionPath, getClaudeHistoryPath, getProjectSlug } from "../adapters/claude-code/runtime";
 import { envelope, parseMsg } from "../adapters/protocol";
-import { registerAdapter, adapterRegistry } from "../adapters/registry";
-import { claudeCodeAdapter } from "../adapters/claude-code";
-import { shellAdapter } from "../adapters/shell";
-import { systemInfoAdapter } from "../adapters/system-info";
+import { adapterRegistry } from "../adapters/registry";
+import { extensionPoints, evaluateWhen } from "../adapters/agent-core/extension-points";
+import type { WhenContext, StreamParserDeps } from "../adapters/types";
 import { RelayEventBus } from "../adapters/agent-core/event-bus";
 import { AuditLogger } from "./audit-log";
+import { appConfig } from "./config";
+import { ensureCert } from "./cert";
 import { SessionPersistence } from "./session-persistence";
 import { registerApiRoutes } from "./api-routes";
 import { RelayConfigManager } from "../adapters/agent-core/config-sync";
+import { PermissionModel } from "../adapters/agent-core/permissions";
+import { CryptoStream } from "./crypto-stream";
+import { tryDecrypt } from "./crypto-layer";
+import { loadOrCreateIdentity } from "./identity-manager";
+
+// ─── Adapter path helper — avoids repeating adapterRegistry.get('claude-code') ──
+function claudePaths() {
+  return adapterRegistry.get('claude-code')?.getSessionPaths?.();
+}
 
 // ─── Start Time ────────────────────────────────────────────────────
 const START_TIME = Date.now();
@@ -31,10 +39,10 @@ import { VERSION as SERVER_VERSION } from "../adapters/version";
 import { mismatchSeverity } from "../adapters/semver";
 
 // ─── Config ──────────────────────────────────────────────────────
-const PORT = parseInt(process.env.PORT || "8080", 10);
-let relayToken = process.env.BRIDGE_TOKEN || "";
-const sslKey = process.env.BRIDGE_SSL_KEY || "";
-const sslCert = process.env.BRIDGE_SSL_CERT || "";
+const PORT = appConfig.get("port");
+let relayToken = appConfig.get("token") || process.env.BRIDGE_TOKEN || "";
+const sslKey = appConfig.get("sslKey") || process.env.BRIDGE_SSL_KEY || "";
+const sslCert = appConfig.get("sslCert") || process.env.BRIDGE_SSL_CERT || "";
 
 /** Allow runtime to set the relay token (overrides env var). */
 export function setRelayToken(token: string): void {
@@ -56,7 +64,26 @@ const eventBus = new RelayEventBus();
 const instanceManager = new InstanceManager(eventBus);
 const auditLog = new AuditLogger(process.cwd());
 const sessionPersistence = new SessionPersistence(process.cwd(), eventBus);
+const permissions = new PermissionModel();
 const relayConfigManager = new RelayConfigManager(eventBus);
+
+// ─── Notification Bus ────────────────────────────────────────────
+let ntfCounter = 0;
+function notifyBus(params: {
+  scenarioId: string;
+  severity: 'info' | 'success' | 'warning' | 'error';
+  title: string;
+  detail?: string;
+  duration?: number;
+}): string {
+  const id = `ntf_${++ntfCounter}_${Date.now().toString(36)}`;
+  broadcast(envelope("system.notification", { id, ...params, timestamp: Date.now() }));
+  return id;
+}
+function dismissNotify(id: string): void {
+  broadcast(envelope("system.notification_dismiss", { id }));
+}
+
 const defaultInstance = instanceManager.create(process.cwd(), "shell");
 defaultInstance.status = "running";
 defaultInstance.adapterId = "shell";  // default = terminal, Claude is a plugin
@@ -65,6 +92,21 @@ instanceManager.setActive(defaultInstance.id);
 /** Get the currently active instance */
 function inst(): import("./instance-manager").InstanceData {
   return instanceManager.getActive() || defaultInstance;
+}
+
+/** Check an HTTP request against the permission model. Returns true if allowed. */
+function checkHttpPermission(
+  res: import("http").ServerResponse,
+  category: import("../adapters/types").PermissionCategory,
+  context?: Record<string, unknown>,
+): boolean {
+  const result = permissions.check(category, context);
+  if (!result.allowed) {
+    res.writeHead(403, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: result.reason || "Permission denied" }));
+    return false;
+  }
+  return true;
 }
 
 // ─── MIME ────────────────────────────────────────────────────────
@@ -100,6 +142,28 @@ const shellWsMap = new Map<WebSocket, Set<string>>();
 const agentVersionMap = new Map<WebSocket, string>();
 // Shell write-lock: instanceId → owning browser WebSocket
 const shellLockMap = new Map<string, WebSocket>();
+/** Shell output subscribers: instanceId → set of browser WebSockets receiving shell.output */
+const shellSubscribers = new Map<string, Set<WebSocket>>();
+
+function subscribeShellOutput(instanceId: string, ws: WebSocket): void {
+  if (!shellSubscribers.has(instanceId)) shellSubscribers.set(instanceId, new Set());
+  shellSubscribers.get(instanceId)!.add(ws);
+  // Clean subscriber ref when the WS disconnects
+  ws.addEventListener('close', () => {
+    const subs = shellSubscribers.get(instanceId);
+    if (subs) { subs.delete(ws); if (subs.size === 0) shellSubscribers.delete(instanceId); }
+  }, { once: true });
+}
+
+function broadcastShellOutput(instanceId: string, data: string, stream: string = 'stdout'): void {
+  const subs = shellSubscribers.get(instanceId);
+  if (!subs || subs.size === 0) return;
+  const msg = envelope("shell.output", { data, stream });
+  for (const ws of subs) {
+    if (ws.readyState === WebSocket.OPEN) send(ws, msg);
+    else subs.delete(ws);
+  }
+}
 
 // Session persistence: clientToken → session data for reconnect recovery
 interface ClientSession { ws: WebSocket; shellIds: Set<string>; label: string; disconnectTime?: number }
@@ -134,7 +198,13 @@ setInterval(() => {
 }, 30000);
 
 function send(ws: WebSocket, msg: unknown) {
-  if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+  if (ws.readyState !== WebSocket.OPEN) return;
+  const cs = cryptoStreams.get(ws);
+  if (cs?.isEstablished) {
+    cs.send(JSON.stringify(msg));
+  } else {
+    ws.send(JSON.stringify(msg));
+  }
 }
 
 function broadcast(msg: unknown) {
@@ -163,6 +233,13 @@ async function spawnInstance(instanceId?: string) {
   const i = instanceId ? (instanceManager.get(instanceId) || inst()) : inst();
   instanceManager.setActive(i.id);
 
+  // Permission check
+  const permResult = permissions.check('processManagement', { action: 'spawn', instanceId: i.id, adapterId: i.adapterId });
+  if (!permResult.allowed) {
+    broadcast(envelope("instance.block", { blockType: "error", text: `Spawn denied: ${permResult.reason}` }));
+    return;
+  }
+
   // Kill existing process via handle
   if (i.handle) {
     i.handle.stop().catch(() => {});
@@ -173,10 +250,8 @@ async function spawnInstance(instanceId?: string) {
     i.process = null;
   }
 
-  // Clear stale blocks
+  // Clear stale blocks (but preserve outputBuffer — it's needed for shell replay on reconnect)
   i.blockBuffer.length = 0;
-  i.outputBuffer.length = 0;
-  i.outputSize = 0;
 
   const adapter = adapterRegistry.get(i.adapterId || 'shell') || adapterRegistry.get('shell')!;
   const adapterName = adapter.displayName;
@@ -199,7 +274,11 @@ async function spawnInstance(instanceId?: string) {
       }
     },
     onOutput: (data: string) => {
-      broadcast(envelope("instance.output", { data }));
+      if (adapter.id === 'shell') {
+        broadcastShellOutput(i.id, data, "stdout");
+      } else {
+        broadcast(envelope("instance.output", { data }));
+      }
       i.outputBuffer.push(data);
       if (i.outputBuffer.length > 2000) i.outputBuffer.shift();
       i.outputSize += data.length;
@@ -233,6 +312,12 @@ function killInstance(instanceId?: string) {
 }
 
 async function spawnShellForWs(ws: WebSocket, instanceId?: string): Promise<import("./instance-manager").InstanceData> {
+  // Permission check
+  const permResult = permissions.check('shellAccess', { action: 'spawn_shell' });
+  if (!permResult.allowed) {
+    send(ws, envelope("error", { code: "ACCESS_DENIED", message: permResult.reason || "Shell access denied" }));
+    throw new Error(permResult.reason || 'Shell access denied');
+  }
   let i: import("./instance-manager").InstanceData;
   if (instanceId) {
     const existing = instanceManager.get(instanceId);
@@ -249,21 +334,23 @@ async function spawnShellForWs(ws: WebSocket, instanceId?: string): Promise<impo
   if (i.source === 'remote') {
     i.status = 'running';
     send(ws, envelope("shell.output", { data: `\x1b[36mConnected to remote shell on ${i.label || i.id}\x1b[0m\r\n`, stream: "stdout" }));
-    // Send newline to trigger a fresh prompt from the remote shell
     sendStdin(i, '\n');
     return i;
   }
 
-  // Kill existing handle if re-spawning
-  if (i.handle) {
-    await i.handle.stop().catch(() => {});
-    i.handle = undefined;
+  // ── Reconnect to existing shell ──────────────────────
+  if (i.handle && i.status === 'running') {
+    subscribeShellOutput(i.id, ws);
+    // Replay output buffer to the newly connected WS
+    for (const chunk of i.outputBuffer) {
+      send(ws, envelope("shell.output", { data: chunk, stream: "stdout" }));
+    }
+    send(ws, envelope("shell.output", { data: `\x1b[33m[Reconnected — output history above]\x1b[0m\r\n`, stream: "stdout" }));
+    return i;
   }
 
-  // Clear output buffer for fresh spawn
-  i.outputBuffer.length = 0;
-  i.outputSize = 0;
-
+  // ── Fresh spawn ──────────────────────────────────
+  subscribeShellOutput(i.id, ws);
   const adapter = adapterRegistry.get("shell")!;
   i.handle = await adapter.start({
     workspaceId: i.id,
@@ -272,7 +359,7 @@ async function spawnShellForWs(ws: WebSocket, instanceId?: string): Promise<impo
     adapterId: "shell",
     config: {},
     onOutput: (data: string) => {
-      send(ws, envelope("shell.output", { data, stream: "stdout" }));
+      broadcastShellOutput(i.id, data, "stdout");
       i.outputBuffer.push(data);
       i.outputSize += data.length;
       while (i.outputSize > 512 * 1024 && i.outputBuffer.length > 0) {
@@ -280,7 +367,14 @@ async function spawnShellForWs(ws: WebSocket, instanceId?: string): Promise<impo
       }
     },
     onExit: (code: number | null) => {
-      send(ws, envelope("shell.exit", { code }));
+      // Notify all subscribers
+      const subs = shellSubscribers.get(i.id);
+      if (subs) {
+        const msg = envelope("shell.exit", { code });
+        for (const s of subs) {
+          if (s.readyState === WebSocket.OPEN) send(s, msg);
+        }
+      }
       i.handle = undefined;
       i.status = "stopped";
     },
@@ -478,7 +572,7 @@ function releaseQueue() {
  * Create parser deps for any instance (local or remote).
  * Used by both spawnInstance() and agent message handlers.
  */
-function parserDepsFor(i: import("./instance-manager").InstanceData): import("../adapters/claude-code/parser").StreamParserDeps {
+function parserDepsFor(i: import("./instance-manager").InstanceData): StreamParserDeps {
   return {
     sendBlock: (block: Record<string, unknown>) => {
       const msg = envelope("instance.block", { ...block, ts: Date.now() });
@@ -517,7 +611,7 @@ let ROOT_DIR = inst().dir;
 
 const serverRequestHandler = (req: import("http").IncomingMessage, res: import("http").ServerResponse) => {
   // Delegate to structured API routes first
-  if (registerApiRoutes(req, res, { instanceManager, broadcast, auditLog })) return;
+  if (registerApiRoutes(req, res, { instanceManager, broadcast, auditLog, checkPermission: checkHttpPermission, configManager: appConfig, relayConfig: relayConfigManager })) return;
 
   const url = new URL(req.url!, `http://${req.headers.host}`);
   const path = url.pathname;
@@ -533,6 +627,7 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
 
   // ── API: List directory ──────────────────────────────────
   if (path === "/api/list" && req.method === "GET") {
+    if (!checkHttpPermission(res, 'fileRead', { path: url.searchParams.get("dir") || "." })) return;
     const dirParam = url.searchParams.get("dir") || ".";
     const targetDir = isAbsolute(dirParam) ? dirParam : resolve(ROOT_DIR, dirParam);
     const root = ROOT_DIR;
@@ -578,6 +673,7 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
 
   // ── API: Read file ──────────────────────────────────────
   if (path === "/api/read-file" && req.method === "GET") {
+    if (!checkHttpPermission(res, 'fileRead', { path: url.searchParams.get("path") || "" })) return;
     const fileParam = url.searchParams.get("path") || "";
     const targetFile = isAbsolute(fileParam) ? fileParam : resolve(ROOT_DIR, fileParam);
 
@@ -618,8 +714,49 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
     return;
   }
 
+  // ── API: Check for updates ──────────────────────────────
+  if (path === "/api/check-update") {
+    const { execSync } = require("child_process");
+    try {
+      const result = execSync(`node "${join(__dirname, "../scripts/check-update.js")}"`, {
+        encoding: "utf-8", timeout: 10000, stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      const data = JSON.parse(result.trim());
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(data));
+    } catch {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ current: SERVER_VERSION, latest: SERVER_VERSION, hasUpdate: false, error: "check failed" }));
+    }
+    return;
+  }
+
+  // ── API: Trigger update ─────────────────────────────────
+  if (path === "/api/do-update" && req.method === "POST") {
+    const { execSync } = require("child_process");
+    try {
+      execSync(`node "${join(__dirname, "../scripts/update.js")}" --force`, {
+        encoding: "utf-8", timeout: 120000, stdio: 'pipe',
+      });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true, message: "Update installed. Restart to apply." }));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: false, error: String(err) }));
+    }
+    return;
+  }
+
+  // ── API: Current version ────────────────────────────────
+  if (path === "/api/version") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ version: SERVER_VERSION }));
+    return;
+  }
+
   // ── API: Write file (for revert) ────────────────────────
   if (path === "/api/write" && req.method === "POST") {
+    if (!checkHttpPermission(res, 'fileWrite')) return;
     let body = "";
     req.on("data", (c) => body += c);
     req.on("end", () => {
@@ -640,6 +777,63 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
     return;
   }
 
+  // ── API: Download file ──────────────────────────────────
+  if (path === "/api/download" && req.method === "GET") {
+    if (!checkHttpPermission(res, 'fileRead', { path: url.searchParams.get("path") || "" })) return;
+    const fileParam = url.searchParams.get("path") || "";
+    const target = isAbsolute(fileParam) ? fileParam : resolve(ROOT_DIR, fileParam);
+    if (!target.startsWith(ROOT_DIR)) {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Outside workspace" }));
+      return;
+    }
+    if (!existsSync(target) || statSync(target).isDirectory()) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "File not found" }));
+      return;
+    }
+    try {
+      const content = readFileSync(target);
+      const name = basename(target);
+      res.writeHead(200, {
+        "Content-Type": "application/octet-stream",
+        "Content-Disposition": `attachment; filename="${name}"`,
+        "Content-Length": String(content.length),
+      });
+      res.end(content);
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: String(err) }));
+    }
+    return;
+  }
+
+  // ── API: Upload file ────────────────────────────────────
+  if (path === "/api/upload" && req.method === "POST") {
+    if (!checkHttpPermission(res, 'fileWrite')) return;
+    let body = "";
+    req.on("data", (c) => body += c);
+    req.on("end", () => {
+      try {
+        const { path: uploadPath, data, encoding } = JSON.parse(body);
+        const target = isAbsolute(uploadPath) ? uploadPath : resolve(ROOT_DIR, uploadPath);
+        if (!target.startsWith(ROOT_DIR)) {
+          res.writeHead(403); res.end(JSON.stringify({ error: "Outside workspace" }));
+          return;
+        }
+        const dir = dirname(target);
+        if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+        const buf = encoding === "base64" ? Buffer.from(data, "base64") : Buffer.from(data, "utf8");
+        writeFileSync(target, buf);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: true, path: relative(ROOT_DIR, target).replace(/\\/g, "/") }));
+      } catch (err) {
+        res.writeHead(500); res.end(JSON.stringify({ error: String(err) }));
+      }
+    });
+    return;
+  }
+
   // ── Read compaction count from a session file ────────────
   const compactionCountCache = new Map<string, number>();
   function getCompactionCount(claudeDir: string, project: string, sessionId: string): number {
@@ -647,7 +841,7 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
     if (compactionCountCache.has(cacheKey)) return compactionCountCache.get(cacheKey)!;
     try {
       const slug = project.replace(/[\\\/: ]/g, "-");
-      const f = getClaudeSessionPath(slug, sessionId);
+      const f = claudePaths()!.sessionPath(slug, sessionId);
       if (!existsSync(f)) { compactionCountCache.set(cacheKey, 0); return 0; }
       const c = readFileSync(f, "utf8");
       const count = (c.match(/"isCompactSummary":true/g) || []).length;
@@ -678,8 +872,8 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
   // ── API: Search Sessions (Claude Code history) ──────────
   if (path === "/api/sessions/search" && req.method === "GET") {
     const query = (url.searchParams.get("q") || "").toLowerCase().trim();
-    const claudeDir = getClaudeDataDir();
-    const historyFile = getClaudeHistoryPath();
+    const claudeDir = claudePaths()!.dataDir;
+    const historyFile = claudePaths()!.historyPath;
     const results: any[] = [];
 
     try {
@@ -700,7 +894,7 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
 
           if (query && !inDisplay && !inProject) {
             const projectSlug = project.replace(/[\\\/: ]/g, "-");
-            const sessionFile = getClaudeSessionPath(projectSlug, sessionId);
+            const sessionFile = claudePaths()!.sessionPath(projectSlug, sessionId);
             try {
               const st = statSync(sessionFile);
               if (st.size > 0 && st.size <= 100 * 1024) {  // skip large files to avoid OOM
@@ -764,7 +958,7 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
   if (path === "/api/sessions/detail" && req.method === "GET") {
     const sessionId = url.searchParams.get("id") || "";
     const project = url.searchParams.get("project") || "";
-    const claudeDir = getClaudeDataDir();
+    const claudeDir = claudePaths()!.dataDir;
 
     if (!sessionId) {
       res.writeHead(400, { "Content-Type": "application/json" });
@@ -776,18 +970,18 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
       let sessionContent = "";
       if (project) {
         const projectSlug = project.replace(/[\\\/: ]/g, "-");
-        const sessionFile = getClaudeSessionPath(projectSlug, sessionId);
+        const sessionFile = claudePaths()!.sessionPath(projectSlug, sessionId);
         if (existsSync(sessionFile)) {
           sessionContent = readFileSync(sessionFile, "utf8");
         }
       }
 
       if (!sessionContent) {
-        const projectsDir = getClaudeProjectsDir();
+        const projectsDir = claudePaths()!.projectsDir;
         if (existsSync(projectsDir)) {
           const projectDirs = readdirSync(projectsDir);
           for (const pdir of projectDirs) {
-            const candidateFile = getClaudeSessionPath(pdir, sessionId);
+            const candidateFile = claudePaths()!.sessionPath(pdir, sessionId);
             if (existsSync(candidateFile)) {
               sessionContent = readFileSync(candidateFile, "utf8");
               break;
@@ -925,9 +1119,9 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
   // ── API: Current session detail ──────────────────────────
   if (path === "/api/sessions/current") {
     try {
-      const claudeDir = getClaudeDataDir();
+      const claudeDir = claudePaths()!.dataDir;
       const projectSlug = ROOT_DIR.replace(/[^a-zA-Z0-9-]/g, "-");
-      const projectsDir = join(getClaudeProjectsDir(), projectSlug);
+      const projectsDir = join(claudePaths()!.projectsDir, projectSlug);
       let latestFile = "";
       let latestTime = 0;
 
@@ -941,7 +1135,7 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
       }
 
       if (!latestFile) {
-        const debugInfo = { ROOT_DIR, projectSlug, projectsDir, claudeDir: getClaudeDataDir(), dirExists: existsSync(projectsDir) };
+        const debugInfo = { ROOT_DIR, projectSlug, projectsDir, claudeDir: claudePaths()!.dataDir, dirExists: existsSync(projectsDir) };
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ sessionId: "", messages: [], found: false, debug: debugInfo }));
         return;
@@ -1309,12 +1503,28 @@ let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 const HEARTBEAT_INTERVAL = 30000;
 const heartbeatMap = new WeakMap<WebSocket, boolean>();
 
+// ─── Crypto Layer ──────────────────────────────────────────────
+const serverIdentity = loadOrCreateIdentity();
+const cryptoStreams = new WeakMap<WebSocket, CryptoStream>();
+
 function ensureServer(): void {
   if (httpServer) return;
-  if (sslKey && sslCert) {
+
+  // Auto-generate self-signed cert if none configured
+  let keyPath = sslKey;
+  let certPath = sslCert;
+  if (!keyPath || !certPath) {
+    const autoPaths = ensureCert();
+    if (autoPaths) {
+      keyPath = autoPaths.key;
+      certPath = autoPaths.cert;
+    }
+  }
+
+  if (keyPath && certPath) {
     httpServer = createHttpsServer({
-      key: readFileSync(sslKey, "utf8"),
-      cert: readFileSync(sslCert, "utf8"),
+      key: readFileSync(keyPath, "utf8"),
+      cert: readFileSync(certPath, "utf8"),
     }, serverRequestHandler);
   } else {
     httpServer = createHttpServer(serverRequestHandler);
@@ -1351,7 +1561,11 @@ function setupWssHandlers(): void {
   // Don't start Claude until we know the client's intent
 
   ws.on("message", (raw: Buffer) => {
-    const msg = parseMsg(raw.toString());
+    // ── Crypto: decrypt before processing ────────────────────
+    const cs = cryptoStreams.get(ws);
+    const rawStr = cs?.isEstablished ? tryDecrypt(cs.sessionKey, raw.toString()) : raw.toString();
+
+    const msg = parseMsg(rawStr);
     if (!msg) return;
 
     // ── Lifecycle: hello/welcome handshake ────────────────
@@ -1367,6 +1581,15 @@ function setupWssHandlers(): void {
         return;
       }
       authenticatedSockets.add(ws);
+
+      // ── Crypto handshake (v0.7+) ─────────────────────────
+      const clientFeatures: string[] = Array.isArray(msg.features) ? msg.features : [];
+      const clientWantsCrypto = clientFeatures.includes("crypto_v1");
+      let cryptoSession: CryptoStream | null = null;
+      if (clientWantsCrypto) {
+        cryptoSession = new CryptoStream(ws, serverIdentity);
+        cryptoStreams.set(ws, cryptoSession);
+      }
 
       // Session recovery: if browser reconnects with same clientToken, restore session
       let restoredInstances: Record<string, unknown>[] = [];
@@ -1390,7 +1613,7 @@ function setupWssHandlers(): void {
       // Start Claude on first browser connection (skip in test mode)
       if (role === "browser" && !process.env.BRIDGE_TEST_MODE) {
         const activeInst = inst();
-        if (!activeInst.process) spawnInstance();
+        if (!activeInst.process && activeInst.adapterId !== 'shell') spawnInstance();
       }
 
       // Track agent version for update notification
@@ -1401,15 +1624,36 @@ function setupWssHandlers(): void {
       // Flush history
       flushBuffer(ws);
 
-      // Respond with welcome
-      send(ws, envelope("welcome", {
+      // Build server features list
+      const serverFeatures = [
+        "crypto_v1",
+        "agent_registration", "shell", "multi_instance",
+        "structured_chat", "queue", "update_notification", "session_recovery",
+      ];
+
+      // Respond with welcome (include crypto keys if handshaking)
+      const welcomeBody: Record<string, unknown> = {
         version: SERVER_VERSION,
-        features: ["agent_registration", "shell", "multi_instance", "structured_chat", "queue", "update_notification", "session_recovery"],
+        features: serverFeatures,
         sessionId: inst().id,
         serverTime: Date.now(),
         instances: instanceManager.toJSON(),
+        extensionPoints: extensionPoints.toJSON(),
         ...(restoredInstances.length > 0 ? { restoredInstances } : {}),
-      }));
+      };
+      if (cryptoSession) {
+        welcomeBody.staticKey = cryptoSession.staticKey;
+        welcomeBody.ephemeralKey = cryptoSession.ephemeralKey;
+      }
+      send(ws, envelope("welcome", welcomeBody));
+
+      // Complete crypto handshake if client provided ephemeral key
+      if (cryptoSession && msg.ephemeralKey) {
+        cryptoSession.handshake(
+          String(msg.ephemeralKey),
+          msg.staticKey ? String(msg.staticKey) : undefined,
+        );
+      }
       return;
     }
 
@@ -1425,7 +1669,7 @@ function setupWssHandlers(): void {
 
       if (!process.env.BRIDGE_TEST_MODE) {
         const activeInst = inst();
-        if (!activeInst.process) spawnInstance();
+        if (!activeInst.process && activeInst.adapterId !== 'shell') spawnInstance();
       }
       flushBuffer(ws);
       send(ws, { type: "auth_result", success: true, sessionId: inst().id, instances: instanceManager.toJSON() });
@@ -1468,7 +1712,7 @@ function setupWssHandlers(): void {
       send(ws, envelope("agent.registered", { instanceId: remoteInst.id, sessionId: remoteInst.id }));
       const entry = instanceManager.toJSON().find(i => i.id === remoteInst.id);
       broadcast(envelope("instance.added", { instance: entry }));
-      broadcast(envelope("system.notification", { type: 'success', title: `Agent connected: ${label}` }));
+      notifyBus({ scenarioId: 'agent.connected', severity: 'success', title: `Agent connected: ${label}` });
       auditLog.log('agent.registered', label, { version: agentVersion }, remoteInst.id);
       instanceManager.startOperation(remoteInst.id, 'spawn', 'agent_register');
       instanceManager.transitionOperation(remoteInst.id, instanceManager.getCurrentOperation(remoteInst.id)?.id || '', 'succeeded', { resultText: `Agent ${label} registered` });
@@ -1477,19 +1721,9 @@ function setupWssHandlers(): void {
       const mismatch = mismatchSeverity(agentVersion, SERVER_VERSION);
       if (mismatch) {
         const severity = mismatch.diff === 'major' ? 'error' : 'warning';
-        const verNote = {
-          type: severity,
-          title: `Agent "${label}" version mismatch`,
-          detail: mismatch.message,
-        };
-        // Notify browser clients
-        for (const c of authenticatedSockets) {
-          if (!(c as any)._isAgent) {
-            send(c, envelope("system.notification", verNote));
-          }
-        }
-        // Notify the agent itself
-        send(ws, envelope("system.notification", verNote));
+        notifyBus({ scenarioId: 'update.available', severity, title: `Agent "${label}" version mismatch`, detail: mismatch.message });
+        // Also notify the agent directly
+        send(ws, envelope("system.notification", { type: severity, title: `Agent "${label}" version mismatch`, detail: mismatch.message, scenarioId: 'update.available' }));
       }
       return;
     }
@@ -1501,7 +1735,7 @@ function setupWssHandlers(): void {
         agentInst.status = 'stopped';
         instanceManager.kill(agentInst.id);
         broadcast(envelope("instance.removed", { instanceId: agentInst.id }));
-        broadcast(envelope("system.notification", { type: 'warning', title: `Agent disconnected: ${agentInst.label}` }));
+        notifyBus({ scenarioId: 'agent.disconnected', severity: 'warning', title: `Agent disconnected: ${agentInst.label}` });
         auditLog.log('agent.unregistered', agentInst.label, {}, agentInst.id);
       }
       return;
@@ -1527,7 +1761,7 @@ function setupWssHandlers(): void {
           remoteInst.outputSize -= remoteInst.outputBuffer.shift()?.length ?? 0;
         }
       } else {
-        processStreamLine(remoteInst, line, parserDepsFor(remoteInst));
+        adapterRegistry.get(remoteInst.adapterId || 'claude-code')?.parseLine?.(line, remoteInst, parserDepsFor(remoteInst));
       }
       return;
     }
@@ -1560,11 +1794,7 @@ function setupWssHandlers(): void {
     if (msg.type === "agent.notification" || msg.type === "agent_notification") {
       const title = msg.title || 'Notification';
       const detail = msg.detail || '';
-      for (const c of authenticatedSockets) {
-        if (!(c as any)._isAgent) {
-          send(c, envelope("system.notification", { type: 'info', title, detail }));
-        }
-      }
+      notifyBus({ scenarioId: msg.scenarioId || 'agent.notification', severity: msg.severity || 'info', title, detail });
       return;
     }
 
@@ -1601,6 +1831,25 @@ function setupWssHandlers(): void {
         broadcast(envelope("instance.removed", { instanceId: remoteInst.id }));
         auditLog.log('instance.exited', remoteInst.label, { exitCode: msg.exitCode }, remoteInst.id);
       }
+      return;
+    }
+
+    // ── Config push ───────────────────────────────────────
+    if (msg.type === "config.push" || msg.type === "config_push") {
+      const entries = msg.entries || (msg.config ? Object.entries(msg.config).map(([k, v]) => ({ key: k, value: v })) : []);
+      if (!Array.isArray(entries) || entries.length === 0) {
+        send(ws, envelope("error", { code: "INVALID_CONFIG", message: "No entries in config.push" }));
+        return;
+      }
+      relayConfigManager.setBatch(entries.map((e) => ({ key: e.key, value: e.value })), 'relay');
+      const pending = relayConfigManager.getPending();
+      for (const client of wss?.clients || []) {
+        if ((client as any)._isAgent && client.readyState === WebSocket.OPEN) {
+          client.send(JSON.stringify(envelope("config.push", { entries: pending.entries, requestId: pending.requestId })));
+        }
+      }
+      auditLog.log('config.pushed', 'admin', { entries: pending.entries }, '');
+      notifyBus({ scenarioId: 'config.synced', severity: 'info', title: 'Config pushed', detail: `${pending.entries.length} key(s) sent` });
       return;
     }
 
@@ -1742,6 +1991,43 @@ function setupWssHandlers(): void {
           }
         } else if (name === "list-instances") {
           send(ws, envelope("instance.list", { instances: instanceManager.toJSON(), activeId: instanceManager.activeId }));
+        } else if (name === "bridge-update") {
+          // Trigger update in the background
+          const { execFile } = require("child_process");
+          execFile("node", [join(__dirname, "../scripts/update.js"), "--force"], {
+            timeout: 120000, windowsHide: true,
+          }, (updateErr: Error | null, stdout: string, stderr: string) => {
+            if (updateErr) {
+              sendBlock({ blockType: "error", text: `Update failed: ${updateErr.message}` });
+            } else {
+              sendBlock({ blockType: "status", text: `Update installed. Restart the server to apply.` });
+              broadcast(envelope("system.notification", {
+                severity: "success", title: "Update ready",
+                detail: "Restart the server to apply the update.",
+                scenarioId: "update", duration: 0,
+              }));
+            }
+          });
+        } else {
+          // Extension-contributed commands
+          const cmd = extensionPoints.findCommand(name);
+          if (cmd) {
+            const ctx: WhenContext = {
+              view: targetInst?.adapterId || 'shell',
+              instanceStatus: targetInst?.status || 'stopped',
+              activeAdapterId: targetInst?.adapterId || 'shell',
+              isRunning: targetInst?.status === 'running',
+            };
+            if (!cmd.when || evaluateWhen(cmd.when, ctx)) {
+              if (targetInst?.handle?.sendCommand) {
+                targetInst.handle.sendCommand(cmd.id, msg.args || {}).then(() => {
+                  send(ws, envelope("instance.command_result", { name: cmd.id, ok: true }));
+                }).catch((err: Error) => {
+                  send(ws, envelope("instance.command_result", { name: cmd.id, ok: false, error: err.message }));
+                });
+              }
+            }
+          }
         }
         break;
       }
@@ -1762,6 +2048,7 @@ function setupWssHandlers(): void {
     clients.delete(ws);
     authenticatedSockets.delete(ws);
     agentVersionMap.delete(ws);
+    cryptoStreams.delete(ws);
     // Release shell write-locks held by this WS
     for (const [instId, owner] of shellLockMap) {
       if (owner === ws) {
@@ -1877,20 +2164,42 @@ export function startRelayServer(port?: number): Promise<{ close: () => void; po
   const p = port ?? PORT;
 
   // ── Adapter environment validation ──────────────────────
-  if (isClaudeAvailable()) {
-    const { cmd, args } = resolveClaudeCommand();
-    console.log(`  ✓ Claude binary resolved: ${cmd} ${args.join(' ')}`);
-  } else {
-    console.warn(`  ⚠ Claude binary not found or not responding.`);
-    console.warn(`    The server will start but Claude will not be available.`);
-    console.warn(`    Install Claude Code: npm install -g @anthropic-ai/claude-code\n`);
-  }
+  // (delegated to extension loader below — adapters self-report availability)
 
-  // ── Register adapters ────────────────────────────────────
-  registerAdapter(claudeCodeAdapter);
-  registerAdapter(shellAdapter);
-  registerAdapter(systemInfoAdapter);
-  console.log(`  ✓ Adapters registered: ${[claudeCodeAdapter, shellAdapter].map(a => a.id).join(', ')}`);
+  // ── Register adapters via extension loader ──────────────
+  (async () => {
+    try {
+      const { scanAndActivate } = await import("../adapters/agent-core/extension-loader");
+      const activated = await scanAndActivate({ log: (msg: string) => console.log(`[ext] ${msg}`) });
+      console.log(`  ✓ Adapters registered: ${activated.map(a => a.manifest.id).join(', ')}`);
+    } catch (err) {
+      console.warn(`  ⚠ Adapter loading failed: ${(err as Error).message}`);
+    }
+  })();
+
+  // ── Background update check (non-blocking) ────────────
+  setTimeout(() => {
+    const { execFile } = require("child_process");
+    execFile("node", [join(__dirname, "../scripts/check-update.js")], {
+      timeout: 10000, windowsHide: true,
+    }, (err: Error | null, stdout: string) => {
+      if (err) return;
+      try {
+        const data = JSON.parse(stdout.trim());
+        if (data.hasUpdate) {
+          console.log(`\n  ⚠ Update available: v${data.current} → v${data.latest}`);
+          console.log(`  ${data.updateUrl}`);
+          console.log(`  Run "bridge update" to upgrade.\n`);
+          // Notify connected browsers
+          broadcast(envelope("update.available", {
+            current: data.current,
+            latest: data.latest,
+            url: data.updateUrl,
+          }));
+        }
+      } catch {}
+    });
+  }, 5000); // Check 5s after startup
 
   // ── Port validation (0 = random port, skip check) ──────
   if (p !== 0 && (p < 1 || p > 65535)) {
@@ -1946,9 +2255,11 @@ export class NodeRelayServer {
     if (this._port !== 0 && (this._port < 1 || this._port > 65535)) {
       this._port = 8080;
     }
-    // Register adapters
-    registerAdapter(claudeCodeAdapter);
-    registerAdapter(shellAdapter);
+    // Register adapters via extension loader
+    (async () => {
+      const { scanAndActivate } = await import("../adapters/agent-core/extension-loader");
+      await scanAndActivate({ log: (msg: string) => console.log(`[ext] ${msg}`) });
+    })();
     // Restore sessions from previous run
     const snapshot = sessionPersistence.restore();
     if (snapshot) {
