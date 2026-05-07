@@ -1,0 +1,95 @@
+# ─── SessionBridge Release Workflow ───────────────────────────────
+# On git tag push: build → package → create GitHub Release
+#
+# Usage:
+#   git tag v0.7.0
+#   git push origin v0.7.0
+#
+# Artifacts:
+#   - sessionbridge-vX.Y.Z.zip  (portable, Node.js required)
+#   - Source code (GitHub auto-attaches)
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Build and Package
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build frontend
+        run: npx next build
+
+      - name: Build server
+        run: npm run build:server
+
+      - name: Package portable
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          PKG_DIR="dist/sessionbridge-${VERSION}"
+
+          mkdir -p "$PKG_DIR"/{dist,out,adapters,lib,public,scripts}
+
+          # Built artifacts
+          cp -r dist/*.js "$PKG_DIR/dist/" 2>/dev/null || true
+          cp -r dist/adapters "$PKG_DIR/dist/" 2>/dev/null || true
+          cp -r out/* "$PKG_DIR/out/"
+          cp -r adapters "$PKG_DIR/"
+          cp -r lib "$PKG_DIR/"
+          cp -r public "$PKG_DIR/"
+          cp -r scripts "$PKG_DIR/"
+
+          # Production modules only
+          npm ci --omit=dev --prefix "$PKG_DIR" 2>/dev/null || true
+          cp node_modules/.package-lock.json "$PKG_DIR/" 2>/dev/null || true
+
+          # Minimal package.json for portable app
+          node -e "
+            const p = require('./package.json');
+            require('fs').writeFileSync('$PKG_DIR/package.json', JSON.stringify({
+              name: 'sessionbridge', version: '$VERSION', private: true,
+              scripts: { start: 'node dist/index.js' },
+            }, null, 2));
+          "
+
+          # Launcher scripts
+          cp SessionBridge.bat "$PKG_DIR/" 2>/dev/null || true
+          cp SessionBridge.sh "$PKG_DIR/" 2>/dev/null || true
+
+          # Version info
+          node -e "
+            require('fs').writeFileSync('$PKG_DIR/.bridge-info',
+              JSON.stringify({ version: '$VERSION', builtAt: new Date().toISOString() }, null, 2));
+          "
+
+          # Zip it
+          cd dist
+          zip -r "sessionbridge-v${VERSION}.zip" "sessionbridge-${VERSION}"
+          echo "artifact=dist/sessionbridge-v${VERSION}.zip" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: SessionBridge v${{ github.ref_name }}
+          body_path: .github/release-template.md
+          fail_on_unmatched_text: true
+          files: |
+            dist/sessionbridge-*.zip
+          generate_release_notes: true

@@ -298,35 +298,37 @@ Agent 的配置比当前模型复杂得多:
 
 ---
 
-## 五、设计建议优先级
+## 五、设计建议优先级（附当前状态）
 
 ```
 现在不改一定会出事：
 ──────────────────────────────────
-  P0  网络层鉴权               relay 加 token
-  P0  WebSocket 大帧处理       消息层分片/压缩
-  P0  孤儿进程管理             agent 启动时清理旧进程
+  P0  网络层鉴权               relay 加 token                  → ✅ 已实现 (relayToken)
+  P0  WebSocket 大帧处理       消息层分片/压缩                  → ✅ 已实现 (64KB chunked)
+  P0  孤儿进程管理             agent 启动时清理旧进程           → ✅ 已实现 (PID file)
 
 应该在 P0 修完后优先做：
 ──────────────────────────────────
-  P1  操作锁机制               session 级别锁
-  P1  会话持久化               写到文件，断线可恢复
-  P1  背压控制                 stdout 流策略
+  P1  操作锁机制               session 级别锁                   → ✅ 已实现 (shell lock map)
+  P1  会话持久化               写到文件，断线可恢复             → ✅ 已实现 (SessionPersistence)
+  P1  背压控制                 stdout 流策略                    → ✅ 已实现 (256KB watermark)
 
 设计阶段留接口，但不急于实现：
 ──────────────────────────────────
-  P2  跨 adapter 通信          Core 加简单 EventBus
-  P2  操作计划 + 回滚          ops adapter 层实现
-  P2  HTTP API                 relay 加 REST 端点
-  P2  审计日志                 消息持久化策略
-  P2  身份透传                 协议加 user 字段
+  P2  跨 adapter 通信          Core 加简单 EventBus            → ✅ 已实现 (RelayEventBus)
+  P2  操作计划 + 回滚          ops adapter 层实现               → ❌ 未开始
+  P2  HTTP API                 relay 加 REST 端点              → ✅ 已实现 (api-routes.ts)
+  P2  审计日志                 消息持久化策略                   → ✅ 已实现 (AuditLogger)
+  P2  身份透传                 协议加 user 字段                 → ❌ 未开始
 
 长期演进：
 ──────────────────────────────────
-  P3  状态机                   操作生命周期
-  P3  配置中心                 relay 统一下发配置
-  P3  多环境管理                dev/staging/production
+  P3  状态机                   操作生命周期                     → ✅ 已实现 (OperationStateMachine)
+  P3  配置中心                 relay 统一下发配置               → ✅ 已实现 (ConfigSync)
+  P3  多环境管理                dev/staging/production          → ❌ 未开始
 ```
+
+> 状态：P0/P1 全部解决，P2 大部分解决，P3 部分解决。剩余未完成项见 design-overview.md 的"下一步"。
 
 ---
 

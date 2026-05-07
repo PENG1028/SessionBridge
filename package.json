@@ -10,6 +10,7 @@
     "lib/",
     "src/",
     "app/",
+    "bin/",
     "public/",
     "scripts/",
     "package.json",
@@ -21,16 +22,22 @@
     "postcss.config.mjs"
   ],
   "bin": {
-    "bridge": "./dist/index.js"
+    "bridge": "./bin/bridge.js"
   },
   "scripts": {
-    "start": "next build && npm run build:server && node dist/index.js",
+    "start": "node scripts/serve.js",
     "start:quick": "npm run build:server && node dist/index.js",
     "start:leaf": "node dist/index.js --role leaf",
+    "serve": "node scripts/serve.js",
+    "update": "node scripts/update.js",
+    "update:check": "node scripts/check-update.js --notify",
+    "package": "node scripts/package.js",
     "dev": "next build && tsx watch src/index.ts",
     "dev:web": "next dev",
     "build": "next build",
     "build:server": "tsc -p tsconfig.server.json",
+    "postinstall": "npm run build:server",
+    "quick": "node bin/bridge.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

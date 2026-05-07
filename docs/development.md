@@ -31,23 +31,44 @@ npm run dev              # relay :8080
 ```
 src/
 ├── index.ts              # CLI 入口（解析参数 + 启动 relay）
-├── relay-server.ts       # 主服务器（HTTP + WS + Claude 管理）
-├── instance-manager.ts   # 多实例管理
-├── stream-parser.ts      # Claude stream-json 解析器（本地/远程共用）
+├── relay-server.ts       # 主服务器（HTTP + WS + 核心集成枢纽）
+├── api-routes.ts         # REST API 路由（8 端点）
+├── audit-log.ts          # JSONL 审计日志
+├── session-persistence.ts # 会话快照持久化
+├── instance-manager.ts   # 多实例管理 + 操作状态机
+├── stream-parser.ts      # Claude stream-json 解析器
 ├── checkpoint-manager.ts # 文件级 checkpoint
 ├── rate-limiter.ts       # API 频率限制
-├── agent.ts              # 远程 agent（家里电脑主动连 VPS）
+├── agent.ts              # 远程 agent 连接
 ├── protocol.ts           # 消息信封格式
 ├── ansi.ts               # ANSI 解析
 ├── browser.ts            # 跨平台打开浏览器
 └── i18n.ts               # 多语言
 
-app/
-├── page.tsx              # Web UI（单页应用）
+adapters/
+├── types.ts              # 核心类型定义（AgentAdapter, OutputBlock 等）
+├── ARCHITECTURE.md       # Adapter 体系架构蓝图
+├── registry.ts           # Adapter 注册中心
+├── agent-core/           # 核心运行时
+│   ├── config.ts         # NodeConfig（支持 CLI/env/文件配置）
+│   ├── node-runtime.ts   # NodeRuntime 统一节点运行时
+│   ├── event-bus.ts      # RelayEventBus（跨适配器通信）
+│   ├── config-sync.ts    # 配置推送（relay ↔ agent）
+│   ├── relay-connection.ts # WebSocket 客户端封装
+│   ├── permissions.ts    # 权限模型
+│   ├── notifications.ts  # 通知模型
+│   ├── capability-host.ts # 能力宿主（fs/process/terminal）
+│   └── dashboard-server.ts # Dashboard HTTP 服务
+├── shell/                # Shell 适配器
+├── claude-code/          # Claude Code 适配器
+└── system-info/          # 系统信息适配器
+
+app/                      # Next.js Web UI
+├── page.tsx              # 单页应用
 ├── layout.tsx
 └── globals.css
 
-lib/
+lib/                      # 客户端库
 ├── ws-client.ts          # WebSocket 客户端封装
 ├── use-ws.ts             # React hook
 └── session-store.ts      # IndexedDB 持久化
@@ -96,4 +117,26 @@ server {
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `PORT` | `8080` | 服务器端口 |
-| `TOKEN` | 空 | 访问令牌（远程认证用） |
+| `TOKEN` | 空 | 访问令牌（远程认证用，推荐设置） |
+| `BRIDGE_CONFIG` | 自动 | 配置文件路径（默认 `~/.sessionbridge/agent.json`） |
+| `BRIDGE_TOKEN` | 空 | 同 `TOKEN`，新命名 |
+| `DASHBOARD_PORT` | `9843` | Dashboard 端口 |
+| `NTFY_TOPIC` | 空 | ntfy 通知主题 |
+| `RELAY_URL` | 空 | 上游 relay 地址（节点模式） |
+
+## CLI 参数
+
+NodeRuntime 启动时接受以下参数（优先级高于环境变量）：
+
+```bash
+npx tsx src/index.ts --port 8080 --token mytoken --dashboard-port 9843
+```
+
+| 参数 | 对应环境变量 | 说明 |
+|------|-------------|------|
+| `--port` | `PORT` | 服务器端口 |
+| `--token` | `TOKEN` | 访问令牌 |
+| `--dashboard-port` | `DASHBOARD_PORT` | Dashboard 端口 |
+| `--relay-url` | `RELAY_URL` | 上游 relay 地址 |
+| `--role` | — | 角色（auto / relay / leaf） |
+| `--node-id` | — | 节点 ID（自动生成，通常无需指定） |

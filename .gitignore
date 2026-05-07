@@ -11,3 +11,5 @@ content/sessions/
 content/site/
 .env
 .env.local
+.sessionbridge/
+*.stackdump

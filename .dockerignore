@@ -1,0 +1,11 @@
+node_modules
+.next
+dist
+out
+out_server
+.git
+*.md
+.DS_Store
+*.local
+.env
+.env.local

@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  sessionbridge:
+    build:
+      context: .
+      # Set to true if you need Claude Code AI agent in the container
+      args:
+        INSTALL_CLAUDE: false
+    ports:
+      # Web UI + WebSocket relay
+      - "8080:8080"
+      # Dashboard (management panel, local-only recommended)
+      - "9843:9843"
+    volumes:
+      # Persist config changes made via Settings UI
+      - sb-config:/root/.sessionbridge
+      # Mount a working directory for your project files
+      # - /path/to/your/project:/workspace
+    environment:
+      # Optional: override config values
+      # - BRIDGE_TOKEN=your_secret_token
+      # - PORT=8080
+      # - NTFY_TOPIC=my-sessionbridge
+      # - TZ=Asia/Shanghai
+      - NODE_ENV=production
+    restart: unless-stopped
+    # Optional: set working directory for shell instances
+    working_dir: /workspace
+    stop_grace_period: 10s
+
+volumes:
+  sb-config:
