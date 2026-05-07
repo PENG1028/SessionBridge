@@ -22,3 +22,17 @@ postcss.config.js
 PROTOCOL.md
 SessionBridge.bat
 SessionBridge.sh
+
+# Flutter / Dart
+flutter_app/build/
+flutter_app/.dart_tool/
+flutter_app/.packages
+flutter_app/.flutter-plugins
+flutter_app/.flutter-plugins-dependencies
+flutter_app/*.iml
+flutter_app/.idea/
+flutter_app/android/local.properties
+flutter_app/android/key.properties
+flutter_app/android/.gradle/
+flutter_app/android/hs_err_pid*.log
+flutter_app/session_bridge/
