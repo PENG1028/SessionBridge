@@ -1,12 +1,15 @@
 // ─── Relay Connection ──────────────────────────────────────────
 // Manages the WebSocket connection from agent to relay server.
-// Handles: hello handshake, agent registration, message
-// forwarding, heartbeat, and exponential-backoff reconnection.
+// Handles: hello handshake with ECDH crypto, agent registration,
+// message forwarding, heartbeat, and exponential-backoff reconnection.
 
 import WebSocket from 'ws';
 import { EventEmitter } from 'events';
 import { envelope, parseMsg } from '../protocol';
 import { VERSION } from '../version';
+import { CryptoStream } from '../../src/crypto-stream';
+import { tryDecrypt } from '../../src/crypto-layer';
+import { loadOrCreateIdentity } from '../../src/identity-manager';
 import type { NodeConfig } from './config';
 
 export interface RelayConnectionEvents {
@@ -27,9 +30,12 @@ export class RelayConnection extends EventEmitter {
   private reconnectDelay = 1000;
   private closing = false;
   private _instanceId: string | null = null;
+  private _cryptoStream: CryptoStream | null = null;
+  private _identity: ReturnType<typeof loadOrCreateIdentity>;
 
   constructor(private config: NodeConfig) {
     super();
+    this._identity = loadOrCreateIdentity(config.identityPath);
   }
 
   get instanceId(): string | null { return this._instanceId; }
@@ -39,6 +45,15 @@ export class RelayConnection extends EventEmitter {
     return this.ws?.bufferedAmount ?? 0;
   }
 
+  /** Send a raw string, encrypted if crypto is established. */
+  private sendRaw(data: string): void {
+    if (this._cryptoStream?.isEstablished) {
+      this._cryptoStream.send(data);
+    } else if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(data);
+    }
+  }
+
   connect(): void {
     if (this.closing) return;
 
@@ -46,23 +61,43 @@ export class RelayConnection extends EventEmitter {
 
     this.ws.on('open', () => {
       this.reconnectDelay = 1000;
-      // Send hello with capability negotiation
-      this.ws!.send(JSON.stringify(envelope('hello', {
+
+      // Create crypto stream for ECDH handshake
+      const cryptoStream = new CryptoStream(this.ws!, this._identity);
+      this._cryptoStream = cryptoStream;
+
+      // Send hello with capability negotiation + crypto keys
+      const helloBody: Record<string, unknown> = {
         role: 'agent',
         version: VERSION,
-        features: ['agent_register', 'structured_events', 'shell', 'system_info'],
+        features: ['crypto_v1', 'agent_register', 'structured_events', 'shell', 'system_info'],
         ...(this.config.relayToken ? { token: this.config.relayToken } : {}),
-      })));
+        staticKey: cryptoStream.staticKey,
+        ephemeralKey: cryptoStream.ephemeralKey,
+      };
+      this.sendRaw(JSON.stringify(envelope('hello', helloBody)));
     });
 
     this.ws.on('message', (raw) => {
-      const msg = parseMsg(raw.toString());
+      // Decrypt if crypto is established
+      const rawStr = this._cryptoStream?.isEstablished
+        ? tryDecrypt(this._cryptoStream.sessionKey, raw.toString())
+        : raw.toString();
+
+      const msg = parseMsg(rawStr);
       if (!msg) return;
 
       switch (msg.type) {
         case 'welcome':
+          // Complete crypto handshake if server supports it
+          if (this._cryptoStream && msg.staticKey && msg.ephemeralKey) {
+            this._cryptoStream.handshake(
+              String(msg.ephemeralKey),
+              String(msg.staticKey),
+            );
+          }
           // Now register
-          this.ws!.send(JSON.stringify(envelope('agent.register', {
+          this.sendRaw(JSON.stringify(envelope('agent.register', {
             dir: this.config.workingDirectory,
             label: this.config.label,
           })));
@@ -90,7 +125,7 @@ export class RelayConnection extends EventEmitter {
           break;
 
         case 'ping':
-          this.ws!.send(JSON.stringify(envelope('pong', {})));
+          this.sendRaw(JSON.stringify(envelope('pong', {})));
           break;
 
         case 'config.push':
@@ -110,6 +145,7 @@ export class RelayConnection extends EventEmitter {
     this.ws.on('close', () => {
       this.ws = null;
       this._instanceId = null;
+      this._cryptoStream = null;
       this.emit('close');
       if (!this.closing) this.scheduleReconnect();
     });
@@ -124,16 +160,16 @@ export class RelayConnection extends EventEmitter {
 
   /** Split a large payload into chunked messages to avoid WebSocket frame limits. */
   private sendChunked(type: string, instanceId: string, field: string, payload: string): void {
-    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    if (this.ws?.readyState !== WebSocket.OPEN && !this._cryptoStream?.isEstablished) return;
     if (payload.length <= RelayConnection.MAX_CHUNK) {
-      this.ws.send(JSON.stringify(envelope(type, { instanceId, [field]: payload })));
+      this.sendRaw(JSON.stringify(envelope(type, { instanceId, [field]: payload })));
       return;
     }
     const msgId = `${instanceId}-${++this._chunkSeq}`;
     const total = Math.ceil(payload.length / RelayConnection.MAX_CHUNK);
     for (let seq = 0; seq < total; seq++) {
       const chunk = payload.slice(seq * RelayConnection.MAX_CHUNK, (seq + 1) * RelayConnection.MAX_CHUNK);
-      this.ws.send(JSON.stringify(envelope(type, {
+      this.sendRaw(JSON.stringify(envelope(type, {
         instanceId,
         [field]: chunk,
         chunk: { msgId, seq, total },
@@ -155,16 +191,12 @@ export class RelayConnection extends EventEmitter {
 
   /** Send a notification to the relay (for forwarding to browsers). */
   sendNotification(scenarioId: string, title: string, detail?: string): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(envelope('agent.notification', { scenarioId, title, detail })));
-    }
+    this.sendRaw(JSON.stringify(envelope('agent.notification', { scenarioId, title, detail })));
   }
 
   /** Request the relay to create a sub-instance for a bridge run shell. */
   sendInstanceSpawn(requestId: string, label: string, dir: string, command: string): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(envelope('agent.instance.spawn', { requestId, label, dir, command })));
-    }
+    this.sendRaw(JSON.stringify(envelope('agent.instance.spawn', { requestId, label, dir, command })));
   }
 
   /** Send stdout for a specific sub-instance. */
@@ -179,16 +211,12 @@ export class RelayConnection extends EventEmitter {
 
   /** Notify relay that a sub-instance has exited. */
   sendInstanceExit(instanceId: string, exitCode: number): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(envelope('agent.instance.exit', { instanceId, exitCode })));
-    }
+    this.sendRaw(JSON.stringify(envelope('agent.instance.exit', { instanceId, exitCode })));
   }
 
   /** Send config ack back to relay after applying a config push. */
   sendConfigAck(requestId: string, applied: string[], rejected: { key: string; reason: string }[]): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(envelope('config.ack', { requestId, applied, rejected })));
-    }
+    this.sendRaw(JSON.stringify(envelope('config.ack', { requestId, applied, rejected })));
   }
 
   private scheduleReconnect(): void {
@@ -203,9 +231,10 @@ export class RelayConnection extends EventEmitter {
   async shutdown(): Promise<void> {
     this.closing = true;
     if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+    if (this._cryptoStream) { this._cryptoStream.close(); this._cryptoStream = null; }
     if (this.ws) {
       if (this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify(envelope('bye', { reason: 'shutdown' })));
+        this.sendRaw(JSON.stringify(envelope('bye', { reason: 'shutdown' })));
       }
       this.ws.close();
       this.ws = null;

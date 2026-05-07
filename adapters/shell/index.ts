@@ -130,3 +130,8 @@ export class ShellAdapter implements AgentAdapter {
 }
 
 export const shellAdapter = new ShellAdapter();
+
+/** Extension entry point for dynamic loading. */
+export async function activate(): Promise<AgentAdapter> {
+  return shellAdapter;
+}

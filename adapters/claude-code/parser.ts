@@ -2,6 +2,10 @@
 // Claude stream-json line processor, extracted from spawnClaude()
 // so local (ChildProcess stdout) and remote (agent WS) can share it.
 
+import type { StreamParserDeps } from '../types';
+
+export type { StreamParserDeps };
+
 export interface ParserInstance {
   id: string;
   status: string;
@@ -16,18 +20,6 @@ export interface ParserInstance {
   };
   isProcessing: boolean;
 }
-
-export type StreamParserDeps = {
-  sendBlock: (block: Record<string, unknown>) => void;
-  broadcast: (msg: unknown) => void;
-  bufferOutput: (data: string) => void;
-  nextId: () => string;
-  setActive: (id: string | null) => void;
-  getActiveId: () => string | null;
-  processQueueForInstance: (inst: ParserInstance) => void;
-  sendControlRequest: (subtype: string, data: Record<string, unknown>, instanceId?: string) => boolean;
-  getEffortLevel: () => string;
-};
 
 /**
  * Process a single stream-json line from Claude output.
@@ -212,7 +204,9 @@ export function processStreamLine(
       deps.sendBlock({ blockType: "done", text: ev.subtype === "success" ? "Completed" : ev.error || "Error" });
       if (ev.subtype !== "success") {
         deps.sendBlock({ blockType: "error", text: ev.error || "Unknown error" });
+        deps.notify?.('claude.error', 'Claude 执行出错', ev.error || 'Unknown error');
       }
+      deps.notify?.('claude.session.ended', '会话结束', ev.subtype === 'success' ? 'Completed' : 'Error');
       // Turn done — process next in queue
       ii.isProcessing = false;
       deps.processQueueForInstance(ii);

@@ -11,6 +11,8 @@ import type { RelayConnection } from './relay-connection';
 import { dashboardHtml } from './dashboard-page';
 import { VERSION } from '../version';
 import { getSystemState, listProcesses, listProcessesSorted, type AgentIntrospection } from './introspection';
+import type { HostInfo } from './extension-host-manager';
+import { extensionPoints } from './extension-points';
 
 const LOG_CAP = 200;
 const logs: string[] = [];
@@ -31,6 +33,74 @@ function readBody(req: IncomingMessage): Promise<string> {
     req.on('data', (chunk: Buffer) => { data += chunk.toString(); });
     req.on('end', () => resolve(data));
   });
+}
+
+function maskSensitive(cfg: Record<string, unknown>): Record<string, unknown> {
+  const masked = { ...cfg };
+  const sensitiveKeys = ['relayToken', 'ntfyTopic', 'apiKey', 'secret', 'token', 'password'];
+  for (const key of sensitiveKeys) {
+    if (masked[key] && typeof masked[key] === 'string' && (masked[key] as string).length > 4) {
+      masked[key] = (masked[key] as string).slice(0, 4) + '*'.repeat(Math.min((masked[key] as string).length - 4, 20));
+    }
+  }
+  return masked;
+}
+
+function qrPage(relayUrl: string, token: string): string {
+  const connectUrl = token
+    ? `${relayUrl}?token=${encodeURIComponent(token)}`
+    : relayUrl;
+  const encoded = encodeURIComponent(connectUrl);
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SessionBridge — Connect</title>
+<style>
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:system-ui,-apple-system,sans-serif; background:#0d1117; color:#c9d1d9; display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:100vh; padding:24px; }
+  .card { background:#161b22; border:1px solid #30363d; border-radius:12px; padding:32px; max-width:420px; width:100%; text-align:center; }
+  h1 { font-size:1.25rem; margin-bottom:8px; color:#58a6ff; }
+  .sub { font-size:0.85rem; color:#8b949e; margin-bottom:24px; word-break:break-all; }
+  .qr { background:#fff; padding:16px; border-radius:8px; display:inline-block; margin-bottom:20px; }
+  .qr img { display:block; width:200px; height:200px; }
+  .copy-btn { background:#238636; color:#fff; border:none; padding:8px 20px; border-radius:6px; cursor:pointer; font-size:0.9rem; }
+  .copy-btn:hover { background:#2ea043; }
+  .copy-btn:active { background:#196c2e; }
+  .info { margin-top:20px; font-size:0.8rem; color:#8b949e; }
+  .info code { background:#21262d; padding:2px 6px; border-radius:3px; font-size:0.85em; }
+  .instructions { text-align:left; margin-top:20px; font-size:0.85rem; line-height:1.6; }
+  .instructions li { margin-bottom:6px; }
+  @media (prefers-color-scheme:light) {
+    body { background:#fff; color:#24292f; }
+    .card { background:#f6f8fa; border-color:#d0d7de; }
+    h1 { color:#0969da; }
+    .sub,.info { color:#656d76; }
+    .info code { background:#eaeef2; }
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>SessionBridge</h1>
+  <p class="sub">Scan QR code or open the link on your target device to connect.</p>
+  <div class="qr"><img src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encoded}" alt="QR" width="200" height="200"></div>
+  <button class="copy-btn" onclick="navigator.clipboard.writeText('${connectUrl}').then(()=>{this.textContent='Copied!';setTimeout(()=>this.textContent='Copy Connection URL',2000)})">Copy Connection URL</button>
+  <div class="instructions">
+    <ol>
+      <li>Install SessionBridge on the target device</li>
+      <li>Run: <code>bridge connect ${connectUrl}</code></li>
+      <li>Or open this page on the device and click "Copy Connection URL"</li>
+    </ol>
+  </div>
+  <div class="info">
+    Relay: <code>${relayUrl}</code><br>
+    ${token ? 'Token: <code>' + token.slice(0, 8) + '…</code>' : 'No token set'}
+  </div>
+</div>
+</body>
+</html>`;
 }
 
 export interface DashboardState {
@@ -65,11 +135,18 @@ const shellInstances = new Map<string, ShellRunInstance>();
 
 // Relay integration — set by agent.ts after dashboard starts
 let relay: RelayConnection | null = null;
+// Extension host manager (dev mode) — set by node-runtime
+let extensionHost: { getInfo(): HostInfo; reload(opts?: any): Promise<string[]> } | null = null;
 // Maps relay instance ID → dashboard shell instanceId
 const relayToShellId = new Map<string, string>();
 
 export function setDashboardRelay(r: RelayConnection | null): void {
   relay = r;
+}
+
+/** Register the extension host manager for dashboard API access. */
+export function setExtensionHost(h: typeof extensionHost): void {
+  extensionHost = h;
 }
 
 /** Write stdin data to a shell instance, looked up by relay instance ID. */
@@ -288,6 +365,110 @@ export function startDashboard(config: AgentConfig, permissions: PermissionModel
           case '/api/logs':
             jsonReply(res, 200, logs.slice(-50));
             return;
+
+          // ── Extensions (dev mode) ───────────────────────────
+          case '/api/extensions': {
+            if (!extensionHost) {
+              jsonReply(res, 200, { enabled: false, state: 'disabled' });
+              return;
+            }
+            if (req.method === 'POST') {
+              const body = await readBody(req);
+              const { action } = JSON.parse(body);
+              if (action === 'reload') {
+                addDashboardLog('[extensions] Reload requested via API');
+                extensionHost.reload().catch((err: Error) => addDashboardLog(`[extensions] Reload failed: ${err.message}`));
+                jsonReply(res, 200, { ok: true, message: 'Reloading...' });
+              } else {
+                jsonReply(res, 400, { error: `Unknown action: ${action}` });
+              }
+            } else {
+              const info = extensionHost.getInfo();
+              (info as any).configurations = extensionPoints.getConfigSchemas();
+              jsonReply(res, 200, info);
+            }
+            return;
+          }
+
+          // ── Config & Connection Management ─────────────────
+          case '/api/config': {
+            if (req.method === 'POST') {
+              const body = await readBody(req);
+              const updates = JSON.parse(body);
+              if (state && updates && typeof updates === 'object') {
+                const config = state.config as unknown as Record<string, unknown>;
+                for (const [k, v] of Object.entries(updates)) {
+                  if (k in config) {
+                    config[k] = v;
+                    addDashboardLog(`[config] ${k}=${JSON.stringify(v)}`);
+                  }
+                }
+                jsonReply(res, 200, { ok: true, config: maskSensitive(config) });
+              } else {
+                jsonReply(res, 400, { error: 'Invalid body' });
+              }
+            } else {
+              // GET: return current config (with sensitive fields masked)
+              const cfg = state ? maskSensitive(state.config as unknown as Record<string, unknown>) : {};
+              jsonReply(res, 200, cfg);
+            }
+            return;
+          }
+
+          case '/api/connect': {
+            if (req.method === 'POST') {
+              const body = await readBody(req);
+              const { relayUrl, token } = JSON.parse(body);
+              if (!relayUrl) { jsonReply(res, 400, { error: 'Missing relayUrl' }); return; }
+              if (relay) {
+                addDashboardLog(`[connect] Connecting to ${relayUrl}...`);
+                // Update config upstreamRelay
+                if (state) state.config.upstreamRelay = relayUrl;
+                if (token) {
+                  if (state) state.config.relayToken = token;
+                  // Also signal relay to use new token
+                  addDashboardLog(`[connect] Token set`);
+                }
+                // Re-connect via relay instance
+                await relay.shutdown();
+                (relay as any).config.upstreamRelay = relayUrl;
+                relay.connect();
+                jsonReply(res, 200, { ok: true, relayUrl, message: 'Reconnecting...' });
+              } else {
+                jsonReply(res, 503, { error: 'Relay connection not available' });
+              }
+              return;
+            } else {
+              // GET: show connection info for sharing
+              const upstreamRelay = relay ? (relay as any).config?.upstreamRelay || '' : '';
+              const token = state?.config.relayToken || '';
+              jsonReply(res, 200, {
+                relayUrl: upstreamRelay || `ws://127.0.0.1:${state?.config.relayPort || 8080}`,
+                token: token ? token.slice(0, 8) + '…' : '(none)',
+                command: upstreamRelay ? `bridge connect ${upstreamRelay}${token ? ` --token ${token.slice(0, 16)}…` : ''}` : 'bridge (default)',
+                role: state?.config.role || 'auto',
+              });
+            }
+            return;
+          }
+
+          case '/api/daemon/stop': {
+            if (req.method !== 'POST') { res.writeHead(405); res.end(); return; }
+            jsonReply(res, 200, { ok: true, message: 'Shutting down...' });
+            addDashboardLog('[daemon] Stop requested via API');
+            // Give the response time to be sent, then exit
+            setTimeout(() => { process.exit(0); }, 200);
+            return;
+          }
+
+          // ── QR Code page (simple page for mobile scan) ─────
+          case '/qr': {
+            const token = url.searchParams.get('token') || state?.config.relayToken || '';
+            const relayUrl = url.searchParams.get('url') || (relay ? (relay as any).config?.upstreamRelay || `ws://127.0.0.1:${state?.config.relayPort || 8080}` : `ws://127.0.0.1:${state?.config.relayPort || 8080}`);
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+            res.end(qrPage(relayUrl, token));
+            return;
+          }
 
           default:
             res.writeHead(404, { 'Content-Type': 'text/plain' });

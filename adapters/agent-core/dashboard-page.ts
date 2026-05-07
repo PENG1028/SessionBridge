@@ -112,6 +112,11 @@ button.primary:hover { background: #7c3aed; }
   <span style="color: var(--muted);">Loading...</span>
 </div>
 
+<h2>Extensions</h2>
+<div class="card" id="extensions-card">
+  <span style="color: var(--muted);">Loading...</span>
+</div>
+
 <h2>Processes</h2>
 <div class="card">
   <div style="max-height: 200px; overflow-y: auto;">
@@ -163,6 +168,21 @@ async function toggleNotif(id, checked) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ scenarioId: id, value: checked }),
   });
+}
+
+async function reloadExtensions(btn) {
+  if (btn) { btn.textContent = 'Reloading...'; btn.disabled = true; }
+  try {
+    await fetch(API + '/extensions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'reload' }),
+    });
+    setTimeout(refresh, 1000);
+  } catch (err) {
+    console.error('Reload failed:', err);
+  }
+  if (btn) setTimeout(() => { btn.textContent = 'Reload Extensions'; btn.disabled = false; }, 2000);
 }
 
 async function refresh() {
@@ -236,6 +256,83 @@ async function refresh() {
     ac.innerHTML = (s.adapters || []).map(a =>
       '<div class="row between" style="margin-bottom:4px"><span>' + a.id + '</span><span class="badge ' + (a.available ? 'green' : 'red') + '">' + (a.available ? 'available' : 'n/a') + '</span></div>'
     ).join('') || '<span style="color:var(--muted)">No adapters detected</span>';
+
+    // Extensions (dev mode)
+    try {
+      const ext = await fetchJson(API + '/extensions');
+      const ec = document.getElementById('extensions-card');
+      if (!ext.enabled) {
+        ec.innerHTML = '<span style="color:var(--muted)">Extension host disabled (use --dev to enable)</span>';
+      } else {
+        const stateDot = ext.state === 'running' ? 'green' : ext.state === 'crashed' ? 'red' : 'yellow';
+        const uptimeStr = ext.uptime ? Math.floor(ext.uptime / 1000) + 's' : '-';
+        const devBadge = ext.mode === 'development' ? '<span class="badge" style="background:#2d1b69;color:#a371f7;margin-left:8px">DEV</span>' : '';
+
+        let html = '<div class="row between" style="margin-bottom:8px">' +
+          '<div class="row"><span class="dot ' + stateDot + '"></span><strong>' + ext.state + '</strong>' + devBadge +
+          '<span style="color:var(--muted);font-size:10px">pid ' + (ext.pid || '-') + ' · up ' + uptimeStr + ' · crashes ' + ext.crashCount + '</span></div>';
+
+        if (ext.state === 'running') {
+          html += '<button class="primary" onclick="reloadExtensions(this)">Reload Extensions</button>';
+        }
+        html += '</div>';
+
+        // Extension list
+        if (ext.activatedExtensionIds && ext.activatedExtensionIds.length > 0) {
+          html += '<div style="font-size:10px;color:var(--muted);margin-bottom:4px">Activated (' + ext.activatedExtensionIds.length + '):</div>';
+          for (const id of ext.activatedExtensionIds) {
+            html += '<span class="badge green" style="margin:2px 4px 2px 0">' + escapeHtml(id) + '</span>';
+          }
+        } else if (ext.state === 'running') {
+          html += '<div style="color:var(--muted)">No extensions activated</div>';
+        }
+
+        // Instance count
+        html += '<div style="margin-top:8px;font-size:10px;color:var(--muted)">Instances: ' + (ext.instanceCount || 0) + '</div>';
+
+        // Configuration schemas from extension manifests
+        if (ext.configurations && ext.configurations.length > 0) {
+          html += '<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:8px">';
+          html += '<div style="font-size:10px;color:var(--muted);text-transform:uppercase;margin-bottom:6px">Extension Configurations</div>';
+          for (const cfg of ext.configurations) {
+            html += '<div style="margin-bottom:6px;padding:4px 6px;background:#0a0a0a;border-radius:4px">';
+            html += '<div style="font-size:10px;color:var(--accent);margin-bottom:2px">' + escapeHtml(cfg.title) + '</div>';
+            const schema = cfg.schema || {};
+            const props = schema.properties || {};
+            for (const [key, prop] of Object.entries(props)) {
+              const p = prop;
+              const defaultValue = p.default !== undefined ? p.default : '-';
+              const description = p.description || '';
+              if (p.type === 'boolean') {
+                html += '<label class="row" style="margin:2px 0;font-size:10px">' +
+                  '<span>' + escapeHtml(key) + '</span>' +
+                  '<label class="toggle" style="margin-left:auto"><input type="checkbox" ' + (defaultValue ? 'checked' : '') + ' disabled>' +
+                  '<span class="slider"></span></label></label>';
+              } else if (p.enum) {
+                html += '<div style="margin:2px 0;font-size:10px;color:var(--muted)">' +
+                  escapeHtml(key) + ': <span style="color:var(--fg)">' + escapeHtml(String(defaultValue)) + '</span>' +
+                  (description ? ' <span style="color:var(--muted)">— ' + escapeHtml(description) + '</span>' : '') + '</div>';
+              } else {
+                html += '<div style="margin:2px 0;font-size:10px;color:var(--muted)">' +
+                  escapeHtml(key) + ': <span style="color:var(--fg)">' + escapeHtml(String(defaultValue)) + '</span>' +
+                  (description ? ' <span style="color:var(--muted)">— ' + escapeHtml(description) + '</span>' : '') + '</div>';
+              }
+            }
+            html += '</div>';
+          }
+          html += '</div>';
+        }
+
+        // Debugger info (dev mode)
+        if (ext.mode === 'development') {
+          html += '<div style="margin-top:8px;padding:6px 8px;background:#0a0a0a;border-radius:4px;font-size:10px;color:var(--muted)">' +
+            'Debug: open <code style="color:var(--accent)">chrome://inspect</code> and look for a remote target on port 9229' +
+            '</div>';
+        }
+
+        ec.innerHTML = html;
+      }
+    } catch { /* extensions endpoint may not be available */ }
 
   } catch (err) {
     document.getElementById('relay-status').textContent = 'error: ' + err.message;

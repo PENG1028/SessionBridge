@@ -1,0 +1,40 @@
+{
+  "id": "system-info",
+  "displayName": "System Info",
+  "version": "0.6.0",
+  "icon": "monitor",
+  "viewId": "terminal",
+  "engines": { "sessionbridge": "^0.6.0" },
+  "main": "./index.js",
+  "activationEvents": ["onStartupFinished"],
+  "runtime": {
+    "installHint": "Built-in — no installation required"
+  },
+  "capabilities": {
+    "terminal": false,
+    "fileContext": true,
+    "structuredEvents": false,
+    "approvals": false,
+    "modes": false,
+    "timeline": false,
+    "compact": false,
+    "tasks": false
+  },
+  "contributes": {
+    "views": {
+      "sidebar-right": [
+        { "id": "system", "title": "System", "icon": "cpu", "defaultVisible": true }
+      ]
+    },
+    "commands": [
+      { "id": "system.refresh", "title": "Refresh System Info", "category": "System", "icon": "refresh-cw" },
+      { "id": "system.diagnostics", "title": "Run Diagnostics", "category": "System", "icon": "activity" }
+    ],
+    "configuration": {
+      "type": "object",
+      "properties": {
+        "refreshInterval": { "type": "integer", "default": 10, "description": "Auto-refresh interval (seconds)" }
+      }
+    }
+  }
+}

@@ -14,15 +14,16 @@ import { PermissionModel } from './permissions';
 import { NotificationModel } from './notifications';
 import { createCapabilityHost } from './capability-host';
 import { RelayConnection } from './relay-connection';
-import { startDashboard, setDashboardState, setDashboardRelay, addDashboardLog, writeToShellByRelayId } from './dashboard-server';
+import { AgentConfigReceiver } from './config-sync';
+import { startDashboard, setDashboardState, setDashboardRelay, setExtensionHost, addDashboardLog, writeToShellByRelayId } from './dashboard-server';
 import { getSystemState } from './introspection';
 import { detectNetworkCapability } from '../system-info';
-import { adapterRegistry, registerAdapter } from '../registry';
-import { shellAdapter } from '../shell';
-import { claudeCodeAdapter } from '../claude-code';
-import { systemInfoAdapter } from '../system-info';
+import { adapterRegistry } from '../registry';
 import type { AgentCapabilityHost, NotificationScenario, RuntimeInfo } from '../types';
 import { spawn, type ChildProcess } from 'child_process';
+import { watch, type FSWatcher } from 'fs';
+import { resolve } from 'path';
+import { ExtensionHostManager } from './extension-host-manager';
 
 export class NodeRuntime {
   readonly config: NodeConfig;
@@ -30,11 +31,15 @@ export class NodeRuntime {
   readonly relay: RelayConnection;
   notifications: NotificationModel;
   capabilityHost: AgentCapabilityHost;
+  configReceiver: AgentConfigReceiver;
 
   private startTime = Date.now();
   private shellProc: ChildProcess | null = null;
   private relayServer: import('../../src/relay-server').NodeRelayServer | null = null;
-  private resolvedRole: 'relay' | 'leaf' = 'leaf';
+  /** Extension host manager (only active in dev mode). */
+  readonly hostManager: ExtensionHostManager | null = null;
+  private fileWatchers: FSWatcher[] = [];
+  resolvedRole: 'relay' | 'leaf' = 'leaf';
 
   constructor(configOverrides: Partial<NodeConfig> & { relayUrl?: string } = {}) {
     this.config = resolveConfig(configOverrides);
@@ -45,6 +50,24 @@ export class NodeRuntime {
     );
     this.relay = new RelayConnection(this.config);
     this.capabilityHost = createCapabilityHost(this.permissions, this.notifications, this.relay, this.config.ntfyTopic);
+    // Config receiver for push updates from relay
+    this.configReceiver = new AgentConfigReceiver(
+      this.config,
+      (key, value) => { addDashboardLog(`[config] Applied: ${key}=${JSON.stringify(value)}`); },
+      this.relay as any,
+    );
+
+    // Extension host manager (dev mode only)
+    if (this.config.devMode) {
+      this.hostManager = new ExtensionHostManager({
+        enabled: true,
+        mode: 'development',
+        logger: (msg) => addDashboardLog(msg),
+        autoRespawn: true,
+        maxRespawns: 3,
+        respawnDelay: 2000,
+      });
+    }
   }
 
   async start(): Promise<void> {
@@ -70,10 +93,22 @@ export class NodeRuntime {
     await startDashboard(this.config, this.permissions);
     setDashboardRelay(this.relay);
 
-    // 4. Register adapters and detect what's available
-    registerAdapter(shellAdapter);
-    registerAdapter(claudeCodeAdapter);
-    registerAdapter(systemInfoAdapter);
+    // 4. Scan and load extensions dynamically
+    const { scanAndActivate } = await import('./extension-loader');
+    await scanAndActivate({ log: (msg: string) => addDashboardLog(msg) });
+
+    // 4b. Start extension host manager (dev mode)
+    if (this.hostManager) {
+      addDashboardLog('[node] Dev mode: starting extension host...');
+      await this.hostManager.start();
+      const activated = await this.hostManager.activate({
+        extraPaths: this.config.extensionPaths,
+        mode: 'development',
+      });
+      addDashboardLog(`[node] Extension host activated ${activated.length} extension(s)`);
+      setExtensionHost(this.hostManager);
+      this.startFileWatcher();
+    }
     const adapters = await this.detectAdapters();
     const adapterScenarios = await this.collectNotificationScenarios();
     const savedSettings = this.notifications.settings;
@@ -103,12 +138,71 @@ export class NodeRuntime {
   async shutdown(): Promise<void> {
     addDashboardLog('[node] Shutting down...');
     this.killShell();
+    this.killFileWatchers();
+    if (this.hostManager) {
+      await this.hostManager.shutdown();
+      addDashboardLog('[node] Extension host shut down');
+    }
     await this.relay.shutdown();
     if (this.relayServer) {
       await this.relayServer.stop();
       addDashboardLog('[node] Relay server stopped');
     }
     addDashboardLog('[node] Shutdown complete');
+  }
+
+  // ─── File Watcher (dev mode hot-reload) ─────────────────────
+
+  private startFileWatcher(): void {
+    const paths: string[] = [];
+
+    // Watch built-in adapters
+    const builtIn = resolve(__dirname, '..');
+    if (builtIn) paths.push(builtIn);
+
+    // Watch user extension paths
+    if (this.config.extensionPaths) paths.push(...this.config.extensionPaths);
+
+    // Also watch home extensions dir
+    const homeDir = resolve(require('os').homedir(), '.sessionbridge', 'extensions');
+    try { if (require('fs').existsSync(homeDir)) paths.push(homeDir); } catch { /* ignore */ }
+
+    for (const dir of [...new Set(paths)]) {
+      try {
+        const watcher = watch(dir, { recursive: true }, (_eventType: string, filename: string | null) => {
+          if (!filename) return;
+          // Only watch .ts, .js, .json files
+          if (!/\.(ts|js|json)$/i.test(filename)) return;
+          // Debounce: ignore rapid changes
+          this.debouncedReload();
+        });
+        this.fileWatchers.push(watcher);
+        addDashboardLog(`[watcher] Watching ${dir}`);
+      } catch (err) {
+        addDashboardLog(`[watcher] Cannot watch ${dir}: ${(err as Error).message}`);
+      }
+    }
+  }
+
+  private debouncedReload: (() => void) = (() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    return () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        addDashboardLog('[watcher] File change detected — reloading extensions...');
+        this.hostManager?.reload({ extraPaths: this.config.extensionPaths, mode: 'development' })
+          .then(() => addDashboardLog('[watcher] Extensions reloaded'))
+          .catch((err) => addDashboardLog(`[watcher] Reload failed: ${err.message}`));
+      }, 500);
+    };
+  })();
+
+  private killFileWatchers(): void {
+    for (const w of this.fileWatchers) {
+      try { w.close(); } catch { /* ignore */ }
+    }
+    this.fileWatchers = [];
   }
 
   private async resolveRole(): Promise<'relay' | 'leaf'> {
@@ -163,6 +257,22 @@ export class NodeRuntime {
 
     this.relay.on('error', (code, message) => {
       addDashboardLog(`[node] Relay error [${code}]: ${message}`);
+    });
+
+    // Config push handler: receive config from relay, validate & apply, send ack
+    this.relay.on('configPush', (entries: { key: string; value: unknown }[], requestId: string) => {
+      addDashboardLog(`[config] Received push from relay: ${entries.length} key(s)`);
+      const push = { entries, requestId };
+      const result = this.configReceiver.apply(push);
+      this.configReceiver.sendAck(this.relay as any, requestId, result);
+      if (result.applied.length > 0) {
+        addDashboardLog(`[config] Applied: ${result.applied.join(', ')}`);
+        // Re-create capability host with updated config
+        this.capabilityHost = createCapabilityHost(this.permissions, this.notifications, this.relay, this.config.ntfyTopic);
+      }
+      if (result.rejected.length > 0) {
+        addDashboardLog(`[config] Rejected: ${result.rejected.map(r => `${r.key} (${r.reason})`).join(', ')}`);
+      }
     });
   }
 

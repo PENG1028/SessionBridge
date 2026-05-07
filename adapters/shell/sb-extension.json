@@ -1,0 +1,41 @@
+{
+  "id": "shell",
+  "displayName": "Shell Terminal",
+  "version": "0.6.0",
+  "icon": "terminal",
+  "viewId": "terminal",
+  "engines": { "sessionbridge": "^0.6.0" },
+  "main": "./index.js",
+  "activationEvents": ["onStartupFinished"],
+  "runtime": {
+    "installHint": "Built-in — no installation required"
+  },
+  "capabilities": {
+    "terminal": true,
+    "fileContext": false,
+    "structuredEvents": false,
+    "approvals": false,
+    "modes": false,
+    "timeline": false,
+    "compact": false,
+    "tasks": false
+  },
+  "contributes": {
+    "views": {
+      "sidebar-right": [
+        { "id": "processes", "title": "Processes", "icon": "activity", "defaultVisible": true }
+      ]
+    },
+    "commands": [
+      { "id": "shell.clear", "title": "Clear Terminal", "category": "Terminal", "icon": "x", "when": "activeAdapterId == shell" },
+      { "id": "shell.kill", "title": "Kill Process", "category": "Terminal", "icon": "stop-circle", "when": "isRunning" }
+    ],
+    "menus": [
+      { "id": "shell.menu.clear", "title": "Clear", "command": "shell.clear", "group": "edit", "when": "activeAdapterId == shell" }
+    ],
+    "spawn": {
+      "command": "bash",
+      "args": ["--login"]
+    }
+  }
+}

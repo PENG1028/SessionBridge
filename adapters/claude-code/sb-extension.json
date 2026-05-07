@@ -1,0 +1,59 @@
+{
+  "id": "claude-code",
+  "displayName": "Claude Code",
+  "version": "0.6.0",
+  "icon": "sparkles",
+  "viewId": "claude-chat",
+  "engines": { "sessionbridge": "^0.6.0" },
+  "main": "./index.js",
+  "activationEvents": ["onStartupFinished"],
+  "runtime": {
+    "detectCommand": "claude --version",
+    "installHint": "npm install -g @anthropic-ai/claude-code"
+  },
+  "capabilities": {
+    "terminal": true,
+    "fileContext": true,
+    "structuredEvents": true,
+    "approvals": true,
+    "modes": true,
+    "timeline": true,
+    "compact": true,
+    "tasks": true
+  },
+  "contributes": {
+    "views": {
+      "sidebar-right": [
+        { "id": "tasks", "title": "Tasks", "icon": "list-checks", "defaultVisible": true },
+        { "id": "files", "title": "Files", "icon": "folder-tree", "defaultVisible": true },
+        { "id": "logs", "title": "Logs", "icon": "scroll-text", "defaultVisible": false },
+        { "id": "terminal", "title": "Terminal", "icon": "terminal", "defaultVisible": false }
+      ]
+    },
+    "notifications": [
+      { "id": "claude.session.ended", "label": "Session Ended", "description": "Notify when a Claude session completes" },
+      { "id": "claude.error", "label": "Runtime Error", "description": "Notify when Claude encounters an error" },
+      { "id": "claude.tool.approval", "label": "Tool Approval", "description": "Notify when tool use requires approval" }
+    ],
+    "commands": [
+      { "id": "claude.cost", "title": "Show Cost", "category": "Session", "icon": "dollar-sign" },
+      { "id": "claude.compact", "title": "Compact Conversation", "category": "Session", "icon": "compress", "when": "isRunning" },
+      { "id": "claude.status", "title": "Session Status", "category": "Session", "icon": "info" }
+    ],
+    "menus": [
+      { "id": "claude.menu.rewind", "title": "Rewind Last Change", "command": "rewind", "group": "navigation", "when": "activeAdapterId == claude-code" },
+      { "id": "claude.menu.compact", "title": "Compact Session", "command": "claude.compact", "group": "edit", "when": "activeAdapterId == claude-code && isRunning" }
+    ],
+    "configuration": {
+      "type": "object",
+      "properties": {
+        "maxThinkingTokens": { "type": "integer", "default": 32000, "description": "Maximum thinking tokens for Claude" },
+        "defaultPermissionMode": { "type": "string", "default": "default", "enum": ["default", "acceptEdits", "plan"], "description": "Default permission mode" }
+      }
+    },
+    "spawn": {
+      "command": "claude",
+      "args": ["-p", "--output-format", "stream-json"]
+    }
+  }
+}

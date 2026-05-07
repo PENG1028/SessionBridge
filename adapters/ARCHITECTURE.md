@@ -373,4 +373,18 @@ interface FileTypeHandler {
 
 ---
 
-**这就是最终状态**。现在离这个状态还差 relay-server 的 refactor（把 spawnClaude 收敛到 ClaudeCodeAdapter 内部）。要做吗？
+**这就是最终状态**。relay-server 的 refactor（去硬编码，纯 adapterRegistry 访问）已在 P2 中完成。
+
+---
+
+### 后续补充（v0.6）
+
+自本文档撰写以来新增的基础设施（不改变 Core 设计理念）：
+
+- **RelayEventBus**（`adapters/agent-core/event-bus.ts`）：类型化发布/订阅，支持通配符 `*`，emit 时自动注入 `nodeId`
+- **节点身份**（`NodeConfig.nodeId`）：每个节点启动时自动生成并持久化，用于事件溯源和未来路由
+- **SystemToast**（`adapters/types.ts`）：结构化通知消息，带 severity/targetScope/duration/actions，供未来节点间路由使用
+- **操作状态机**（`src/instance-manager.ts`）：操作生命周期 pending→running→succeeded/failed/cancelled，通过 EventBus 广播事件
+- **ConfigSync**（`adapters/agent-core/config-sync.ts`）：relay 统一下发配置给 agent，含键验证和重启必需键保护
+
+以上全部与 Core 保持正交——不引入领域逻辑，仅扩展基础设施原语。

@@ -2,10 +2,12 @@
 // Central registry for all AgentAdapter implementations.
 // Adapters register themselves and are looked up by ID or capability.
 
-import type { AgentAdapter, AdapterCapabilities, RuntimeInfo } from './types';
+import type { AgentAdapter, AdapterCapabilities, RuntimeInfo, ExtensionManifest } from './types';
 
 class AdapterRegistry {
   private adapters = new Map<string, AgentAdapter>();
+  /** Manifests loaded from sb-extension.json files. */
+  private manifests = new Map<string, ExtensionManifest>();
 
   register(adapter: AgentAdapter): void {
     if (this.adapters.has(adapter.id)) {
@@ -14,7 +16,14 @@ class AdapterRegistry {
     this.adapters.set(adapter.id, adapter);
   }
 
+  /** Register an adapter and associate it with a manifest. */
+  registerFromManifest(adapter: AgentAdapter, manifest: ExtensionManifest): void {
+    this.register(adapter);
+    this.manifests.set(adapter.id, manifest);
+  }
+
   unregister(id: string): boolean {
+    this.manifests.delete(id);
     return this.adapters.delete(id);
   }
 
@@ -24,6 +33,16 @@ class AdapterRegistry {
 
   list(): AgentAdapter[] {
     return [...this.adapters.values()];
+  }
+
+  /** Get the manifest for a registered adapter. */
+  getManifest(id: string): ExtensionManifest | undefined {
+    return this.manifests.get(id);
+  }
+
+  /** List all loaded manifests. */
+  listManifests(): ExtensionManifest[] {
+    return [...this.manifests.values()];
   }
 
   /** Find adapters that can run on the given runtime */

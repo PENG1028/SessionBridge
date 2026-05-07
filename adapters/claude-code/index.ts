@@ -6,9 +6,9 @@ import { createInterface } from 'readline';
 import type {
   AgentAdapter, AdapterCapabilities, AdapterViewProps,
   OutputBlock, InstanceHandle, StartInstanceInput, SidePanelDef, RuntimeInfo,
-  NotificationScenario,
+  NotificationScenario, StreamParserDeps, CliSessionPaths,
 } from '../types';
-import { resolveClaudeCommand, buildClaudeArgs } from './runtime';
+import { resolveClaudeCommand, buildClaudeArgs, getClaudeDataDir, getClaudeProjectsDir, getClaudeSessionPath, getClaudeHistoryPath, getProjectSlug } from './runtime';
 import { processStreamLine } from './parser';
 
 const CLAUDE_CAPABILITIES: AdapterCapabilities = {
@@ -106,6 +106,11 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         return true;
       },
       getEffortLevel: () => 'medium',
+      notify: input.host?.notifications?.notify
+        ? (scenarioId: string, title: string, detail?: string) => {
+            input.host!.notifications.notify(scenarioId, title, detail);
+          }
+        : undefined,
     };
 
     // Minimal InstanceData-like object for the parser
@@ -184,6 +189,25 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       { id: 'claude.tool.approval', label: '工具审批', description: '需要人工审批工具调用时', source: 'claude-code' },
     ];
   }
+
+  parseLine(line: string, instance: Record<string, unknown>, deps: StreamParserDeps): void {
+    processStreamLine(instance as any, line, deps);
+  }
+
+  getSessionPaths(): CliSessionPaths {
+    return {
+      dataDir: getClaudeDataDir(),
+      projectsDir: getClaudeProjectsDir(),
+      historyPath: getClaudeHistoryPath(),
+      sessionPath: (slug: string, sessionId: string) => getClaudeSessionPath(slug, sessionId),
+      projectSlug: (dir: string) => getProjectSlug(dir),
+    };
+  }
 }
 
 export const claudeCodeAdapter = new ClaudeCodeAdapter();
+
+/** Extension entry point for dynamic loading. */
+export async function activate(): Promise<AgentAdapter> {
+  return claudeCodeAdapter;
+}

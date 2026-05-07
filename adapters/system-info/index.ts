@@ -105,6 +105,10 @@ export class SystemInfoAdapter implements AgentAdapter {
 
 export const systemInfoAdapter = new SystemInfoAdapter();
 
+/** Extension entry point for dynamic loading. */
+export async function activate(): Promise<AgentAdapter> {
+  return systemInfoAdapter;
+}
 /**
  * Detect whether this node can act as a relay (can bind to 0.0.0.0).
  *

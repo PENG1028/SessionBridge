@@ -260,6 +260,18 @@ export interface AgentAdapter {
 
   /** Optional: notification scenarios this adapter can emit */
   getNotificationScenarios?(): NotificationScenario[];
+
+  /**
+   * Optional: parse a single line of output from a running instance.
+   * Used for remote agents that stream structured output.
+   */
+  parseLine?(line: string, instance: any, deps: StreamParserDeps): void;
+
+  /**
+   * Optional: return CLI data paths for persistent session storage.
+   * Used by relay-server to locate session files on disk.
+   */
+  getSessionPaths?(): CliSessionPaths;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -286,6 +298,10 @@ export interface SidePanelDef {
   icon: string;
   component: ComponentType<SidePanelProps>;
   defaultVisible: boolean;
+  /** When condition expression for visibility. */
+  when?: string;
+  /** Display order (lower = higher priority). */
+  order?: number;
 }
 
 export interface SidePanelProps {
@@ -322,4 +338,193 @@ export interface RelayEventBus {
   on(type: string, handler: (data: Record<string, unknown>) => void): () => void;
   emit(type: string, data: Record<string, unknown>): void;
   off(type: string, handler: (data: Record<string, unknown>) => void): void;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Stream Parser Deps — shared between server and adapters
+// ═══════════════════════════════════════════════════════════════════
+
+/** Dependencies needed by an adapter's parseLine() method. */
+export interface StreamParserDeps {
+  sendBlock: (block: Record<string, unknown>) => void;
+  broadcast: (msg: unknown) => void;
+  bufferOutput: (data: string) => void;
+  nextId: () => string;
+  setActive: (id: string | null) => void;
+  getActiveId: () => string | null;
+  processQueueForInstance: (inst: any) => void;
+  sendControlRequest: (subtype: string, data: Record<string, unknown>, instanceId?: string) => boolean;
+  getEffortLevel: () => string;
+  notify?: (scenarioId: string, title: string, detail?: string) => void;
+}
+
+/** CLI data paths exposed by adapters with persistent CLI storage. */
+export interface CliSessionPaths {
+  dataDir: string;
+  projectsDir: string;
+  historyPath: string;
+  sessionPath(slug: string, sessionId: string): string;
+  projectSlug(dir: string): string;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Extension System — VS Code-alike manifest + context
+// ═══════════════════════════════════════════════════════════════════
+
+/** A disposable resource that will be cleaned up on deactivation. */
+export interface Disposable {
+  dispose(): void;
+}
+
+/** Simple KV store for persisting extension state. */
+export interface StateStore {
+  get<T = unknown>(key: string): T | undefined;
+  set<T = unknown>(key: string, value: T): void;
+  delete(key: string): void;
+  clear(): void;
+}
+
+/** Extension logging channel. */
+export interface ExtensionLogger {
+  info(msg: string, data?: Record<string, unknown>): void;
+  warn(msg: string, data?: Record<string, unknown>): void;
+  error(msg: string, data?: Record<string, unknown>): void;
+  verbose(msg: string, data?: Record<string, unknown>): void;
+}
+
+export type ExtensionMode = 'production' | 'development';
+
+/** Context provided to every extension's activate() function. */
+export interface ExtensionContext {
+  /** Unique extension identifier (from manifest). */
+  readonly id: string;
+  /** Human-readable display name (from manifest). */
+  readonly displayName: string;
+  /** Absolute path to the extension directory on disk. */
+  readonly extensionPath: string;
+  /** Push disposables here for automatic cleanup on deactivation. */
+  readonly subscriptions: Disposable[];
+  /** Global persistent state (survives extension restarts). */
+  readonly globalState: StateStore;
+  /** Workspace-scoped persistent state. */
+  readonly workspaceState: StateStore;
+  /** API capabilities (permission-gated system access). */
+  readonly api: AgentCapabilityHost;
+  /** Runtime mode: 'production' or 'development'. */
+  readonly extensionMode: ExtensionMode;
+  /** Stuctured logger with automatic extensionId prefix. */
+  readonly log: ExtensionLogger;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Extension Manifest (sb-extension.json)
+// ═══════════════════════════════════════════════════════════════════
+
+export interface ExtensionManifest {
+  /** Unique identifier (e.g. "claude-code"). */
+  id: string;
+  /** Display name (e.g. "Claude Code"). */
+  displayName: string;
+  /** SemVer version. */
+  version: string;
+  /** Icon identifier for the UI. */
+  icon?: string;
+  /** View component identifier for client-side routing. */
+  viewId?: string;
+  /** Compatibility: minimum SessionBridge engine version. */
+  engines?: {
+    sessionbridge?: string;
+  };
+  /** Entry module path relative to extension root. */
+  main: string;
+  /** Activation events that trigger loading this extension. */
+  activationEvents?: string[];
+  /** Runtime detection and install hints. */
+  runtime?: {
+    detectCommand?: string;
+    installHint?: string;
+    autoInstallCommand?: string;
+  };
+  /** Capability declarations (maps to AdapterCapabilities). */
+  capabilities?: Partial<AdapterCapabilities>;
+  /** UI contributions. */
+  contributes?: {
+    views?: {
+      'sidebar-left'?: SidePanelContribution[];
+      'sidebar-right'?: SidePanelContribution[];
+    };
+    commands?: CommandContribution[];
+    menus?: MenuContribution[];
+    notifications?: NotificationContribution[];
+    configuration?: Record<string, unknown>;
+    languages?: LanguageContribution[];
+    spawn?: {
+      command: string;
+      args: string[];
+      cwd?: string;
+      env?: Record<string, string>;
+    };
+  };
+}
+
+export interface SidePanelContribution {
+  id: string;
+  title: string;
+  icon: string;
+  defaultVisible: boolean;
+  /** When condition expression for visibility. */
+  when?: string;
+  /** Display order (lower = higher priority). */
+  order?: number;
+}
+
+export interface CommandContribution {
+  id: string;
+  title: string;
+  category?: string;
+  icon?: string;
+  /** When condition expression for visibility. */
+  when?: string;
+}
+
+export interface MenuContribution {
+  /** Unique menu item identifier. */
+  id: string;
+  /** Display label for the menu item. */
+  title: string;
+  /** Icon identifier. */
+  icon?: string;
+  /** Command ID to execute when activated. */
+  command: string;
+  /** When condition expression for visibility. */
+  when?: string;
+  /** Group within the menu ("navigation", "edit", "debug", "view"). */
+  group?: string;
+  /** Whether the item is disabled. */
+  disabled?: boolean;
+}
+
+export interface LanguageContribution {
+  /** Language ID (e.g. "javascript", "python"). */
+  id: string;
+  /** File extensions to associate (e.g. [".js", ".ts"]). */
+  extensions: string[];
+  /** Optional icon identifier. */
+  icon?: string;
+}
+
+/** Context variables available to when condition evaluation. */
+export interface WhenContext {
+  view?: string;
+  instanceStatus?: string;
+  activeAdapterId?: string;
+  editorHasSelection?: boolean;
+  isRunning?: boolean;
+  [key: string]: unknown;
+}
+
+export interface NotificationContribution {
+  id: string;
+  label: string;
+  description: string;
 }

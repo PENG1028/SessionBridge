@@ -45,6 +45,21 @@ export interface NodeConfig {
 
   /** Extension bag — opaque config for devices / platforms / future features */
   extensions?: Record<string, unknown>;
+
+  /** Path to the node identity file (~/.sessionbridge/identity.json by default) */
+  identityPath?: string;
+
+  /** Crypto/encryption configuration */
+  crypto?: {
+    /** Enable ECDH+AES-GCM encryption for WebSocket transport (default: true) */
+    enabled: boolean;
+  };
+
+  /** Development mode (--dev flag). Enables extension host isolation and debugging. */
+  devMode?: boolean;
+
+  /** Additional extension directories to scan (--extensions flag). */
+  extensionPaths?: string[];
 }
 
 const DEFAULT_CONFIG: NodeConfig = {
