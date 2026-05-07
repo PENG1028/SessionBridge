@@ -92,7 +92,11 @@ export function ecdh(privateKey: Buffer, publicKey: Buffer): Buffer {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const crypto = require("crypto") as any;
   const priv = crypto.createPrivateKey({ key: privateKey, format: "der", type: "pkcs8" });
-  const pub = crypto.createPublicKey({ key: publicKey, format: "raw", type: "x25519" });
+  // Node.js v20 does not support format:"raw" for createPublicKey with X25519.
+  // Wrap the raw 32-byte key in SPKI DER structure as a workaround.
+  const spkiHeader = Buffer.from([0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x03, 0x21, 0x00]);
+  const spkiDer = Buffer.concat([spkiHeader, publicKey]);
+  const pub = crypto.createPublicKey({ key: spkiDer, format: "der", type: "spki" });
   return crypto.diffieHellman({ privateKey: priv, publicKey: pub });
 }
 

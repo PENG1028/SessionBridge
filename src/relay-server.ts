@@ -1510,10 +1510,11 @@ const cryptoStreams = new WeakMap<WebSocket, CryptoStream>();
 function ensureServer(): void {
   if (httpServer) return;
 
-  // Auto-generate self-signed cert if none configured
+  // Only auto-generate self-signed cert if SSL was explicitly configured
+  const hasExplicitSSL = !!appConfig.get("sslKey") || !!process.env.BRIDGE_SSL_KEY;
   let keyPath = sslKey;
   let certPath = sslCert;
-  if (!keyPath || !certPath) {
+  if (hasExplicitSSL && (!keyPath || !certPath)) {
     const autoPaths = ensureCert();
     if (autoPaths) {
       keyPath = autoPaths.key;
