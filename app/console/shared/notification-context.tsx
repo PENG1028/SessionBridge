@@ -13,7 +13,7 @@ export interface AppNotification {
 
 interface NotificationContextValue {
   notifications: AppNotification[];
-  notify: (n: Omit<AppNotification, 'id'>) => void;
+  notify: (n: Omit<AppNotification, 'id'> & { id?: string }) => void;
   dismiss: (id: string) => void;
 }
 
@@ -35,10 +35,21 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     setNotifications(prev => prev.filter(n => n.id !== id));
   }, []);
 
-  const notify = useCallback((n: Omit<AppNotification, 'id'>) => {
-    const id = nextId();
-    const notification: AppNotification = { ...n, id };
-    setNotifications(prev => [...prev.slice(-4), notification]);
+  const notify = useCallback((n: Omit<AppNotification, 'id'> & { id?: string }) => {
+    const id = n.id || nextId();
+    // If server-assigned id already exists, update in-place
+    if (n.id) {
+      setNotifications(prev => {
+        const existing = prev.find(x => x.id === n.id);
+        if (existing) {
+          return prev.map(x => x.id === n.id ? { ...x, ...n, id: n.id! } : x);
+        }
+        return [...prev.slice(-4), { ...n, id: n.id! } as AppNotification];
+      });
+    } else {
+      const notification: AppNotification = { ...n, id } as AppNotification;
+      setNotifications(prev => [...prev.slice(-4), notification]);
+    }
     const dur = n.duration ?? 4000;
     if (dur > 0) {
       setTimeout(() => dismiss(id), dur);

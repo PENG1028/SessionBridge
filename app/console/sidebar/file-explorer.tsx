@@ -1,6 +1,6 @@
 'use client';
 
-import { Folder, FileCode, ChevronRight } from 'lucide-react';
+import { Folder, FileCode, ChevronRight, Download } from 'lucide-react';
 
 interface FileTreeEntry {
   name: string;
@@ -92,6 +92,14 @@ export function FileExplorer({
                 title="Add to message"
               >@</button>
             )}
+            <a
+              href={`/api/download?path=${encodeURIComponent(fullPath)}`}
+              download
+              className="opacity-0 group-hover:opacity-100 px-1 text-gray-600 hover:text-blue-400 transition-opacity shrink-0"
+              title="Download file"
+            >
+              <Download className="w-2.5 h-2.5" />
+            </a>
           </div>
         );
       })}

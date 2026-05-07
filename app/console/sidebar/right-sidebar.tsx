@@ -2,9 +2,10 @@
 
 import { FileCode, GitBranch, ChevronRight, AlertCircle } from 'lucide-react';
 import { TaskPanel } from '../panels/task-panel';
+import { getPanelComponent } from './panel-components';
+import { evaluateWhen, type WhenContext } from '../../../lib/evaluate-when';
 
 interface RightSidebarProps {
-  isClaude: boolean;
   activeTasks: Map<string, any>;
   queueInfo: { isProcessing: boolean; queueDepth: number; queue: any[] };
   onNewSession: () => void;
@@ -21,10 +22,13 @@ interface RightSidebarProps {
   terminalTab: 'log' | 'raw';
   onTerminalTabChange: (tab: 'log' | 'raw') => void;
   logsEndRef: React.RefObject<HTMLDivElement | null>;
+  /** When context for evaluating panel visibility conditions. */
+  whenContext: WhenContext;
+  /** Dynamic extension panels from manifests */
+  extensionPanels?: { id: string; title: string; icon: string; defaultVisible: boolean; when?: string }[];
 }
 
 export function RightSidebar({
-  isClaude,
   activeTasks,
   queueInfo,
   onNewSession,
@@ -41,10 +45,15 @@ export function RightSidebar({
   terminalTab,
   onTerminalTabChange,
   logsEndRef,
+  whenContext,
+  extensionPanels,
 }: RightSidebarProps) {
+  // Compute visible extension panels based on when conditions
+  const visiblePanels = (extensionPanels || []).filter(p => evaluateWhen(p.when, whenContext));
+  const showTaskPanel = evaluateWhen('activeAdapterId == claude-code', whenContext);
   return (
     <aside className="w-72 border-l border-gray-800 bg-[#0d0d0d] flex flex-col hidden lg:flex shrink-0">
-      {isClaude && <TaskPanel tasks={activeTasks} queueInfo={queueInfo} />}
+      {showTaskPanel && <TaskPanel tasks={activeTasks} queueInfo={queueInfo} />}
 
       {/* Actions */}
       <div className="p-3 border-b border-gray-800 bg-[#111] space-y-2">
@@ -179,6 +188,23 @@ export function RightSidebar({
           <div ref={logsEndRef} />
         </div>
       </div>
+
+      {/* Extension panels (from manifests, filtered by when condition) */}
+      {visiblePanels.length > 0 && (
+        <div className="border-t border-gray-800 bg-[#111] shrink-0">
+          <div className="p-2 text-[10px] font-bold text-gray-500 tracking-wider">EXTENSIONS</div>
+          <div className="pb-2 space-y-0.5">
+            {visiblePanels.map(p => {
+              const PanelComponent = getPanelComponent(p.id);
+              return (
+                <div key={p.id}>
+                  <PanelComponent instanceId="" blocks={[]} />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </aside>
   );
 }

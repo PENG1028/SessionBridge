@@ -1,6 +1,6 @@
 'use client';
 
-import { Cpu, Folder, FileCode, Search, ChevronDown } from 'lucide-react';
+import { Cpu, Folder, FileCode, Search, ChevronDown, Settings } from 'lucide-react';
 
 export interface ConsoleHeaderProps {
   onMobileOpen: () => void;
@@ -22,6 +22,7 @@ export interface ConsoleHeaderProps {
   onSwitchDir: (dir: string) => void;
   savedSessions: { id: string; label: string; dir: string; ts: string }[];
   onSelectSavedSession: (s: { label: string; dir: string }) => void;
+  onOpenSettings?: () => void;
 }
 
 export function ConsoleHeader({
@@ -44,6 +45,7 @@ export function ConsoleHeader({
   onSwitchDir,
   savedSessions,
   onSelectSavedSession,
+  onOpenSettings,
 }: ConsoleHeaderProps) {
   return (
     <header className="h-11 flex items-center justify-between px-4 border-b border-gray-800 bg-[#111] shrink-0">
@@ -97,6 +99,17 @@ export function ConsoleHeader({
           >
             <Search className="w-3 h-3" />
           </button>
+
+          {/* Settings button */}
+          {onOpenSettings && (
+            <button
+              onClick={onOpenSettings}
+              className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#1a1a1a] border border-gray-700 hover:border-gray-500 text-gray-400 hover:text-gray-200 text-[10px] transition-colors"
+              title="Settings"
+            >
+              <Settings className="w-3 h-3" />
+            </button>
+          )}
 
           <button
             onClick={onToggleDirSwitcher}

@@ -20,8 +20,11 @@ import { SearchResultsPanel } from './console/shell/search-results-panel';
 import { ClaudeChatView } from './console/main/claude-chat-view';
 import { adapterToViewId } from './console/main/view-registry';
 import { InstanceTabBar } from './console/main/instance-tab-bar';
+import { SplitPaneContainer } from './console/main/split-pane-container';
+import { singlePaneLayout, ensurePane, removePane } from './console/main/split-layout';
 import { useNotification } from './console/shared/notification-context';
 import { sessionStore } from '../lib/session-store';
+import { SettingsPanel } from './console/shell/settings-panel';
 
 // ==========================================
 // Types
@@ -200,11 +203,17 @@ function parseSessionBlocks(apiBlocks: any[]): Block[] {
 // Main Page
 // ==========================================
 export default function Page() {
-  const params = typeof window !== 'undefined' ? new URL(window.location.href).searchParams : new URLSearchParams();
-  const token = params.get('token');
-  const wsUrl = typeof window !== 'undefined'
+  // ── Connection state: default to localhost ──
+  const defaultUrl = typeof window !== 'undefined'
     ? `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.hostname}:8080`
     : 'ws://localhost:8080';
+  const params = typeof window !== 'undefined' ? new URL(window.location.href).searchParams : new URLSearchParams();
+  const urlParam = params.get('url');
+  const tokenParam = params.get('token');
+  const [wsUrl, setWsUrl] = useState(urlParam || defaultUrl);
+  const [token, setToken] = useState<string | undefined>(tokenParam || undefined);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [manualConnectOpen, setManualConnectOpen] = useState(!tokenParam && !urlParam);
 
   // ── Core state ──────────────────────────
   const [phase, setPhase] = useState<Phase>('idle');
@@ -213,7 +222,6 @@ export default function Page() {
   const [logs, setLogs] = useState<string[]>(['[$] session-bridge connected']);
   const [inputValue, setInputValue] = useState('');
   // ── No virtual window — render all messages ──
-  const [loginInput, setLoginInput] = useState("");
   const [terminalTab, setTerminalTab] = useState<'log' | 'raw'>('log');
   const [showCommands, setShowCommands] = useState(false);
   const [showTerminal, setShowTerminal] = useState(false);
@@ -369,11 +377,27 @@ export default function Page() {
   const messagesCacheRef = useRef<Record<string, Message[]>>({});
   const messagesRef = useRef<Message[]>([]);
 
-  const { connStatus, parsed, msgLog, sendInput, sendCommand, serverBlocks, sessions, activeSessionId, activateSession, spawnSession, isWorkspace, queueStatus, instances, activeInstanceId, activateInstance, createInstance, killInstance } = useSession(wsUrl, token ?? undefined);
+  const { notify, dismiss } = useNotification();
+
+  const onSystemNotify = useCallback((n: { id?: string; type: string; title: string; message?: string; scenarioId?: string; duration?: number; action?: { label: string; onClick: () => void } }) => {
+    const severity = (n.type === 'success' || n.type === 'warning' || n.type === 'error') ? n.type : 'info';
+    notify({ id: n.id, type: severity, title: n.title, message: n.message, duration: n.duration, action: n.action });
+  }, [notify]);
+
+  const { connStatus, parsed, msgLog, sendInput, sendCommand, serverBlocks, sessions, activeSessionId, activateSession, spawnSession, isWorkspace, queueStatus, instances, activeInstanceId, activateInstance, createInstance, killInstance, extensionPointsData } = useSession(wsUrl, token ?? undefined, undefined, undefined, undefined, onSystemNotify, dismiss);
   const activeAdapterId = instances.find(i => i.id === activeInstanceId)?.adapterId || 'shell';
   const viewId = adapterToViewId[activeAdapterId] || 'terminal';
+  const isActiveRunning = instances.some(i => i.id === activeInstanceId && i.status === 'running');
+  const whenContext = { activeAdapterId, view: viewId, isRunning: isActiveRunning };
 
-  const { notify } = useNotification();
+  // ── Split-screen layout state ───────────
+  const [splitLayout, setSplitLayout] = useState(() => singlePaneLayout(activeInstanceId || ''));
+  // Keep splitLayout in sync with activeInstanceId (single-pane mode)
+  useEffect(() => {
+    if (activeInstanceId && splitLayout.panes.length <= 1) {
+      setSplitLayout(singlePaneLayout(activeInstanceId));
+    }
+  }, [activeInstanceId]);
 
   // ── Instance lifecycle → notifications ──
   const prevInstanceIdsRef = useRef<Set<string>>(new Set());
@@ -861,6 +885,24 @@ export default function Page() {
   }, []);
 
   // ── Context menu handler ───────────────
+  // Simple client-side when-condition matching for extension menus
+  const matchWhen = useCallback((when: string | undefined): boolean => {
+    if (!when) return true;
+    const ctx = { view: viewId, activeAdapterId: activeAdapterId, isRunning: instances.some(i => i.id === activeInstanceId && i.status === 'running') };
+    // Simple key-value matching: "key == value" or "key != value"
+    const eqMatch = when.match(/(\w+)\s*==\s*['"]?(\w+)['"]?/);
+    if (eqMatch) return ctx[eqMatch[1] as keyof typeof ctx] === eqMatch[2];
+    const neqMatch = when.match(/(\w+)\s*!=\s*['"]?(\w+)['"]?/);
+    if (neqMatch) return ctx[neqMatch[1] as keyof typeof ctx] !== neqMatch[2];
+    // Simple boolean check: "isRunning" or "!isRunning"
+    const boolMatch = when.match(/^(!?)(\w+)$/);
+    if (boolMatch) {
+      const val = ctx[boolMatch[2] as keyof typeof ctx];
+      return boolMatch[1] === '!' ? !val : !!val;
+    }
+    return true;
+  }, [viewId, activeAdapterId, activeInstanceId, instances]);
+
   const handleCtx = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     const items: ContextMenuItem[] = viewId === 'terminal' ? [
@@ -880,8 +922,23 @@ export default function Page() {
         navigator.clipboard.writeText(text);
       }},
     ];
+
+    // Extension-contributed menu items from manifests
+    const extMenus = (extensionPointsData?.menus as any[]) || [];
+    const matchedExtItems = extMenus
+      .filter((m: any) => matchWhen(m.when))
+      .map((m: any) => ({
+        label: m.title,
+        action: () => sendCommand(m.command),
+        disabled: m.disabled,
+      }));
+    if (matchedExtItems.length > 0) {
+      items.push({ label: '', divider: true, action: () => {} });
+      items.push(...matchedExtItems);
+    }
+
     setCtxMenu({ x: e.clientX, y: e.clientY, items });
-  }, [viewId, activeInstanceId, projectInfo, messages, createInstance, killInstance, setShowTerminal]);
+  }, [viewId, activeInstanceId, projectInfo, messages, createInstance, killInstance, setShowTerminal, extensionPointsData, sendCommand, matchWhen, activeAdapterId]);
 
   const handleCommandClick = useCallback((cmd: string) => {
     setInputValue(cmd + ' ');
@@ -926,33 +983,88 @@ export default function Page() {
   // ==========================================
   // Render
   // ==========================================
-  if (!token) {
+  // Fetch saved connections for the connect screen
+  const [savedRelays, setSavedRelays] = useState<{id:string;name:string;url:string;token?:string}[]>([]);
+  useEffect(() => {
+    if (!manualConnectOpen) return;
+    fetch('/api/config').then(r => r.json()).then((cfg: any) => {
+      if (cfg?.connections) setSavedRelays(cfg.connections);
+    }).catch(() => {});
+  }, [manualConnectOpen]);
+
+  if (manualConnectOpen) {
     return (
       <div className="flex items-center justify-center h-screen bg-[#0a0a0a] text-gray-300 font-mono">
-        <div className="w-full max-w-sm p-8 bg-[#111] border border-gray-800 rounded-lg">
-          <h1 className="text-lg font-bold mb-2">SessionBridge</h1>
-          <p className="text-xs text-gray-500 mb-6">Enter your access token to connect.</p>
+        <div className="w-full max-w-sm p-8 bg-[#111] border border-gray-800 rounded-lg space-y-5">
+          <div>
+            <h1 className="text-lg font-bold mb-1">SessionBridge</h1>
+            <p className="text-[10px] text-gray-600">Connect to a relay server.</p>
+          </div>
+
+          {/* Saved connections */}
+          {savedRelays.length > 0 && (
+            <div>
+              <div className="text-[9px] font-bold text-gray-500 tracking-wider mb-2">SAVED RELAYS</div>
+              <div className="space-y-1">
+                {savedRelays.map((r) => (
+                  <button
+                    key={r.id}
+                    onClick={() => { setWsUrl(r.url); setToken(r.token || undefined); setManualConnectOpen(false); }}
+                    className="w-full flex items-center gap-2 px-3 py-2 bg-[#1a1a1a] border border-gray-700 rounded hover:border-purple-600 text-left transition-colors"
+                  >
+                    <div className="w-1.5 h-1.5 rounded-full bg-gray-600" />
+                    <span className="text-xs text-gray-300 truncate flex-1">{r.name}</span>
+                    <span className="text-[8px] text-gray-600 truncate max-w-[140px]">{r.url}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="border-t border-gray-800 my-3" />
+            </div>
+          )}
+
+          {/* Manual connect form */}
           <form onSubmit={(e) => {
             e.preventDefault();
-            if (loginInput.trim()) {
-              window.location.href = `?token=${encodeURIComponent(loginInput.trim())}`;
-            }
+            const url = (document.getElementById('connect-url') as HTMLInputElement)?.value.trim() || defaultUrl;
+            const tok = (document.getElementById('connect-token') as HTMLInputElement)?.value.trim() || '';
+            setWsUrl(url);
+            setToken(tok || undefined);
+            setManualConnectOpen(false);
           }}>
-            <input
-              type="password"
-              value={loginInput}
-              onChange={(e) => setLoginInput(e.target.value)}
-              placeholder="BRIDGE_TOKEN"
-              className="w-full bg-[#1a1a1a] border border-gray-700 rounded px-3 py-2 text-sm text-gray-200 placeholder-gray-600 outline-none focus:border-purple-500 mb-4"
-              autoFocus
-            />
+            <div className="text-[9px] font-bold text-gray-500 tracking-wider mb-2">MANUAL CONNECT</div>
+            <div className="space-y-2">
+              <input
+                id="connect-url"
+                type="text"
+                defaultValue={defaultUrl}
+                placeholder="ws://localhost:8080"
+                className="w-full bg-[#1a1a1a] border border-gray-700 rounded px-3 py-2 text-sm text-gray-200 placeholder-gray-600 outline-none focus:border-purple-500 font-mono"
+                autoFocus={savedRelays.length === 0}
+              />
+              <input
+                id="connect-token"
+                type="password"
+                placeholder="Token (optional)"
+                className="w-full bg-[#1a1a1a] border border-gray-700 rounded px-3 py-2 text-sm text-gray-200 placeholder-gray-600 outline-none focus:border-purple-500 font-mono"
+              />
+            </div>
             <button
               type="submit"
-              className="w-full bg-purple-700 hover:bg-purple-600 text-white rounded px-3 py-2 text-sm font-semibold transition-colors"
+              className="w-full bg-purple-700 hover:bg-purple-600 text-white rounded px-3 py-2 text-sm font-semibold transition-colors mt-3"
             >
               Connect
             </button>
           </form>
+
+          {/* Quick localhost connect */}
+          <div className="text-center">
+            <button
+              onClick={() => { setWsUrl(defaultUrl); setToken(undefined); setManualConnectOpen(false); }}
+              className="text-[10px] text-gray-600 hover:text-gray-400 transition-colors"
+            >
+              Connect to localhost
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -983,7 +1095,17 @@ export default function Page() {
           addLog(`[System] Previous session: ${s.label} (${s.dir})`);
           setShowDirSwitcher(false);
         }}
+        onOpenSettings={() => setSettingsOpen(true)}
       />
+
+      {/* ── Disconnect banner ── */}
+      {connStatus.status !== 'connected' && (
+        <div className="flex items-center justify-center gap-2 px-3 py-1.5 text-[11px] font-bold tracking-wider uppercase"
+          style={{ backgroundColor: connStatus.status === 'connecting' ? '#1a3a1a' : '#3a1a1a', color: connStatus.status === 'connecting' ? '#4ade80' : '#f87171' }}>
+          <span className={`w-1.5 h-1.5 rounded-full ${statusColor}`} />
+          {connStatus.status === 'connecting' ? 'Connecting to server...' : 'Disconnected from server'}
+        </div>
+      )}
 
       {/* ═══ SEARCH SESSIONS PANEL (overlay) ════ */}
       {showSearch && (
@@ -1057,10 +1179,11 @@ export default function Page() {
           onActivateInstance={activateInstance}
           onCreateInstance={createInstance}
           onKillInstance={killInstance}
-          activeViewId={viewId}
           onQuickAction={handleQuickAction}
           onRewind={() => { sendCommand('rewind'); addLog('[System] Rewinding last change...'); }}
           projectCwd={projectInfo?.cwd || '.'}
+          whenContext={whenContext}
+          extensionPanels={(extensionPointsData?.views as Record<string, unknown>)?.['sidebar-left'] as any[] | undefined}
         />
 
         {/* ═══ CENTER: Message Stream ════════ */}
@@ -1069,14 +1192,36 @@ export default function Page() {
             <InstanceTabBar
               instances={instances}
               activeInstanceId={activeInstanceId}
-              onActivate={activateInstance}
+              onActivate={(id) => {
+                activateInstance(id);
+                // In split mode, ensure the activated instance has a pane
+                if (splitLayout.panes.length > 1) {
+                  setSplitLayout(ensurePane(splitLayout, id));
+                }
+              }}
               onCreate={(dir, adapterId) => createInstance(dir, undefined, adapterId)}
               showTerminal={showTerminal}
               onToggleTerminal={() => setShowTerminal(v => !v)}
               projectCwd={projectInfo?.cwd || '.'}
+              isSplit={splitLayout.panes.length > 1}
+              onSplit={(instanceId) => {
+                // Toggle split: find another instance to pair with
+                const other = instances.find((i: any) => i.id !== instanceId);
+                if (!other) return;
+                if (splitLayout.panes.length > 1) {
+                  // Collapse to single
+                  setSplitLayout(singlePaneLayout(activeInstanceId || instanceId));
+                } else {
+                  // Enter split mode
+                  setSplitLayout({
+                    direction: 'horizontal',
+                    panes: [{ instanceId: activeInstanceId || instanceId }, { instanceId: other.id }],
+                  });
+                }
+              }}
             />
             <span className="flex items-center gap-2">
-              MESSAGE STREAM
+              <span className="hidden sm:inline">MESSAGE STREAM</span>
               {activeExternalSession && (
                 <span className="text-amber-500 text-[8px] bg-amber-900/20 px-1.5 py-0.5 rounded border border-amber-700/30">
                   VIEWING: {activeExternalSession}
@@ -1089,7 +1234,7 @@ export default function Page() {
                   }} className="ml-1.5 px-1 bg-amber-800/40 hover:bg-amber-700/60 rounded text-[7px] text-amber-300">✕</button>
                 </span>
               )}
-              <span className="text-gray-700 text-[8px] font-mono">
+              <span className="text-gray-700 text-[8px] font-mono hidden sm:inline">
                 msg:{messages.length} u:{messages.filter(m => m.role === 'user').length} a:{messages.filter(m => m.role === 'assistant').length}
                 <button onClick={() => { console.log('=== MSG DUMP ===', JSON.parse(JSON.stringify(messagesBySession))); console.log('sessionKey:', sessionKey); console.log('roles:', messages.map(m => m.role).join(',')); alert(`msg:${messages.length} u:${messages.filter(m => m.role === 'user').length} a:${messages.filter(m => m.role === 'assistant').length} roles:${messages.slice(0,10).map(m=>m.role).join(',')}...`) }}
                   className="ml-2 px-1 bg-gray-800 hover:bg-gray-700 rounded text-[7px]" title="Dump messages to console">🐛</button>
@@ -1108,75 +1253,79 @@ export default function Page() {
                 </button>
               )}
               {queueInfo.queueDepth > 0 && (
-                <span className="text-yellow-600 text-[9px]">+{queueInfo.queueDepth} queued</span>
+                <span className="text-yellow-600 text-[9px] hidden sm:inline">+{queueInfo.queueDepth} queued</span>
               )}
             </span>
           </div>
 
-          {/* Shell instances — all kept mounted, inactive hidden */}
-          {instances.filter((i: any) => (i.adapterId || 'shell') === 'shell').map((inst: any) => (
-            <div key={inst.id} className={inst.id === activeInstanceId ? "flex-1" : "hidden"}>
-              <TerminalView wsUrl={wsUrl} instanceId={inst.id} token={token ?? undefined} />
-            </div>
-          ))}
-          {instances.filter((i: any) => (i.adapterId || 'shell') === 'shell').length === 0 && (
-            <div className={viewId === 'terminal' ? "flex-1" : "hidden"}>
-              <TerminalView wsUrl={wsUrl} token={token ?? undefined} />
-            </div>
-          )}
-
-          {/* Claude instance: chat view */}
-          <div className={viewId === 'claude-chat' ? "flex-1 flex flex-col" : "hidden"}>
-            <ClaudeChatView
-              messages={messages}
-              turns={turns}
-              phase={phase}
-              setPhase={setPhase}
-              currentActivity={currentActivity}
-              setCurrentActivity={setCurrentActivity}
-              connStatus={connStatus}
-              isRestoring={isRestoring}
-              historyLoading={historyLoading}
-              inputValue={inputValue}
-              setInputValue={setInputValue}
-              handleSubmit={handleSubmit}
-              handleInputChange={handleInputChange}
-              handleKeyDown={handleKeyDown}
-              toolActivities={toolActivities}
-              setToolActivities={setToolActivities}
-              expandedToolOutputs={expandedToolOutputs}
-              setExpandedToolOutputs={setExpandedToolOutputs}
-              showFileSuggest={showFileSuggest}
-              fileSuggestions={fileSuggestions}
-              handleFileSuggestionClick={handleFileSuggestionClick}
-              showCommands={showCommands}
-              setShowCommands={setShowCommands}
-              handleCommandClick={handleCommandClick}
-              cmdPanelRef={cmdPanelRef}
-              handleInterrupt={handleInterrupt}
-              setForkTarget={setForkTarget}
-              setForkPrompt={setForkPrompt}
-              activeExternalSession={activeExternalSession}
-              clearExternalSession={() => {
-                setActiveExternalSession(null);
-                try { localStorage.removeItem('sessionbridge-active-session'); } catch {}
-                historyLoadedRef.current = false;
-                window.location.reload();
-              }}
-              scrollContainerRef={scrollContainerRef}
-              actionEndRef={actionEndRef}
-            />
+          {/* ── Stage: SplitPaneContainer ── */}
+          <SplitPaneContainer
+            layout={splitLayout.panes.length > 1 ? splitLayout : singlePaneLayout(activeInstanceId || '')}
+            onClosePane={(instanceId) => {
+              setSplitLayout(removePane(splitLayout, instanceId));
+              if (instanceId === activeInstanceId) {
+                const next = instances.find(i => i.id !== instanceId);
+                if (next) activateInstance(next.id);
+              }
+            }}
+            renderPane={(instanceId) => {
+              const inst = instances.find((i: any) => i.id === instanceId);
+              if (!inst || inst.adapterId === 'claude-code') {
+                return (
+                  <ClaudeChatView
+                    messages={messages}
+                    turns={turns}
+                    phase={phase}
+                    setPhase={setPhase}
+                    currentActivity={currentActivity}
+                    setCurrentActivity={setCurrentActivity}
+                    connStatus={connStatus}
+                    isRestoring={isRestoring}
+                    historyLoading={historyLoading}
+                    inputValue={inputValue}
+                    setInputValue={setInputValue}
+                    handleSubmit={handleSubmit}
+                    handleInputChange={handleInputChange}
+                    handleKeyDown={handleKeyDown}
+                    toolActivities={toolActivities}
+                    setToolActivities={setToolActivities}
+                    expandedToolOutputs={expandedToolOutputs}
+                    setExpandedToolOutputs={setExpandedToolOutputs}
+                    showFileSuggest={showFileSuggest}
+                    fileSuggestions={fileSuggestions}
+                    handleFileSuggestionClick={handleFileSuggestionClick}
+                    showCommands={showCommands}
+                    setShowCommands={setShowCommands}
+                    handleCommandClick={handleCommandClick}
+                    cmdPanelRef={cmdPanelRef}
+                    handleInterrupt={handleInterrupt}
+                    setForkTarget={setForkTarget}
+                    setForkPrompt={setForkPrompt}
+                    activeExternalSession={activeExternalSession}
+                    clearExternalSession={() => {
+                      setActiveExternalSession(null);
+                      try { localStorage.removeItem('sessionbridge-active-session'); } catch {}
+                      historyLoadedRef.current = false;
+                      window.location.reload();
+                    }}
+                    scrollContainerRef={scrollContainerRef}
+                    actionEndRef={actionEndRef}
+                  />
+                );
+              }
+              return (
+                <TerminalView wsUrl={wsUrl} instanceId={instanceId} token={token ?? undefined} />
+              );
+            }}
+          />
+          {/* ── Terminal drawer (always mounted, hidden by CSS when not shown) ── */}
+          <div className={`border-t border-gray-700 shrink-0 ${showTerminal ? '' : 'hidden'}`} style={{ height: '180px' }}>
+            <TerminalView wsUrl={wsUrl} token={token ?? undefined} />
           </div>
-          {/* ── Terminal drawer ── */}
-          {showTerminal && (
-            <div className="border-t border-gray-700 shrink-0" style={{ height: '180px' }}>
-              <TerminalView wsUrl={wsUrl} token={token ?? undefined} />
-            </div>
-          )}
         </main>
 
         <RightSidebar
-          isClaude={viewId === 'claude-chat'}
+          whenContext={whenContext}
           activeTasks={activeTasks}
           queueInfo={queueInfo}
           onNewSession={handleNewSession}
@@ -1200,6 +1349,7 @@ export default function Page() {
           terminalTab={terminalTab}
           onTerminalTabChange={setTerminalTab}
           logsEndRef={logsEndRef}
+          extensionPanels={(extensionPointsData?.views as Record<string, unknown>)?.['sidebar-right'] as any[] | undefined}
         />
       </div>
       {/* File viewer modal */}
@@ -1319,6 +1469,18 @@ export default function Page() {
         onCreate={() => createInstance(projectInfo?.cwd || '.')}
         onKill={killInstance}
         onQuickAction={handleQuickAction}
+      />
+
+      {/* Settings panel */}
+      <SettingsPanel
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        currentUrl={wsUrl}
+        currentToken={token}
+        onConnect={(url, tok) => {
+          setWsUrl(url);
+          setToken(tok);
+        }}
       />
     </div>
   );
