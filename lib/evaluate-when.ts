@@ -9,6 +9,9 @@ export interface WhenContext {
   view?: string;
   activeAdapterId?: string;
   isRunning?: boolean;
+  instanceId?: string;
+  permissionMode?: string;
+  effortLevel?: string;
   [key: string]: unknown;
 }
 

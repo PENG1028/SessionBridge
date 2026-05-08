@@ -4,6 +4,7 @@
 export type StatusInfo = {
   authenticated: boolean;
   sessionId?: string;
+  retryCount?: number;
 };
 
 export type SessionInfo = {
@@ -86,6 +87,10 @@ export class WSClient {
   private closed = false;
   private workspaceMode = false;
   private _crypto: BrowserCryptoSession | null = null;
+  private retryCount = 0;
+  private baseRetryInterval = 1000;
+  private maxRetryInterval = 30000;
+  private retryMultiplier = 1.5;
 
   constructor(url: string, token: string, cb: WSCallback) {
     this.url = url;
@@ -98,6 +103,7 @@ export class WSClient {
     this.ws = new WebSocket(this.url);
 
     this.ws.onopen = async () => {
+      this.retryCount = 0; // Reset retry counter on successful connection
       // Create crypto session for ECDH + AES-256-GCM encryption
       this._crypto = await createCryptoSession();
 
@@ -332,7 +338,16 @@ export class WSClient {
     this.ws.onclose = () => {
       if (!this.closed) {
         this.cb.onDisconnect();
-        setTimeout(() => this.connect(), 3000);
+        // Exponential backoff: 1s * 1.5^retry, capped at 30s, ±500ms jitter
+        const delay = Math.min(
+          this.baseRetryInterval * Math.pow(this.retryMultiplier, this.retryCount),
+          this.maxRetryInterval
+        );
+        const jitter = (Math.random() - 0.5) * 1000;
+        const finalDelay = Math.max(100, Math.round(delay + jitter));
+        this.retryCount++;
+        this.cb.onStatusChange?.({ authenticated: false, retryCount: this.retryCount });
+        setTimeout(() => this.connect(), finalDelay);
       }
     };
 

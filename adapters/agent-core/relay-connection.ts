@@ -132,6 +132,14 @@ export class RelayConnection extends EventEmitter {
           this.emit('configPush', msg.entries || [], msg.requestId || '');
           break;
 
+        case 'node.external.inspect':
+          this.emit('nodeExternalInspect', msg.requestId || '');
+          break;
+
+        case 'node.external.set':
+          this.emit('nodeExternalSet', msg.requestId || '', msg.enable === true);
+          break;
+
         case 'system.notification':
           this.emit('notification', msg.type || 'info', msg.title || '', msg.detail || '');
           break;

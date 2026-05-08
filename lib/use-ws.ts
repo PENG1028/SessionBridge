@@ -6,6 +6,7 @@ import { WSClient, SessionInfo, QueueStatus, InstanceInfo } from './ws-client';
 export interface ConnStatus {
   status: 'connecting' | 'connected' | 'disconnected' | 'error';
   sessionId?: string;
+  retryCount?: number;
 }
 
 export interface ParsedInfo {
@@ -144,6 +145,8 @@ export function useSession(
       onStatusChange: (info) => {
         if (info.authenticated) {
           setConnStatus({ status: 'connected', sessionId: info.sessionId });
+        } else if (info.retryCount) {
+          setConnStatus(prev => ({ ...prev, status: 'disconnected', retryCount: info.retryCount }));
         } else {
           setConnStatus({ status: 'error', sessionId: info.sessionId });
         }

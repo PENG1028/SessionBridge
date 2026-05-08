@@ -15,15 +15,17 @@ import { NotificationModel } from './notifications';
 import { createCapabilityHost } from './capability-host';
 import { RelayConnection } from './relay-connection';
 import { AgentConfigReceiver } from './config-sync';
-import { startDashboard, setDashboardState, setDashboardRelay, setExtensionHost, addDashboardLog, writeToShellByRelayId } from './dashboard-server';
+import { startDashboard, setDashboardState, setDashboardRelay, setExtensionHost, addDashboardLog, writeToShellByRelayId, restartDashboard } from './dashboard-server';
 import { getSystemState } from './introspection';
 import { detectNetworkCapability } from '../system-info';
-import { adapterRegistry } from '../registry';
+import { envelope } from '../protocol';
+import { detectNetwork } from '../../src/network-detect';
 import type { AgentCapabilityHost, NotificationScenario, RuntimeInfo } from '../types';
 import { spawn, type ChildProcess } from 'child_process';
 import { watch, type FSWatcher } from 'fs';
 import { resolve } from 'path';
 import { ExtensionHostManager } from './extension-host-manager';
+import { adapterRegistry } from '../registry';
 
 export class NodeRuntime {
   readonly config: NodeConfig;
@@ -273,6 +275,31 @@ export class NodeRuntime {
       if (result.rejected.length > 0) {
         addDashboardLog(`[config] Rejected: ${result.rejected.map(r => `${r.key} (${r.reason})`).join(', ')}`);
       }
+    });
+
+    // External access: network inspect → run detection → send result back
+    this.relay.on('nodeExternalInspect', (requestId: string) => {
+      const hasToken = !!this.config.relayToken;
+      const result = detectNetwork(this.config.dashboardPort, hasToken);
+      (this.relay as any).sendRaw(JSON.stringify(envelope('node.external.inspected', { requestId, result })));
+    });
+
+    // External access: toggle dashboard bind on/off
+    this.relay.on('nodeExternalSet', async (requestId: string, enable: boolean) => {
+      const bind = enable ? '0.0.0.0' : '127.0.0.1';
+      addDashboardLog(`[external] Toggling external access: dashboardBind → ${bind}`);
+      this.config.dashboardBind = bind;
+      try {
+        await restartDashboard();
+        addDashboardLog(`[external] Dashboard restarted on ${bind}:${this.config.dashboardPort}`);
+      } catch (err: any) {
+        addDashboardLog(`[external] Restart failed: ${err.message}`);
+      }
+      (this.relay as any).sendRaw(JSON.stringify(envelope('node.external.status', {
+        requestId,
+        enabled: enable,
+        url: enable ? `http://${bind}:${this.config.dashboardPort}` : '',
+      })));
     });
   }
 

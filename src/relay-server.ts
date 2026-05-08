@@ -26,6 +26,7 @@ import { PermissionModel } from "../adapters/agent-core/permissions";
 import { CryptoStream } from "./crypto-stream";
 import { tryDecrypt } from "./crypto-layer";
 import { loadOrCreateIdentity } from "./identity-manager";
+import { detectNetwork } from "./network-detect";
 
 // ─── Adapter path helper — avoids repeating adapterRegistry.get('claude-code') ──
 function claudePaths() {
@@ -63,6 +64,10 @@ export function getNodeId(): string {
 const eventBus = new RelayEventBus();
 const instanceManager = new InstanceManager(eventBus);
 const auditLog = new AuditLogger(process.cwd());
+
+// ─── Pending External Access Requests ───────────────────────────────
+// Map requestId → WebSocket of the browser that initiated the request
+const pendingExternalRequests = new Map<string, WebSocket>();
 const sessionPersistence = new SessionPersistence(process.cwd(), eventBus);
 const permissions = new PermissionModel();
 const relayConfigManager = new RelayConfigManager(eventBus);
@@ -1854,6 +1859,66 @@ function setupWssHandlers(): void {
       return;
     }
 
+    // ── Node External Access ─────────────────────────────────
+    if (msg.type === "node.external.inspect") {
+      const targetId = msg.instanceId || '';
+      const targetInst = targetId ? instanceManager.get(targetId) : null;
+
+      if (targetInst?.source === 'remote' && targetInst.agentConnection) {
+        // Forward to remote agent with request tracking
+        const requestId = `ext_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        pendingExternalRequests.set(requestId, ws);
+        send(targetInst.agentConnection, envelope("node.external.inspect", { requestId }));
+      } else {
+        // Self-service: detect locally and respond directly
+        const hasToken = !!relayToken;
+        const result = detectNetwork(9843, hasToken);
+        send(ws, envelope("node.external.inspected", { result }));
+      }
+      return;
+    }
+
+    if (msg.type === "node.external.inspected" && msg.requestId) {
+      // Route response from agent back to original requester
+      const requester = pendingExternalRequests.get(msg.requestId);
+      if (requester && requester.readyState === WebSocket.OPEN) {
+        send(requester, envelope("node.external.inspected", { result: msg.result }));
+      }
+      pendingExternalRequests.delete(msg.requestId);
+      return;
+    }
+
+    if (msg.type === "node.external.set") {
+      // Toggle external access on/off on the target node
+      const targetId = msg.instanceId || '';
+      const enable = msg.enable === true;
+      const targetInst = targetId ? instanceManager.get(targetId) : null;
+
+      if (targetInst?.source === 'remote' && targetInst.agentConnection) {
+        // Forward set command to remote agent
+        const requestId = `ext_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        pendingExternalRequests.set(requestId, ws);
+        send(targetInst.agentConnection, envelope("node.external.set", { requestId, enable }));
+      } else {
+        // Self-service: just report that this requires runtime support
+        send(ws, envelope("node.external.status", {
+          enabled: false,
+          url: '',
+          message: 'self-service toggle not yet implemented in dashboard-server',
+        }));
+      }
+      return;
+    }
+
+    if (msg.type === "node.external.status" && msg.requestId) {
+      const requester = pendingExternalRequests.get(msg.requestId);
+      if (requester && requester.readyState === WebSocket.OPEN) {
+        send(requester, envelope("node.external.status", { enabled: msg.enabled, url: msg.url || '' }));
+      }
+      pendingExternalRequests.delete(msg.requestId);
+      return;
+    }
+
     // ── Shell terminal ────────────────────────────────────
     if (msg.type === "shell.spawn" || msg.type === "shell_spawn") {
       spawnShellForWs(ws, msg.instanceId).then((shellInst) => {
@@ -2267,6 +2332,7 @@ export class NodeRelayServer {
       for (const inst of snapshot.instances) {
         const restored = instanceManager.create(inst.dir, inst.label, inst.source, inst.adapterId);
         restored.agentVersion = inst.agentVersion;
+        restored.status = 'running'; // Mark as running so UI shows green dot
         console.log(`[relay] Restored session: ${restored.id} (${inst.label})`);
         auditLog.log('session.restored', 'system', { originalId: inst.id }, restored.id);
       }

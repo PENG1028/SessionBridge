@@ -9,6 +9,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { join, resolve, dirname, basename } from 'path';
 import { homedir } from 'os';
+import { pathToFileURL } from 'url';
 import { adapterRegistry } from '../registry';
 import { ExtensionContextImpl } from './extension-context';
 import { extensionPoints } from './extension-points';
@@ -142,9 +143,12 @@ function loadManifest(manifestPath: string, dir: string): ManifestEntry | null {
 async function importModule(manifest: ExtensionManifest, extDir: string): Promise<Record<string, unknown>> {
   const mainPath = resolve(extDir, manifest.main);
 
+  // Convert path to file:// URL (required on Windows for dynamic import())
+  const importPath = pathToFileURL(mainPath).href;
+
   // Try direct import first (works for compiled .js and .ts via tsx)
   try {
-    return await import(mainPath);
+    return await import(importPath);
   } catch (err1) {
     // Fallback #1: if extDir is source adapters/, try dist/adapters/ equivalent
     // (handles running compiled code from dist/ while manifests are in source adapters/)
@@ -154,7 +158,7 @@ async function importModule(manifest: ExtensionManifest, extDir: string): Promis
     if (existsSync(distExtDir)) {
       const distMainPath = resolve(distExtDir, manifest.main);
       try {
-        return await import(distMainPath);
+        return await import(pathToFileURL(distMainPath).href);
       } catch {}
     }
 
@@ -162,7 +166,7 @@ async function importModule(manifest: ExtensionManifest, extDir: string): Promis
     const tsPath = resolve(extDir, 'index.ts');
     if (tsPath !== mainPath && existsSync(tsPath)) {
       try {
-        return await import(tsPath);
+        return await import(pathToFileURL(tsPath).href);
       } catch (err2) {
         throw new Error(`Cannot load extension "${manifest.id}": ${(err1 as Error).message}; fallback also failed: ${(err2 as Error).message}`);
       }

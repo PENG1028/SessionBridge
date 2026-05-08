@@ -2,8 +2,10 @@
 // Minimal HTTP server on localhost that serves the agent dashboard
 // and a JSON API for status, processes, permissions, and logs.
 
-import { createServer, IncomingMessage, ServerResponse } from 'http';
+import { createServer, request as httpRequest, IncomingMessage, ServerResponse } from 'http';
 import { spawn, ChildProcess } from 'child_process';
+import { readFileSync, existsSync } from 'fs';
+import { join, extname } from 'path';
 import type { AgentConfig } from './config';
 import type { PermissionModel } from './permissions';
 import type { NotificationModel } from './notifications';
@@ -13,9 +15,26 @@ import { VERSION } from '../version';
 import { getSystemState, listProcesses, listProcessesSorted, type AgentIntrospection } from './introspection';
 import type { HostInfo } from './extension-host-manager';
 import { extensionPoints } from './extension-points';
+import { detectNetwork } from '../../src/network-detect';
+
+const MIME: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'application/javascript',
+  '.css': 'text/css',
+  '.json': 'application/json',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
+  '.txt': 'text/plain',
+};
 
 const LOG_CAP = 200;
 const logs: string[] = [];
+
+/** Reference to the running HTTP server, used for restarting. */
+let httpServer: import('http').Server | null = null;
 
 export function addDashboardLog(msg: string): void {
   logs.push(`[${new Date().toISOString()}] ${msg}`);
@@ -33,17 +52,6 @@ function readBody(req: IncomingMessage): Promise<string> {
     req.on('data', (chunk: Buffer) => { data += chunk.toString(); });
     req.on('end', () => resolve(data));
   });
-}
-
-function maskSensitive(cfg: Record<string, unknown>): Record<string, unknown> {
-  const masked = { ...cfg };
-  const sensitiveKeys = ['relayToken', 'ntfyTopic', 'apiKey', 'secret', 'token', 'password'];
-  for (const key of sensitiveKeys) {
-    if (masked[key] && typeof masked[key] === 'string' && (masked[key] as string).length > 4) {
-      masked[key] = (masked[key] as string).slice(0, 4) + '*'.repeat(Math.min((masked[key] as string).length - 4, 20));
-    }
-  }
-  return masked;
 }
 
 function qrPage(relayUrl: string, token: string): string {
@@ -188,8 +196,20 @@ export function startDashboard(config: AgentConfig, permissions: PermissionModel
       try {
         switch (url.pathname) {
           case '/':
-            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-            res.end(dashboardHtml(config.label || 'Agent'));
+          case '/index.html':
+            // Serve the Next.js console (from out/) at root
+            const consoleRoot = existsSync(join(__dirname, '../../out'))
+              ? join(__dirname, '../../out')
+              : join(__dirname, '../../../out');
+            const consoleIndex = join(consoleRoot, 'index.html');
+            if (existsSync(consoleIndex)) {
+              res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+              res.end(readFileSync(consoleIndex));
+            } else {
+              // Fallback: show monitoring if out/ not built
+              res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+              res.end(dashboardHtml(config.label || 'Agent'));
+            }
             return;
 
           case '/api/status':
@@ -390,31 +410,6 @@ export function startDashboard(config: AgentConfig, permissions: PermissionModel
             return;
           }
 
-          // ── Config & Connection Management ─────────────────
-          case '/api/config': {
-            if (req.method === 'POST') {
-              const body = await readBody(req);
-              const updates = JSON.parse(body);
-              if (state && updates && typeof updates === 'object') {
-                const config = state.config as unknown as Record<string, unknown>;
-                for (const [k, v] of Object.entries(updates)) {
-                  if (k in config) {
-                    config[k] = v;
-                    addDashboardLog(`[config] ${k}=${JSON.stringify(v)}`);
-                  }
-                }
-                jsonReply(res, 200, { ok: true, config: maskSensitive(config) });
-              } else {
-                jsonReply(res, 400, { error: 'Invalid body' });
-              }
-            } else {
-              // GET: return current config (with sensitive fields masked)
-              const cfg = state ? maskSensitive(state.config as unknown as Record<string, unknown>) : {};
-              jsonReply(res, 200, cfg);
-            }
-            return;
-          }
-
           case '/api/connect': {
             if (req.method === 'POST') {
               const body = await readBody(req);
@@ -470,7 +465,85 @@ export function startDashboard(config: AgentConfig, permissions: PermissionModel
             return;
           }
 
+          // ── Node External Access ──────────────────────────
+          case '/api/node/external': {
+            if (req.method === 'GET') {
+              // Network environment detection
+              const hasToken = !!state?.config.relayToken;
+              const port = state?.config.dashboardPort || 9843;
+              const result = detectNetwork(port, hasToken);
+              jsonReply(res, 200, result);
+              return;
+            }
+            if (req.method === 'POST') {
+              // Toggle external access on/off
+              const body = await readBody(req);
+              const { enable } = JSON.parse(body);
+              const bind = enable ? '0.0.0.0' : '127.0.0.1';
+              addDashboardLog(`[external] Toggling: ${enable ? 'ON' : 'OFF'} → dashboardBind: ${bind}`);
+              if (state) {
+                state.config.dashboardBind = bind;
+                // Restart the HTTP server to pick up the new bind address
+                await restartDashboard().catch((err) => {
+                  addDashboardLog(`[external] Restart failed: ${err.message}`);
+                });
+              }
+              jsonReply(res, 200, {
+                enabled: enable,
+                bind,
+                port: state?.config.dashboardPort || 9843,
+                message: enable
+                  ? `对外访问已开启: http://${bind}:${state?.config.dashboardPort || 9843}`
+                  : '对外访问已关闭',
+              });
+              return;
+            }
+            jsonReply(res, 405, { error: 'Method not allowed' });
+            return;
+          }
+
           default:
+            // API proxy: forward unknown /api/* requests to relay server
+            if (url.pathname.startsWith('/api/')) {
+              const relayPort = state?.config.relayPort || 8080;
+              const proxyHeaders = { ...req.headers };
+              delete proxyHeaders['host'];
+              delete proxyHeaders['connection'];
+              delete proxyHeaders['keep-alive'];
+              const proxyReq = httpRequest(
+                { hostname: '127.0.0.1', port: relayPort, path: req.url, method: req.method, headers: proxyHeaders },
+                (proxyRes) => {
+                  res.writeHead(proxyRes.statusCode || 200, proxyRes.headers);
+                  proxyRes.pipe(res);
+                },
+              );
+              req.pipe(proxyReq);
+              proxyReq.on('error', () => {
+                jsonReply(res, 502, { error: 'Relay server unavailable' });
+              });
+              return;
+            }
+
+            // Try serving static file from Next.js export (out/)
+            const projectRoot = existsSync(join(__dirname, '../../out'))
+              ? join(__dirname, '../../out')
+              : join(__dirname, '../../../out');
+            const diskPath = join(projectRoot, url.pathname === '/' ? 'index.html' : url.pathname);
+            if (existsSync(diskPath)) {
+              const content = readFileSync(diskPath);
+              const ext = extname(diskPath);
+              res.writeHead(200, { 'Content-Type': MIME[ext] ?? 'application/octet-stream' });
+              res.end(content);
+              return;
+            }
+            // SPA fallback: serve index.html for unknown paths
+            const spaFallback = join(projectRoot, 'index.html');
+            if (existsSync(spaFallback)) {
+              const content = readFileSync(spaFallback);
+              res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+              res.end(content);
+              return;
+            }
             res.writeHead(404, { 'Content-Type': 'text/plain' });
             res.end('Not found');
         }
@@ -481,7 +554,31 @@ export function startDashboard(config: AgentConfig, permissions: PermissionModel
 
     server.listen(config.dashboardPort, config.dashboardBind, () => {
       addDashboardLog(`[dashboard] http://${config.dashboardBind}:${config.dashboardPort}`);
+      httpServer = server;
       resolve();
     });
   });
+}
+
+/**
+ * Restart the dashboard HTTP server.
+ * Call after changing `config.dashboardBind` or `config.dashboardPort`
+ * to apply the new binding without a full process restart.
+ */
+export async function restartDashboard(): Promise<void> {
+  // Close the old server if running
+  if (httpServer) {
+    await new Promise<void>((resolve, reject) => {
+      httpServer!.close((err) => (err ? reject(err) : resolve()));
+    });
+    httpServer = null;
+  }
+  // Restart with current state config (already updated by caller)
+  const cfg = state?.config;
+  const perm = state?.permissions;
+  if (!cfg || !perm) {
+    addDashboardLog('[dashboard] Cannot restart — no saved state');
+    return;
+  }
+  return startDashboard(cfg, perm);
 }

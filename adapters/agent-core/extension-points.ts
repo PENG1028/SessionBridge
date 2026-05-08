@@ -233,6 +233,22 @@ export class ExtensionPointsRegistry {
     return this.manifests.get(adapterId);
   }
 
+  // ─── Adapter → View ID Mapping ──────────────────────────────
+
+  /**
+   * Get mapping of adapter ID → view ID for all registered extensions.
+   * Used by the client to resolve which view component to render for each adapter.
+   */
+  getAdapterViews(): Record<string, string> {
+    const result: Record<string, string> = {};
+    for (const [adapterId, manifest] of this.manifests) {
+      if (manifest.viewId) {
+        result[adapterId] = manifest.viewId;
+      }
+    }
+    return result;
+  }
+
   // ─── View Contributions ────────────────────────────────────
 
   /**
@@ -355,6 +371,7 @@ export class ExtensionPointsRegistry {
   toJSON(): Record<string, unknown> {
     return {
       extensions: this.listExtensions(),
+      adapterViews: this.getAdapterViews(),
       views: {
         'sidebar-left': this.getViews('sidebar-left'),
         'sidebar-right': this.getViews('sidebar-right'),
