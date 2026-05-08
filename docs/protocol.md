@@ -61,7 +61,7 @@
 |------|------|------|------|
 | `role` | `string` | 是 | `"browser"` 或 `"agent"` |
 | `version` | `string` | 是 | 客户端版本号 |
-| `token` | `string` | 否 | 认证令牌（若服务端配置了 `BRIDGE_TOKEN`） |
+| `token` | `string` | 否 | 认证令牌（若服务端配置了 `relayToken` / `--relay-token`） |
 | `features` | `string[]` | 否 | 客户端支持的 feature 列表。含 `"crypto_v1"` 时启用加密 |
 | `clientToken` | `string` | 否 | 会话恢复令牌（浏览器断线重连时使用） |
 | `nodeId` | `string` | 否 | 节点标识（Agent 端使用，用于 EventBus 路由） |
@@ -250,7 +250,7 @@
 }
 ```
 
-重启后，`NodeRelayServer.start()` 会恢复上一轮的实例列表（状态统一为 `stopped`，进程需重新启动）。
+重启后，`SessionPersistence` 快照语义是恢复上一轮实例列表并将状态视为 `stopped`，因为原进程已经随 relay 退出。当前 `NodeRelayServer.start()` 实现会把恢复出的实例重新标记为 `running`，这是已知不一致，后续应修正为以真实进程/agent 连接状态为准。
 
 ---
 
@@ -831,6 +831,10 @@ role, relayPort, relayBind, dashboardPort, dashboardBind
 | 系统 | `plan_question` | S→C | Plan 模式问题（待实现） |
 | 系统 | `plan_choice` | C→S | 用户 Plan 选择（待实现） |
 | 系统 | `error` | S→C | 错误通知 |
+| **节点管理** | `node.external.inspect` | Browser→Relay / Relay→Agent | 查询目标节点网络环境（用于对外访问） |
+| 节点管理 | `node.external.inspected` | Agent→Relay / Relay→Browser | 节点返回网络检测结果（IP、端口可达性启发式判断、HTTPS、token 等） |
+| 节点管理 | `node.external.set` | Browser→Relay / Relay→Agent | 开启/关闭目标节点对外访问 |
+| 节点管理 | `node.external.status` | Agent→Relay / Relay→Browser | 对外访问状态确认 |
 | **EventBus** | `instance.operation.started` | 内部 | 操作状态机 - 开始 |
 | EventBus | `instance.operation.completed` | 内部 | 操作状态机 - 完成 |
 | EventBus | `instance.created` | 内部 | 实例创建 |
@@ -849,33 +853,56 @@ role, relayPort, relayBind, dashboardPort, dashboardBind
 ## 14. 生命周期图示
 
 ```
-浏览器                    Relay 服务器                    Agent (远程)
-  │                          │                              │
-  │══ WebSocket 连接 ═══════▶│                              │
-  │══ hello + crypto keys ══▶│                              │
-  │◀══ welcome + crypto keys │                              │
-  │   (ECDH → session key)   │                              │
-  │                          │◀══ WebSocket 连接 ═══════════│
-  │                          │◀══ hello + crypto keys +     │
-  │                          │    agent.register ═══════════│
-  │                          │══ agent.registered ═════════▶│
-  │                          │   (ECDH → session key)       │
-  │                          │                              │
-  │══ instance.input ═══════▶│                              │
-  │     (AES-256-GCM)        │══ 透传(不解密) agent.stdin ═▶│
-  │                          │◀══ agent.stdout ═════════════│
-  │◀══ instance.output ═════│                              │
-  │◀══ instance.block ══════│                              │
-  │                          │                              │
-  │══ command (interrupt) ══▶│                              │
-  │                          │══ 透传 agent.control ═══════▶│
-  │                          │                              │
-  │══ 断开 ═════════════════▶│                              │
-  │                          │◀══ 断开 ═════════════════════│
-  │                          │                              │
-  │ Legend:                    │                              │
-  │ ══ 加密通道 (AES-256-GCM)  │                              │
-  │ ── 明文通道 (旧客户端/旧版) │                              │
+Node A (Dashboard/WebView)     Node B (Relay)                   Node C (Leaf Agent)
+      │                             │                                │
+      │══ WebSocket 连接 ═══════════▶│                               │
+      │══ hello + crypto keys ══════▶│                               │
+      │◀══ welcome + crypto keys ════│                               │
+      │   (ECDH → session key)       │                               │
+      │                             │◀══ WebSocket 连接 ═════════════│
+      │                             │◀══ hello + crypto keys +       │
+      │                             │    agent.register ═════════════│
+      │                             │══ agent.registered ═══════════▶│
+      │                             │   (ECDH → session key)        │
+      │                             │                               │
+      │══ instance.input ══════════▶│                               │
+      │     (AES-256-GCM)           │══ 透传(不解密) agent.stdin ═══▶│
+      │                             │◀══ agent.stdout ═══════════════│
+      │◀══ instance.output ════════│                               │
+      │◀══ instance.block ═════════│                               │
+      │                             │                               │
+      │══ command (interrupt) ═════▶│                               │
+      │                             │══ 透传 agent.control ═════════▶│
+      │                             │                               │
+      │══ 断开 ════════════════════▶│                               │
+      │                             │◀══ 断开 ═══════════════════════│
+      │                             │                               │
+      │ 节点间全加密:                 │                               │
+      │ ══ 加密通道 (AES-256-GCM)    │                               │
+      │ ── 明文通道 (旧客户端)       │                               │
+```
+
+节点可以是任意角色组合：
+
+```
+ 手机 Node             VPS Relay              PC Node
+  ┌────────────┐     ┌──────────────┐       ┌──────────────┐
+  │ 内置 WebView│────▶│ Relay :8080  │◀─────│ NodeRuntime  │
+  │ 加载本地面板 │     │ Dashboard:9843│      │ 本地面板      │
+  │ 通知服务     │     │ 本地面板      │       │ Shell/Claude │
+  └────────────┘     └──────────────┘       └──────────────┘
+                                       
+ 默认访问:
+   手机 → APK 内置 WebView 加载自己的面板
+   PC   → EXE 打开本地面板
+   服务端 → 无 GUI，默认不查看
+   
+ 可选对外暴露（当前实现状态）:
+   本机操作: Dashboard /api/node/external → 检测环境 → 切换 dashboardBind
+   远程操作: node.external.* 协议与 relay 转发已存在，前端端到端体验仍在收口中
+   
+ 跨节点控制:
+   本地面板显示全网所有实例，直接操控远程进程
 ```
 
 ## 15. 附录：协议演变历史
@@ -888,4 +915,4 @@ role, relayPort, relayBind, dashboardPort, dashboardBind
 | v0.4 | Shell 终端协议（`shell.spawn`/`shell.input`/`shell.output`），Agent 注册协议 |
 | v0.5 | 队列系统（`queue.status`/`system.queue_blocked`），v1 信封格式规范化，chunked 传输 |
 | v0.6 | Shell 写锁（`shell.lock`/`shell.unlock`），配置推送（`config.push`/`config.ack`），会话恢复，EventBus 操作状态机，Agent 子实例管理 |
-| v0.7 (规划) | AES-256-GCM 加密层, 加密握手 (ECDH + HKDF), 加密/非加密客户端共存, Flutter APK |
+| v0.7 (规划) | Flutter APK 完整节点体验、对外访问完整前端入口、更多节点路由能力 |

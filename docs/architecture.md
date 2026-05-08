@@ -1,6 +1,6 @@
 # SessionBridge — 架构文档
 
-> 最后更新: 2026-05-06
+> 最后更新: 2026-05-08
 > 版本: v0.6.0
 
 ---
@@ -12,6 +12,13 @@ SessionBridge 是一个 **多端远程控制台 (Remote Agent Console)** — 一
 不是"Claude Code 的 Web 前端"，不是终端桥接工具，不是 SSH 客户端。虽然当前支持的 adapter 之一是 Claude Code，但架构本身是通用、多 peer 的：每个安装实例运行同一份 `NodeRuntime` 二进制，自动探测自己的角色，既可以控制别人也可以被别人控制。
 
 **关键理念**：所有节点都是对等的。无论是浏览器、手机 APK、Windows EXE、还是服务器无头进程，都跑同样的核心代码，只有 form factor 不同。
+
+### 设计原则
+
+- **双端口职责清晰**：Relay 默认使用 `8080` 提供 HTTP/API/WebSocket 中继，Dashboard 默认使用 `9843` 提供本地管理面板。
+- **节点即平台**：PC、手机、服务器都围绕同一套 `NodeRuntime` 组织，只通过角色和外壳形态区分。
+- **实例即执行上下文**：每个 Instance 绑定独立工作目录、进程状态和输出缓冲；UI 只是在不同 View 中呈现这些上下文。
+- **Adapter 插件体系**：Core 不绑定特定 AI 或终端后端，通过 Adapter 暴露能力、View 和 Panel。
 
 ---
 
@@ -40,27 +47,48 @@ NodeRuntime.resolveRole()
 ┌─────────────────┐    HTTP/WS + Crypto     ┌──────────────────────────┐
 │  Flutter APK      │ ◀══════════════════▶  │  VPS 节点                │
 │  (手机)           │    AES-256-GCM      │  role: relay              │
-│  ├─ WebView UI    │    wss:// (可选 TLS)  │  NodeRuntime              │
-│  └─ 后台通知服务  │                      │  ├─ HTTP :8080 (Web UI)   │
-└─────────────────┘                      │  ├─ WS :8080 (crypto)     │
-                                          │  ├─ Dashboard :9843       │
-┌─────────────────┐    HTTP/WS + Crypto     │  ├─ Identity Manager     │
-│  PC 节点          │ ◀══════════════════▶  │  ├─ Crypto Layer         │
-│  role: leaf       │    AES-256-GCM      │  ├─ Adapter Layer         │
-│  NodeRuntime      │    wss:// (可选 TLS)  │  │  ├─ Claude Code       │
-│  (家里电脑)       │                      │  │  ├─ Shell              │
-└─────────────────┘                      │  │  └─ System Info        │
-                                          └──────────────────────────┘
-                                                      ▲
-                                              HTTP/WS + Crypto
+│  ├─ 内置 WebView  │    wss:// (可选 TLS)  │  NodeRuntime              │
+│  │  加载本地面板   │                      │  ├─ Relay HTTP/WS :8080   │
+│  └─ 后台通知服务  │                      │  ├─ Dashboard :9843       │
+└─────────────────┘                      │  ├─ 本地面板               │
+                                          │  ├─ Identity Manager     │
+┌─────────────────┐    HTTP/WS + Crypto     │  ├─ Crypto Layer         │
+│  PC 节点          │ ◀══════════════════▶  │  ├─ Adapter Layer         │
+│  role: leaf       │    AES-256-GCM      │  │  ├─ Claude Code       │
+│  NodeRuntime      │    wss:// (可选 TLS)  │  │  ├─ Shell              │
+│  (家里电脑)       │                      │  │  └─ System Info        │
+│  ├─ 本地面板      │                      └──────────────────────────┘
+│  └─ RelayConnect  │                                  ▲
+└─────────────────┘                          HTTP/WS + Crypto
                                               AES-256-GCM
                                                       ▼
                                           ┌──────────────────────────┐
                                           │  PC 节点                  │
                                           │  role: leaf               │
-                                          │  (办公室电脑)              │
+                                          │  ├─ 本地面板             │
+                                          │  └─ RelayConnect         │
                                           └──────────────────────────┘
 ```
+
+**Dashboard（本地面板）访问方式**：
+
+| 设备 | 怎么用 | 可对外暴露？ |
+|------|--------|------------|
+| PC | EXE/浏览器打开本地面板 (127.0.0.1:9843) | 本机 API 已实现，前端体验仍在收口 |
+| 手机 | APK 内置 WebView 加载自己的面板 | 开发中 |
+| 服务器 | 无 GUI，默认不查看 | 远程协议已存在，端到端体验仍在收口 |
+
+Dashboard 默认绑定 `127.0.0.1`（仅本机访问）。当前实现提供 `/api/node/external` 本机接口，可执行网络环境检测并切换 `dashboardBind` 后重启 Dashboard。远程节点通过 `node.external.*` 协议转发的后端通道已存在，但前端入口与端到端体验仍在收口中。
+
+```
+本机操作: Dashboard → /api/node/external → 检测环境 → 切换 dashboardBind
+远程操作: node.external.inspect / node.external.set → relay 转发 → 目标节点处理
+              (前端入口与状态展示仍在收口中)
+```
+
+网络检测覆盖：本机 IP 地址（127.0.0.1 / LAN / 公网）、HTTPS 证书状态、认证 Token 配置，以及基于网卡信息的端口可达性启发式判断。检测通过后可修改 `dashboardBind` 并重启绑定。防火墙/安全组外部探测目前还不是强校验。
+
+跨节点控制不依赖访问别人的面板。**本地面板会显示全网所有实例**，从自己面板直接操控远程进程。
 
 **关键特性**：
 - 所有通信经过应用层 AES-256-GCM 加密，不依赖 TLS
@@ -71,6 +99,7 @@ NodeRuntime.resolveRole()
 - 每个节点都可以被其他节点控制（注册为 agent）
 - 一个 relay 可以挂载任意多个 leaf 节点
 - relay 本身也可以连接另一个 upstream relay（链式拓扑）
+- Dashboard 对外暴露能力处于部分实现状态：本机 API 已可用，远程协议已接入 relay，完整前端入口和端到端状态仍需收口
 
 ---
 
@@ -95,7 +124,9 @@ NodeRuntime
 │       └─ SessionPersistence
 │
 ├─ [所有角色]
-│   ├─ Dashboard            ← 本地管理页面 (:9843)
+│   ├─ Dashboard            ← 本地管理页面 (127.0.0.1:9843)
+│   │                          仅当前设备用户使用。PC 用 EXE 打开，
+│   │                          手机 APK 用 WebView 加载，服务器无 GUI 默认不看
 │   ├─ RelayConnection      ← 连接上游 relay
 │   ├─ AdapterRegistry      ← 插件注册中心
 │   │   ├─ shellAdapter
@@ -330,7 +361,7 @@ pending ──▶ running ──▶ succeeded
 - 500ms 防抖写入
 - 优雅关闭时 flush
 - 断线重连 60 秒 grace period
-- 恢复后所有实例标记为 stopped（原进程随 relay 退出已死）
+- 持久化快照按 `stopped` 写入；当前 `NodeRelayServer.start()` 恢复时会把实例重新标为 `running`，这是实现与持久化语义之间的已知不一致，后续应以真实进程/agent 连接状态为准
 - 存储路径：`.sessionbridge/sessions.json`
 
 ### RelayEventBus
@@ -605,48 +636,48 @@ sessionBridge/
 
 ## 十、数据流
 
-### 用户通过 Web UI 与本地实例交互
+### Dashboard 节点通过 Relay 与实例交互
 
 ```
-浏览器输入文本
-    │
-    ├─ WebSocket + AES-256-GCM 加密 → relay-server
-    │   ├─ CryptoStream 解密 → parseMsg
-    │   ├─ 鉴权 (relayToken)
-    │   ├─ envelope({ type: "instance.input", data })
-    │   └─ InstanceManager 路由到活动实例
-    │
-    ├─ [本地实例]
-    │   └─ adapter.handle.send(data) / process.stdin.write()
-    │       └─ Claude Code / Shell 进程
-    │
-    ├─ [远程实例]
-    │   └─ 通过 agent.agentConnection WebSocket 加密转发
-    │       └─ leaf 节点的 CryptoStream 解密 → RelayConnection 接收
-    │           └─ writeToShellByRelayId() → shellProc.stdin
-    │
-    ├─ 输出返回路径
-    │   ├─ stdout → adapter.onOutput / processStreamLine
-    │   ├─ CryptoStream 加密 → OutputBlock → broadcast → UI
-    │   └─ shell.output → 加密 → 终端面板
-    │
-    └─ 浏览器渲染
-        ├─ 终端输出 (ANSI 解析)
-        ├─ 工具调用卡片 (OutputBlock 渲染)
-        ├─ 文件树 / 实例面板
-        └─ 消息日志
+Dashboard 节点 (A)                       Relay 节点 (B)                      目标节点 (C)
+     │                                      │                                   │
+     │─ WebSocket + AES-256-GCM ───────────▶│                                   │
+     │  加密握手 (ECDH + HKDF)               │                                   │
+     │◀─ 加密通道已建立 ────────────────────│                                   │
+     │                                      │                                   │
+     │─ instance.input (加密) ─────────────▶│                                   │
+     │                                      ├─ CryptoStream 解密 → parseMsg     │
+     │                                      ├─ 鉴权 (relayToken)                │
+     │                                      ├─ envelope({ type, data })         │
+     │                                      │                                   │
+     │                                      ├─ [本地实例]                        │
+     │                                      │   └─ adapter.handle.send(data)    │
+     │                                      │       → Claude / Shell 进程       │
+     │                                      │                                   │
+     │                                      ├─ [远程实例]                       │
+     │                                      │   └─ agent.stdin (加密) ────────▶│
+     │                                      │       → shellProc.stdin           │
+     │                                      │                                   │
+     │◀─ instance.output/block (加密) ─────│                                   │
+     │                                      │◀─ agent.stdout (加密) ────────────│
+     │                                      │                                   │
+     └─ Dashboard 渲染                       │                                   │
+         ├─ 终端输出 (ANSI 解析)              │                                   │
+         ├─ 工具调用卡片                      │                                   │
+         ├─ 文件树 / 实例面板                │                                   │
+         └─ 消息日志                         │                                   │
 ```
 
-### Agent 注册与通信
+### Leaf 节点注册与通信
 
 ```
-Leaf 节点启动
-    │
-    ├─ 1. NodeRuntime.resolveRole() → 'leaf'
-    ├─ 2. startDashboard() (:9843)
-    ├─ 3. Register adapters + detect
-    ├─ 4. new RelayConnection(config)
-    └─ 5. relay.connect()
+Leaf 节点 (C)                              Relay 节点 (B)
+    │                                           │
+    ├─ 1. NodeRuntime.resolveRole() → 'leaf'     │
+    ├─ 2. startDashboard() (:9843)              │
+    ├─ 3. Register adapters + detect             │
+    ├─ 4. new RelayConnection(config)            │
+    └─ 5. relay.connect()                       │
          │
          ├─ WebSocket → relay: ws://upstream:8080
          ├─ hello { role: "agent", version, features }
@@ -687,21 +718,22 @@ SessionBridge 默认不使用 TLS/HTTPS 证书。所有 WebSocket 通信通过�
 - **消息加密**: 所有消息使用 AES-256-GCM 加密，附带随机 IV 和认证标签（防篡改）
 - **双层加密**: 如配置了 TLS 证书（HTTPS/WSS），应用层加密仍然生效，两层互不干扰
 
-握手过程：
+握手过程（任意两节点之间）：
 
 ```
-客户端                                 服务器
+节点 A (发起方)                   节点 B (响应方)
   │                                      │
-  │ hello { publicKey, ephemeralKey }    │
+  │ 生成 ephemeral X25519 密钥对          │
+  │ hello { staticKey, ephemeralKey }    │
   │─────────────────────────────────────▶│
   │                                      │ 验证 token
-  │                                      │ 生成 ephemeral 密钥对
-  │ welcome { publicKey, ephemeralKey }  │
+  │                                      │ 生成 ephemeral X25519 密钥对
+  │ welcome { staticKey, ephemeralKey }  │
   │◀─────────────────────────────────────│
   │                                      │
   │ 双方独立计算:                         │
-  │ sec = X25519(eph, peer_eph)          │
-  │ auth = X25525(static, peer_static)   │
+  │ sec = X25519(eph, peer_eph)          │ ← 前向安全
+  │ auth = X25519(static, peer_static)   │ ← 身份绑定
   │ session_key = HKDF(sec || auth)      │
   │                                      │
   │ 所有后续消息 AES-256-GCM 加密         │
@@ -712,7 +744,7 @@ SessionBridge 默认不使用 TLS/HTTPS 证书。所有 WebSocket 通信通过�
 
 ### 访问认证
 
-- **relayToken**: 节点间认证，通过环境变量 `BRIDGE_TOKEN` 或 CLI `--relay-token` 设置
+- **relayToken**: 节点间认证，通过配置文件或 CLI `--relay-token` 设置
 - Token 在加密握手**之后**通过加密通道传输，不会被窃听
 - 未认证连接立即关闭（4001 Unauthorized）
 
@@ -770,24 +802,25 @@ SessionBridge 默认不使用 TLS/HTTPS 证书。所有 WebSocket 通信通过�
 | Dashboard 本地管理 | dashboard-server.ts | 已完成 |
 | NodeConfig.extensions 扩展配置包 | config.ts | 已完成 |
 | 版本兼容性检查 (semver) | semver.ts | 已完成 |
-| Session 恢复/重建 | relay-server.ts | 已完成 |
+| Session 恢复/重建 | relay-server.ts | 部分完成：快照恢复已实现，恢复后运行态仍需修正 |
 | `bridge run` 单命令模式 | run-command.ts | 已完成 |
 | `bridge setup` 配置管理 | index.ts | 已完成 |
+| Ed25519 身份密钥自动生成 | identity-manager.ts | 已完成 |
+| ECDH 密钥交换 + 会话派生 | crypto-layer.ts | 已完成 |
+| AES-256-GCM 消息加密 | crypto-layer.ts | 已完成 |
+| CryptoStream 透明加解密封装 | crypto-stream.ts | 已完成 |
+| 浏览器端 Web Crypto 加密 | crypto-client.ts | 已完成 |
+| Relay 加密握手集成 | relay-server.ts | 已完成 |
+| Agent 加密连接集成 | relay-connection.ts | 已完成 |
+| 前端 WS 加密集成 | ws-client.ts | 已完成 |
+| 加密/非加密客户端共存 | relay-server.ts | 已完成 |
 
 ### v0.7 (规划中)
 
 | 功能 | 模块 | 状态 |
 |------|------|------|
-| Ed25519 身份密钥自动生成 | identity-manager.ts | 待实现 |
-| ECDH 密钥交换 + 会话派生 | crypto-layer.ts | 待实现 |
-| AES-256-GCM 消息加密 | crypto-layer.ts | 待实现 |
-| CryptoStream 透明加解密封装 | crypto-stream.ts | 待实现 |
-| 浏览器端 Web Crypto 加密 | crypto-client.ts | 待实现 |
-| Relay 加密握手集成 | relay-server.ts | 待实现 |
-| Agent 加密连接集成 | relay-connection.ts | 待实现 |
-| 前端 WS 加密集成 | ws-client.ts | 待实现 |
-| 加密/非加密客户端共存 | relay-server.ts | 待实现 |
-| Flutter APK (WebView + 通知) | flutter_app/ | 待实现 |
+| Flutter APK (WebView + 通知 Service) | flutter_app/ | 开发中 |
+| 对外访问完整体验 | dashboard-server.ts + node.external.* | 开发中：本机 API 与远程协议已存在，前端/端到端仍需收口 |
 
 ---
 
