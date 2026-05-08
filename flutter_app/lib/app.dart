@@ -1,10 +1,21 @@
 import 'package:flutter/material.dart';
-import 'screens/connect_screen.dart';
-import 'screens/terminal_screen.dart';
+import 'screens/home_screen.dart';
+import 'screens/settings_screen.dart';
+import 'services/node_service.dart';
+import 'services/notification_service.dart';
+import 'services/settings_service.dart';
 
-/// Root MaterialApp with dark theme and route definitions.
 class SessionBridgeApp extends StatelessWidget {
-  const SessionBridgeApp({super.key});
+  final SettingsService settings;
+  final NodeService nodeService;
+  final NotificationService notificationService;
+
+  const SessionBridgeApp({
+    super.key,
+    required this.settings,
+    required this.nodeService,
+    required this.notificationService,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -16,10 +27,14 @@ class SessionBridgeApp extends StatelessWidget {
         colorSchemeSeed: Colors.cyan,
         useMaterial3: true,
       ),
-      initialRoute: '/connect',
+      initialRoute: '/',
       routes: {
-        '/connect': (_) => const ConnectScreen(),
-        '/terminal': (_) => const TerminalScreen(),
+        '/': (_) => HomeScreen(
+              settings: settings,
+              nodeService: nodeService,
+              notificationService: notificationService,
+            ),
+        '/settings': (_) => SettingsScreen(settings: settings),
       },
     );
   }

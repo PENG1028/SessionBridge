@@ -1,18 +1,22 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import 'app.dart';
-import 'providers/connection_provider.dart';
-import 'providers/terminal_provider.dart';
+import 'services/node_service.dart';
+import 'services/notification_service.dart';
+import 'services/settings_service.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(
-    MultiProvider(
-      providers: [
-        ChangeNotifierProvider(create: (_) => ConnectionProvider()),
-        ChangeNotifierProvider(create: (_) => TerminalProvider()),
-      ],
-      child: const SessionBridgeApp(),
-    ),
-  );
+
+  // Init services
+  final settings = SettingsService();
+  await settings.init();
+
+  final nodeService = NodeService(settings);
+  final notificationService = NotificationService();
+
+  runApp(SessionBridgeApp(
+    settings: settings,
+    nodeService: nodeService,
+    notificationService: notificationService,
+  ));
 }

@@ -1,7 +1,7 @@
 name: session_bridge
-description: "Mobile client for SessionBridge — remote shell relay."
+description: "SessionBridge multi-platform client — embedded Node.js relay + WebView dashboard."
 publish_to: 'none'
-version: 0.1.0+1
+version: 0.2.0+1
 
 environment:
   sdk: ^3.11.5
@@ -10,11 +10,11 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.8
-  web_socket_channel: ^2.4.5
-  provider: ^6.1.2
+  webview_flutter: ^4.10.0
+  webview_flutter_wkwebview: ^3.16.0
+  flutter_local_notifications: ^18.0.1
   shared_preferences: ^2.3.4
-  cryptography: ^2.7.0
-  crypto: ^3.0.3
+  path_provider: ^2.1.5
 
 dev_dependencies:
   flutter_test:
