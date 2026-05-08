@@ -7,12 +7,14 @@
 //   Parent → Host:  { type, ... }
 //   Host → Parent:  { type, ... }
 
-import { scanAndActivate, type ActivatedExtension } from './extension-loader';
+import { scanAndActivate, type ActivatedExtension, type LoaderResult } from './extension-loader';
+import type { ExtensionDiagnostic } from '../types';
 import { adapterRegistry } from '../registry';
 
 // ─── State ───────────────────────────────────────────────────────
 
 const activeExtensions = new Map<string, ActivatedExtension>();
+let diagnostics: ExtensionDiagnostic[] = [];
 
 // ─── Message Handlers ────────────────────────────────────────────
 
@@ -33,17 +35,19 @@ async function handleMessage(msg: any): Promise<void> {
   try {
     switch (msg.type) {
       case 'host.activate': {
-        const activated = await scanAndActivate({
+        const result: LoaderResult = await scanAndActivate({
           extraPaths: msg.extraPaths || [],
           filter: msg.filter || [],
           mode: msg.mode || 'production',
         });
-        for (const ext of activated) {
+        for (const ext of result.activated) {
           activeExtensions.set(ext.manifest.id, ext);
         }
+        diagnostics = result.diagnostics;
         send('host.activated', {
-          ids: activated.map(a => a.manifest.id),
-          count: activated.length,
+          ids: result.activated.map(a => a.manifest.id),
+          count: result.activated.length,
+          diagnostics: result.diagnostics,
         });
         break;
       }
@@ -117,14 +121,18 @@ async function handleMessage(msg: any): Promise<void> {
           adapterRegistry.unregister(id);
         }
         activeExtensions.clear();
-        const activated = await scanAndActivate({
+        const result: LoaderResult = await scanAndActivate({
           extraPaths: msg.extraPaths || [],
           mode: msg.mode || 'production',
         });
-        for (const ext of activated) {
+        for (const ext of result.activated) {
           activeExtensions.set(ext.manifest.id, ext);
         }
-        send('host.reloaded', { ids: activated.map(a => a.manifest.id) });
+        diagnostics = result.diagnostics;
+        send('host.reloaded', {
+          ids: result.activated.map(a => a.manifest.id),
+          diagnostics: result.diagnostics,
+        });
         break;
       }
 

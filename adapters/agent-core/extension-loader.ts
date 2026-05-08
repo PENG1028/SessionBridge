@@ -1,21 +1,24 @@
 // ─── Extension Loader ─────────────────────────────────────────────
 // Scans extension directories for sb-extension.json manifests,
-// dynamically imports the main entry point, and registers adapters.
+// dynamically imports the main entry point, and activates extensions.
 //
-// Supports two module formats:
-//   1. New (VS Code-like): exports activate(context) => AgentAdapter
+// Supports two activation patterns:
+//   1. New (VS Code-like): exports activate(context) => AgentAdapter | void
 //   2. Legacy: exports a singleton adapter instance (const foo = new X)
+//
+// Extensions may return an AgentAdapter (for runtime capabilities) or
+// contribute only manifest-level declarations (commands, menus, views, etc.).
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
-import { join, resolve, dirname, basename } from 'path';
+import { join, resolve, dirname, basename, relative, isAbsolute } from 'path';
 import { homedir } from 'os';
 import { pathToFileURL } from 'url';
 import { adapterRegistry } from '../registry';
 import { ExtensionContextImpl } from './extension-context';
 import { extensionPoints } from './extension-points';
 import type {
-  AgentAdapter, ExtensionManifest, ExtensionMode,
-  AgentCapabilityHost, RuntimeInfo,
+  AgentAdapter, ExtensionManifest, ExtensionMode, ExtensionStatus, ExtensionDiagnostic,
+  AgentCapabilityHost,
 } from '../types';
 
 export interface LoaderOptions {
@@ -29,6 +32,11 @@ export interface LoaderOptions {
   capabilityHost?: AgentCapabilityHost;
   /** Logger override. */
   log?: (msg: string) => void;
+}
+
+export interface LoaderResult {
+  activated: ActivatedExtension[];
+  diagnostics: ExtensionDiagnostic[];
 }
 
 function logDefault(msg: string): void { console.log(`[ext-loader] ${msg}`); }
@@ -83,6 +91,194 @@ function getScanPaths(options: LoaderOptions): string[] {
   return paths;
 }
 
+// ─── Manifest Validation ─────────────────────────────────────────
+
+/**
+ * Validate an extension manifest structure.
+ * Returns an array of error messages (empty = valid).
+ * Non-fatal warnings are prefixed with "[WARN]".
+ */
+export function validateManifest(manifest: Record<string, unknown>, dir: string): string[] {
+  const errors: string[] = [];
+
+  // id
+  if (!manifest.id || typeof manifest.id !== 'string') {
+    errors.push('id is required and must be a string');
+  } else if (!/^[a-z0-9][a-z0-9.\-]*[a-z0-9]$/.test(manifest.id as string)) {
+    errors.push(`id "${manifest.id}" must match /^[a-z0-9][a-z0-9.-]*[a-z0-9]$/`);
+  }
+
+  // displayName
+  if (!manifest.displayName || typeof manifest.displayName !== 'string') {
+    errors.push('displayName is required and must be a string');
+  }
+
+  // version
+  if (!manifest.version || typeof manifest.version !== 'string') {
+    errors.push('version is required and must be a string');
+  } else if (!/^\d+\.\d+\.\d+/.test(manifest.version as string)) {
+    errors.push(`version "${manifest.version}" must be semver (x.y.z)`);
+  }
+
+  // main
+  if (!manifest.main || typeof manifest.main !== 'string') {
+    errors.push('main is required and must be a string');
+  } else {
+    const resolved = resolve(dir, manifest.main as string);
+    // Check the resolved path does not escape the extension directory
+    const normalizedDir = resolve(dir);
+    const rel = relative(normalizedDir, resolved);
+    if (rel.startsWith('..') || isAbsolute(rel)) {
+      errors.push(`main "${manifest.main}" resolves outside extension directory`);
+    }
+    // Warn (not error) if main does not exist — dev mode may have .ts instead of .js
+    const tsPath = resolve(dir, manifest.main.replace(/\.js$/, '.ts'));
+    if (!existsSync(resolved) && !existsSync(tsPath)) {
+      // Neither .js nor .ts found — add as warning prefix
+      errors.push(`[WARN] main "${manifest.main}" not found at ${resolved} (may be compiled later)`);
+    }
+  }
+
+  // engines.sessionbridge — warn only
+  const engines = manifest.engines as Record<string, unknown> | undefined;
+  if (engines?.sessionbridge && typeof engines.sessionbridge !== 'string') {
+    errors.push('engines.sessionbridge must be a string if present');
+  }
+
+  // capabilities — must only contain known fields
+  const knownCapabilities = new Set([
+    'terminal', 'fileContext', 'structuredEvents', 'approvals',
+    'modes', 'timeline', 'compact', 'tasks',
+  ]);
+  const capabilities = manifest.capabilities as Record<string, unknown> | undefined;
+  if (capabilities !== undefined) {
+    if (typeof capabilities !== 'object' || capabilities === null) {
+      errors.push('capabilities must be an object');
+    } else {
+      for (const key of Object.keys(capabilities)) {
+        if (!knownCapabilities.has(key)) {
+          errors.push(`capabilities: unknown field "${key}"`);
+        }
+      }
+    }
+  }
+
+  // contributes
+  const contributes = manifest.contributes as Record<string, unknown> | undefined;
+  if (contributes !== undefined) {
+    if (typeof contributes !== 'object' || contributes === null) {
+      errors.push('contributes must be an object');
+    } else {
+      // commands
+      const commands = contributes.commands as Record<string, unknown>[] | undefined;
+      if (commands !== undefined) {
+        if (!Array.isArray(commands)) {
+          errors.push('contributes.commands must be an array');
+        } else {
+          for (let i = 0; i < commands.length; i++) {
+            const cmd = commands[i];
+            if (!cmd.id || typeof cmd.id !== 'string') {
+              errors.push(`contributes.commands[${i}]: id is required`);
+            }
+            if (!cmd.title || typeof cmd.title !== 'string') {
+              errors.push(`contributes.commands[${i}] (${cmd.id || '?'}): title is required`);
+            }
+          }
+        }
+      }
+
+      // menus
+      const menus = contributes.menus as Record<string, unknown>[] | undefined;
+      if (menus !== undefined) {
+        if (!Array.isArray(menus)) {
+          errors.push('contributes.menus must be an array');
+        } else {
+          for (let i = 0; i < menus.length; i++) {
+            const menu = menus[i];
+            if (!menu.id || typeof menu.id !== 'string') {
+              errors.push(`contributes.menus[${i}]: id is required`);
+            }
+            if (!menu.command || typeof menu.command !== 'string') {
+              errors.push(`contributes.menus[${i}] (${menu.id || '?'}): command is required`);
+            }
+          }
+        }
+      }
+
+      // views
+      const views = contributes.views as Record<string, unknown> | undefined;
+      if (views !== undefined) {
+        if (typeof views !== 'object' || views === null) {
+          errors.push('contributes.views must be an object');
+        } else {
+          for (const side of ['sidebar-left', 'sidebar-right']) {
+            const panels = views[side] as Record<string, unknown>[] | undefined;
+            if (panels !== undefined) {
+              if (!Array.isArray(panels)) {
+                errors.push(`contributes.views.${side} must be an array`);
+              } else {
+                for (let i = 0; i < panels.length; i++) {
+                  const panel = panels[i];
+                  if (!panel.id || typeof panel.id !== 'string') {
+                    errors.push(`contributes.views.${side}[${i}]: id is required`);
+                  }
+                  if (!panel.title || typeof panel.title !== 'string') {
+                    errors.push(`contributes.views.${side}[${i}] (${panel.id || '?'}): title is required`);
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // notifications
+      const notifications = contributes.notifications as Record<string, unknown>[] | undefined;
+      if (notifications !== undefined) {
+        if (!Array.isArray(notifications)) {
+          errors.push('contributes.notifications must be an array');
+        } else {
+          for (let i = 0; i < notifications.length; i++) {
+            const n = notifications[i];
+            if (!n.id || typeof n.id !== 'string') {
+              errors.push(`contributes.notifications[${i}]: id is required`);
+            }
+            if (!n.label || typeof n.label !== 'string') {
+              errors.push(`contributes.notifications[${i}] (${n.id || '?'}): label is required`);
+            }
+          }
+        }
+      }
+
+      // configuration
+      const config = contributes.configuration as Record<string, unknown> | undefined;
+      if (config !== undefined && (typeof config !== 'object' || config === null)) {
+        errors.push('contributes.configuration must be an object');
+      }
+
+      // languages
+      const languages = contributes.languages as Record<string, unknown>[] | undefined;
+      if (languages !== undefined) {
+        if (!Array.isArray(languages)) {
+          errors.push('contributes.languages must be an array');
+        } else {
+          for (let i = 0; i < languages.length; i++) {
+            const lang = languages[i];
+            if (!lang.id || typeof lang.id !== 'string') {
+              errors.push(`contributes.languages[${i}]: id is required`);
+            }
+            if (lang.extensions !== undefined && !Array.isArray(lang.extensions)) {
+              errors.push(`contributes.languages[${i}] (${lang.id || '?'}): extensions must be an array`);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return errors;
+}
+
 // ─── Manifest Discovery ──────────────────────────────────────────
 
 interface ManifestEntry {
@@ -93,7 +289,7 @@ interface ManifestEntry {
   engineVersion: string | null;
 }
 
-function discoverManifests(paths: string[]): ManifestEntry[] {
+function discoverManifests(paths: string[], diagnostics: ExtensionDiagnostic[]): ManifestEntry[] {
   const entries: ManifestEntry[] = [];
 
   for (const basePath of paths) {
@@ -101,7 +297,7 @@ function discoverManifests(paths: string[]): ManifestEntry[] {
     // or CONTAINS extension subdirectories
     const selfManifest = join(basePath, 'sb-extension.json');
     if (existsSync(selfManifest)) {
-      const entry = loadManifest(selfManifest, basePath);
+      const entry = loadManifest(selfManifest, basePath, diagnostics);
       if (entry) entries.push(entry);
       continue;
     }
@@ -114,7 +310,7 @@ function discoverManifests(paths: string[]): ManifestEntry[] {
     for (const subdir of subdirs) {
       const manifestPath = join(basePath, subdir, 'sb-extension.json');
       if (existsSync(manifestPath)) {
-        const entry = loadManifest(manifestPath, join(basePath, subdir));
+        const entry = loadManifest(manifestPath, join(basePath, subdir), diagnostics);
         if (entry) entries.push(entry);
       }
     }
@@ -123,21 +319,57 @@ function discoverManifests(paths: string[]): ManifestEntry[] {
   return entries;
 }
 
-function loadManifest(manifestPath: string, dir: string): ManifestEntry | null {
+function loadManifest(manifestPath: string, dir: string, diagnostics: ExtensionDiagnostic[]): ManifestEntry | null {
   try {
     const raw = readFileSync(manifestPath, 'utf8');
-    const manifest = JSON.parse(raw) as ExtensionManifest;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
 
-    // Validate required fields
-    if (!manifest.id || !manifest.displayName || !manifest.main) {
-      console.warn(`[ext-loader] Invalid manifest in ${dir}: missing id/displayName/main`);
+    // Validate
+    const errors = validateManifest(parsed, dir);
+    const hardErrors = errors.filter(e => !e.startsWith('[WARN]'));
+    const warnings = errors.filter(e => e.startsWith('[WARN]'));
+
+    if (hardErrors.length > 0) {
+      const id = (parsed.id as string) || basename(dir);
+      console.warn(`[ext-loader] Invalid manifest in ${dir}:`);
+      for (const err of hardErrors) console.warn(`  - ${err}`);
+      diagnostics.push({
+        id,
+        dir,
+        status: 'invalid',
+        message: `Manifest validation failed: ${hardErrors.join('; ')}`,
+        manifest: parsed as unknown as ExtensionManifest,
+      });
       return null;
     }
 
+    // Print warnings but accept the manifest
+    for (const w of warnings) console.warn(`[ext-loader]  ⚠ ${w.replace('[WARN] ', '')}`);
+
+    const manifest = parsed as unknown as ExtensionManifest;
     const engineVersion = manifest.engines?.sessionbridge ?? null;
+
+    if (engineVersion) {
+      console.warn(`[ext-loader] "${manifest.id}" requires sessionbridge ${engineVersion} — version check not yet enforced`);
+    }
+
+    diagnostics.push({
+      id: manifest.id,
+      dir,
+      status: 'discovered',
+      manifest,
+    });
+
     return { manifest, dir, engineVersion };
   } catch (err) {
+    const id = basename(dir);
     console.warn(`[ext-loader] Failed to load manifest at ${manifestPath}:`, err);
+    diagnostics.push({
+      id,
+      dir,
+      status: 'invalid',
+      message: `Failed to load manifest: ${(err as Error).message}`,
+    });
     return null;
   }
 }
@@ -226,49 +458,58 @@ function resolveAdapter(module: Record<string, unknown>, manifest: ExtensionMani
 
 export interface ActivatedExtension {
   manifest: ExtensionManifest;
-  adapter: AgentAdapter;
+  /** Optional adapter — extensions may contribute only manifest declarations. */
+  adapter?: AgentAdapter;
   context: ExtensionContextImpl;
   activateTime: number;
 }
 
 /**
  * Scan all extension paths, discover manifests, load and activate
- * extensions. Returns the list of successfully activated adapters.
+ * extensions. Returns both the list of successfully activated extensions
+ * and diagnostics for all discovered/invalid/failed extensions.
  */
-export async function scanAndActivate(options: LoaderOptions = {}): Promise<ActivatedExtension[]> {
+export async function scanAndActivate(options: LoaderOptions = {}): Promise<LoaderResult> {
   const log = options.log ?? logDefault;
   const paths = getScanPaths(options);
-  const manifests = discoverManifests(paths);
+  const diagnostics: ExtensionDiagnostic[] = [];
+  const manifests = discoverManifests(paths, diagnostics);
 
-  log(`Found ${manifests.length} extension manifest(s) in ${paths.length} path(s)`);
+  log(`Found ${manifests.length} valid manifest(s) in ${paths.length} path(s)`);
 
   const activated: ActivatedExtension[] = [];
 
   for (const entry of manifests) {
+    // Update diagnostic status to activating
+    updateDiagnostic(diagnostics, entry.manifest.id, { status: 'activating' });
+
     try {
       // Filter check
       if (options.filter && options.filter.length > 0 && !options.filter.includes(entry.manifest.id)) {
         log(`  Skipping "${entry.manifest.id}" (not in filter)`);
+        updateDiagnostic(diagnostics, entry.manifest.id, { status: 'skipped', message: 'Not in filter' });
         continue;
-      }
-
-      // Engine version check
-      if (entry.engineVersion) {
-        log(`  "${entry.manifest.id}" requires sessionbridge ${entry.engineVersion}`);
       }
 
       // Activate
       const result = await activateExtension(entry, options);
       if (result) {
         activated.push(result);
+        updateDiagnostic(diagnostics, entry.manifest.id, {
+          status: 'activated',
+          message: undefined,
+          activateTime: result.activateTime,
+        });
         log(`  ✅ "${entry.manifest.id}" v${entry.manifest.version} activated (${result.activateTime}ms)`);
       }
     } catch (err) {
-      log(`  ❌ "${entry.manifest.id}" activation failed: ${(err as Error).message}`);
+      const msg = (err as Error).message;
+      log(`  ❌ "${entry.manifest.id}" activation failed: ${msg}`);
+      updateDiagnostic(diagnostics, entry.manifest.id, { status: 'failed', message: msg });
     }
   }
 
-  return activated;
+  return { activated, diagnostics };
 }
 
 async function activateExtension(
@@ -290,27 +531,68 @@ async function activateExtension(
 
   const startTime = Date.now();
 
+  let adapter: AgentAdapter | undefined | null = null;
+
   // New-style: call module.activate(context)
   if (typeof module.activate === 'function') {
-    const adapter = await module.activate(context);
-    if (!adapter || typeof adapter.id !== 'string') {
-      throw new Error(`activate() did not return a valid AgentAdapter`);
+    const activateResult = await module.activate(context);
+
+    if (activateResult && typeof activateResult === 'object' && typeof (activateResult as any).id === 'string') {
+      // activate() returned a valid AgentAdapter
+      adapter = activateResult as AgentAdapter;
+      if (adapter.id !== manifest.id) {
+        throw new Error(`adapter.id ("${adapter.id}") must match manifest.id ("${manifest.id}")`);
+      }
+      adapterRegistry.registerFromManifest(adapter, manifest);
+    } else {
+      // activate() returned void/null/undefined — contributions-only extension
+      adapter = null;
     }
-    adapterRegistry.registerFromManifest(adapter, manifest);
-    extensionPoints.register(adapter.id, manifest);
-    const activateTime = Date.now() - startTime;
-    return { manifest, adapter, context, activateTime };
+  } else {
+    // Legacy-style: find exported singleton
+    adapter = resolveAdapter(module, manifest);
+    if (adapter) {
+      if (adapter.id !== manifest.id) {
+        throw new Error(`adapter.id ("${adapter.id}") must match manifest.id ("${manifest.id}")`);
+      }
+      adapterRegistry.registerFromManifest(adapter, manifest);
+    } else {
+      // No adapter found — contributions-only extension
+      adapter = null;
+    }
   }
 
-  // Legacy-style: find exported singleton
-  const adapter = resolveAdapter(module, manifest);
-  if (!adapter) {
-    throw new Error(`No AgentAdapter export found in module for "${manifest.id}"`);
-  }
-  adapterRegistry.registerFromManifest(adapter, manifest);
-  extensionPoints.register(adapter.id, manifest);
+  // Always register manifest contributions (regardless of adapter presence)
+  extensionPoints.register(manifest.id, manifest);
+
   const activateTime = Date.now() - startTime;
-  return { manifest, adapter, context, activateTime };
+
+  // For legacy extensions that returned no adapter and no activate(), log a note
+  if (adapter === null && typeof module.activate !== 'function') {
+    const log = options.log ?? logDefault;
+    log(`  "${manifest.id}" loaded as contributions-only (no adapter export, no activate())`);
+  }
+
+  return {
+    manifest,
+    adapter: adapter || undefined,
+    context,
+    activateTime,
+  };
+}
+
+/** Update a diagnostic entry's status/message/activateTime by extension ID. */
+function updateDiagnostic(
+  diagnostics: ExtensionDiagnostic[],
+  id: string,
+  update: { status?: ExtensionStatus; message?: string; activateTime?: number },
+): void {
+  const existing = diagnostics.find(d => d.id === id);
+  if (existing) {
+    if (update.status) existing.status = update.status;
+    if (update.message !== undefined) existing.message = update.message;
+    if (update.activateTime !== undefined) existing.activateTime = update.activateTime;
+  }
 }
 
 /**
@@ -329,9 +611,10 @@ export function deactivateExtension(id: string, activated: ActivatedExtension[])
 /**
  * Reload all extensions: deactivate all, re-scan, re-activate.
  */
-export async function reloadExtensions(options: LoaderOptions = {}): Promise<ActivatedExtension[]> {
+export async function reloadExtensions(options: LoaderOptions = {}): Promise<LoaderResult> {
   // Clear registry and extension points
-  const allIds = adapterRegistry.list().map(a => a.id);
+  // Collect all keys (manifest IDs) from extension points
+  const allIds = extensionPoints.listExtensions();
   for (const id of allIds) {
     adapterRegistry.unregister(id);
     extensionPoints.unregister(id);

@@ -528,3 +528,25 @@ export interface NotificationContribution {
   label: string;
   description: string;
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// Extension Lifecycle — status and diagnostics
+// ═══════════════════════════════════════════════════════════════════
+
+export type ExtensionStatus =
+  | 'discovered'
+  | 'invalid'
+  | 'activating'
+  | 'activated'
+  | 'failed'
+  | 'disabled'
+  | 'skipped';
+
+export interface ExtensionDiagnostic {
+  id: string;
+  dir: string;
+  status: ExtensionStatus;
+  message?: string;
+  manifest?: ExtensionManifest;
+  activateTime?: number;
+}

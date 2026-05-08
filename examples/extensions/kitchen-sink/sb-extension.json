@@ -1,0 +1,135 @@
+{
+  "id": "kitchen-sink",
+  "displayName": "Kitchen Sink",
+  "version": "0.1.0",
+  "icon": "test-tube",
+  "engines": {
+    "sessionbridge": "^0.6.0"
+  },
+  "main": "./index.js",
+  "activationEvents": ["onStartupFinished"],
+  "runtime": {
+    "installHint": "Example plugin, no external runtime required"
+  },
+  "capabilities": {
+    "terminal": false,
+    "fileContext": false,
+    "structuredEvents": false,
+    "approvals": false,
+    "modes": false,
+    "timeline": false,
+    "compact": false,
+    "tasks": false
+  },
+  "contributes": {
+    "views": {
+      "sidebar-left": [
+        {
+          "id": "ks.explorer",
+          "title": "KS Explorer",
+          "icon": "compass",
+          "defaultVisible": true,
+          "order": 50
+        }
+      ],
+      "sidebar-right": [
+        {
+          "id": "ks.info",
+          "title": "KS Info",
+          "icon": "info",
+          "defaultVisible": true,
+          "order": 50
+        },
+        {
+          "id": "ks.stats",
+          "title": "KS Stats",
+          "icon": "bar-chart",
+          "defaultVisible": false,
+          "order": 60,
+          "when": "isRunning"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "id": "ks.hello",
+        "title": "Say Hello",
+        "category": "Kitchen Sink",
+        "icon": "wave"
+      },
+      {
+        "id": "ks.greet",
+        "title": "Greet World",
+        "category": "Kitchen Sink",
+        "icon": "globe",
+        "when": "isRunning"
+      },
+      {
+        "id": "ks.reset",
+        "title": "Reset State",
+        "category": "Kitchen Sink",
+        "icon": "rotate-ccw"
+      }
+    ],
+    "menus": [
+      {
+        "id": "ks.menu.hello",
+        "title": "Say Hello",
+        "command": "ks.hello",
+        "group": "navigation",
+        "when": "activeAdapterId == claude-code"
+      },
+      {
+        "id": "ks.menu.reset",
+        "title": "Reset Kitchen Sink",
+        "command": "ks.reset",
+        "group": "edit"
+      }
+    ],
+    "notifications": [
+      {
+        "id": "ks.greeting",
+        "label": "Greeting Received",
+        "description": "Triggered when someone says hello to Kitchen Sink"
+      },
+      {
+        "id": "ks.stateReset",
+        "label": "State Reset",
+        "description": "Triggered when Kitchen Sink state is reset"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "properties": {
+        "ks.greeting.target": {
+          "type": "string",
+          "default": "World",
+          "description": "Target of the Kitchen Sink greeting"
+        },
+        "ks.autoGreet": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically greet on activation"
+        },
+        "ks.logLevel": {
+          "type": "string",
+          "default": "info",
+          "enum": ["verbose", "info", "warn", "error"],
+          "description": "Kitchen Sink log level"
+        },
+        "ks.pollInterval": {
+          "type": "integer",
+          "default": 30,
+          "description": "Poll interval in seconds"
+        }
+      }
+    },
+    "languages": [
+      {
+        "id": "kitchen-sink-test",
+        "extensions": [".sbtest", ".sb-test"],
+        "icon": "flask"
+      }
+    ]
+  }
+}

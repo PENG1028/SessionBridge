@@ -2315,8 +2315,12 @@ export function startRelayServer(port?: number): Promise<{ close: () => void; po
   (async () => {
     try {
       const { scanAndActivate } = await import("../adapters/agent-core/extension-loader");
-      const activated = await scanAndActivate({ log: (msg: string) => console.log(`[ext] ${msg}`) });
-      console.log(`  ✓ Adapters registered: ${activated.map(a => a.manifest.id).join(', ')}`);
+      const result = await scanAndActivate({ log: (msg: string) => console.log(`[ext] ${msg}`) });
+      console.log(`  ✓ Extensions activated: ${result.activated.map(a => a.manifest.id).join(', ')}`);
+      if (result.diagnostics.some(d => d.status === 'failed' || d.status === 'invalid')) {
+        const bad = result.diagnostics.filter(d => d.status === 'failed' || d.status === 'invalid');
+        for (const d of bad) console.warn(`  ⚠ Extension "${d.id}": ${d.message}`);
+      }
     } catch (err) {
       console.warn(`  ⚠ Adapter loading failed: ${(err as Error).message}`);
     }
@@ -2403,7 +2407,12 @@ export class NodeRelayServer {
     // Register adapters via extension loader
     (async () => {
       const { scanAndActivate } = await import("../adapters/agent-core/extension-loader");
-      await scanAndActivate({ log: (msg: string) => console.log(`[ext] ${msg}`) });
+      const result = await scanAndActivate({ log: (msg: string) => console.log(`[ext] ${msg}`) });
+      console.log(`  ✓ Extensions activated: ${result.activated.map(a => a.manifest.id).join(', ')}`);
+      if (result.diagnostics.some(d => d.status === 'failed' || d.status === 'invalid')) {
+        const bad = result.diagnostics.filter(d => d.status === 'failed' || d.status === 'invalid');
+        for (const d of bad) console.warn(`  ⚠ Extension "${d.id}": ${d.message}`);
+      }
     })();
     // Restore sessions from previous run
     const snapshot = sessionPersistence.restore();

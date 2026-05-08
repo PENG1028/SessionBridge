@@ -207,15 +207,15 @@ export class ExtensionPointsRegistry {
   private manifests = new Map<string, ExtensionManifest>();
 
   /** Register an extension's manifest. Called during extension activation. */
-  register(adapterId: string, manifest: ExtensionManifest): void {
-    this.manifests.set(adapterId, manifest);
-    panelRegistry.registerFromManifest(adapterId, manifest);
+  register(extensionId: string, manifest: ExtensionManifest): void {
+    this.manifests.set(extensionId, manifest);
+    panelRegistry.registerFromManifest(extensionId, manifest);
   }
 
   /** Unregister an extension's manifest. Called during deactivation. */
-  unregister(adapterId: string): void {
-    this.manifests.delete(adapterId);
-    panelRegistry.unregister(adapterId);
+  unregister(extensionId: string): void {
+    this.manifests.delete(extensionId);
+    panelRegistry.unregister(extensionId);
   }
 
   /** Clear all manifests (used during reload). */
@@ -230,8 +230,8 @@ export class ExtensionPointsRegistry {
   }
 
   /** Get the manifest for a specific extension. */
-  getManifest(adapterId: string): ExtensionManifest | undefined {
-    return this.manifests.get(adapterId);
+  getManifest(extensionId: string): ExtensionManifest | undefined {
+    return this.manifests.get(extensionId);
   }
 
   // ─── Adapter → View ID Mapping ──────────────────────────────

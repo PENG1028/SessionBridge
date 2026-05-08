@@ -12,7 +12,7 @@
 
 import { fork, type ChildProcess } from 'child_process';
 import { resolve } from 'path';
-import type { InstanceHandle, StartInstanceInput, RuntimeInfo } from '../types';
+import type { InstanceHandle, StartInstanceInput, RuntimeInfo, ExtensionDiagnostic } from '../types';
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -39,6 +39,7 @@ export interface HostInfo {
   uptime: number;
   crashCount: number;
   activatedExtensionIds: string[];
+  diagnostics: ExtensionDiagnostic[];
   instanceCount: number;
   mode: 'production' | 'development';
   enabled: boolean;
@@ -76,6 +77,7 @@ export class ExtensionHostManager {
   }>();
   private crashCount = 0;
   private activatedIds: string[] = [];
+  private diagnostics: ExtensionDiagnostic[] = [];
   private startTime = 0;
   private readyResolver: (() => void) | null = null;
 
@@ -109,6 +111,7 @@ export class ExtensionHostManager {
       uptime: this.uptime,
       crashCount: this.crashCount,
       activatedExtensionIds: [...this.activatedIds],
+      diagnostics: [...this.diagnostics],
       instanceCount: this.instanceCallbacks.size,
       mode: this.options.mode,
       enabled: this.options.enabled,
@@ -155,6 +158,7 @@ export class ExtensionHostManager {
     if (!this.isRunning()) throw new Error('Extension host not running');
     const result = await this.sendRequest('host.activate', opts);
     this.activatedIds = (result as any).ids || [];
+    this.diagnostics = (result as any).diagnostics || [];
     this.log(`Activated ${this.activatedIds.length} extension(s): ${this.activatedIds.join(', ')}`);
     return this.activatedIds;
   }
@@ -253,6 +257,7 @@ export class ExtensionHostManager {
     this.instanceCallbacks.clear();
     const result = await this.sendRequest('host.reload', opts);
     this.activatedIds = (result as any).ids || [];
+    this.diagnostics = (result as any).diagnostics || [];
     this.log(`Reloaded ${this.activatedIds.length} extension(s)`);
     return this.activatedIds;
   }
@@ -443,6 +448,7 @@ export class ExtensionHostManager {
 
       case 'host.activated': {
         this.activatedIds = msg.ids || [];
+        this.diagnostics = msg.diagnostics || [];
         this.log(`Activated ${this.activatedIds.length} extension(s)`);
         break;
       }
