@@ -45,3 +45,8 @@
 .animate-pulse-dot {
   animation: pulse-dot 1.5s ease-in-out infinite;
 }
+
+/* ── Workbench: main view fade transition ────────────────────── */
+.animate-fadeIn {
+  animation: fadeIn 150ms ease-in-out;
+}

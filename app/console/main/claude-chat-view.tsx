@@ -10,10 +10,9 @@ import { TOOL_SEMANTICS } from '../shared/tool-constants';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { SystemContextBar } from './system-context-bar';
+import { useWorkbench } from '../workbench/workbench-context';
 
-// ─── Types ──────────────────────────────────────────────
-
-type Phase = 'idle' | 'running' | 'done' | 'error';
+// ─── Internal types (duplicated from context for local references) ──
 
 interface Block {
   id: string;
@@ -52,16 +51,6 @@ interface ToolActivity {
   detail: string;
   semantic: string;
   status: 'running' | 'done' | 'error';
-}
-
-interface TaskInfo {
-  id: string;
-  description: string;
-  taskType: string;
-  startTime: number;
-  lastToolName?: string;
-  summary?: string;
-  usage?: { totalTokens?: number; toolUses?: number; durationMs?: number };
 }
 
 // ─── Constants ──────────────────────────────────────────
@@ -153,69 +142,9 @@ function MarkdownRenderer({ content }: { content: string }) {
   );
 }
 
-// ─── Props ──────────────────────────────────────────────
-
-export interface ClaudeChatViewProps {
-  // Messages
-  messages: Message[];
-  turns: Turn[];
-
-  // Phase
-  phase: Phase;
-  setPhase: (p: Phase) => void;
-  currentActivity: string | null;
-  setCurrentActivity: (a: string | null) => void;
-
-  // Connection
-  connStatus: { status: string };
-
-  // Loading
-  isRestoring: boolean;
-  historyLoading: boolean;
-
-  // Input
-  inputValue: string;
-  setInputValue: (v: string) => void;
-  handleSubmit: (overrideCmd?: string) => void;
-  handleInputChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  handleKeyDown: (e: React.KeyboardEvent) => void;
-
-  // Tool activity
-  toolActivities: Map<string, ToolActivity>;
-  setToolActivities: React.Dispatch<React.SetStateAction<Map<string, ToolActivity>>>;
-  expandedToolOutputs: Set<string>;
-  setExpandedToolOutputs: React.Dispatch<React.SetStateAction<Set<string>>>;
-
-  // File suggestions
-  showFileSuggest: boolean;
-  fileSuggestions: any[];
-  handleFileSuggestionClick: (item: any) => void;
-
-  // Commands
-  showCommands: boolean;
-  setShowCommands: React.Dispatch<React.SetStateAction<boolean>>;
-  handleCommandClick: (cmd: string) => void;
-  cmdPanelRef: React.RefObject<HTMLDivElement | null>;
-
-  // Actions
-  handleInterrupt: () => void;
-
-  // Fork (just the state setters — dialog lives in page.tsx)
-  setForkTarget: (v: number | null) => void;
-  setForkPrompt: (v: string) => void;
-
-  // External session
-  activeExternalSession: string | null;
-  clearExternalSession: () => void;
-
-  // Refs
-  scrollContainerRef: React.RefObject<HTMLDivElement | null>;
-  actionEndRef: React.RefObject<HTMLDivElement | null>;
-}
-
 // ─── ClaudeChatView ─────────────────────────────────────
 
-export function ClaudeChatView(props: ClaudeChatViewProps) {
+export function ClaudeChatView() {
   const {
     messages, turns,
     phase, setPhase, currentActivity, setCurrentActivity,
@@ -228,7 +157,7 @@ export function ClaudeChatView(props: ClaudeChatViewProps) {
     setForkTarget, setForkPrompt,
     activeExternalSession, clearExternalSession,
     scrollContainerRef, actionEndRef,
-  } = props;
+  } = useWorkbench();
 
   return (
     <>
@@ -526,7 +455,7 @@ export function ClaudeChatView(props: ClaudeChatViewProps) {
           <div className="absolute bottom-full left-4 right-4 mb-2 bg-[#1a1a1a] border border-gray-700 rounded-lg shadow-2xl shadow-black/50 overflow-hidden z-50">
             <div className="p-1.5 border-b border-gray-800 text-[10px] text-gray-500 px-3 py-1">FILES</div>
             <div className="max-h-40 overflow-y-auto py-1">
-              {fileSuggestions.map((item) => (
+              {fileSuggestions.map((item: any) => (
                 <button key={item.path || item.name}
                   onClick={() => handleFileSuggestionClick(item)}
                   className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-gray-800 transition-colors text-left"

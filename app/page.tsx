@@ -5,9 +5,8 @@ import { useSession } from '../lib/use-ws';
 import {
   Terminal, FileCode, Search,
   Square, Cpu, CheckCircle2, ChevronRight,
-  Sparkles, Ban, ChevronDown,
+  Sparkles, Ban, ChevronDown, Activity,
 } from 'lucide-react';
-import { TerminalView } from './console/main/terminal-view';
 import { ContextMenu, type ContextMenuItem } from './console/shell/context-menu';
 import { MobileSidebar } from './console/sidebar/mobile-sidebar';
 import { useSessionSearch } from './console/shell/use-session-search';
@@ -17,14 +16,20 @@ import { StatusBar } from './console/shell/status-bar';
 import { ConsoleHeader } from './console/shell/console-header';
 import { ForkDialog } from './console/shell/fork-dialog';
 import { SearchResultsPanel } from './console/shell/search-results-panel';
-import { ClaudeChatView } from './console/main/claude-chat-view';
-import { adapterToViewId } from './console/main/view-registry';
-import { InstanceTabBar } from './console/main/instance-tab-bar';
-import { SplitPaneContainer } from './console/main/split-pane-container';
-import { singlePaneLayout, ensurePane, removePane } from './console/main/split-layout';
+import { CommandPalette } from './console/shell/command-palette';
+import { getAdapterViewId, syncAdapterViewsFromExtensionData, syncAdapterMetaFromExtensionData, getViewEntry } from './console/main/view-registry';
+import { __coreViewsRegistered } from './console/main/register-core-views';
+import { syncExtensionPanels } from './console/panels/panel-registry';
+import { __corePanelsRegistered } from './console/panels/register-core-panels';
+import { evaluateWhen } from '../lib/evaluate-when';
+void __corePanelsRegistered;
+void __coreViewsRegistered;
 import { useNotification } from './console/shared/notification-context';
 import { sessionStore } from '../lib/session-store';
 import { SettingsPanel } from './console/shell/settings-panel';
+import { LayoutProvider, useLayout, SidebarSlot, MainSlot, FocusProvider, RuntimePolicyProvider, useFocus, useRuntimePolicy, WorkbenchProvider } from './console/workbench';
+import { WorkbenchLayout } from './console/stage/workbench-layout';
+import { workbenchReducer, createInitialState, ensureInstanceTab, findPane as findPaneInTree, type ViewType } from './console/stage/workbench-state';
 
 // ==========================================
 // Types
@@ -203,6 +208,14 @@ function parseSessionBlocks(apiBlocks: any[]): Block[] {
 // Main Page
 // ==========================================
 export default function Page() {
+  return (
+    <LayoutProvider>
+      <PageContent />
+    </LayoutProvider>
+  );
+}
+
+function PageContent() {
   // ── Connection state: default to localhost ──
   const defaultUrl = typeof window !== 'undefined'
     ? `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.hostname}:8080`
@@ -213,7 +226,8 @@ export default function Page() {
   const [wsUrl, setWsUrl] = useState(urlParam || defaultUrl);
   const [token, setToken] = useState<string | undefined>(tokenParam || undefined);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [manualConnectOpen, setManualConnectOpen] = useState(!tokenParam && !urlParam);
+  const [manualConnectOpen, setManualConnectOpen] = useState(false);
+  const { state, dispatch } = useLayout();
 
   // ── Core state ──────────────────────────
   const [phase, setPhase] = useState<Phase>('idle');
@@ -224,7 +238,7 @@ export default function Page() {
   // ── No virtual window — render all messages ──
   const [terminalTab, setTerminalTab] = useState<'log' | 'raw'>('log');
   const [showCommands, setShowCommands] = useState(false);
-  const [showTerminal, setShowTerminal] = useState(false);
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [viewingFile, setViewingFile] = useState<{path: string; content: string} | null>(null);
   // ── Background task tracking ──────────────
   const [activeTasks, setActiveTasks] = useState<Map<string, TaskInfo>>(new Map());
@@ -248,18 +262,6 @@ export default function Page() {
     poll();
     const timer = setInterval(poll, 3000);
     return () => clearInterval(timer);
-  }, []);
-  // ── Mode / Effort state ──────────────────
-  const [permissionMode, setPermissionMode] = useState<string>('default');
-  const [effortLevel, setEffortLevel] = useState<string>('low');
-  const [showModePicker, setShowModePicker] = useState(false);
-  const modePickerRef = useRef<HTMLDivElement>(null);
-  // Fetch current mode on mount
-  useEffect(() => {
-    fetch('/api/mode').then(r => r.json()).then(data => {
-      if (data.mode) setPermissionMode(data.mode);
-      if (data.effort) setEffortLevel(data.effort);
-    }).catch(() => {});
   }, []);
   // ── Project / Session state ──────────────
   const [projectInfo, setProjectInfo] = useState<{cwd: string; projectName: string} | null>(null);
@@ -385,17 +387,41 @@ export default function Page() {
   }, [notify]);
 
   const { connStatus, parsed, msgLog, sendInput, sendCommand, serverBlocks, sessions, activeSessionId, activateSession, spawnSession, isWorkspace, queueStatus, instances, activeInstanceId, activateInstance, createInstance, killInstance, extensionPointsData } = useSession(wsUrl, token ?? undefined, undefined, undefined, undefined, onSystemNotify, dismiss);
+  // Derived from instances for extCommands filtering and context menu
   const activeAdapterId = instances.find(i => i.id === activeInstanceId)?.adapterId || 'shell';
-  const viewId = adapterToViewId[activeAdapterId] || 'terminal';
+  const viewId = getAdapterViewId(activeAdapterId) || 'terminal';
   const isActiveRunning = instances.some(i => i.id === activeInstanceId && i.status === 'running');
   const whenContext = { activeAdapterId, view: viewId, isRunning: isActiveRunning };
 
-  // ── Split-screen layout state ───────────
-  const [splitLayout, setSplitLayout] = useState(() => singlePaneLayout(activeInstanceId || ''));
-  // Keep splitLayout in sync with activeInstanceId (single-pane mode)
+  // Filter extension commands by when-condition
+  const extCommands = useMemo(() => {
+    if (!extensionPointsData?.commands) return [];
+    const cmds = extensionPointsData.commands as Array<{ id: string; title: string; category?: string; when?: string }>;
+    return cmds.filter(cmd => {
+      if (!cmd.when) return true;
+      return evaluateWhen(cmd.when, whenContext);
+    });
+  }, [extensionPointsData, whenContext]);
+
+  // Sync adapter→viewId mapping and extension panels from extension points data
   useEffect(() => {
-    if (activeInstanceId && splitLayout.panes.length <= 1) {
-      setSplitLayout(singlePaneLayout(activeInstanceId));
+    syncAdapterViewsFromExtensionData(extensionPointsData);
+    syncAdapterMetaFromExtensionData(extensionPointsData);
+    if (extensionPointsData?.views) {
+      const views = extensionPointsData.views as Record<string, any>;
+      syncExtensionPanels(views['sidebar-left'], views['sidebar-right']);
+    }
+  }, [extensionPointsData]);
+
+  // ── Workbench pane/tab layout state ──────
+  const [workbenchState, setWorkbenchState] = useState(() => createInitialState(activeInstanceId || undefined));
+  const workbenchDispatch = useCallback((action: import('./console/stage/workbench-state').WorkbenchAction) => {
+    setWorkbenchState(prev => workbenchReducer(prev, action));
+  }, []);
+  // Sync activeInstanceId → ensure a tab exists
+  useEffect(() => {
+    if (activeInstanceId) {
+      setWorkbenchState(prev => ensureInstanceTab(prev, activeInstanceId));
     }
   }, [activeInstanceId]);
 
@@ -535,20 +561,14 @@ export default function Page() {
     setCurrentActivity('Interrupted');
   }, [sendCommand, addLog]);
 
-  const handleSetMode = useCallback((mode: string) => {
-    if (!['default', 'acceptEdits', 'plan'].includes(mode)) return;
-    setPermissionMode(mode);
+  const setMode = useCallback((mode: string) => {
     sendCommand('setMode', { mode });
     addLog(`[System] Permission mode: ${mode}`);
-    setShowModePicker(false);
   }, [sendCommand, addLog]);
 
-  const handleSetEffort = useCallback((level: string) => {
-    if (!['low', 'medium', 'high'].includes(level)) return;
-    setEffortLevel(level);
+  const setEffort = useCallback((level: string) => {
     sendCommand('setEffort', { level });
     addLog(`[System] Thinking effort: ${level}`);
-    setShowModePicker(false);
   }, [sendCommand, addLog]);
 
   // ── Switch project directory ─────────────
@@ -652,18 +672,6 @@ export default function Page() {
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [showSearch]);
-
-  // Close mode picker on outside click
-  useEffect(() => {
-    if (!showModePicker) return;
-    const handler = (e: MouseEvent) => {
-      if (modePickerRef.current && !modePickerRef.current.contains(e.target as Node)) {
-        setShowModePicker(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [showModePicker]);
 
   // ── Session snapshots (fork) ──────────────
   const saveSnapshot = useCallback((name?: string) => {
@@ -869,6 +877,26 @@ export default function Page() {
         }
         return;
       }
+      // Ctrl+Shift+P: toggle command palette
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'p' || e.key === 'P')) {
+        e.preventDefault();
+        setShowCommandPalette(v => !v);
+        return;
+      }
+      // Ctrl+B: toggle left sidebar
+      if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
+        if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+        e.preventDefault();
+        dispatch({ type: 'TOGGLE_SIDEBAR', position: 'left' });
+        return;
+      }
+      // Ctrl+Shift+M: toggle mode picker
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'm' || e.key === 'M')) {
+        if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent('toggle-mode-picker'));
+        return;
+      }
       // Ctrl+R: restart session (only if not focused in input)
       if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
         if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
@@ -885,24 +913,6 @@ export default function Page() {
   }, []);
 
   // ── Context menu handler ───────────────
-  // Simple client-side when-condition matching for extension menus
-  const matchWhen = useCallback((when: string | undefined): boolean => {
-    if (!when) return true;
-    const ctx = { view: viewId, activeAdapterId: activeAdapterId, isRunning: instances.some(i => i.id === activeInstanceId && i.status === 'running') };
-    // Simple key-value matching: "key == value" or "key != value"
-    const eqMatch = when.match(/(\w+)\s*==\s*['"]?(\w+)['"]?/);
-    if (eqMatch) return ctx[eqMatch[1] as keyof typeof ctx] === eqMatch[2];
-    const neqMatch = when.match(/(\w+)\s*!=\s*['"]?(\w+)['"]?/);
-    if (neqMatch) return ctx[neqMatch[1] as keyof typeof ctx] !== neqMatch[2];
-    // Simple boolean check: "isRunning" or "!isRunning"
-    const boolMatch = when.match(/^(!?)(\w+)$/);
-    if (boolMatch) {
-      const val = ctx[boolMatch[2] as keyof typeof ctx];
-      return boolMatch[1] === '!' ? !val : !!val;
-    }
-    return true;
-  }, [viewId, activeAdapterId, activeInstanceId, instances]);
-
   const handleCtx = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     const items: ContextMenuItem[] = viewId === 'terminal' ? [
@@ -915,7 +925,13 @@ export default function Page() {
       { label: 'Kill Instance', shortcut: '⌘W', action: () => activeInstanceId && killInstance(activeInstanceId), danger: true },
       { label: '', divider: true, action: () => {} },
       { label: 'Clear History', action: () => { /* handled in InputForm */ } },
-      { label: 'Toggle Terminal', shortcut: '⌘`', action: () => setShowTerminal(v => !v) },
+      { label: 'Toggle Terminal', shortcut: '⌘`', action: () => {
+  if (workbenchState.bottom) {
+    workbenchDispatch({ type: 'CLOSE_BOTTOM_PANE' });
+  } else {
+    workbenchDispatch({ type: 'ADD_BOTTOM_PANE' });
+  }
+} },
       { label: '', divider: true, action: () => {} },
       { label: 'Copy All', shortcut: '⌘⇧C', action: () => {
         const text = messages.map(m => `[${m.role}] ${m.content}`).join('\n');
@@ -923,22 +939,43 @@ export default function Page() {
       }},
     ];
 
-    // Extension-contributed menu items from manifests
+    // Extension-contributed menu items from manifests (grouped)
     const extMenus = (extensionPointsData?.menus as any[]) || [];
     const matchedExtItems = extMenus
-      .filter((m: any) => matchWhen(m.when))
+      .filter((m: any) => evaluateWhen(m.when, { view: viewId, activeAdapterId, isRunning: isActiveRunning }))
       .map((m: any) => ({
         label: m.title,
         action: () => sendCommand(m.command),
         disabled: m.disabled,
+        group: m.group as string | undefined,
       }));
     if (matchedExtItems.length > 0) {
       items.push({ label: '', divider: true, action: () => {} });
-      items.push(...matchedExtItems);
+
+      const groupOrder = ['navigation', 'edit', 'debug', 'view'];
+      const byGroup = new Map<string, typeof matchedExtItems>();
+      const noGroup: typeof matchedExtItems = [];
+
+      for (const item of matchedExtItems) {
+        if (item.group && groupOrder.includes(item.group)) {
+          const arr = byGroup.get(item.group) || [];
+          arr.push(item);
+          byGroup.set(item.group, arr);
+        } else {
+          noGroup.push(item);
+        }
+      }
+
+      for (const group of groupOrder) {
+        const arr = byGroup.get(group);
+        if (arr && arr.length > 0) items.push(...arr);
+      }
+
+      if (noGroup.length > 0) items.push(...noGroup);
     }
 
     setCtxMenu({ x: e.clientX, y: e.clientY, items });
-  }, [viewId, activeInstanceId, projectInfo, messages, createInstance, killInstance, setShowTerminal, extensionPointsData, sendCommand, matchWhen, activeAdapterId]);
+  }, [viewId, activeInstanceId, projectInfo, messages, createInstance, killInstance, workbenchState, workbenchDispatch, extensionPointsData, sendCommand, activeAdapterId, isActiveRunning]);
 
   const handleCommandClick = useCallback((cmd: string) => {
     setInputValue(cmd + ' ');
@@ -1070,7 +1107,113 @@ export default function Page() {
     );
   }
 
+  // ── Handle view request from pane (user picks view in EmptyPane) ──
+  const handleRequestView = useCallback(async (paneId: string, tabId: string, viewType: ViewType) => {
+    if (viewType === 'terminal') {
+      const result = await createInstance(projectInfo?.cwd || '.', undefined, 'shell');
+      if (result?.instance?.id) {
+        workbenchDispatch({
+          type: 'SET_TAB_VIEW', paneId, tabId,
+          viewType: 'terminal',
+          title: result.instance.id.slice(0, 12),
+          instanceId: result.instance.id,
+        });
+      }
+    } else if (viewType === 'claude-code' || viewType === 'claude-chat') {
+      const result = await createInstance(projectInfo?.cwd || '.', undefined, 'claude-code');
+      if (result?.instance?.id) {
+        workbenchDispatch({
+          type: 'SET_TAB_VIEW', paneId, tabId,
+          viewType: 'terminal',
+          title: result.instance.id.slice(0, 12),
+          instanceId: result.instance.id,
+        });
+      }
+    } else {
+      // Static views — no instance needed
+      const title = viewType === 'dashboard' ? 'Dashboard'
+        : viewType === 'logs' ? 'Logs'
+        : viewType === 'agent-monitor' ? 'Agent Monitor'
+        : viewType === 'ai' ? 'AI'
+        : viewType === 'file-explorer' ? 'Files'
+        : viewType.charAt(0).toUpperCase() + viewType.slice(1);
+      workbenchDispatch({ type: 'SET_TAB_VIEW', paneId, tabId, viewType, title });
+    }
+  }, [createInstance, projectInfo?.cwd, workbenchDispatch]);
+
+  // Derive pane focus from workbenchState
+  const paneFocus = useMemo(() => {
+    if (!workbenchState) return null;
+    const activePane = workbenchState.root.kind === 'pane'
+      ? workbenchState.root
+      : findPaneInTree(workbenchState.root, workbenchState.activePaneId);
+    if (!activePane) return null;
+    const activeTab = activePane.tabs.find(t => t.id === activePane.activeTabId) || activePane.tabs[0];
+    if (!activeTab) return null;
+    return { paneId: activePane.id, viewType: activeTab.viewType };
+  }, [workbenchState]);
+
+  // ── Workbench context value (provides session/chat state to all view components) ──
+  const workbenchContextValue = useMemo(() => ({
+    wsUrl,
+    token: token ?? undefined,
+    logs,
+    messages,
+    turns,
+    phase,
+    setPhase,
+    currentActivity: currentActivity as string | null,
+    setCurrentActivity,
+    connStatus,
+    isRestoring,
+    historyLoading,
+    inputValue,
+    setInputValue,
+    handleSubmit,
+    handleInputChange,
+    handleKeyDown,
+    toolActivities,
+    setToolActivities,
+    expandedToolOutputs,
+    setExpandedToolOutputs,
+    showFileSuggest,
+    fileSuggestions,
+    handleFileSuggestionClick,
+    showCommands,
+    setShowCommands,
+    handleCommandClick,
+    cmdPanelRef: cmdPanelRef as React.RefObject<HTMLDivElement | null>,
+    handleInterrupt,
+    setForkTarget,
+    setForkPrompt,
+    activeExternalSession,
+    clearExternalSession: () => {
+      setActiveExternalSession(null);
+      try { localStorage.removeItem('sessionbridge-active-session'); } catch {}
+      historyLoadedRef.current = false;
+      window.location.reload();
+    },
+    scrollContainerRef: scrollContainerRef as React.RefObject<HTMLDivElement | null>,
+    actionEndRef: actionEndRef as React.RefObject<HTMLDivElement | null>,
+  }), [
+    wsUrl, token, logs, messages, turns,
+    phase, setPhase, currentActivity, setCurrentActivity,
+    connStatus, isRestoring, historyLoading,
+    inputValue, setInputValue,
+    handleSubmit, handleInputChange, handleKeyDown,
+    toolActivities, setToolActivities,
+    expandedToolOutputs, setExpandedToolOutputs,
+    showFileSuggest, fileSuggestions, handleFileSuggestionClick,
+    showCommands, setShowCommands, handleCommandClick,
+    handleInterrupt,
+    setForkTarget, setForkPrompt,
+    activeExternalSession,
+    cmdPanelRef, scrollContainerRef, actionEndRef,
+  ]);
+
   return (
+    <FocusProvider instances={instances} activeInstanceId={activeInstanceId} activeViewId={state.activeViewId} sessionKey={sessionKey} paneFocus={paneFocus}>
+      <RuntimePolicyProvider>
     <div className="flex flex-col h-screen bg-[#0a0a0a] text-gray-300 font-mono text-sm overflow-hidden selection:bg-purple-900 selection:text-white relative" onContextMenu={handleCtx}>
       <ConsoleHeader
         onMobileOpen={() => setMobileOpen(true)}
@@ -1096,6 +1239,21 @@ export default function Page() {
           setShowDirSwitcher(false);
         }}
         onOpenSettings={() => setSettingsOpen(true)}
+        onToggleDashboard={() => {
+                // Add a dashboard tab to the active pane
+                const tabId = 'dash_' + Date.now().toString(36);
+                workbenchDispatch({
+                  type: 'ADD_TAB',
+                  paneId: workbenchState.activePaneId,
+                  tab: { id: tabId, title: 'Dashboard', viewType: 'dashboard' },
+                });
+              }}
+        showDashboard={false}
+        onToggleCommandPalette={() => setShowCommandPalette(v => !v)}
+        leftSidebarOpen={state.leftSidebarOpen}
+        rightSidebarOpen={state.rightSidebarOpen}
+        onToggleLeftSidebar={() => dispatch({ type: 'TOGGLE_SIDEBAR', position: 'left' })}
+        onToggleRightSidebar={() => dispatch({ type: 'TOGGLE_SIDEBAR', position: 'right' })}
       />
 
       {/* ── Disconnect banner ── */}
@@ -1103,7 +1261,7 @@ export default function Page() {
         <div className="flex items-center justify-center gap-2 px-3 py-1.5 text-[11px] font-bold tracking-wider uppercase"
           style={{ backgroundColor: connStatus.status === 'connecting' ? '#1a3a1a' : '#3a1a1a', color: connStatus.status === 'connecting' ? '#4ade80' : '#f87171' }}>
           <span className={`w-1.5 h-1.5 rounded-full ${statusColor}`} />
-          {connStatus.status === 'connecting' ? 'Connecting to server...' : 'Disconnected from server'}
+          {connStatus.status === 'connecting' ? 'Connecting to server...' : `Disconnected from server${connStatus.retryCount ? ` (retry #${connStatus.retryCount})` : ''}`}
         </div>
       )}
 
@@ -1149,8 +1307,18 @@ export default function Page() {
         </div>
       )}
 
+      {/* ═══ COMMAND PALETTE (overlay) ════ */}
+      {showCommandPalette && (
+        <CommandPalette
+          commands={extCommands}
+          onCommand={(cmdId) => sendCommand(cmdId)}
+          onClose={() => setShowCommandPalette(false)}
+        />
+      )}
+
       <div className="flex flex-1 overflow-hidden">
-        <LeftSidebar
+        <SidebarSlot open={state.leftSidebarOpen}>
+          <LeftSidebar
           fileTree={fileTree}
           expandedDirs={expandedDirs}
           onToggleDir={(dirPath) => {
@@ -1182,150 +1350,65 @@ export default function Page() {
           onQuickAction={handleQuickAction}
           onRewind={() => { sendCommand('rewind'); addLog('[System] Rewinding last change...'); }}
           projectCwd={projectInfo?.cwd || '.'}
-          whenContext={whenContext}
-          extensionPanels={(extensionPointsData?.views as Record<string, unknown>)?.['sidebar-left'] as any[] | undefined}
         />
+        </SidebarSlot>
 
-        {/* ═══ CENTER: Message Stream ════════ */}
+        {/* ═══ CENTER: WorkbenchLayout ════════ */}
         <main className="flex-1 flex flex-col relative bg-black min-w-0">
-          <div className="px-2 py-1.5 border-b border-gray-800 text-[10px] font-bold text-gray-500 flex justify-between items-center bg-[#0a0a0a] shrink-0 tracking-wider">
-            <InstanceTabBar
-              instances={instances}
-              activeInstanceId={activeInstanceId}
-              onActivate={(id) => {
-                activateInstance(id);
-                // In split mode, ensure the activated instance has a pane
-                if (splitLayout.panes.length > 1) {
-                  setSplitLayout(ensurePane(splitLayout, id));
-                }
-              }}
-              onCreate={(dir, adapterId) => createInstance(dir, undefined, adapterId)}
-              showTerminal={showTerminal}
-              onToggleTerminal={() => setShowTerminal(v => !v)}
-              projectCwd={projectInfo?.cwd || '.'}
-              isSplit={splitLayout.panes.length > 1}
-              onSplit={(instanceId) => {
-                // Toggle split: find another instance to pair with
-                const other = instances.find((i: any) => i.id !== instanceId);
-                if (!other) return;
-                if (splitLayout.panes.length > 1) {
-                  // Collapse to single
-                  setSplitLayout(singlePaneLayout(activeInstanceId || instanceId));
-                } else {
-                  // Enter split mode
-                  setSplitLayout({
-                    direction: 'horizontal',
-                    panes: [{ instanceId: activeInstanceId || instanceId }, { instanceId: other.id }],
-                  });
-                }
-              }}
-            />
-            <span className="flex items-center gap-2">
-              <span className="hidden sm:inline">MESSAGE STREAM</span>
+          <WorkbenchProvider value={workbenchContextValue}>
+          <div className="flex items-center justify-between h-7 px-2 border-b border-gray-800 bg-[#0a0a0a] shrink-0">
+            <span className="flex items-center gap-2 text-[10px] font-bold text-gray-500 tracking-wider">
+              WORKBENCH
               {activeExternalSession && (
                 <span className="text-amber-500 text-[8px] bg-amber-900/20 px-1.5 py-0.5 rounded border border-amber-700/30">
                   VIEWING: {activeExternalSession}
                   <button onClick={() => {
                     setActiveExternalSession(null);
                     try { localStorage.removeItem('sessionbridge-active-session'); } catch {}
-                    // Reload the current session from API
                     historyLoadedRef.current = false;
                     window.location.reload();
                   }} className="ml-1.5 px-1 bg-amber-800/40 hover:bg-amber-700/60 rounded text-[7px] text-amber-300">✕</button>
                 </span>
               )}
-              <span className="text-gray-700 text-[8px] font-mono hidden sm:inline">
-                msg:{messages.length} u:{messages.filter(m => m.role === 'user').length} a:{messages.filter(m => m.role === 'assistant').length}
-                <button onClick={() => { console.log('=== MSG DUMP ===', JSON.parse(JSON.stringify(messagesBySession))); console.log('sessionKey:', sessionKey); console.log('roles:', messages.map(m => m.role).join(',')); alert(`msg:${messages.length} u:${messages.filter(m => m.role === 'user').length} a:${messages.filter(m => m.role === 'assistant').length} roles:${messages.slice(0,10).map(m=>m.role).join(',')}...`) }}
-                  className="ml-2 px-1 bg-gray-800 hover:bg-gray-700 rounded text-[7px]" title="Dump messages to console">🐛</button>
+            </span>
+            <span className="flex items-center gap-2">
+              <span className="text-gray-700 text-[8px] font-mono">
+                msg:{messages.length}
               </span>
               {phase === 'running' && (
-                <span className="text-purple-500 animate-pulse">● PROCESSING</span>
+                <span className="text-purple-500 animate-pulse text-[9px]">●</span>
               )}
-            </span>
-            <span className="flex items-center gap-3">
               {phase === 'running' && (
                 <button onClick={handleInterrupt}
-                  className="text-red-400 hover:text-red-300 flex items-center gap-1 text-[9px] bg-red-900/20 px-1.5 py-0.5 rounded border border-red-800/30 transition-colors"
+                  className="text-red-400 hover:text-red-300 flex items-center gap-1 text-[8px] bg-red-900/20 px-1.5 py-0.5 rounded border border-red-800/30 transition-colors"
                   title="Stop (Esc)"
                 >
-                  <Square className="w-2.5 h-2.5 fill-current" /> STOP
+                  <Square className="w-2 h-2 fill-current" /> STOP
                 </button>
-              )}
-              {queueInfo.queueDepth > 0 && (
-                <span className="text-yellow-600 text-[9px] hidden sm:inline">+{queueInfo.queueDepth} queued</span>
               )}
             </span>
           </div>
 
-          {/* ── Stage: SplitPaneContainer ── */}
-          <SplitPaneContainer
-            layout={splitLayout.panes.length > 1 ? splitLayout : singlePaneLayout(activeInstanceId || '')}
-            onClosePane={(instanceId) => {
-              setSplitLayout(removePane(splitLayout, instanceId));
-              if (instanceId === activeInstanceId) {
-                const next = instances.find(i => i.id !== instanceId);
-                if (next) activateInstance(next.id);
-              }
-            }}
-            renderPane={(instanceId) => {
-              const inst = instances.find((i: any) => i.id === instanceId);
-              if (!inst || inst.adapterId === 'claude-code') {
-                return (
-                  <ClaudeChatView
-                    messages={messages}
-                    turns={turns}
-                    phase={phase}
-                    setPhase={setPhase}
-                    currentActivity={currentActivity}
-                    setCurrentActivity={setCurrentActivity}
-                    connStatus={connStatus}
-                    isRestoring={isRestoring}
-                    historyLoading={historyLoading}
-                    inputValue={inputValue}
-                    setInputValue={setInputValue}
-                    handleSubmit={handleSubmit}
-                    handleInputChange={handleInputChange}
-                    handleKeyDown={handleKeyDown}
-                    toolActivities={toolActivities}
-                    setToolActivities={setToolActivities}
-                    expandedToolOutputs={expandedToolOutputs}
-                    setExpandedToolOutputs={setExpandedToolOutputs}
-                    showFileSuggest={showFileSuggest}
-                    fileSuggestions={fileSuggestions}
-                    handleFileSuggestionClick={handleFileSuggestionClick}
-                    showCommands={showCommands}
-                    setShowCommands={setShowCommands}
-                    handleCommandClick={handleCommandClick}
-                    cmdPanelRef={cmdPanelRef}
-                    handleInterrupt={handleInterrupt}
-                    setForkTarget={setForkTarget}
-                    setForkPrompt={setForkPrompt}
-                    activeExternalSession={activeExternalSession}
-                    clearExternalSession={() => {
-                      setActiveExternalSession(null);
-                      try { localStorage.removeItem('sessionbridge-active-session'); } catch {}
-                      historyLoadedRef.current = false;
-                      window.location.reload();
-                    }}
-                    scrollContainerRef={scrollContainerRef}
-                    actionEndRef={actionEndRef}
-                  />
-                );
-              }
-              return (
-                <TerminalView wsUrl={wsUrl} instanceId={instanceId} token={token ?? undefined} />
-              );
+          {/* ── WorkbenchLayout (pane/tab/view system) — fully generic, no hardcoded viewType checks ── */}
+          <WorkbenchLayout
+            state={workbenchState}
+            dispatch={workbenchDispatch}
+            onRequestView={handleRequestView}
+            renderView={(viewType, instanceId) => {
+              // Generic view resolution: instance-bound views resolve through adapter system,
+              // static views use viewType directly as the registry key.
+              // No viewType-specific branching — plugins can add views without touching page.tsx.
+              const resolvedViewId = instanceId
+                ? getAdapterViewId(instances.find((i: any) => i.id === instanceId)?.adapterId || 'shell') || 'terminal'
+                : viewType;
+              return <MainSlot viewId={resolvedViewId} />;
             }}
           />
-          {/* ── Terminal drawer (always mounted, hidden by CSS when not shown) ── */}
-          <div className={`border-t border-gray-700 shrink-0 ${showTerminal ? '' : 'hidden'}`} style={{ height: '180px' }}>
-            <TerminalView wsUrl={wsUrl} token={token ?? undefined} />
-          </div>
+          </WorkbenchProvider>
         </main>
 
-        <RightSidebar
-          whenContext={whenContext}
+        <SidebarSlot open={state.rightSidebarOpen}>
+          <RightSidebar
           activeTasks={activeTasks}
           queueInfo={queueInfo}
           onNewSession={handleNewSession}
@@ -1349,8 +1432,8 @@ export default function Page() {
           terminalTab={terminalTab}
           onTerminalTabChange={setTerminalTab}
           logsEndRef={logsEndRef}
-          extensionPanels={(extensionPointsData?.views as Record<string, unknown>)?.['sidebar-right'] as any[] | undefined}
         />
+        </SidebarSlot>
       </div>
       {/* File viewer modal */}
       {viewingFile && (
@@ -1410,14 +1493,9 @@ export default function Page() {
       )}
 
       <StatusBar
-        permissionMode={permissionMode}
-        effortLevel={effortLevel}
-        showModePicker={showModePicker}
-        onToggleModePicker={() => setShowModePicker(v => !v)}
-        onSetMode={handleSetMode}
-        onSetEffort={handleSetEffort}
         queueStatus={queueStatus}
-        modePickerRef={modePickerRef}
+        onSetMode={setMode}
+        onSetEffort={setEffort}
       />
 
       {/* Custom scrollbar styles */}
@@ -1483,6 +1561,8 @@ export default function Page() {
         }}
       />
     </div>
+      </RuntimePolicyProvider>
+    </FocusProvider>
   );
 }
 
