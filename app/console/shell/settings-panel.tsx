@@ -33,7 +33,17 @@ interface SettingsPanelProps {
   onConfigChange?: (config: Partial<ServerConfig>) => void;
 }
 
-type Tab = 'connections' | 'server' | 'notifications';
+interface NetworkInfo {
+  canExternal: boolean;
+  hasPublicIP: boolean;
+  hasTLS: boolean;
+  hasToken: boolean;
+  portReachable: boolean;
+  ips: { type: string; addr: string; family: string; interface: string }[];
+  warnings: string[];
+}
+
+type Tab = 'connections' | 'server' | 'notifications' | 'external';
 
 export function SettingsPanel({
   open,
@@ -58,6 +68,11 @@ export function SettingsPanel({
   const [localPort, setLocalPort] = useState('8080');
   const [localToken, setLocalToken] = useState('');
   const [ntfyTopic, setNtfyTopic] = useState('');
+  // ── External access state ──
+  const [netInfo, setNetInfo] = useState<NetworkInfo | null>(null);
+  const [netLoading, setNetLoading] = useState(false);
+  const [externalEnabled, setExternalEnabled] = useState(false);
+  const [externalToggling, setExternalToggling] = useState(false);
 
   // Load config from backend on mount
   useEffect(() => {
@@ -152,13 +167,61 @@ export function SettingsPanel({
     [onConnect, onClose],
   );
 
+  // ── External Access ──
+  const handleCheckNetwork = useCallback(async () => {
+    setNetLoading(true);
+    try {
+      const res = await fetch('/api/node/external');
+      const info: NetworkInfo = await res.json();
+      setNetInfo(info);
+      // Determine if currently enabled (bind is 0.0.0.0)
+      // We infer from the URL: if not localhost-only, it's enabled
+      setExternalEnabled(info.canExternal && info.hasPublicIP);
+    } catch (err) {
+      setNetInfo({
+        canExternal: false,
+        hasPublicIP: false,
+        hasTLS: false,
+        hasToken: false,
+        portReachable: false,
+        ips: [],
+        warnings: ['Failed to detect network. Is the relay server running?'],
+      });
+    }
+    setNetLoading(false);
+  }, []);
+
+  const handleToggleExternal = useCallback(async (enable: boolean) => {
+    setExternalToggling(true);
+    try {
+      const res = await fetch('/api/node/external', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enable }),
+      });
+      const data = await res.json();
+      setExternalEnabled(enable);
+      // Refresh network info
+      handleCheckNetwork();
+    } catch (err) {
+      console.error('Failed to toggle external access:', err);
+    }
+    setExternalToggling(false);
+  }, [handleCheckNetwork]);
+
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-12 bg-black/60">
-      <div className="w-full max-w-lg bg-[#151515] border border-gray-700 rounded-lg shadow-2xl shadow-black/60 overflow-hidden max-h-[80vh] flex flex-col">
+    <>
+      {/* Backdrop */}
+      <div
+        className="fixed inset-0 z-40 bg-black/30 transition-opacity"
+        onClick={onClose}
+      />
+      {/* Drawer */}
+      <div className="fixed top-0 right-0 z-50 h-full w-full max-w-lg bg-[#151515] border-l border-gray-700 shadow-2xl shadow-black/60 flex flex-col animate-slideInRight">
         {/* ── Header ── */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800 shrink-0">
           <div className="flex items-center gap-2 text-gray-200 text-sm font-bold">
             <Settings className="w-4 h-4" />
             Settings
@@ -173,6 +236,7 @@ export function SettingsPanel({
           {([
             { id: 'connections' as Tab, label: 'Connections' },
             { id: 'server' as Tab, label: 'Server' },
+            { id: 'external' as Tab, label: 'External' },
             { id: 'notifications' as Tab, label: 'Notifications' },
           ]).map((t) => (
             <button
@@ -335,6 +399,119 @@ export function SettingsPanel({
                 )}
               </div>
             </>
+          ) : tab === 'external' ? (
+            /* ── External Access tab ── */
+            <>
+              <div className="text-[10px] font-bold text-gray-500 tracking-wider mb-3">
+                EXTERNAL ACCESS
+              </div>
+              <div className="text-[9px] text-gray-500 mb-3 leading-relaxed">
+                Allow other devices on your network to access this dashboard.
+                This binds the dashboard server to <code className="text-gray-400">0.0.0.0</code> instead of <code className="text-gray-400">127.0.0.1</code>.
+              </div>
+
+              {/* Network check button */}
+              {!netInfo && (
+                <button
+                  onClick={handleCheckNetwork}
+                  disabled={netLoading}
+                  className="w-full px-3 py-2 bg-purple-700 hover:bg-purple-600 disabled:opacity-50 text-white text-[10px] rounded border border-purple-600 transition-colors flex items-center justify-center gap-2"
+                >
+                  {netLoading ? (
+                    <><span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Checking...</>
+                  ) : (
+                    'Check Network Environment'
+                  )}
+                </button>
+              )}
+
+              {/* Network info */}
+              {netInfo && (
+                <div className="space-y-3">
+                  <div className="bg-[#0d0d0d] rounded border border-gray-800 p-3 text-[10px] space-y-2">
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Status</span>
+                      <span className={externalEnabled ? 'text-green-500' : 'text-gray-400'}>
+                        {externalEnabled ? 'External Access ON' : 'Local Only'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Public IP</span>
+                      <span className={netInfo.hasPublicIP ? 'text-green-500' : 'text-yellow-500'}>
+                        {netInfo.hasPublicIP ? 'Available' : 'None'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">TLS Certificate</span>
+                      <span className={netInfo.hasTLS ? 'text-green-500' : 'text-yellow-500'}>
+                        {netInfo.hasTLS ? 'Ready' : 'Not configured'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Auth Token</span>
+                      <span className={netInfo.hasToken ? 'text-green-500' : 'text-yellow-500'}>
+                        {netInfo.hasToken ? 'Set' : 'Not set'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* IP list */}
+                  {netInfo.ips.length > 0 && (
+                    <div>
+                      <div className="text-[9px] text-gray-600 mb-1">Network Interfaces</div>
+                      <div className="space-y-1">
+                        {netInfo.ips.filter(ip => ip.type !== 'loopback').slice(0, 5).map((ip, i) => (
+                          <div key={i} className="flex items-center gap-2 text-[9px] bg-[#0d0d0d] px-2 py-1 rounded border border-gray-800">
+                            <span className={`w-1.5 h-1.5 rounded-full ${ip.type === 'public' ? 'bg-green-500' : ip.type === 'lan' ? 'bg-blue-500' : 'bg-gray-600'}`} />
+                            <span className="text-gray-300 font-mono">{ip.addr}</span>
+                            <span className="text-gray-600 ml-auto">{ip.type}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Warnings */}
+                  {netInfo.warnings.length > 0 && (
+                    <div className="space-y-1">
+                      <div className="text-[9px] text-yellow-600 font-bold">Warnings</div>
+                      {netInfo.warnings.map((w, i) => (
+                        <div key={i} className="text-[9px] text-yellow-500/80 bg-yellow-900/10 px-2 py-1 rounded border border-yellow-800/30">
+                          {w}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleCheckNetwork}
+                      disabled={netLoading}
+                      className="flex-1 px-2 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-[9px] rounded border border-gray-700 transition-colors"
+                    >
+                      Refresh
+                    </button>
+                    <button
+                      onClick={() => handleToggleExternal(!externalEnabled)}
+                      disabled={externalToggling || !netInfo.canExternal}
+                      className={`flex-1 px-2 py-1.5 text-[9px] rounded border transition-colors flex items-center justify-center gap-1 ${
+                        externalEnabled
+                          ? 'bg-red-900/30 hover:bg-red-900/50 text-red-400 border-red-800/50'
+                          : 'bg-purple-700 hover:bg-purple-600 text-white border-purple-600 disabled:opacity-40'
+                      }`}
+                    >
+                      {externalToggling ? (
+                        <><span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Updating...</>
+                      ) : externalEnabled ? (
+                        'Disable External Access'
+                      ) : (
+                        'Enable External Access'
+      )}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
           ) : (
             /* ── Notifications tab ── */
             <>
@@ -377,6 +554,13 @@ export function SettingsPanel({
           )}
         </div>
       </div>
-    </div>
+      <style>{`@keyframes slideInRight {
+        from { transform: translateX(100%); }
+        to { transform: translateX(0); }
+      }
+      .animate-slideInRight {
+        animation: slideInRight 0.2s ease-out;
+      }`}</style>
+    </>
   );
 }

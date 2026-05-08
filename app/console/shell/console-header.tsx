@@ -1,6 +1,9 @@
 'use client';
 
-import { Cpu, Folder, FileCode, Search, ChevronDown, Settings } from 'lucide-react';
+import { Cpu, Folder, FileCode, Search, ChevronDown, Settings, LayoutDashboard, Terminal } from 'lucide-react';
+import { useFocus } from '../workbench/focus-context';
+import { useRuntimePolicy } from '../workbench/runtime-policy-context';
+import { getAdapterMeta } from '../main/view-registry';
 
 export interface ConsoleHeaderProps {
   onMobileOpen: () => void;
@@ -23,6 +26,13 @@ export interface ConsoleHeaderProps {
   savedSessions: { id: string; label: string; dir: string; ts: string }[];
   onSelectSavedSession: (s: { label: string; dir: string }) => void;
   onOpenSettings?: () => void;
+  onToggleDashboard?: () => void;
+  showDashboard?: boolean;
+  onToggleCommandPalette?: () => void;
+  leftSidebarOpen?: boolean;
+  rightSidebarOpen?: boolean;
+  onToggleLeftSidebar?: () => void;
+  onToggleRightSidebar?: () => void;
 }
 
 export function ConsoleHeader({
@@ -46,7 +56,34 @@ export function ConsoleHeader({
   savedSessions,
   onSelectSavedSession,
   onOpenSettings,
+  onToggleDashboard,
+  showDashboard,
+  onToggleCommandPalette,
+  leftSidebarOpen,
+  rightSidebarOpen,
+  onToggleLeftSidebar,
+  onToggleRightSidebar,
 }: ConsoleHeaderProps) {
+  let runtimeBadge: string | null = null;
+  try {
+    const { paneViewType, adapterId } = useFocus();
+    const { activePolicy } = useRuntimePolicy();
+    const label = paneViewType
+      ? paneViewType === 'claude-code' ? 'Claude'
+        : paneViewType === 'claude-chat' ? 'Claude'
+        : paneViewType === 'terminal' ? 'Terminal'
+        : paneViewType === 'dashboard' ? 'Dashboard'
+        : paneViewType === 'logs' ? 'Logs'
+        : paneViewType === 'agent-monitor' ? 'Monitor'
+        : paneViewType === 'browser' ? 'Browser'
+        : paneViewType.charAt(0).toUpperCase() + paneViewType.slice(1)
+      : getAdapterMeta(adapterId ?? undefined).label;
+    const modeBadge = activePolicy.permissionMode === 'default' ? 'ASK'
+      : activePolicy.permissionMode === 'acceptEdits' ? 'AUTO' : 'PLAN';
+    const effortBadge = activePolicy.effortLevel === 'low' ? 'OFF'
+      : activePolicy.effortLevel === 'medium' ? 'ON' : 'MAX';
+    runtimeBadge = `${label} [${modeBadge}] T:${effortBadge}`;
+  } catch {}
   return (
     <header className="h-11 flex items-center justify-between px-4 border-b border-gray-800 bg-[#111] shrink-0">
       <div className="flex items-center space-x-4">
@@ -59,6 +96,19 @@ export function ConsoleHeader({
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
           </svg>
         </button>
+        {/* Left sidebar toggle */}
+        {onToggleLeftSidebar && (
+          <button
+            onClick={onToggleLeftSidebar}
+            className="hidden md:flex items-center justify-center w-4 h-full text-gray-600 hover:text-gray-300 transition-colors shrink-0"
+            title={`${leftSidebarOpen ? 'Collapse' : 'Expand'} sidebar (Ctrl+B)`}
+          >
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d={leftSidebarOpen ? 'M15 19l-7-7 7-7' : 'M9 5l7 7-7 7'} />
+            </svg>
+          </button>
+        )}
         <Cpu className="w-4 h-4 text-purple-500" />
         <span className="text-purple-400 font-bold tracking-widest text-sm">SESSIONBRIDGE</span>
         <span className="text-gray-700">|</span>
@@ -75,6 +125,12 @@ export function ConsoleHeader({
         }`}>
           {phaseLabel}
         </span>
+        {/* Runtime info badge */}
+        {runtimeBadge && (
+          <span className="text-[9px] text-gray-500 bg-gray-900/80 px-1.5 py-0.5 border border-gray-800 font-mono tracking-tight hidden md:inline">
+            {runtimeBadge}
+          </span>
+        )}
         {/* Current activity */}
         {currentActivity && phase === 'running' && (
           <span className="text-[10px] text-purple-400 bg-purple-900/10 px-2 py-0.5 rounded-full border border-purple-800/30 truncate max-w-[200px] hidden sm:inline">
@@ -89,6 +145,19 @@ export function ConsoleHeader({
       </div>
       <div className="flex items-center space-x-4 text-xs">
         {parsed.cost && <span className="text-gray-400 hidden sm:inline">TOKENS: <span className="text-gray-200">{parsed.cost}</span></span>}
+        {/* Right sidebar toggle */}
+        {onToggleRightSidebar && (
+          <button
+            onClick={onToggleRightSidebar}
+            className="hidden lg:flex items-center justify-center w-4 h-full text-gray-600 hover:text-gray-300 transition-colors shrink-0"
+            title={`${rightSidebarOpen ? 'Collapse' : 'Expand'} right sidebar`}
+          >
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d={rightSidebarOpen ? 'M9 5l7 7-7 7' : 'M15 19l-7-7 7-7'} />
+            </svg>
+          </button>
+        )}
         {/* Project info */}
         <div className="flex items-center gap-2 relative">
           {/* Search sessions button */}
@@ -100,6 +169,21 @@ export function ConsoleHeader({
             <Search className="w-3 h-3" />
           </button>
 
+          {/* Dashboard button */}
+              {onToggleDashboard && (
+                <button
+                  onClick={onToggleDashboard}
+                  className={`flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] transition-colors ${
+                    showDashboard
+                      ? 'bg-purple-900/30 border-purple-600 text-purple-300'
+                      : 'bg-[#1a1a1a] border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-500'
+                  }`}
+                  title="Dashboard"
+                >
+                  <LayoutDashboard className="w-3 h-3" />
+                </button>
+              )}
+
           {/* Settings button */}
           {onOpenSettings && (
             <button
@@ -108,6 +192,17 @@ export function ConsoleHeader({
               title="Settings"
             >
               <Settings className="w-3 h-3" />
+            </button>
+          )}
+
+          {/* Command palette button */}
+          {onToggleCommandPalette && (
+            <button
+              onClick={onToggleCommandPalette}
+              className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#1a1a1a] border border-gray-700 hover:border-purple-500 text-gray-400 hover:text-gray-200 text-[10px] transition-colors"
+              title="Commands (Ctrl+Shift+P)"
+            >
+              <Terminal className="w-3 h-3" />
             </button>
           )}
 
