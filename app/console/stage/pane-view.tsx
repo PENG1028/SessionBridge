@@ -39,7 +39,7 @@ export function PaneView({ pane, isActive, onFocus, onSelectTab, onCloseTab, onA
         onAddTab={onAddTab}
       />
 
-      <div className="flex-1 min-w-0 min-h-0 overflow-hidden">
+      <div className="flex-1 min-w-0 min-h-0">
         {activeTab.viewType === 'empty' ? (
           <EmptyPane onSelectView={(vt) => onRequestView?.(pane.activeTabId, vt)} />
         ) : (

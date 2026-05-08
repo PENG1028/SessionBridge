@@ -1109,35 +1109,24 @@ function PageContent() {
 
   // ── Handle view request from pane (user picks view in EmptyPane) ──
   const handleRequestView = useCallback(async (paneId: string, tabId: string, viewType: ViewType) => {
-    if (viewType === 'terminal') {
-      const result = await createInstance(projectInfo?.cwd || '.', undefined, 'shell');
+    const entry = getViewEntry(viewType);
+    const defaultTitle = entry?.meta.title || viewType.charAt(0).toUpperCase() + viewType.slice(1);
+
+    // Instance-requiring views: create an adapter instance, then bind the tab to it
+    if (viewType === 'terminal' || viewType === 'claude-code' || viewType === 'claude-chat') {
+      const adapterId = viewType === 'terminal' ? 'shell' : 'claude-code';
+      const result = await createInstance(projectInfo?.cwd || '.', undefined, adapterId);
       if (result?.instance?.id) {
         workbenchDispatch({
           type: 'SET_TAB_VIEW', paneId, tabId,
-          viewType: 'terminal',
-          title: result.instance.id.slice(0, 12),
-          instanceId: result.instance.id,
-        });
-      }
-    } else if (viewType === 'claude-code' || viewType === 'claude-chat') {
-      const result = await createInstance(projectInfo?.cwd || '.', undefined, 'claude-code');
-      if (result?.instance?.id) {
-        workbenchDispatch({
-          type: 'SET_TAB_VIEW', paneId, tabId,
-          viewType: 'terminal',
-          title: result.instance.id.slice(0, 12),
+          viewType,
+          title: defaultTitle,
           instanceId: result.instance.id,
         });
       }
     } else {
       // Static views — no instance needed
-      const title = viewType === 'dashboard' ? 'Dashboard'
-        : viewType === 'logs' ? 'Logs'
-        : viewType === 'agent-monitor' ? 'Agent Monitor'
-        : viewType === 'ai' ? 'AI'
-        : viewType === 'file-explorer' ? 'Files'
-        : viewType.charAt(0).toUpperCase() + viewType.slice(1);
-      workbenchDispatch({ type: 'SET_TAB_VIEW', paneId, tabId, viewType, title });
+      workbenchDispatch({ type: 'SET_TAB_VIEW', paneId, tabId, viewType, title: defaultTitle });
     }
   }, [createInstance, projectInfo?.cwd, workbenchDispatch]);
 

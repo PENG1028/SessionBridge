@@ -361,7 +361,7 @@ pending ──▶ running ──▶ succeeded
 - 500ms 防抖写入
 - 优雅关闭时 flush
 - 断线重连 60 秒 grace period
-- 持久化快照按 `stopped` 写入；当前 `NodeRelayServer.start()` 恢复时会把实例重新标为 `running`，这是实现与持久化语义之间的已知不一致，后续应以真实进程/agent 连接状态为准
+- 持久化快照按 `stopped` 写入；`NodeRelayServer.start()` 恢复后实例状态保持 `stopped`（不标记 `running`，因为原 OS 进程已随 relay 退出）
 - 存储路径：`.sessionbridge/sessions.json`
 
 ### RelayEventBus
@@ -802,7 +802,7 @@ SessionBridge 默认不使用 TLS/HTTPS 证书。所有 WebSocket 通信通过�
 | Dashboard 本地管理 | dashboard-server.ts | 已完成 |
 | NodeConfig.extensions 扩展配置包 | config.ts | 已完成 |
 | 版本兼容性检查 (semver) | semver.ts | 已完成 |
-| Session 恢复/重建 | relay-server.ts | 部分完成：快照恢复已实现，恢复后运行态仍需修正 |
+| Session 恢复/重建 | relay-server.ts | 已完成：快照恢复实现，恢复后实例保持 `stopped` 状态 |
 | `bridge run` 单命令模式 | run-command.ts | 已完成 |
 | `bridge setup` 配置管理 | index.ts | 已完成 |
 | Ed25519 身份密钥自动生成 | identity-manager.ts | 已完成 |

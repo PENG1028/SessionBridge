@@ -250,7 +250,7 @@
 }
 ```
 
-重启后，`SessionPersistence` 快照语义是恢复上一轮实例列表并将状态视为 `stopped`，因为原进程已经随 relay 退出。当前 `NodeRelayServer.start()` 实现会把恢复出的实例重新标记为 `running`，这是已知不一致，后续应修正为以真实进程/agent 连接状态为准。
+重启后，`SessionPersistence` 快照语义是恢复上一轮实例列表并将状态视为 `stopped`，因为原进程已经随 relay 退出。恢复后实例状态保持 `stopped`，用户需手动重启（不自动标记 `running`）。
 
 ---
 

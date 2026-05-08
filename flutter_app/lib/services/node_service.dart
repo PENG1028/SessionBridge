@@ -57,9 +57,9 @@ class NodeService extends ChangeNotifier {
         final fallback =
             '${exeDir.substring(0, exeDir.lastIndexOf(Platform.pathSeparator))}/$_relayBinaryPath';
         if (await File(fallback).exists()) {
-          await Process.start(fallback, [
+          _process = await Process.start(fallback, [
             '--relay-port',
-            _settings.dashboardPort.toString(),
+            _settings.relayPort.toString(),
             '--dashboard-port',
             _settings.dashboardPort.toString(),
           ], mode: ProcessStartMode.normal);
@@ -67,27 +67,23 @@ class NodeService extends ChangeNotifier {
           _setError('Relay binary not found: $relayPath');
           return;
         }
+      } else {
+        _process = await Process.start(relayPath, [
+          '--relay-port',
+          _settings.relayPort.toString(),
+          '--dashboard-port',
+          _settings.dashboardPort.toString(),
+        ], mode: ProcessStartMode.normal);
       }
 
-      _process = await Process.start(relayPath, [
-        '--relay-port',
-        _settings.dashboardPort.toString(),
-        '--dashboard-port',
-        _settings.dashboardPort.toString(),
-      ], mode: ProcessStartMode.normal);
-
-      // Monitor stdout for ready signal
+      // Monitor stdout/stderr for diagnostics
       _process!.stdout
           .transform(utf8.decoder)
           .transform(const LineSplitter())
           .listen((line) {
-        if (line.contains('Dashboard ready') ||
-            line.contains('Relay server on port')) {
-          _setState(NodeState.running);
-        }
+        // stdout used for diagnostics only; ready detection via health check
       });
 
-      // Monitor stderr for errors
       _process!.stderr
           .transform(utf8.decoder)
           .transform(const LineSplitter())
@@ -96,6 +92,9 @@ class NodeService extends ChangeNotifier {
           _setError(line);
         }
       });
+
+      // Poll dashboard health endpoint to detect ready state
+      _waitForDashboard(_settings.dashboardPort);
 
       // Handle unexpected exit
       _process!.exitCode.then((code) {
@@ -116,6 +115,31 @@ class NodeService extends ChangeNotifier {
       _process = null;
     }
     _setState(NodeState.stopped);
+  }
+
+  /// Poll [dashboardPort]/api/status until the dashboard responds with 200,
+  /// then transition to [NodeState.running]. Times out after ~15 s.
+  Future<void> _waitForDashboard(int dashboardPort) async {
+    final client = HttpClient();
+    try {
+      for (var i = 0; i < 30; i++) {
+        await Future.delayed(const Duration(milliseconds: 500));
+        try {
+          final request = await client.getUrl(
+            Uri.parse('http://127.0.0.1:$dashboardPort/api/status'),
+          );
+          final response = await request.close();
+          if (response.statusCode == 200) {
+            _setState(NodeState.running);
+            return;
+          }
+        } catch (_) {
+          // Connection refused — server still starting, retry
+        }
+      }
+    } finally {
+      client.close(force: true);
+    }
   }
 
   void _setState(NodeState newState) {

@@ -6,6 +6,7 @@ class SettingsService extends ChangeNotifier {
   static const _keyRelayToken = 'relay_token';
   static const _keyAutoStart = 'auto_start';
   static const _keyDashboardPort = 'dashboard_port';
+  static const _keyRelayPort = 'relay_port';
 
   late SharedPreferences _prefs;
 
@@ -21,6 +22,8 @@ class SettingsService extends ChangeNotifier {
   bool get autoStart => _prefs.getBool(_keyAutoStart) ?? false;
 
   int get dashboardPort => _prefs.getInt(_keyDashboardPort) ?? 9843;
+
+  int get relayPort => _prefs.getInt(_keyRelayPort) ?? 8080;
 
   Future<void> setRelayUrl(String url) async {
     await _prefs.setString(_keyRelayUrl, url);
@@ -39,6 +42,11 @@ class SettingsService extends ChangeNotifier {
 
   Future<void> setDashboardPort(int port) async {
     await _prefs.setInt(_keyDashboardPort, port);
+    notifyListeners();
+  }
+
+  Future<void> setRelayPort(int port) async {
+    await _prefs.setInt(_keyRelayPort, port);
     notifyListeners();
   }
 }

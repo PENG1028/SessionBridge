@@ -34,18 +34,6 @@ export function StatusBar({
       )}
 
       <span className="flex-1" />
-
-      {/* Keyboard shortcut hints */}
-      <span className="text-[9px] text-gray-600 hidden md:flex items-center gap-3">
-        <kbd className="px-1 py-0.5 rounded bg-gray-800 border border-gray-700 text-gray-500">Esc</kbd>
-        <span className="text-gray-700">Stop</span>
-        <kbd className="px-1 py-0.5 rounded bg-gray-800 border border-gray-700 text-gray-500">⌘K</kbd>
-        <span className="text-gray-700">Commands</span>
-        <kbd className="px-1 py-0.5 rounded bg-gray-800 border border-gray-700 text-gray-500">⌘L</kbd>
-        <span className="text-gray-700">Clear</span>
-        <kbd className="px-1 py-0.5 rounded bg-gray-800 border border-gray-700 text-gray-500">⌘⇧C</kbd>
-        <span className="text-gray-700">Copy</span>
-      </span>
     </div>
   );
 }

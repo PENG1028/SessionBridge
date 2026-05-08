@@ -3,7 +3,7 @@
 import { Cpu, Folder, FileCode, Search, ChevronDown, Settings, LayoutDashboard, Terminal } from 'lucide-react';
 import { useFocus } from '../workbench/focus-context';
 import { useRuntimePolicy } from '../workbench/runtime-policy-context';
-import { getAdapterMeta } from '../main/view-registry';
+import { getAdapterMeta, getViewEntry } from '../main/view-registry';
 
 export interface ConsoleHeaderProps {
   onMobileOpen: () => void;
@@ -69,14 +69,7 @@ export function ConsoleHeader({
     const { paneViewType, adapterId } = useFocus();
     const { activePolicy } = useRuntimePolicy();
     const label = paneViewType
-      ? paneViewType === 'claude-code' ? 'Claude'
-        : paneViewType === 'claude-chat' ? 'Claude'
-        : paneViewType === 'terminal' ? 'Terminal'
-        : paneViewType === 'dashboard' ? 'Dashboard'
-        : paneViewType === 'logs' ? 'Logs'
-        : paneViewType === 'agent-monitor' ? 'Monitor'
-        : paneViewType === 'browser' ? 'Browser'
-        : paneViewType.charAt(0).toUpperCase() + paneViewType.slice(1)
+      ? getViewEntry(paneViewType)?.meta.title || paneViewType.charAt(0).toUpperCase() + paneViewType.slice(1)
       : getAdapterMeta(adapterId ?? undefined).label;
     const modeBadge = activePolicy.permissionMode === 'default' ? 'ASK'
       : activePolicy.permissionMode === 'acceptEdits' ? 'AUTO' : 'PLAN';

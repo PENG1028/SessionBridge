@@ -68,6 +68,7 @@ const auditLog = new AuditLogger(process.cwd());
 // ─── Pending External Access Requests ───────────────────────────────
 // Map requestId → WebSocket of the browser that initiated the request
 const pendingExternalRequests = new Map<string, WebSocket>();
+const PENDING_TIMEOUT_MS = 30_000;
 const sessionPersistence = new SessionPersistence(process.cwd(), eventBus);
 const permissions = new PermissionModel();
 const relayConfigManager = new RelayConfigManager(eventBus);
@@ -1868,6 +1869,7 @@ function setupWssHandlers(): void {
         // Forward to remote agent with request tracking
         const requestId = `ext_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
         pendingExternalRequests.set(requestId, ws);
+        setTimeout(() => pendingExternalRequests.delete(requestId), PENDING_TIMEOUT_MS);
         send(targetInst.agentConnection, envelope("node.external.inspect", { requestId }));
       } else {
         // Self-service: detect locally and respond directly
@@ -1898,6 +1900,7 @@ function setupWssHandlers(): void {
         // Forward set command to remote agent
         const requestId = `ext_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
         pendingExternalRequests.set(requestId, ws);
+        setTimeout(() => pendingExternalRequests.delete(requestId), PENDING_TIMEOUT_MS);
         send(targetInst.agentConnection, envelope("node.external.set", { requestId, enable }));
       } else {
         // Self-service: just report that this requires runtime support
@@ -1913,7 +1916,7 @@ function setupWssHandlers(): void {
     if (msg.type === "node.external.status" && msg.requestId) {
       const requester = pendingExternalRequests.get(msg.requestId);
       if (requester && requester.readyState === WebSocket.OPEN) {
-        send(requester, envelope("node.external.status", { enabled: msg.enabled, url: msg.url || '' }));
+        send(requester, envelope("node.external.status", { enabled: msg.enabled, url: msg.url || '', message: msg.message || '', error: msg.error || '' }));
       }
       pendingExternalRequests.delete(msg.requestId);
       return;
@@ -2332,7 +2335,7 @@ export class NodeRelayServer {
       for (const inst of snapshot.instances) {
         const restored = instanceManager.create(inst.dir, inst.label, inst.source, inst.adapterId);
         restored.agentVersion = inst.agentVersion;
-        restored.status = 'running'; // Mark as running so UI shows green dot
+        restored.status = 'stopped'; // OS processes died with the relay; user must restart
         console.log(`[relay] Restored session: ${restored.id} (${inst.label})`);
         auditLog.log('session.restored', 'system', { originalId: inst.id }, restored.id);
       }

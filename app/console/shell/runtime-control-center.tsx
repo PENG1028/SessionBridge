@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useFocus } from '../workbench/focus-context';
 import { useRuntimePolicy, type PermissionMode, type EffortLevel } from '../workbench/runtime-policy-context';
-import { getAdapterMeta } from '../main/view-registry';
+import { getAdapterMeta, getViewEntry } from '../main/view-registry';
 
 interface RuntimeControlCenterProps {
   /** Send mode change to relay server. */
@@ -29,7 +29,7 @@ const EFFORT_CONFIG: Record<EffortLevel, { badge: string; color: string }> = {
 // ── Component ────────────────────────────────────────────────
 
 export function RuntimeControlCenter({ onSetMode, onSetEffort }: RuntimeControlCenterProps) {
-  const { adapterId, paneViewType } = useFocus();
+  const { adapterId, paneViewType, viewId } = useFocus();
   const { activePolicy, setPolicy, activeScope } = useRuntimePolicy();
   const [showDropdown, setShowDropdown] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -53,15 +53,10 @@ export function RuntimeControlCenter({ onSetMode, onSetEffort }: RuntimeControlC
     return () => window.removeEventListener('toggle-mode-picker', handler);
   }, []);
 
+  const claudeViews = new Set(['claude-chat', 'claude-code']);
+  const isClaude = paneViewType ? claudeViews.has(paneViewType) : claudeViews.has(viewId);
   const adapterLabel = paneViewType
-    ? paneViewType === 'claude-code' ? 'Claude'
-      : paneViewType === 'claude-chat' ? 'Claude'
-      : paneViewType === 'terminal' ? 'Terminal'
-      : paneViewType === 'dashboard' ? 'Dashboard'
-      : paneViewType === 'logs' ? 'Logs'
-      : paneViewType === 'agent-monitor' ? 'Monitor'
-      : paneViewType === 'browser' ? 'Browser'
-      : paneViewType.charAt(0).toUpperCase() + paneViewType.slice(1)
+    ? getViewEntry(paneViewType)?.meta.title || paneViewType.charAt(0).toUpperCase() + paneViewType.slice(1)
     : getAdapterMeta(adapterId ?? undefined).label;
   const modeCfg = MODE_CONFIG[activePolicy.permissionMode];
   const effortCfg = EFFORT_CONFIG[activePolicy.effortLevel];
@@ -83,22 +78,22 @@ export function RuntimeControlCenter({ onSetMode, onSetEffort }: RuntimeControlC
       {/* Focus target */}
       <span className="text-gray-500 font-mono"># {adapterLabel}</span>
 
-      {/* Mode indicator */}
-      <button
-        onClick={() => setShowDropdown(v => !v)}
-        className={`font-mono font-bold tracking-wider ${modeCfg.color} hover:brightness-125 transition-all cursor-pointer`}
-        title={modeCfg.label}
-      >
-        [{modeCfg.badge}]
-      </button>
+      {/* Mode + effort indicators — Claude views only */}
+      {isClaude && (<>
+        <button
+          onClick={() => setShowDropdown(v => !v)}
+          className={`font-mono font-bold tracking-wider ${modeCfg.color} hover:brightness-125 transition-all cursor-pointer`}
+          title={modeCfg.label}
+        >
+          [{modeCfg.badge}]
+        </button>
+        <span className={`font-mono ${effortCfg.color}`}>
+          THINK:{effortCfg.badge}
+        </span>
+      </>)}
 
-      {/* Effort indicator */}
-      <span className={`font-mono ${effortCfg.color}`}>
-        THINK:{effortCfg.badge}
-      </span>
-
-      {/* Dropdown panel */}
-      {showDropdown && (
+      {/* Dropdown panel — Claude views only */}
+      {showDropdown && isClaude && (
         <div className="absolute bottom-full left-0 mb-1.5 bg-[#1a1a1a] border border-gray-700 shadow-2xl shadow-black/60 overflow-hidden z-50" style={{ minWidth: '220px' }}>
           {/* Permission mode section */}
           <div className="px-3 py-1.5 text-[9px] text-gray-600 font-bold tracking-wider border-b border-gray-800 bg-[#151515]">
