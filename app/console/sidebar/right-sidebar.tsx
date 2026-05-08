@@ -1,9 +1,9 @@
 'use client';
 
-import { FileCode, GitBranch, ChevronRight, AlertCircle } from 'lucide-react';
-import { TaskPanel } from '../panels/task-panel';
-import { getPanelComponent } from './panel-components';
-import { evaluateWhen, type WhenContext } from '../../../lib/evaluate-when';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { getPanels } from '../panels/panel-registry';
+import { PanelDndWrapper, loadPanelOrder, savePanelOrder, applyPanelOrder } from './panel-dnd-wrapper';
+import { useFocus } from '../workbench/focus-context';
 
 interface RightSidebarProps {
   activeTasks: Map<string, any>;
@@ -22,189 +22,60 @@ interface RightSidebarProps {
   terminalTab: 'log' | 'raw';
   onTerminalTabChange: (tab: 'log' | 'raw') => void;
   logsEndRef: React.RefObject<HTMLDivElement | null>;
-  /** When context for evaluating panel visibility conditions. */
-  whenContext: WhenContext;
-  /** Dynamic extension panels from manifests */
-  extensionPanels?: { id: string; title: string; icon: string; defaultVisible: boolean; when?: string }[];
 }
 
-export function RightSidebar({
-  activeTasks,
-  queueInfo,
-  onNewSession,
-  onQuickCompact,
-  onSaveSnapshot,
-  snapshots,
-  onLoadSnapshot,
-  onForkSnapshot,
-  knownFiles,
-  onOpenFile,
-  shortenPath,
-  logs,
-  msgLog,
-  terminalTab,
-  onTerminalTabChange,
-  logsEndRef,
-  whenContext,
-  extensionPanels,
-}: RightSidebarProps) {
-  // Compute visible extension panels based on when conditions
-  const visiblePanels = (extensionPanels || []).filter(p => evaluateWhen(p.when, whenContext));
-  const showTaskPanel = evaluateWhen('activeAdapterId == claude-code', whenContext);
+export function RightSidebar(props: RightSidebarProps) {
+  const { whenContext } = useFocus();
+  const registryPanels = getPanels('right', whenContext);
+  const [savedOrder, setSavedOrder] = useState<string[] | null>(null);
+
+  useEffect(() => {
+    setSavedOrder(loadPanelOrder('right'));
+  }, []);
+
+  const panelIds = useMemo(() => registryPanels.map(p => p.id), [registryPanels]);
+  useEffect(() => {
+    setSavedOrder(prev => {
+      if (!prev) return panelIds;
+      const merged = prev.filter(id => panelIds.includes(id));
+      for (const id of panelIds) {
+        if (!merged.includes(id)) merged.push(id);
+      }
+      return merged;
+    });
+  }, [panelIds]);
+
+  const panels = useMemo(() => applyPanelOrder(registryPanels, savedOrder),
+    [registryPanels, savedOrder]);
+
+  const handleReorder = useCallback((dragId: string, targetId: string) => {
+    setSavedOrder(prev => {
+      const current = prev || registryPanels.map(p => p.id);
+      const fromIdx = current.indexOf(dragId);
+      const toIdx = current.indexOf(targetId);
+      if (fromIdx === -1 || toIdx === -1) return prev;
+      const next = [...current];
+      next.splice(fromIdx, 1);
+      next.splice(toIdx, 0, dragId);
+      savePanelOrder('right', next);
+      return next;
+    });
+  }, [registryPanels]);
+
   return (
-    <aside className="w-72 border-l border-gray-800 bg-[#0d0d0d] flex flex-col hidden lg:flex shrink-0">
-      {showTaskPanel && <TaskPanel tasks={activeTasks} queueInfo={queueInfo} />}
-
-      {/* Actions */}
-      <div className="p-3 border-b border-gray-800 bg-[#111] space-y-2">
-        <div className="text-[10px] text-gray-500 font-bold tracking-wider">ACTIONS</div>
-        <div className="flex flex-wrap gap-1.5">
-          <button onClick={onNewSession}
-            className="flex-1 px-2 py-1.5 bg-[#1a1a1a] hover:bg-gray-800 text-gray-400 hover:text-gray-200 text-[10px] rounded border border-gray-700 transition-colors">
-            + New Session
-          </button>
-          <button onClick={onQuickCompact}
-            className="px-2 py-1.5 bg-[#1a1a1a] hover:bg-gray-800 text-gray-400 hover:text-gray-200 text-[10px] rounded border border-gray-700 transition-colors"
-            title="Compress context to free tokens">
-            /compact
-          </button>
-          <button onClick={onSaveSnapshot}
-            className="px-2 py-1.5 bg-[#1a1a1a] hover:bg-gray-800 text-gray-400 hover:text-gray-200 text-[10px] rounded border border-gray-700 transition-colors"
-            title="Save current conversation as snapshot">
-            + Snapshot
-          </button>
-        </div>
-      </div>
-
-      {/* Snapshots */}
-      {snapshots.length > 0 && (
-        <div className="border-b border-gray-800 bg-[#111]">
-          <div className="p-2 text-[10px] font-bold text-gray-500 flex items-center gap-2 tracking-wider">
-            <GitBranch className="w-3 h-3" />
-            SNAPSHOTS
-            <span className="text-gray-700 font-normal">{snapshots.length}</span>
-          </div>
-          <div className="max-h-28 overflow-y-auto px-2 pb-2 space-y-0.5">
-            {snapshots.slice().reverse().map(s => (
-              <div key={s.id} className="flex items-center gap-1 group">
-                <button
-                  onClick={() => onLoadSnapshot(s.id)}
-                  className="flex-1 flex items-center gap-1.5 px-2 py-0.5 rounded hover:bg-gray-800 text-gray-400 hover:text-gray-200 text-[10px] transition-colors text-left min-w-0"
-                  title={s.name}
-                >
-                  <ChevronRight className="w-2 h-2 shrink-0 text-gray-600" />
-                  <span className="truncate text-[9px]">{s.name}</span>
-                  <span className="text-[7px] text-gray-700 ml-auto shrink-0">{s.ts.slice(5, 16)}</span>
-                </button>
-                <button
-                  onClick={() => onForkSnapshot(s.id)}
-                  className="opacity-0 group-hover:opacity-100 px-1 text-[8px] text-purple-600 hover:text-purple-400 transition-opacity"
-                  title="Fork from this snapshot"
-                >fork</button>
+    <aside className="w-72 border-l border-gray-800 bg-[#0d0d0d] flex flex-col hidden lg:flex shrink-0 overflow-hidden">
+      <div className="flex-1 overflow-y-auto">
+        {panels.map((p, i) => {
+          const PanelComponent = p.component;
+          return (
+            <PanelDndWrapper key={p.id} panelId={p.id} index={i} title={p.title} onReorder={handleReorder}>
+              <div className="overflow-y-auto max-h-[50vh]">
+                <PanelComponent {...props} />
               </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Files in Context */}
-      {knownFiles.size > 0 && (
-        <div className="border-b border-gray-800 bg-[#111]">
-          <div className="p-2 text-[10px] font-bold text-gray-500 flex items-center gap-2 tracking-wider">
-            <FileCode className="w-3 h-3" />
-            FILES IN CONTEXT
-            <span className="text-gray-700 font-normal">{knownFiles.size}</span>
-          </div>
-          <div className="max-h-24 overflow-y-auto px-2 pb-2 space-y-0.5">
-            {[...knownFiles.entries()].filter(([,t]) => t === 'file').slice(-30).map(([path]) => (
-              <button key={path}
-                onClick={() => onOpenFile(path)}
-                className="w-full flex items-center gap-1.5 px-2 py-0.5 rounded hover:bg-gray-800 text-gray-400 hover:text-gray-200 text-[10px] transition-colors text-left"
-                title={path}
-              >
-                <FileCode className="w-2.5 h-2.5 shrink-0 text-blue-500" />
-                <span className="truncate text-[9px]">{shortenPath(path)}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Raw Terminal — truth layer */}
-      <div className="flex-1 flex flex-col bg-black min-h-0">
-        <div className="flex border-b border-gray-800 bg-[#111] shrink-0">
-          <button onClick={() => onTerminalTabChange('log')}
-            className={`px-3 py-1.5 text-[10px] tracking-wider flex items-center gap-1.5 transition-colors ${
-              terminalTab === 'log' ? 'text-purple-400 border-b border-purple-500 bg-[#0a0a0a]' : 'text-gray-600 hover:text-gray-400'
-            }`}>
-            <AlertCircle className="w-3 h-3" /> LOG
-          </button>
-          <button onClick={() => onTerminalTabChange('raw')}
-            className={`px-3 py-1.5 text-[10px] tracking-wider flex items-center gap-1.5 transition-colors ${
-              terminalTab === 'raw' ? 'text-purple-400 border-b border-purple-500 bg-[#0a0a0a]' : 'text-gray-600 hover:text-gray-400'
-            }`}>
-            <AlertCircle className="w-3 h-3" /> RAW
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-3 text-gray-400 text-xs font-mono leading-relaxed">
-          {terminalTab === 'log' ? (
-            logs.length === 0 ? (
-              <div className="text-gray-700 text-[10px] italic">No log entries yet</div>
-            ) : (
-              logs.map((log, i) => (
-                <div key={i} className={`whitespace-pre-wrap ${
-                  log.includes('Error') || log.includes('[Error]') ? 'text-red-400'
-                  : log.includes('✓') || log.includes('✅') ? 'text-green-400'
-                  : log.includes('> ') ? 'text-purple-300'
-                  : log.includes('[Unknown]') ? 'text-yellow-500'
-                  : 'text-gray-500'
-                }`}>
-                  {log}
-                </div>
-              ))
-            )
-          ) : (
-            msgLog.length === 0 ? (
-              <div className="text-gray-700 text-[10px] italic">Raw output will appear here</div>
-            ) : (
-              msgLog.slice(-200).map((entry) => (
-                <div key={entry.id} className="text-[10px] leading-relaxed font-mono">
-                  <span className="text-gray-700">{entry.time}</span>{' '}
-                  <span className={`${
-                    entry.type === 'output' ? 'text-gray-500'
-                    : entry.type === 'block' ? 'text-purple-500'
-                    : entry.type === 'input' ? 'text-green-500'
-                    : entry.type === 'error' ? 'text-red-500'
-                    : 'text-gray-600'
-                  }`}>
-                    [{entry.type}]
-                  </span>{' '}
-                  <span className="text-gray-400">{entry.data}</span>
-                </div>
-              ))
-            )
-          )}
-          <div ref={logsEndRef} />
-        </div>
+            </PanelDndWrapper>
+          );
+        })}
       </div>
-
-      {/* Extension panels (from manifests, filtered by when condition) */}
-      {visiblePanels.length > 0 && (
-        <div className="border-t border-gray-800 bg-[#111] shrink-0">
-          <div className="p-2 text-[10px] font-bold text-gray-500 tracking-wider">EXTENSIONS</div>
-          <div className="pb-2 space-y-0.5">
-            {visiblePanels.map(p => {
-              const PanelComponent = getPanelComponent(p.id);
-              return (
-                <div key={p.id}>
-                  <PanelComponent instanceId="" blocks={[]} />
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
     </aside>
   );
 }

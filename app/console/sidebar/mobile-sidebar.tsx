@@ -1,6 +1,6 @@
 'use client';
 
-import { Folder } from 'lucide-react';
+import { Folder, Cpu } from 'lucide-react';
 import { FileExplorer } from './file-explorer';
 import { InstanceList } from './instance-list';
 
@@ -57,9 +57,12 @@ export function MobileSidebar({
         </div>
 
         {/* Instances */}
+        <div className="p-2 border-b border-gray-800 text-[10px] font-bold text-gray-500 tracking-wider">
+          <span className="flex items-center gap-1.5"><Cpu className="w-3 h-3" /> INSTANCES</span>
+        </div>
         <InstanceList
           instances={instances} activeInstanceId={activeInstanceId}
-          onActivate={onActivate} onCreate={onCreate} onKill={onKill}
+          onActivate={onActivate} onKill={onKill}
         />
 
         {/* Quick Actions */}
