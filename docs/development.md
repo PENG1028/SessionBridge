@@ -7,21 +7,23 @@
 ```bash
 # 生产模式（一步到位）
 npm start
-# → next build → tsx src/index.ts
-# → 浏览器打开 http://localhost:8080
+# → node bin/bridge.js
+# → Dashboard: http://127.0.0.1:9843
+# → Relay: ws://127.0.0.1:8080
 ```
 
 ```bash
 # 开发模式（后端热重载）
 npm run dev
-# → next build → tsx watch src/index.ts
-# → 浏览器打开 http://localhost:8080
+# → tsx watch src/index.ts
+# → Dashboard: http://127.0.0.1:9843
+# → Relay: ws://127.0.0.1:8080
 ```
 
 ```bash
 # 前端开发（需要热重载时单独起 next）
 npm run dev:web          # Next.js :3000
-npm run dev              # relay :8080
+npm run dev              # NodeRuntime: relay :8080 + dashboard :9843
 # 浏览器打开 http://localhost:3000（前端）
 # 前端 JS 连 ws://localhost:8080（API/WS）
 ```
@@ -88,11 +90,11 @@ npx tsc --noEmit          # 类型检查
 # 1. 装依赖
 npm install
 
-# 2. 构建前端
-npx next build
+# 2. 构建前端 + 后端
+npm run build
 
 # 3. 启动（systemd 推荐）
-PORT=8080 nohup tsx src/index.ts &
+nohup node bin/bridge.js --relay-port 8080 --dashboard-port 9843 &
 
 # 4. nginx 反向代理（TLS + WebSocket）
 server {
@@ -116,27 +118,24 @@ server {
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `PORT` | `8080` | 服务器端口 |
-| `TOKEN` | 空 | 访问令牌（远程认证用，推荐设置） |
 | `BRIDGE_CONFIG` | 自动 | 配置文件路径（默认 `~/.sessionbridge/agent.json`） |
-| `BRIDGE_TOKEN` | 空 | 同 `TOKEN`，新命名 |
-| `DASHBOARD_PORT` | `9843` | Dashboard 端口 |
 | `NTFY_TOPIC` | 空 | ntfy 通知主题 |
-| `RELAY_URL` | 空 | 上游 relay 地址（节点模式） |
+
+端口、上游 relay 与 token 当前主要通过 CLI 参数或配置文件控制。
 
 ## CLI 参数
 
 NodeRuntime 启动时接受以下参数（优先级高于环境变量）：
 
 ```bash
-npx tsx src/index.ts --port 8080 --token mytoken --dashboard-port 9843
+npx tsx src/index.ts --relay-port 8080 --relay-token mytoken --dashboard-port 9843
 ```
 
 | 参数 | 对应环境变量 | 说明 |
 |------|-------------|------|
-| `--port` | `PORT` | 服务器端口 |
-| `--token` | `TOKEN` | 访问令牌 |
-| `--dashboard-port` | `DASHBOARD_PORT` | Dashboard 端口 |
-| `--relay-url` | `RELAY_URL` | 上游 relay 地址 |
+| `--relay-port` | 配置文件 `relayPort` | Relay 端口 |
+| `--relay-token` | 配置文件 `relayToken` | 访问令牌 |
+| `--dashboard-port` | 配置文件 `dashboardPort` | Dashboard 端口 |
+| `--upstream` | 配置文件 `upstreamRelay` | 上游 relay 地址 |
 | `--role` | — | 角色（auto / relay / leaf） |
 | `--node-id` | — | 节点 ID（自动生成，通常无需指定） |
