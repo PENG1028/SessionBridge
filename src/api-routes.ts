@@ -14,7 +14,7 @@ import type { InstanceManager, InstanceData } from "./instance-manager";
 import type { ConfigManager } from "./config";
 import type { RelayConfigManager } from "../adapters/agent-core/config-sync";
 import { envelope } from "../adapters/protocol";
-import { getClaudeHistoryPath } from "../adapters/claude-code/runtime";
+import { adapterRegistry, getDefaultAdapterId } from "../adapters/registry";
 import type { PermissionCategory } from "../adapters/types";
 
 // ─── Types ─────────────────────────────────────────────────────
@@ -101,7 +101,7 @@ function instanceToJSON(inst: InstanceData): Record<string, unknown> {
     label: inst.label,
     status: inst.status,
     source: inst.source,
-    adapterId: inst.adapterId || "shell",
+    adapterId: inst.adapterId || getDefaultAdapterId(),
     model: inst.model,
     blockCount: inst.blockBuffer.length,
     outputSize: inst.outputSize,
@@ -170,7 +170,7 @@ export function registerApiRoutes(
         instanceId: inst.id,
         status: inst.status,
         source: inst.source,
-        adapterId: inst.adapterId || "shell",
+        adapterId: inst.adapterId || getDefaultAdapterId(),
         model: inst.model,
         isProcessing: inst.isProcessing,
         queueDepth: inst.pendingQueue.length,
@@ -310,7 +310,7 @@ export function registerApiRoutes(
           targetDir,
           label || basename(targetDir),
           "local",
-          adapterId || "shell",
+          adapterId || getDefaultAdapterId(),
         );
 
         // Audit
@@ -401,9 +401,10 @@ export function registerApiRoutes(
   if (method === "GET" && pathname === "/api/sessions") {
     try {
       const sessions: Array<Record<string, unknown>> = [];
-      const historyFile = getClaudeHistoryPath();
+      const historyPath = adapterRegistry.list().map(a => a.getSessionPaths?.()).find(Boolean)?.historyPath;
+      const historyFile = historyPath || '';
 
-      if (existsSync(historyFile)) {
+      if (historyFile && existsSync(historyFile)) {
         const content = readFileSync(historyFile, "utf8");
         const lines = content
           .split("\n")

@@ -403,18 +403,13 @@ export class NodeRuntime {
 
   private async collectNotificationScenarios(): Promise<NotificationScenario[]> {
     const scenarios: NotificationScenario[] = [];
-    try {
-      const { claudeCodeAdapter } = await import('../claude-code');
-      if (claudeCodeAdapter.getNotificationScenarios) {
-        scenarios.push(...claudeCodeAdapter.getNotificationScenarios());
-      }
-    } catch { /* adapter not available */ }
-    try {
-      const { shellAdapter } = await import('../shell');
-      if (shellAdapter.getNotificationScenarios) {
-        scenarios.push(...shellAdapter.getNotificationScenarios());
-      }
-    } catch { /* ignore */ }
+    for (const adapter of adapterRegistry.list()) {
+      try {
+        if (adapter.getNotificationScenarios) {
+          scenarios.push(...adapter.getNotificationScenarios());
+        }
+      } catch { /* ignore adapter errors */ }
+    }
     return scenarios;
   }
 

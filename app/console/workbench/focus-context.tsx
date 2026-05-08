@@ -2,7 +2,8 @@
 
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import type { WhenContext } from '../../../lib/evaluate-when';
-import { getAdapterViewId } from '../main/view-registry';
+import { getAdapterViewId, getAllAdapterTypes } from '../main/view-registry';
+import { getDefaultAdapterId } from '../../../adapters/registry';
 
 // ── Focus State ───────────────────────────────────────────────
 
@@ -43,12 +44,13 @@ export function FocusProvider({
   const value = useMemo<FocusState>(() => {
     const activeInstance = instances.find(i => i.id === activeInstanceId) ?? null;
     const adapterId = activeInstance?.adapterId ?? null;
-    const viewId = getAdapterViewId(adapterId || 'shell') || 'terminal';
+    const defaultAdapterId = getAllAdapterTypes()[0]?.id || getDefaultAdapterId();
+    const viewId = getAdapterViewId(adapterId || defaultAdapterId) || getDefaultAdapterId();
     const isRunning = activeInstance?.status === 'running';
 
     const whenContext: WhenContext = {
       view: paneFocus?.viewType || viewId,
-      activeAdapterId: adapterId || 'shell',
+      activeAdapterId: adapterId || defaultAdapterId,
       isRunning,
       instanceId: activeInstanceId ?? undefined,
     };

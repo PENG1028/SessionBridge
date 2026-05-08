@@ -1,6 +1,7 @@
 'use client';
 
 import { createContext, useContext, useReducer, useEffect, useState, type ReactNode } from 'react';
+import { getAllViewEntries } from '../main/view-registry';
 
 // ── Platform Capabilities ────────────────────────────────────────
 
@@ -77,8 +78,14 @@ const LayoutContext = createContext<LayoutContextValue | null>(null);
 
 // ── Provider ────────────────────────────────────────────────────
 
+function getDefaultViewId(): string {
+  const entries = getAllViewEntries();
+  const first = entries.find(([id]) => id !== 'empty');
+  return first?.[0] || 'empty';
+}
+
 const initialState: LayoutState = {
-  activeViewId: 'claude-chat',
+  activeViewId: getDefaultViewId(),
   leftSidebarOpen: true,
   rightSidebarOpen: true,
   sidebarOverride: false,
@@ -101,7 +108,7 @@ export function LayoutProvider({ children }: { children: ReactNode }) {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        dispatch({ type: 'RESTORE', state: { activeViewId: parsed.activeViewId || 'claude-chat', leftSidebarOpen: parsed.leftSidebarOpen ?? true, rightSidebarOpen: parsed.rightSidebarOpen ?? true } });
+        dispatch({ type: 'RESTORE', state: { activeViewId: parsed.activeViewId || getDefaultViewId(), leftSidebarOpen: parsed.leftSidebarOpen ?? true, rightSidebarOpen: parsed.rightSidebarOpen ?? true } });
       }
     } catch {}
   }, []);

@@ -1,6 +1,7 @@
 'use client';
 
 import { useFocus } from '../workbench/focus-context';
+import { getAdapterCapabilities } from '../main/view-registry';
 
 interface QuickActionsPanelProps {
   onQuickAction?: (cmd: string) => void;
@@ -10,7 +11,8 @@ interface QuickActionsPanelProps {
 export function QuickActionsPanel(props: QuickActionsPanelProps) {
   const { onQuickAction, onRewind } = props;
   const { adapterId } = useFocus();
-  const isTerminal = adapterId === 'shell';
+  const caps = getAdapterCapabilities(adapterId ?? '');
+  const isTerminal = caps ? !caps.structuredEvents : true;
 
   if (!onQuickAction) return null;
 

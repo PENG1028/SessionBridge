@@ -12,7 +12,7 @@ import { checkRateLimit } from "./rate-limiter";
 import { CheckpointManager } from "./checkpoint-manager";
 import { InstanceManager } from "./instance-manager";
 import { envelope, parseMsg } from "../adapters/protocol";
-import { adapterRegistry } from "../adapters/registry";
+import { adapterRegistry, getDefaultAdapterId, getTerminalAdapterId, resolveAdapter, resolveAdapterByCapability } from "../adapters/registry";
 import { extensionPoints, evaluateWhen } from "../adapters/agent-core/extension-points";
 import type { WhenContext, StreamParserDeps } from "../adapters/types";
 import { RelayEventBus } from "../adapters/agent-core/event-bus";
@@ -28,15 +28,21 @@ import { tryDecrypt } from "./crypto-layer";
 import { loadOrCreateIdentity } from "./identity-manager";
 import { detectNetwork } from "./network-detect";
 
-// ─── Adapter path helper — avoids repeating adapterRegistry.get('claude-code') ──
-function claudePaths() {
-  return adapterRegistry.get('claude-code')?.getSessionPaths?.();
+// ─── Adapter session path helper — first adapter that provides paths ──
+// Used by session/history APIs to locate persistent session files.
+// Each adapter declares CliSessionPaths via getSessionPaths().
+function adapterSessionPaths() {
+  for (const adapter of adapterRegistry.list()) {
+    const paths = adapter.getSessionPaths?.();
+    if (paths) return paths;
+  }
+  return undefined;
 }
 
 // ─── Start Time ────────────────────────────────────────────────────
 const START_TIME = Date.now();
 
-import { VERSION as SERVER_VERSION } from "../adapters/version";
+import { VERSION as SERVER_VERSION } from "../version";
 import { mismatchSeverity } from "../adapters/semver";
 
 // ─── Config ──────────────────────────────────────────────────────
@@ -90,9 +96,10 @@ function dismissNotify(id: string): void {
   broadcast(envelope("system.notification_dismiss", { id }));
 }
 
-const defaultInstance = instanceManager.create(process.cwd(), "shell");
+const defaultAdapterId = getDefaultAdapterId();
+const defaultInstance = instanceManager.create(process.cwd(), defaultAdapterId);
 defaultInstance.status = "running";
-defaultInstance.adapterId = "shell";  // default = terminal, Claude is a plugin
+defaultInstance.adapterId = defaultAdapterId;
 instanceManager.setActive(defaultInstance.id);
 
 /** Get the currently active instance */
@@ -259,7 +266,7 @@ async function spawnInstance(instanceId?: string) {
   // Clear stale blocks (but preserve outputBuffer — it's needed for shell replay on reconnect)
   i.blockBuffer.length = 0;
 
-  const adapter = adapterRegistry.get(i.adapterId || 'shell') || adapterRegistry.get('shell')!;
+  const adapter = resolveAdapter(i.adapterId) || adapterRegistry.get(getDefaultAdapterId())!;
   const adapterName = adapter.displayName;
 
   broadcast(envelope("instance.block", { blockType: "status", text: `Spawning ${adapterName} instance...` }));
@@ -269,7 +276,7 @@ async function spawnInstance(instanceId?: string) {
     workspaceId: i.id,
     directory: i.dir,
     label: i.label,
-    adapterId: i.adapterId || 'shell',
+    adapterId: i.adapterId || getDefaultAdapterId(),
     config: { model: i.model },
     onBlock: (block: Record<string, unknown>) => {
       const msg = envelope("instance.block", { ...block, ts: Date.now() });
@@ -280,7 +287,7 @@ async function spawnInstance(instanceId?: string) {
       }
     },
     onOutput: (data: string) => {
-      if (adapter.id === 'shell') {
+      if (!adapter.getCapabilities().structuredEvents) {
         broadcastShellOutput(i.id, data, "stdout");
       } else {
         broadcast(envelope("instance.output", { data }));
@@ -324,12 +331,37 @@ async function spawnShellForWs(ws: WebSocket, instanceId?: string): Promise<impo
     send(ws, envelope("error", { code: "ACCESS_DENIED", message: permResult.reason || "Shell access denied" }));
     throw new Error(permResult.reason || 'Shell access denied');
   }
+
+  // Resolve terminal-capable adapter BEFORE creating any instance.
+  // shell.spawn semantics always require a raw terminal adapter.
+  const terminalAdapter = resolveAdapterByCapability('terminal', true);
+  if (!terminalAdapter) {
+    send(ws, envelope("error", { code: "NO_TERMINAL_ADAPTER", message: "No terminal-capable adapter available" }));
+    throw new Error('No terminal-capable adapter available for shell.spawn');
+  }
+
   let i: import("./instance-manager").InstanceData;
   if (instanceId) {
     const existing = instanceManager.get(instanceId);
-    i = existing || instanceManager.create(process.cwd(), "shell", "local", "shell");
+    if (existing) {
+      // Validate that the existing instance's adapter is terminal-capable.
+      // Use strict lookup — resolveAdapter() would fallback to the first adapter,
+      // potentially misclassifying an instance with a missing/unknown adapterId.
+      const existingAdapter = existing.adapterId ? adapterRegistry.get(existing.adapterId) : undefined;
+      if (!existingAdapter) {
+        send(ws, envelope("error", { code: "INVALID_ADAPTER", message: `Instance ${instanceId} has unknown adapter: ${existing.adapterId}` }));
+        throw new Error(`Instance ${instanceId} has unknown adapter: ${existing.adapterId}`);
+      }
+      if (!existingAdapter.getCapabilities().terminal) {
+        send(ws, envelope("error", { code: "NOT_TERMINAL", message: "Instance is not terminal-capable — cannot attach shell" }));
+        throw new Error(`Instance ${instanceId} is not terminal-capable`);
+      }
+      i = existing;
+    } else {
+      i = instanceManager.create(process.cwd(), terminalAdapter.displayName, "local", terminalAdapter.id);
+    }
   } else {
-    i = instanceManager.create(process.cwd(), "shell", "local", "shell");
+    i = instanceManager.create(process.cwd(), terminalAdapter.displayName, "local", terminalAdapter.id);
   }
 
   // Track ownership
@@ -357,12 +389,11 @@ async function spawnShellForWs(ws: WebSocket, instanceId?: string): Promise<impo
 
   // ── Fresh spawn ──────────────────────────────────
   subscribeShellOutput(i.id, ws);
-  const adapter = adapterRegistry.get("shell")!;
-  i.handle = await adapter.start({
+  i.handle = await terminalAdapter.start({
     workspaceId: i.id,
     directory: i.dir,
-    label: i.label || "Shell",
-    adapterId: "shell",
+    label: i.label || terminalAdapter.displayName,
+    adapterId: terminalAdapter.id,
     config: {},
     onOutput: (data: string) => {
       broadcastShellOutput(i.id, data, "stdout");
@@ -513,7 +544,9 @@ function processQueueForInstance(i: import("./instance-manager").InstanceData) {
     queueDepth: i.pendingQueue.length,
   }));
 
-  const cap = adapterRegistry.get(i.adapterId || 'shell')?.getCapabilities();
+  // Strict lookup — this instance's queue must use its own adapter's capabilities.
+  const queueAdapter = i.adapterId ? adapterRegistry.get(i.adapterId) : undefined;
+  const cap = queueAdapter?.getCapabilities();
   if (cap?.structuredEvents) {
     // Structured adapter: JSONL-encoded user message
     resetStreamState();
@@ -841,13 +874,16 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
   }
 
   // ── Read compaction count from a session file ────────────
+  // TODO: this assumes Claude JSONL format — move to adapter session provider.
   const compactionCountCache = new Map<string, number>();
-  function getCompactionCount(claudeDir: string, project: string, sessionId: string): number {
+  function getCompactionCount(project: string, sessionId: string): number {
+    const paths = adapterSessionPaths();
+    if (!paths) return 0;
     const cacheKey = sessionId;
     if (compactionCountCache.has(cacheKey)) return compactionCountCache.get(cacheKey)!;
     try {
       const slug = project.replace(/[\\\/: ]/g, "-");
-      const f = claudePaths()!.sessionPath(slug, sessionId);
+      const f = paths.sessionPath(slug, sessionId);
       if (!existsSync(f)) { compactionCountCache.set(cacheKey, 0); return 0; }
       const c = readFileSync(f, "utf8");
       const count = (c.match(/"isCompactSummary":true/g) || []).length;
@@ -875,11 +911,18 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
     return grouped;
   }
 
-  // ── API: Search Sessions (Claude Code history) ──────────
+  // ── API: Search Sessions (adapter-provided paths) ──────────
+  // TODO: session/compaction logic assumes Claude Code JSONL format.
+  // Extract to claude-code adapter as SessionProvider interface.
   if (path === "/api/sessions/search" && req.method === "GET") {
+    const paths = adapterSessionPaths();
+    if (!paths) {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ results: [], error: null }));
+      return;
+    }
     const query = (url.searchParams.get("q") || "").toLowerCase().trim();
-    const claudeDir = claudePaths()!.dataDir;
-    const historyFile = claudePaths()!.historyPath;
+    const historyFile = paths.historyPath;
     const results: any[] = [];
 
     try {
@@ -900,7 +943,7 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
 
           if (query && !inDisplay && !inProject) {
             const projectSlug = project.replace(/[\\\/: ]/g, "-");
-            const sessionFile = claudePaths()!.sessionPath(projectSlug, sessionId);
+            const sessionFile = paths.sessionPath(projectSlug, sessionId);
             try {
               const st = statSync(sessionFile);
               if (st.size > 0 && st.size <= 100 * 1024) {  // skip large files to avoid OOM
@@ -948,7 +991,7 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
       const limited = deduped.slice(0, 50);
       // Compute compaction count for all limited results
       for (const r of limited) {
-        r.compactionCount = getCompactionCount(claudeDir, r.project, r.sessionId);
+        r.compactionCount = getCompactionCount(r.project, r.sessionId);
       }
 
       res.writeHead(200, { "Content-Type": "application/json" });
@@ -961,10 +1004,16 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
   }
 
   // ── API: Session detail (full conversation) ─────────────
+  // TODO: session detail assumes Claude JSONL format — move to adapter provider
   if (path === "/api/sessions/detail" && req.method === "GET") {
+    const paths = adapterSessionPaths();
+    if (!paths) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "No session provider available" }));
+      return;
+    }
     const sessionId = url.searchParams.get("id") || "";
     const project = url.searchParams.get("project") || "";
-    const claudeDir = claudePaths()!.dataDir;
 
     if (!sessionId) {
       res.writeHead(400, { "Content-Type": "application/json" });
@@ -976,18 +1025,18 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
       let sessionContent = "";
       if (project) {
         const projectSlug = project.replace(/[\\\/: ]/g, "-");
-        const sessionFile = claudePaths()!.sessionPath(projectSlug, sessionId);
+        const sessionFile = paths.sessionPath(projectSlug, sessionId);
         if (existsSync(sessionFile)) {
           sessionContent = readFileSync(sessionFile, "utf8");
         }
       }
 
       if (!sessionContent) {
-        const projectsDir = claudePaths()!.projectsDir;
+        const projectsDir = paths.projectsDir;
         if (existsSync(projectsDir)) {
           const projectDirs = readdirSync(projectsDir);
           for (const pdir of projectDirs) {
-            const candidateFile = claudePaths()!.sessionPath(pdir, sessionId);
+            const candidateFile = paths.sessionPath(pdir, sessionId);
             if (existsSync(candidateFile)) {
               sessionContent = readFileSync(candidateFile, "utf8");
               break;
@@ -1123,11 +1172,17 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
   }
 
   // ── API: Current session detail ──────────────────────────
+  // TODO: assumes Claude JSONL data layout — extract to adapter session provider.
   if (path === "/api/sessions/current") {
+    const paths = adapterSessionPaths();
+    if (!paths) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "No session provider available" }));
+      return;
+    }
     try {
-      const claudeDir = claudePaths()!.dataDir;
       const projectSlug = ROOT_DIR.replace(/[^a-zA-Z0-9-]/g, "-");
-      const projectsDir = join(claudePaths()!.projectsDir, projectSlug);
+      const projectsDir = join(paths.projectsDir, projectSlug);
       let latestFile = "";
       let latestTime = 0;
 
@@ -1141,7 +1196,7 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
       }
 
       if (!latestFile) {
-        const debugInfo = { ROOT_DIR, projectSlug, projectsDir, claudeDir: claudePaths()!.dataDir, dirExists: existsSync(projectsDir) };
+        const debugInfo = { ROOT_DIR, projectSlug, projectsDir, dataDir: paths.dataDir, dirExists: existsSync(projectsDir) };
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ sessionId: "", messages: [], found: false, debug: debugInfo }));
         return;
@@ -1620,7 +1675,7 @@ function setupWssHandlers(): void {
       // Start Claude on first browser connection (skip in test mode)
       if (role === "browser" && !process.env.BRIDGE_TEST_MODE) {
         const activeInst = inst();
-        if (!activeInst.process && activeInst.adapterId !== 'shell') spawnInstance();
+        if (!activeInst.process && activeInst.adapterId && adapterRegistry.get(activeInst.adapterId)?.getCapabilities().structuredEvents) spawnInstance();
       }
 
       // Track agent version for update notification
@@ -1676,7 +1731,7 @@ function setupWssHandlers(): void {
 
       if (!process.env.BRIDGE_TEST_MODE) {
         const activeInst = inst();
-        if (!activeInst.process && activeInst.adapterId !== 'shell') spawnInstance();
+        if (!activeInst.process && activeInst.adapterId && adapterRegistry.get(activeInst.adapterId)?.getCapabilities().structuredEvents) spawnInstance();
       }
       flushBuffer(ws);
       send(ws, { type: "auth_result", success: true, sessionId: inst().id, instances: instanceManager.toJSON() });
@@ -1708,7 +1763,9 @@ function setupWssHandlers(): void {
       const dir = msg.dir || process.cwd();
       const label = msg.label || `remote-${Date.now().toString(36)}`;
       const agentVersion = agentVersionMap.get(ws) || "unknown";
-      const remoteInst = instanceManager.create(dir, label, 'remote', 'shell');
+      // TODO: protocol should carry adapterId/capability — the agent must declare what type it is.
+      const agentAdapterId = msg.adapterId || 'unknown';
+      const remoteInst = instanceManager.create(dir, label, 'remote', agentAdapterId);
       remoteInst.agentConnection = ws;
       remoteInst.agentVersion = agentVersion;
       remoteInst.status = 'running';
@@ -1759,7 +1816,22 @@ function setupWssHandlers(): void {
         return;
       }
       remoteInst.status = 'running';
-      if (remoteInst.adapterId === 'shell') {
+
+      // Strict adapter lookup — resolveAdapter() would fallback on 'unknown',
+      // causing the wrong adapter to parse this instance's output.
+      const instAdapter = remoteInst.adapterId ? adapterRegistry.get(remoteInst.adapterId) : undefined;
+      if (!instAdapter) {
+        // Unknown adapter: broadcast as raw output, no parseLine
+        broadcast(envelope("shell.output", { data: line.slice(0, 65536), stream: "stdout" }));
+        remoteInst.outputBuffer.push(line);
+        remoteInst.outputSize += line.length;
+        while (remoteInst.outputSize > 512 * 1024 && remoteInst.outputBuffer.length > 0) {
+          remoteInst.outputSize -= remoteInst.outputBuffer.shift()?.length ?? 0;
+        }
+        return;
+      }
+      const caps = instAdapter.getCapabilities();
+      if (!caps.structuredEvents) {
         // Raw shell output → terminal view (cap line size for broadcast)
         broadcast(envelope("shell.output", { data: line.slice(0, 65536), stream: "stdout" }));
         remoteInst.outputBuffer.push(line);
@@ -1768,7 +1840,7 @@ function setupWssHandlers(): void {
           remoteInst.outputSize -= remoteInst.outputBuffer.shift()?.length ?? 0;
         }
       } else {
-        adapterRegistry.get(remoteInst.adapterId || 'claude-code')?.parseLine?.(line, remoteInst, parserDepsFor(remoteInst));
+        instAdapter.parseLine?.(line, remoteInst, parserDepsFor(remoteInst));
       }
       return;
     }
@@ -1783,7 +1855,9 @@ function setupWssHandlers(): void {
         send(ws, envelope("error", { code: "NOT_FOUND", message: `Instance ${msg.instanceId} not found` }));
         return;
       }
-      if (remoteInst.adapterId === 'shell') {
+      const stderrAdapter = remoteInst.adapterId ? adapterRegistry.get(remoteInst.adapterId) : undefined;
+      const stderrCaps = stderrAdapter?.getCapabilities();
+      if (stderrCaps && !stderrCaps.structuredEvents) {
         // Raw shell stderr → terminal view
         broadcast(envelope("shell.output", { data: data.slice(0, 65536), stream: "stderr" }));
       } else {
@@ -1816,7 +1890,9 @@ function setupWssHandlers(): void {
     if (msg.type === "agent.instance.spawn") {
       const dir = msg.dir || process.cwd();
       const label = msg.label || 'Shell';
-      const remoteInst = instanceManager.create(dir, label, 'remote', 'shell');
+      // TODO: protocol should carry adapterId — agent.instance.spawn declares what type.
+      const agentAdapterId = msg.adapterId || 'unknown';
+      const remoteInst = instanceManager.create(dir, label, 'remote', agentAdapterId);
       remoteInst.agentConnection = ws;
       remoteInst.status = 'running';
       send(ws, envelope("agent.instance.spawned", {
@@ -2082,9 +2158,9 @@ function setupWssHandlers(): void {
           const cmd = extensionPoints.findCommand(name);
           if (cmd) {
             const ctx: WhenContext = {
-              view: targetInst?.adapterId || 'shell',
+              view: targetInst?.adapterId || getDefaultAdapterId(),
               instanceStatus: targetInst?.status || 'stopped',
-              activeAdapterId: targetInst?.adapterId || 'shell',
+              activeAdapterId: targetInst?.adapterId || getDefaultAdapterId(),
               isRunning: targetInst?.status === 'running',
             };
             if (!cmd.when || evaluateWhen(cmd.when, ctx)) {

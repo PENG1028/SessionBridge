@@ -1,7 +1,7 @@
 'use client';
 
 import type { ComponentType } from 'react';
-import { Sparkles, Terminal as TerminalIcon, Cpu } from 'lucide-react';
+import { Cpu } from 'lucide-react';
 
 // ── View Registry Entry ────────────────────────────────────────
 
@@ -12,6 +12,10 @@ export interface ViewMeta {
     left?: 'auto' | 'hidden' | 'shown';
     right?: 'auto' | 'hidden' | 'shown';
   };
+  /** Show this view in the "Open View" selector. Core workspace views set this. */
+  showInSelector?: boolean;
+  /** Category label in the view selector (e.g. "workspace", "adapter"). */
+  category?: string;
 }
 
 export interface ViewRegistryEntry {
@@ -33,6 +37,11 @@ export function getViewEntry(viewId: string): ViewRegistryEntry | undefined {
   return _dynamicViews.get(viewId);
 }
 
+/** Get all registered view entries (for the view selector UI). */
+export function getAllViewEntries(): Array<[string, ViewRegistryEntry]> {
+  return [..._dynamicViews.entries()];
+}
+
 // ── Backward-compatible viewRegistry (ComponentType map) ───────
 
 export const viewRegistry: Record<string, ComponentType<any>> = {};
@@ -44,22 +53,34 @@ export function syncLegacyRegistry(): void {
 }
 
 // ── Adapter-to-View mapping ───────────────────────────────────
+// Populated by adapter code at module init time and by server sync
+// at runtime. The lookup functions check dynamic data first, then
+// fall back to module-level registrations.
 
-export const adapterToViewId: Record<string, string> = {
-  'claude-code': 'claude-chat',
-  'shell': 'terminal',
-};
+const _adapterToViewId = new Map<string, string>();
 
-const dynamicAdapterToViewId = new Map<string, string>();
+export function registerAdapterMapping(adapterId: string, viewId: string): void {
+  if (!_adapterToViewId.has(adapterId)) {
+    _adapterToViewId.set(adapterId, viewId);
+  }
+}
 
 export function setAdapterViewMap(map: Record<string, string>): void {
   for (const [key, value] of Object.entries(map)) {
-    dynamicAdapterToViewId.set(key, value);
+    _adapterToViewId.set(key, value);
   }
 }
 
 export function getAdapterViewId(adapterId: string): string | undefined {
-  return dynamicAdapterToViewId.get(adapterId) ?? adapterToViewId[adapterId];
+  return _adapterToViewId.get(adapterId);
+}
+
+/** Reverse lookup: find the adapter ID that produces a given view ID. */
+export function getAdapterIdForView(viewId: string): string | undefined {
+  for (const [adapterId, vid] of _adapterToViewId) {
+    if (vid === viewId) return adapterId;
+  }
+  return undefined;
 }
 
 export function syncAdapterViewsFromExtensionData(eps: Record<string, unknown> | null): void {
@@ -78,25 +99,26 @@ export interface AdapterMeta {
   emoji: string;
 }
 
-export const adapterMeta: Record<string, AdapterMeta> = {
-  'claude-code': { icon: Sparkles, label: 'Claude Code', emoji: '💬' },
-  'shell': { icon: TerminalIcon, label: 'Terminal', emoji: '⌨' },
-};
+const _adapterMeta = new Map<string, AdapterMeta>();
+
+export function registerAdapterMeta(adapterId: string, meta: AdapterMeta): void {
+  if (!_adapterMeta.has(adapterId)) {
+    _adapterMeta.set(adapterId, meta);
+  }
+}
 
 const fallbackMeta: AdapterMeta = { icon: Cpu, label: 'Unknown', emoji: '▶' };
 export function getAdapterMeta(adapterId?: string): AdapterMeta {
-  return adapterMeta[adapterId || 'shell'] || dynamicAdapterMeta.get(adapterId || '') || fallbackMeta;
+  return _adapterMeta.get(adapterId || '') || fallbackMeta;
 }
-
-const dynamicAdapterMeta = new Map<string, AdapterMeta>();
 
 export function syncAdapterMetaFromExtensionData(eps: Record<string, unknown> | null): void {
   if (!eps) return;
   const extMeta = eps.adapterMeta as Record<string, { label?: string; emoji?: string }> | undefined;
   if (extMeta) {
     for (const [id, meta] of Object.entries(extMeta)) {
-      if (!adapterMeta[id]) {
-        dynamicAdapterMeta.set(id, {
+      if (!_adapterMeta.has(id)) {
+        _adapterMeta.set(id, {
           icon: Cpu,
           label: meta.label || id,
           emoji: meta.emoji || '▶',
@@ -107,17 +129,21 @@ export function syncAdapterMetaFromExtensionData(eps: Record<string, unknown> | 
 }
 
 export function getAllAdapterTypes(): Array<{ id: string; meta: AdapterMeta }> {
-  const result: Array<{ id: string; meta: AdapterMeta }> = [];
-  const seen = new Set<string>();
-  for (const [id, meta] of Object.entries(adapterMeta)) {
-    result.push({ id, meta });
-    seen.add(id);
+  return [..._adapterMeta.entries()].map(([id, meta]) => ({ id, meta }));
+}
+
+// ─── Adapter Capabilities (from extension manifests) ────────────
+
+const dynamicAdapterCapabilities = new Map<string, Record<string, boolean>>();
+
+export function syncAdapterCapabilitiesFromExtensionData(eps: Record<string, unknown> | null): void {
+  if (!eps?.adapterCapabilities) return;
+  const caps = eps.adapterCapabilities as Record<string, Record<string, boolean>>;
+  for (const [id, cap] of Object.entries(caps)) {
+    dynamicAdapterCapabilities.set(id, cap);
   }
-  for (const [id, meta] of dynamicAdapterMeta) {
-    if (!seen.has(id)) {
-      result.push({ id, meta });
-      seen.add(id);
-    }
-  }
-  return result;
+}
+
+export function getAdapterCapabilities(adapterId: string): Record<string, boolean> | undefined {
+  return dynamicAdapterCapabilities.get(adapterId);
 }

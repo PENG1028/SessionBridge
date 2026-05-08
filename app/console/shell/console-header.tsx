@@ -3,7 +3,7 @@
 import { Cpu, Folder, FileCode, Search, ChevronDown, Settings, LayoutDashboard, Terminal } from 'lucide-react';
 import { useFocus } from '../workbench/focus-context';
 import { useRuntimePolicy } from '../workbench/runtime-policy-context';
-import { getAdapterMeta, getViewEntry } from '../main/view-registry';
+import { getAdapterMeta, getViewEntry, getAdapterCapabilities } from '../main/view-registry';
 
 export interface ConsoleHeaderProps {
   onMobileOpen: () => void;
@@ -14,7 +14,7 @@ export interface ConsoleHeaderProps {
   phaseLabel: string;
   phase: string;
   currentActivity: string | null;
-  parsed: { model?: string; cost?: string };
+  parsed?: { model?: string; cost?: string };
   openSearchPanel: () => void;
   showDirSwitcher: boolean;
   onToggleDirSwitcher: () => void;
@@ -68,14 +68,17 @@ export function ConsoleHeader({
   try {
     const { paneViewType, adapterId } = useFocus();
     const { activePolicy } = useRuntimePolicy();
-    const label = paneViewType
-      ? getViewEntry(paneViewType)?.meta.title || paneViewType.charAt(0).toUpperCase() + paneViewType.slice(1)
-      : getAdapterMeta(adapterId ?? undefined).label;
-    const modeBadge = activePolicy.permissionMode === 'default' ? 'ASK'
-      : activePolicy.permissionMode === 'acceptEdits' ? 'AUTO' : 'PLAN';
-    const effortBadge = activePolicy.effortLevel === 'low' ? 'OFF'
-      : activePolicy.effortLevel === 'medium' ? 'ON' : 'MAX';
-    runtimeBadge = `${label} [${modeBadge}] T:${effortBadge}`;
+    const caps = getAdapterCapabilities(adapterId ?? '');
+    if (caps?.modes === true) {
+      const label = paneViewType
+        ? getViewEntry(paneViewType)?.meta.title || paneViewType.charAt(0).toUpperCase() + paneViewType.slice(1)
+        : getAdapterMeta(adapterId ?? undefined).label;
+      const modeBadge = activePolicy.permissionMode === 'default' ? 'ASK'
+        : activePolicy.permissionMode === 'acceptEdits' ? 'AUTO' : 'PLAN';
+      const effortBadge = activePolicy.effortLevel === 'low' ? 'OFF'
+        : activePolicy.effortLevel === 'medium' ? 'ON' : 'MAX';
+      runtimeBadge = `${label} [${modeBadge}] T:${effortBadge}`;
+    }
   } catch {}
   return (
     <header className="h-11 flex items-center justify-between px-4 border-b border-gray-800 bg-[#111] shrink-0">
@@ -130,14 +133,14 @@ export function ConsoleHeader({
             {currentActivity}
           </span>
         )}
-        {parsed.model && (
+        {parsed?.model && (
           <span className="text-[10px] text-gray-500 bg-gray-900 px-2 py-0.5 rounded border border-gray-800 hidden md:inline">
             {parsed.model}
           </span>
         )}
       </div>
       <div className="flex items-center space-x-4 text-xs">
-        {parsed.cost && <span className="text-gray-400 hidden sm:inline">TOKENS: <span className="text-gray-200">{parsed.cost}</span></span>}
+        {parsed?.cost && <span className="text-gray-400 hidden sm:inline">TOKENS: <span className="text-gray-200">{parsed.cost}</span></span>}
         {/* Right sidebar toggle */}
         {onToggleRightSidebar && (
           <button

@@ -9,6 +9,7 @@ import { CheckpointManager } from "./checkpoint-manager";
 import type { ChildProcess } from "child_process";
 import type { WebSocket } from "ws";
 import type { RelayEventBus } from '../adapters/types';
+import { adapterRegistry, getDefaultAdapterId } from "../adapters/registry";
 
 // ─── Types ─────────────────────────────────────────────────
 
@@ -104,7 +105,7 @@ export class InstanceManager {
       label: label || labelFromDir(dir),
       status: 'starting',
       source: source || 'local',
-      adapterId: adapterId || 'shell',
+      adapterId: adapterId || getDefaultAdapterId(),
       process: null,
       agentConnection: null,
       model: null,
@@ -300,7 +301,7 @@ export class InstanceManager {
       label: inst.label,
       status: inst.status,
       source: inst.source,
-      adapterId: inst.adapterId || 'claude-code',
+      adapterId: inst.adapterId || getDefaultAdapterId(),
       model: inst.model,
       blockCount: inst.blockBuffer.length,
       outputSize: inst.outputSize,

@@ -10,6 +10,7 @@ import { writeFileSync, readFileSync, existsSync, unlinkSync, mkdirSync } from '
 import { join, dirname } from 'path';
 import type { InstanceManager } from './instance-manager';
 import type { RelayEventBus } from '../adapters/types';
+import { getDefaultAdapterId } from '../adapters/registry';
 
 // ─── Types ─────────────────────────────────────────────────
 
@@ -174,7 +175,7 @@ export class SessionPersistence {
       label: inst.label,
       status: 'stopped' as const,
       source: inst.source,
-      adapterId: inst.adapterId ?? 'shell',
+      adapterId: inst.adapterId ?? getDefaultAdapterId(),
       agentVersion: inst.agentVersion,
       createdAt: inst.createdAt,
       restoredAt: 0, // placeholder — set by restore()

@@ -71,7 +71,7 @@ export type WSCallback = {
   onExtensionPoints?: (eps: Record<string, unknown>) => void;
 };
 
-import { VERSION } from '../adapters/version';
+import { VERSION } from '../version';
 import { createCryptoSession, type BrowserCryptoSession } from '../app/crypto-client';
 
 /** Envelope helper for client-side sends. */

@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { getDefaultAdapterId } from '../../../adapters/registry';
 
-// ── Logs Panel (claude-code adapter) ─────────────────────────
+// ── Logs Panel ──────────────────────────────────────────────
 
 export function LogsPanel(props: { logs?: string[]; msgLog?: any[] }) {
   const { logs } = props;
@@ -25,7 +26,7 @@ export function LogsPanel(props: { logs?: string[]; msgLog?: any[] }) {
   );
 }
 
-// ── Terminal Panel (claude-code adapter) ─────────────────────
+// ── Terminal Panel ──────────────────────────────────────────
 
 export function TerminalPanel(props: { msgLog?: any[] }) {
   const { msgLog } = props;
@@ -50,7 +51,7 @@ export function TerminalPanel(props: { msgLog?: any[] }) {
   );
 }
 
-// ── System Panel (system-info adapter) ───────────────────────
+// ── System Panel ────────────────────────────────────────────
 
 export function SystemPanel(props: { projectCwd?: string }) {
   const [info, setInfo] = useState<{ cwd?: string; platform?: string; hostname?: string; uptime?: number } | null>(null);
@@ -110,7 +111,7 @@ export function SystemPanel(props: { projectCwd?: string }) {
   );
 }
 
-// ── Processes Panel (shell adapter) ──────────────────────────
+// ── Processes Panel ─────────────────────────────────────────
 
 export function ProcessesPanel(props: { instances?: any[]; activeInstanceId?: string | null }) {
   const { instances, activeInstanceId } = props;
@@ -129,7 +130,7 @@ export function ProcessesPanel(props: { instances?: any[]; activeInstanceId?: st
               inst.status === 'running' ? 'bg-green-500' : inst.status === 'error' ? 'bg-red-500' : 'bg-gray-600'
             }`} />
             <span className="truncate flex-1">{inst.label || inst.id?.slice(0, 8)}</span>
-            <span className="text-gray-600">{inst.adapterId || 'shell'}</span>
+            <span className="text-gray-600">{inst.adapterId || getDefaultAdapterId()}</span>
           </div>
         ))}
       </div>

@@ -3,16 +3,8 @@
 // proper recursive layout tree where all views are first-class panes.
 
 export type ViewType =
-  | 'terminal'
-  | 'claude-chat'
-  | 'claude-code'
-  | 'dashboard'
-  | 'agent-monitor'
-  | 'logs'
-  | 'ai'
-  | 'file-explorer'
-  | 'browser'
-  | 'empty';
+  | 'empty'
+  | (string & {});
 
 export interface PaneTab {
   id: string;
@@ -48,6 +40,8 @@ export interface WorkbenchState {
   bottom: PaneState | null;
 }
 
+import { getAllViewEntries, getAdapterViewId, getAllAdapterTypes } from '../main/view-registry';
+
 // ─── ID generation ─────────────────────────────────────────────
 
 let _counter = 0;
@@ -56,6 +50,20 @@ export function genPaneId(): string {
 }
 export function genTabId(): string {
   return `tab_${++_counter}_${Date.now().toString(36)}`;
+}
+
+/** Pick the best default view type from what's registered. */
+export function getDefaultViewType(): string {
+  // Prefer the first adapter's mapped view
+  const adapters = getAllAdapterTypes();
+  if (adapters.length > 0) {
+    const vid = getAdapterViewId(adapters[0].id);
+    if (vid) return vid;
+  }
+  // Fall back to the first non-empty registered view
+  const entries = getAllViewEntries();
+  const first = entries.find(([id]) => id !== 'empty');
+  return first?.[0] || 'empty';
 }
 
 // ─── Tree helpers ──────────────────────────────────────────────
@@ -108,13 +116,14 @@ function removeNode(root: LayoutNode, paneId: string): LayoutNode | null {
 
 // ─── Initial state ─────────────────────────────────────────────
 
-export function createInitialState(instanceId?: string): WorkbenchState {
+export function createInitialState(instanceId?: string, defaultVType?: string): WorkbenchState {
   const tabId = genTabId();
   const paneId = genPaneId();
+  const vType = defaultVType || getDefaultViewType();
   const tab: PaneTab = {
     id: tabId,
-    title: instanceId ? instanceId.slice(0, 12) : 'Terminal',
-    viewType: 'terminal',
+    title: instanceId ? instanceId.slice(0, 12) : vType.charAt(0).toUpperCase() + vType.slice(1),
+    viewType: vType as ViewType,
     instanceId: instanceId || undefined,
   };
   return {
@@ -136,21 +145,12 @@ export function createEmptyPane(zone: 'main' | 'bottom' = 'main'): PaneState {
   };
 }
 
-function clonePane(pane: PaneState): PaneState {
-  return {
-    ...pane,
-    id: genPaneId(),
-    tabs: pane.tabs.map(t => ({ ...t, id: genTabId() })),
-    activeTabId: pane.activeTabId, // will be fixed below
-  };
-}
-
 // ─── Reducer ───────────────────────────────────────────────────
 
 export type WorkbenchAction =
   | { type: 'FOCUS_PANE'; paneId: string }
   | { type: 'CLOSE_TAB'; paneId: string; tabId: string }
-  | { type: 'SPLIT_PANE'; paneId: string; direction: 'horizontal' | 'vertical'; newInstanceId?: string }
+  | { type: 'SPLIT_PANE'; paneId: string; direction: 'horizontal' | 'vertical'; newInstanceId?: string; viewType?: string }
   | { type: 'UNSPLIT_PANE'; paneId: string }
   | { type: 'ADD_TAB'; paneId: string; tab: PaneTab }
   | { type: 'SET_ACTIVE_TAB'; paneId: string; tabId: string }
@@ -206,7 +206,7 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         tabs: [{
           id: tabId,
           title: action.newInstanceId ? action.newInstanceId.slice(0, 12) : 'New',
-          viewType: 'terminal',
+          viewType: (action.viewType as ViewType) || getDefaultViewType(),
           instanceId: action.newInstanceId,
         }],
         activeTabId: tabId,
@@ -311,10 +311,11 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
     case 'ADD_BOTTOM_PANE': {
       if (state.bottom) return state; // already open
       const tabId = genTabId();
+      const defaultVType = getDefaultViewType();
       const bottom: PaneState = {
         kind: 'pane',
         id: genPaneId(),
-        tabs: [action.tab || { id: tabId, title: 'Terminal', viewType: 'terminal' }],
+        tabs: [action.tab || { id: tabId, title: defaultVType.charAt(0).toUpperCase() + defaultVType.slice(1), viewType: defaultVType as ViewType }],
         activeTabId: action.tab?.id || tabId,
         zone: 'bottom',
         minSize: 100,
@@ -369,15 +370,16 @@ export function findPaneByInstance(state: WorkbenchState, instanceId: string): P
 }
 
 /** Ensure an instance has a tab, adding to the active pane if not found. */
-export function ensureInstanceTab(state: WorkbenchState, instanceId: string, title?: string): WorkbenchState {
+export function ensureInstanceTab(state: WorkbenchState, instanceId: string, title?: string, defaultViewType?: string): WorkbenchState {
   const existing = findPaneByInstance(state, instanceId);
   if (existing) return state;
   const activePane = findPane(state.root, state.activePaneId);
   if (activePane) {
+    const vType = defaultViewType || getDefaultViewType();
     const tab: PaneTab = {
       id: genTabId(),
       title: title || instanceId.slice(0, 12),
-      viewType: 'terminal',
+      viewType: vType as ViewType,
       instanceId,
     };
     return workbenchReducer(state, { type: 'ADD_TAB', paneId: activePane.id, tab });

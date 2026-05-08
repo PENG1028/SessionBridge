@@ -9,19 +9,6 @@ export interface ConnStatus {
   retryCount?: number;
 }
 
-export interface ParsedInfo {
-  model?: string;
-  version?: string;
-  task?: string;
-  tool?: string;
-  toolArgs?: string;
-  inputTokens?: number;
-  outputTokens?: number;
-  cost?: string;
-  turnCount?: number;
-  cwd?: string;
-}
-
 export interface MsgLog {
   id: number;
   time: string;
@@ -42,14 +29,11 @@ export function useSession(
   const clientRef = useRef<WSClient | null>(null);
   const [connStatus, setConnStatus] = useState<ConnStatus>({ status: 'connecting' });
   const [output, setOutput] = useState<string>('');
-  const [parsed, setParsed] = useState<ParsedInfo>({});
   const [msgLog, setMsgLog] = useState<MsgLog[]>([]);
-  const [toolHistory, setToolHistory] = useState<{ tool: string; args: string; time: string }[]>([]);
   const [serverBlocks, setServerBlocks] = useState<any[]>([]);
   const [queueStatus, setQueueStatus] = useState<QueueStatus>({ processing: false, source: null, queueDepth: 0 });
   const outputRef = useRef('');
   const msgIdRef = useRef(0);
-  const toolHistRef = useRef<{ tool: string; args: string; time: string }[]>([]);
   const blocksRef = useRef<any[]>([]);
 
   // Workspace mode state
@@ -88,29 +72,6 @@ export function useSession(
       const next = [...prev, entry];
       return next.length > 500 ? next.slice(-500) : next;
     });
-  }, []);
-
-  // Parse output for structured info — delegates to adapter-specific parser
-  const parseOutput = useCallback((data: string) => {
-    // Dynamic import to avoid hardcoding Claude-specific parsing here.
-    // The actual parser is in adapters/claude-code/parse-output.ts
-    import('../adapters/claude-code/parse-output').then(({ parseClaudeOutputLine }) => {
-      setParsed(prev => {
-        const update = parseClaudeOutputLine(data, prev);
-        return Object.keys(update).length > 0 ? { ...prev, ...update } : prev;
-      });
-      // Tool history from output
-      if (data.includes('●') || /(?:Read|Edit|Bash|Glob|Grep|Tool)\s+/.test(data)) {
-        const toolMatch = data.match(/(Read|Edit|Bash|Glob|Grep|Tool)\s+(.+?)(?:\n|$)/);
-        if (toolMatch) {
-          toolHistRef.current = [
-            ...toolHistRef.current.slice(-49),
-            { tool: toolMatch[1], args: toolMatch[2].trim().slice(0, 80), time: new Date().toISOString().slice(11, 19) },
-          ];
-          setToolHistory(toolHistRef.current);
-        }
-      }
-    }).catch(() => {});
   }, []);
 
   const sendInput = useCallback((text: string, sessionId?: string) => {
@@ -154,7 +115,6 @@ export function useSession(
       onOutput: (data) => {
         appendOutput(data);
         addMsgLog('output', data);
-        parseOutput(data);
         onChunk?.(data);
       },
       onBlock: (block) => {
@@ -247,7 +207,7 @@ export function useSession(
       ws.disconnect();
       clientRef.current = null;
     };
-  }, [wsUrl, token, appendOutput, addMsgLog, parseOutput, initialCols, initialRows, onSystemNotify]);
+  }, [wsUrl, token, appendOutput, addMsgLog, initialCols, initialRows, onSystemNotify]);
 
   // Sync refs with state
   useEffect(() => {
@@ -332,9 +292,7 @@ export function useSession(
   return {
     connStatus,
     output,
-    parsed,
     msgLog,
-    toolHistory,
     serverBlocks,
     sendInput,
     sendCommand,

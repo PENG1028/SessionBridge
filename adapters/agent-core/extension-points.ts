@@ -12,6 +12,7 @@
 import type {
   ExtensionManifest, SidePanelContribution, CommandContribution,
   MenuContribution, WhenContext, NotificationContribution,
+  AdapterCapabilities,
 } from '../types';
 import { adapterRegistry } from '../registry';
 import { panelRegistry } from './panel-registry';
@@ -363,6 +364,21 @@ export class ExtensionPointsRegistry {
     return result;
   }
 
+  // ─── Capabilities ───────────────────────────────────────────
+
+  /**
+   * Get capabilities map (adapterId → capabilities) for all registered extensions.
+   */
+  getCapabilities(): Record<string, Partial<AdapterCapabilities>> {
+    const result: Record<string, Partial<AdapterCapabilities>> = {};
+    for (const [adapterId, manifest] of this.manifests) {
+      if (manifest.capabilities) {
+        result[adapterId] = manifest.capabilities;
+      }
+    }
+    return result;
+  }
+
   // ─── Serialization ─────────────────────────────────────────
 
   /**
@@ -381,6 +397,7 @@ export class ExtensionPointsRegistry {
       configurations: this.getConfigSchemas(),
       languages: this.getLanguages(),
       notifications: this.getNotificationScenarios(),
+      adapterCapabilities: this.getCapabilities(),
     };
   }
 }

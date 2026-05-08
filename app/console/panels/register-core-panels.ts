@@ -8,7 +8,6 @@ import { SessionActionsPanel } from './session-actions-panel';
 import { SnapshotsPanel } from './snapshots-panel';
 import { FilesContextPanel } from './files-context-panel';
 import { TerminalLogPanel } from './terminal-log-panel';
-import { TaskPanel } from './task-panel';
 import { LogsPanel, TerminalPanel, SystemPanel, ProcessesPanel } from './extension-panels';
 
 /** Dummy symbol to prevent tree-shaking of module-level side effects. */
@@ -19,7 +18,6 @@ registerPanel({ id: 'files', side: 'left', title: 'Files', order: 10, component:
 registerPanel({ id: 'instances', side: 'left', title: 'Instances', order: 20, component: InstancesPanel });
 registerPanel({ id: 'quick-actions', side: 'left', title: 'Quick Actions', order: 30, component: QuickActionsPanel });
 
-registerPanel({ id: 'tasks', side: 'right', title: 'Tasks', order: 10, when: 'activeAdapterId == claude-code', component: TaskPanel });
 registerPanel({ id: 'session-actions', side: 'right', title: 'Actions', order: 20, component: SessionActionsPanel });
 registerPanel({ id: 'snapshots', side: 'right', title: 'Snapshots', order: 30, component: SnapshotsPanel });
 registerPanel({ id: 'files-context', side: 'right', title: 'Files in Context', order: 40, component: FilesContextPanel });

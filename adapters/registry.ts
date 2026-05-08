@@ -82,3 +82,39 @@ export const adapterRegistry = new AdapterRegistry();
 export function registerAdapter(adapter: AgentAdapter): void {
   adapterRegistry.register(adapter);
 }
+
+/** Get the most appropriate default adapter ID — first registered, or 'shell'. */
+export function getDefaultAdapterId(): string {
+  const list = adapterRegistry.list();
+  return list[0]?.id || 'shell';
+}
+
+/** Resolve an adapter by ID, falling back to the first available adapter. */
+export function resolveAdapter(adapterId?: string): AgentAdapter | undefined {
+  if (adapterId) {
+    const found = adapterRegistry.get(adapterId);
+    if (found) return found;
+  }
+  return adapterRegistry.list()[0];
+}
+
+/** Resolve the first adapter matching a capability (e.g. terminal: true, structuredEvents: true). */
+export function resolveAdapterByCapability<K extends keyof AdapterCapabilities>(
+  key: K,
+  value: AdapterCapabilities[K],
+): AgentAdapter | undefined {
+  const matches = adapterRegistry.findByCapability(key, value);
+  return matches[0];
+}
+
+/** Get the first terminal-capable adapter ID, or undefined if none registered. */
+export function getTerminalAdapterId(): string | undefined {
+  const terminal = resolveAdapterByCapability('terminal', true);
+  return terminal?.id;
+}
+
+/** Get the first structured-events-capable adapter ID, or undefined if none registered. */
+export function getStructuredAdapterId(): string | undefined {
+  const structured = resolveAdapterByCapability('structuredEvents', true);
+  return structured?.id;
+}

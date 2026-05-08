@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useFocus } from '../workbench/focus-context';
 import { useRuntimePolicy, type PermissionMode, type EffortLevel } from '../workbench/runtime-policy-context';
-import { getAdapterMeta, getViewEntry } from '../main/view-registry';
+import { getAdapterMeta, getViewEntry, getAdapterCapabilities } from '../main/view-registry';
 
 interface RuntimeControlCenterProps {
   /** Send mode change to relay server. */
@@ -29,7 +29,7 @@ const EFFORT_CONFIG: Record<EffortLevel, { badge: string; color: string }> = {
 // ── Component ────────────────────────────────────────────────
 
 export function RuntimeControlCenter({ onSetMode, onSetEffort }: RuntimeControlCenterProps) {
-  const { adapterId, paneViewType, viewId } = useFocus();
+  const { adapterId, paneViewType } = useFocus();
   const { activePolicy, setPolicy, activeScope } = useRuntimePolicy();
   const [showDropdown, setShowDropdown] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -53,8 +53,8 @@ export function RuntimeControlCenter({ onSetMode, onSetEffort }: RuntimeControlC
     return () => window.removeEventListener('toggle-mode-picker', handler);
   }, []);
 
-  const claudeViews = new Set(['claude-chat', 'claude-code']);
-  const isClaude = paneViewType ? claudeViews.has(paneViewType) : claudeViews.has(viewId);
+  const caps = getAdapterCapabilities(adapterId ?? '');
+  const isClaude = caps?.modes === true;
   const adapterLabel = paneViewType
     ? getViewEntry(paneViewType)?.meta.title || paneViewType.charAt(0).toUpperCase() + paneViewType.slice(1)
     : getAdapterMeta(adapterId ?? undefined).label;

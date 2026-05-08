@@ -1,3 +1,2 @@
-// ─── Single source of truth for the SessionBridge version ──────
-// Every component that sends a version string MUST import from here.
-export const VERSION = "0.6.0";
+// Re-export from the single source of truth at the project root.
+export { VERSION } from '../version';

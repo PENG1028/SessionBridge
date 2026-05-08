@@ -17,11 +17,12 @@ import { ConsoleHeader } from './console/shell/console-header';
 import { ForkDialog } from './console/shell/fork-dialog';
 import { SearchResultsPanel } from './console/shell/search-results-panel';
 import { CommandPalette } from './console/shell/command-palette';
-import { getAdapterViewId, syncAdapterViewsFromExtensionData, syncAdapterMetaFromExtensionData, getViewEntry } from './console/main/view-registry';
+import { getAdapterViewId, getAdapterIdForView, getAdapterCapabilities, syncAdapterViewsFromExtensionData, syncAdapterMetaFromExtensionData, syncAdapterCapabilitiesFromExtensionData, getViewEntry, getAllAdapterTypes } from './console/main/view-registry';
 import { __coreViewsRegistered } from './console/main/register-core-views';
 import { syncExtensionPanels } from './console/panels/panel-registry';
 import { __corePanelsRegistered } from './console/panels/register-core-panels';
 import { evaluateWhen } from '../lib/evaluate-when';
+import { getDefaultAdapterId } from '../adapters/registry';
 void __corePanelsRegistered;
 void __coreViewsRegistered;
 import { useNotification } from './console/shared/notification-context';
@@ -386,10 +387,10 @@ function PageContent() {
     notify({ id: n.id, type: severity, title: n.title, message: n.message, duration: n.duration, action: n.action });
   }, [notify]);
 
-  const { connStatus, parsed, msgLog, sendInput, sendCommand, serverBlocks, sessions, activeSessionId, activateSession, spawnSession, isWorkspace, queueStatus, instances, activeInstanceId, activateInstance, createInstance, killInstance, extensionPointsData } = useSession(wsUrl, token ?? undefined, undefined, undefined, undefined, onSystemNotify, dismiss);
+  const { connStatus, msgLog, sendInput, sendCommand, serverBlocks, sessions, activeSessionId, activateSession, spawnSession, isWorkspace, queueStatus, instances, activeInstanceId, activateInstance, createInstance, killInstance, extensionPointsData } = useSession(wsUrl, token ?? undefined, undefined, undefined, undefined, onSystemNotify, dismiss);
   // Derived from instances for extCommands filtering and context menu
-  const activeAdapterId = instances.find(i => i.id === activeInstanceId)?.adapterId || 'shell';
-  const viewId = getAdapterViewId(activeAdapterId) || 'terminal';
+  const activeAdapterId = instances.find(i => i.id === activeInstanceId)?.adapterId || getAllAdapterTypes()[0]?.id || getDefaultAdapterId();
+  const viewId = getAdapterViewId(activeAdapterId) || getDefaultAdapterId();
   const isActiveRunning = instances.some(i => i.id === activeInstanceId && i.status === 'running');
   const whenContext = { activeAdapterId, view: viewId, isRunning: isActiveRunning };
 
@@ -407,6 +408,7 @@ function PageContent() {
   useEffect(() => {
     syncAdapterViewsFromExtensionData(extensionPointsData);
     syncAdapterMetaFromExtensionData(extensionPointsData);
+    syncAdapterCapabilitiesFromExtensionData(extensionPointsData);
     if (extensionPointsData?.views) {
       const views = extensionPointsData.views as Record<string, any>;
       syncExtensionPanels(views['sidebar-left'], views['sidebar-right']);
@@ -915,28 +917,38 @@ function PageContent() {
   // ── Context menu handler ───────────────
   const handleCtx = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
-    const items: ContextMenuItem[] = viewId === 'terminal' ? [
-      { label: 'New Terminal', shortcut: '⌘T', action: () => createInstance(projectInfo?.cwd || '.', undefined, 'shell') },
+    const activeCaps = getAdapterCapabilities(activeAdapterId);
+    const isTerminalView = activeCaps ? !activeCaps.structuredEvents : true;
+    // Build "New Instance" items from all registered adapter types
+    const allAdapterTypes = getAllAdapterTypes();
+    const newInstanceItems: ContextMenuItem[] = allAdapterTypes
+      .filter(a => a.id !== 'shell' || isTerminalView)
+      .map(a => ({
+        label: `New ${a.meta.label}`,
+        shortcut: '⌘T',
+        action: () => createInstance(projectInfo?.cwd || '.', undefined, a.id),
+      }));
+    const items: ContextMenuItem[] = [
+      ...newInstanceItems,
       { label: 'Kill Instance', shortcut: '⌘W', action: () => activeInstanceId && killInstance(activeInstanceId), danger: true },
       { label: '', divider: true, action: () => {} },
-      { label: 'Clear Terminal', action: () => { /* noop in this view */ } },
-    ] : [
-      { label: 'New Claude Instance', shortcut: '⌘T', action: () => createInstance(projectInfo?.cwd || '.', undefined, 'claude-code') },
-      { label: 'Kill Instance', shortcut: '⌘W', action: () => activeInstanceId && killInstance(activeInstanceId), danger: true },
-      { label: '', divider: true, action: () => {} },
-      { label: 'Clear History', action: () => { /* handled in InputForm */ } },
-      { label: 'Toggle Terminal', shortcut: '⌘`', action: () => {
-  if (workbenchState.bottom) {
-    workbenchDispatch({ type: 'CLOSE_BOTTOM_PANE' });
-  } else {
-    workbenchDispatch({ type: 'ADD_BOTTOM_PANE' });
-  }
-} },
-      { label: '', divider: true, action: () => {} },
-      { label: 'Copy All', shortcut: '⌘⇧C', action: () => {
-        const text = messages.map(m => `[${m.role}] ${m.content}`).join('\n');
-        navigator.clipboard.writeText(text);
-      }},
+      ...(isTerminalView
+        ? [{ label: 'Clear Terminal', action: () => { /* noop in this view */ } } as ContextMenuItem]
+        : [
+            { label: 'Clear History', action: () => { /* handled in InputForm */ } } as ContextMenuItem,
+            { label: 'Toggle Terminal', shortcut: '⌘`', action: () => {
+              if (workbenchState.bottom) {
+                workbenchDispatch({ type: 'CLOSE_BOTTOM_PANE' });
+              } else {
+                workbenchDispatch({ type: 'ADD_BOTTOM_PANE' });
+              }
+            } } as ContextMenuItem,
+            { label: '', divider: true, action: () => {} } as ContextMenuItem,
+            { label: 'Copy All', shortcut: '⌘⇧C', action: () => {
+              const text = messages.map(m => `[${m.role}] ${m.content}`).join('\n');
+              navigator.clipboard.writeText(text);
+            } } as ContextMenuItem,
+          ]),
     ];
 
     // Extension-contributed menu items from manifests (grouped)
@@ -1112,9 +1124,9 @@ function PageContent() {
     const entry = getViewEntry(viewType);
     const defaultTitle = entry?.meta.title || viewType.charAt(0).toUpperCase() + viewType.slice(1);
 
-    // Instance-requiring views: create an adapter instance, then bind the tab to it
-    if (viewType === 'terminal' || viewType === 'claude-code' || viewType === 'claude-chat') {
-      const adapterId = viewType === 'terminal' ? 'shell' : 'claude-code';
+    // Instance-requiring views: look up adapter, create instance, bind the tab
+    const adapterId = getAdapterIdForView(viewType);
+    if (adapterId) {
       const result = await createInstance(projectInfo?.cwd || '.', undefined, adapterId);
       if (result?.instance?.id) {
         workbenchDispatch({
@@ -1213,7 +1225,7 @@ function PageContent() {
         phaseLabel={phaseLabel}
         phase={phase}
         currentActivity={currentActivity}
-        parsed={parsed}
+        parsed={{}}
         openSearchPanel={openSearchPanel}
         showDirSwitcher={showDirSwitcher}
         onToggleDirSwitcher={() => setShowDirSwitcher(v => !v)}
@@ -1388,7 +1400,7 @@ function PageContent() {
               // static views use viewType directly as the registry key.
               // No viewType-specific branching — plugins can add views without touching page.tsx.
               const resolvedViewId = instanceId
-                ? getAdapterViewId(instances.find((i: any) => i.id === instanceId)?.adapterId || 'shell') || 'terminal'
+                ? getAdapterViewId(instances.find((i: any) => i.id === instanceId)?.adapterId || getAllAdapterTypes()[0]?.id || getDefaultAdapterId()) || viewType
                 : viewType;
               return <MainSlot viewId={resolvedViewId} />;
             }}

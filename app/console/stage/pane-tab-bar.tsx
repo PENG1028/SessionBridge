@@ -2,6 +2,7 @@
 
 import { Plus, X } from 'lucide-react';
 import type { PaneTab } from './workbench-state';
+import { getViewEntry } from '../main/view-registry';
 
 interface PaneTabBarProps {
   tabs: PaneTab[];
@@ -11,16 +12,11 @@ interface PaneTabBarProps {
   onAddTab: () => void;
 }
 
-const VIEW_ICONS: Record<string, string> = {
-  terminal: '>_',
-  'claude-chat': '♢',
-  dashboard: '▦',
-  'agent-monitor': '◎',
-  logs: '☰',
-  ai: '◇',
-  'file-explorer': '📁',
-  empty: '+',
-};
+function tabIcon(viewType: string): string {
+  if (viewType === 'empty') return '+';
+  const entry = getViewEntry(viewType);
+  return entry ? entry.meta.title.charAt(0) : '?';
+}
 
 export function PaneTabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onAddTab }: PaneTabBarProps) {
   return (
@@ -38,7 +34,7 @@ export function PaneTabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onAddTa
               }`}
               onClick={() => onSelectTab(tab.id)}
             >
-              <span className="font-mono text-[9px]">{VIEW_ICONS[tab.viewType] || '?'}</span>
+              <span className="font-mono text-[9px]">{tabIcon(tab.viewType)}</span>
               <span className="truncate max-w-[100px]">{tab.title}</span>
               {tabs.length > 1 && (
                 <button

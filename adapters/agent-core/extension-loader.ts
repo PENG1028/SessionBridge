@@ -38,23 +38,27 @@ function logDefault(msg: string): void { console.log(`[ext-loader] ${msg}`); }
 function getScanPaths(options: LoaderOptions): string[] {
   const paths: string[] = [];
 
+  // Helper: check if path contains at least one extension manifest subdirectory.
+  function hasManifestSubdir(dir: string): boolean {
+    try {
+      return readdirSync(dir).some(d =>
+        statSync(join(dir, d)).isDirectory() && existsSync(join(dir, d, 'sb-extension.json'))
+      );
+    } catch { return false; }
+  }
+
   // 1. Built-in adapters directory (project adapters/)
   // Handles tsx dev mode (__dirname = adapters/agent-core/) and
   // compiled dist mode (__dirname = dist/adapters/agent-core/)
   const projectAdapters = resolve(__dirname, '..');
-  if (existsSync(projectAdapters)) {
-    // Verify it actually contains manifests (not compiled dist/)
-    const probe = join(projectAdapters, 'claude-code', 'sb-extension.json');
-    if (existsSync(probe)) {
-      paths.push(projectAdapters);
-    }
+  if (existsSync(projectAdapters) && hasManifestSubdir(projectAdapters)) {
+    paths.push(projectAdapters);
   }
 
   // 1b. Fallback for compiled dist/: look for source adapters/ at project root
   const srcAdapters = resolve(__dirname, '..', '..', '..', 'adapters');
-  if (srcAdapters !== projectAdapters && existsSync(srcAdapters)) {
-    const probe = join(srcAdapters, 'claude-code', 'sb-extension.json');
-    if (existsSync(probe)) paths.push(srcAdapters);
+  if (srcAdapters !== projectAdapters && existsSync(srcAdapters) && hasManifestSubdir(srcAdapters)) {
+    paths.push(srcAdapters);
   }
 
   // 2. User-installed extensions directory
