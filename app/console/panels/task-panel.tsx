@@ -88,8 +88,8 @@ function TaskCard({ task }: { task: TaskInfo }) {
 
 // ─── TaskPanel ─────────────────────────────────────────────
 
-export function TaskPanel({ tasks, queueInfo }: {
-  tasks: Map<string, TaskInfo>;
+export function TaskPanel({ activeTasks: tasks, queueInfo }: {
+  activeTasks: Map<string, TaskInfo>;
   queueInfo?: { isProcessing: boolean; queueDepth: number; queue: { text: string }[] };
 }) {
   const taskList = Array.from(tasks.values());

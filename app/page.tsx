@@ -1,22 +1,19 @@
 'use client';
 
+// Prerendering disabled — page uses browser-only APIs (WebSocket, localStorage, indexedDB)
+export const dynamic = 'force-dynamic';
+
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useSession } from '../lib/use-ws';
 import {
-  Terminal, FileCode, Search,
-  Square, Cpu, CheckCircle2, ChevronRight,
-  Sparkles, Ban, ChevronDown, Activity,
+  Square,
 } from 'lucide-react';
-import { ContextMenu, type ContextMenuItem } from './console/shell/context-menu';
 import { MobileSidebar } from './console/sidebar/mobile-sidebar';
 import { useSessionSearch } from './console/shell/use-session-search';
 import { LeftSidebar } from './console/sidebar/left-sidebar';
 import { RightSidebar } from './console/sidebar/right-sidebar';
 import { StatusBar } from './console/shell/status-bar';
 import { ConsoleHeader } from './console/shell/console-header';
-import { ForkDialog } from './console/shell/fork-dialog';
-import { SearchResultsPanel } from './console/shell/search-results-panel';
-import { CommandPalette } from './console/shell/command-palette';
 import { getAdapterViewId, getAdapterIdForView, getAdapterCapabilities, syncAdapterViewsFromExtensionData, syncAdapterMetaFromExtensionData, syncAdapterCapabilitiesFromExtensionData, getViewEntry, getAllAdapterTypes } from './console/main/view-registry';
 import { __coreViewsRegistered } from './console/main/register-core-views';
 import { syncExtensionPanels } from './console/panels/panel-registry';
@@ -29,7 +26,12 @@ void __extensionPanelComponentsRegistered;
 void __coreViewsRegistered;
 import { useNotification } from './console/shared/notification-context';
 import { sessionStore } from '../lib/session-store';
-import { SettingsPanel } from './console/shell/settings-panel';
+import { useMessageSessions } from './console/hooks/use-message-sessions';
+import { useHistoryLoader } from './console/hooks/use-history-loader';
+import { useCommandHandlers } from './console/hooks/use-command-handlers';
+import { useKeyboardShortcuts } from './console/hooks/use-keyboard-shortcuts';
+import { useContextMenu } from './console/hooks/use-context-menu';
+import { ConsoleOverlays } from './console/overlays/console-overlays';
 import { LayoutProvider, useLayout, SidebarSlot, MainSlot, FocusProvider, RuntimePolicyProvider, useFocus, useRuntimePolicy, WorkbenchProvider } from './console/workbench';
 import { WorkbenchLayout } from './console/stage/workbench-layout';
 import { workbenchReducer, createInitialState, ensureInstanceTab, findPane as findPaneInTree, type ViewType } from './console/stage/workbench-state';
@@ -235,12 +237,9 @@ function PageContent() {
   // ── Core state ──────────────────────────
   const [phase, setPhase] = useState<Phase>('idle');
   const [currentActivity, setCurrentActivity] = useState<string | null>(null);
-  const [messagesBySession, setMessagesBySession] = useState<Record<string, Message[]>>({});
   const [logs, setLogs] = useState<string[]>(['[$] session-bridge connected']);
-  const [inputValue, setInputValue] = useState('');
   // ── No virtual window — render all messages ──
   const [terminalTab, setTerminalTab] = useState<'log' | 'raw'>('log');
-  const [showCommands, setShowCommands] = useState(false);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [viewingFile, setViewingFile] = useState<{path: string; content: string} | null>(null);
   // ── Background task tracking ──────────────
@@ -249,7 +248,6 @@ function PageContent() {
   const [expandedToolOutputs, setExpandedToolOutputs] = useState<Set<string>>(new Set());
   const [taskTimer, setTaskTimer] = useState(0);
   const [queueInfo, setQueueInfo] = useState<{isProcessing: boolean; queueDepth: number; queue: any[]}>({isProcessing: false, queueDepth: 0, queue: []});
-  const [ctxMenu, setCtxMenu] = useState<{x:number; y:number; items:ContextMenuItem[]}|null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   // Timer to refresh task durations and queue every 5s
   useEffect(() => {
@@ -272,7 +270,6 @@ function PageContent() {
   const [showDirSwitcher, setShowDirSwitcher] = useState(false);
   const [switchDirLocal, setSwitchDirLocal] = useState('');
   const [switching, setSwitching] = useState(false);
-  const [snapshots, setSnapshots] = useState<{id: string; name: string; msgs: Message[]; ts: string}[]>([]);
   useEffect(() => {
     fetch('/api/info').then(r => r.json()).then(info => {
       setProjectInfo(info);
@@ -291,65 +288,6 @@ function PageContent() {
     }).catch(() => {});
   }, []);
 
-  // ── Session persistence (IndexedDB) ──────────
-  const [isRestoring, setIsRestoring] = useState(true);
-
-  // Restore messages from IndexedDB on mount (complete path)
-  useEffect(() => {
-    const activeId = sessionStore.getActiveSessionId();
-    if (activeId) {
-      sessionStore.loadMessages(activeId).then(msgs => {
-        if (msgs.length > 0) {
-          setMessagesBySession(prev => ({ ...prev, [activeId]: toAppMessages(activeId, msgs) }));
-        }
-        setIsRestoring(false);
-      }).catch(() => setIsRestoring(false));
-    } else {
-      setIsRestoring(false);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Persist messages to IndexedDB (debounced) + localStorage fast path
-  const idbDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    if (isRestoring) return;
-    if (idbDebounceRef.current) clearTimeout(idbDebounceRef.current);
-    idbDebounceRef.current = setTimeout(() => {
-      // Fast path: full-map localStorage cache
-      try {
-        localStorage.setItem('bridge-messages', JSON.stringify(messagesBySession));
-      } catch {}
-      // Complete path: per-session IndexedDB writes
-      for (const [sid, msgs] of Object.entries(messagesBySession)) {
-        if (msgs.length > 0) {
-          sessionStore.replaceMessages(sid, toStorageMessages(msgs)).catch(() => {});
-        }
-      }
-    }, 500);
-    return () => { if (idbDebounceRef.current) clearTimeout(idbDebounceRef.current); };
-  }, [messagesBySession, isRestoring]);
-
-  // ── History loading (state+ref declarations only) ──
-  const historyLoadedRef = useRef(false);
-  const [historyLoading, setHistoryLoading] = useState(false);
-
-  // ── Persist messages to localStorage ─────
-  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
-    persistTimerRef.current = setTimeout(() => {
-      try {
-        const msgs = messagesBySession;
-        const hasContent = Object.values(msgs).some(arr => arr.length > 0);
-        if (hasContent) {
-          localStorage.setItem('sessionbridge-messages', JSON.stringify(msgs));
-        }
-      } catch {}
-    }, 2000);
-    return () => { if (persistTimerRef.current) clearTimeout(persistTimerRef.current); };
-  }, [messagesBySession]);
-
   // ── File tree state ─────────────────────
   const [fileTree, setFileTree] = useState<Record<string, {items: any[]; loaded: boolean}>>({});
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set(['.']));
@@ -367,19 +305,10 @@ function PageContent() {
   // Fetch root on mount
   useEffect(() => { fetchDir('.'); }, [fetchDir]);
 
-  // ── @ autocomplete state ────────────────
-  const [showFileSuggest, setShowFileSuggest] = useState(false);
-  const [fileSuggestions, setFileSuggestions] = useState<any[]>([]);
-  const [atPos, setAtPos] = useState(0);
   const actionEndRef = useRef<HTMLDivElement>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const processedRef = useRef(0);
-  /** Blocks whose ts is before this value are from a stale flushBuffer replay — skip them. */
-  const historyCutoffRef = useRef(0);
-  const submittingRef = useRef(false);
   const cmdPanelRef = useRef<HTMLDivElement>(null);
-  const messagesCacheRef = useRef<Record<string, Message[]>>({});
   const messagesRef = useRef<Message[]>([]);
 
   const { notify, dismiss } = useNotification();
@@ -450,120 +379,69 @@ function PageContent() {
 
   const addLog = useCallback((msg: string) => setLogs(prev => [...prev, msg]), []);
 
-  // ── History loading ──────────────────────
-  useEffect(() => {
-    if (historyLoadedRef.current) return;
-    if (!projectInfo?.cwd) return;
-    const key = projectInfo.cwd.replace(/[/\\:]/g, '_');
-    // Check if localStorage has data for this project
-    try {
-      const saved = localStorage.getItem('sessionbridge-messages');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed[key]?.length > 0) {
-          setMessagesBySession(parsed);
-          historyCutoffRef.current = Date.now();
-          processedRef.current = serverBlocks.length;
-          historyLoadedRef.current = true;
-          addLog(`[System] Restored ${parsed[key].length} messages from localStorage`);
-          // Restore active external session indicator
-          try {
-            const activeSaved = localStorage.getItem('sessionbridge-active-session');
-            if (activeSaved) {
-              const { display } = JSON.parse(activeSaved);
-              setActiveExternalSession(display);
-            }
-          } catch {}
-          return;
-        }
-      }
-    } catch {}
-    // No localStorage → load from Claude Code history API
-    setHistoryLoading(true);
-    const controller = new AbortController();
-    fetch('/api/sessions/current', { signal: controller.signal })
-      .then(r => r.json()).then(data => {
-        if (data.messages?.length) {
-          const loadedMsgs: Message[] = data.messages.map((m: any) => ({
-            id: genId(),
-            role: m.role === 'user' ? 'user' : 'assistant',
-            content: m.text || '',
-            timestamp: m.timestamp ? new Date(m.timestamp).toLocaleTimeString() : getTime(),
-            blocks: parseSessionBlocks(m.blocks || []),
-            isPending: false,
-            isCompactSummary: m.isCompactSummary === true,
-          }));
-          setMessagesBySession(prev => {
-            if (prev[key]?.length > loadedMsgs.length) return prev;
-            return { ...prev, [key]: loadedMsgs };
-          });
-          historyCutoffRef.current = Date.now();
-          processedRef.current = serverBlocks.length;
-          historyLoadedRef.current = true;
-          addLog(`[System] Loaded ${loadedMsgs.length} messages from Claude Code history`);
-        } else {
-          addLog('[System] No Claude Code history found for this project');
-        }
-      }).catch((err) => {
-        addLog(`[Error] History fetch failed: ${err?.message || err}`);
-        console.error('[History] fetch error:', err);
-      })
-      .finally(() => setHistoryLoading(false));
-    return () => controller.abort();
-  }, [projectInfo?.cwd, addLog]);
-
-  // ── Session-aware message helpers ────────
-  // Use instance ID (multi-instance mode) or project directory (legacy) as key
-  const sessionKey = isWorkspace
-    ? (activeSessionId || 'default')
-    : activeInstanceId
-      ? activeInstanceId
-      : (projectInfo?.cwd ? projectInfo.cwd.replace(/[/\\:]/g, '_') : 'default');
-  const messages = messagesBySession[sessionKey] || [];
-
-  const updateSession = useCallback((session: string, updater: (prev: Message[]) => Message[]) => {
-    setMessagesBySession(prev => {
-      const current = prev[session] || [];
-      const updated = updater(current);
-      if (!messagesCacheRef.current[session]) messagesCacheRef.current[session] = [];
-      messagesCacheRef.current[session] = updated;
-      return { ...prev, [session]: updated };
-    });
-  }, []);
-
-  /** When a historical session is loaded, track its ID so we can show it in the UI */
-  const [activeExternalSession, setActiveExternalSession] = useState<string | null>(null);
-
-  const handleNewSession = useCallback(() => {
-    const sk = sessionKey;
-    updateSession(sk, () => []);
-    // Clear persisted data for this session
-    sessionStore.clearMessages(sk).catch(() => {});
-    try {
-      const cached = JSON.parse(localStorage.getItem('bridge-messages') || '{}');
-      delete cached[sk];
-      localStorage.setItem('bridge-messages', JSON.stringify(cached));
-    } catch {}
-    setPhase('idle');
-    setCurrentActivity(null);
-    setActiveExternalSession(null);
-    try { localStorage.removeItem('sessionbridge-active-session'); } catch {}
-    processedRef.current = 0;
-    sendCommand('clear');
-    addLog('[System] Session cleared — started fresh');
-  }, [updateSession, sendCommand, addLog, sessionKey]);
-
-  const handleQuickCompact = useCallback(() => {
-    sendInput('/compact', activeSessionId || undefined);
-    addLog('[System] Sending /compact command');
-  }, [sendInput, addLog, activeSessionId]);
-
   const handleInterrupt = useCallback(() => {
     sendCommand('interrupt');
     addLog('[System] ⏹ Interrupting Claude...');
     setPhase('idle');
     setCurrentActivity('Interrupted');
   }, [sendCommand, addLog]);
+
+  // ── Hook integration (extracted from page.tsx to reduce size) ──
+  const { messagesBySession, setMessagesBySession, messages, sessionKey, updateSession, handleNewSession, isRestoring, snapshots, saveSnapshot, loadSnapshot, forkFromSnapshot, knownFiles } = useMessageSessions(
+    projectInfo, isWorkspace, activeSessionId, activeInstanceId, addLog, sendCommand
+  );
+
+  const { historyLoadedRef, historyLoading, historyCutoffRef, processedRef, activeExternalSession, setActiveExternalSession } = useHistoryLoader(
+    projectInfo, serverBlocks, addLog, setMessagesBySession
+  );
+
+  const { inputValue, setInputValue, showFileSuggest, fileSuggestions, handleSubmit, handleInputChange, handleKeyDown, handleFileSuggestionClick, submittingRef, showCommands, setShowCommands, handleQuickAction, handleCommandClick } = useCommandHandlers(
+    connStatus, phase, setPhase, setCurrentActivity, sendInput, sendCommand, addLog, activeSessionId, fileTree, handleInterrupt
+  );
+
+  // ── Session action wrappers (restore old page.tsx behavior: reset page-level state on session ops) ──
+  const handleNewSessionWrapper = useCallback(() => {
+    handleNewSession();
+    setPhase('idle');
+    setCurrentActivity(null);
+    setActiveExternalSession(null);
+    processedRef.current = 0;
+    sendCommand('clear');
+  }, [handleNewSession, setPhase, setCurrentActivity, setActiveExternalSession, processedRef, sendCommand]);
+
+  const loadSnapshotWrapper = useCallback((snapshotId: string) => {
+    loadSnapshot(snapshotId);
+    processedRef.current = 0;
+    setPhase('idle');
+    setCurrentActivity(null);
+  }, [loadSnapshot, processedRef, setPhase, setCurrentActivity]);
+
+  const forkFromSnapshotWrapper = useCallback((snapshotId: string) => {
+    forkFromSnapshot(snapshotId);
+    processedRef.current = 0;
+    setPhase('idle');
+    setCurrentActivity(null);
+  }, [forkFromSnapshot, processedRef, setPhase, setCurrentActivity]);
+
+  const handleClearSession = useCallback(() => {
+    setMessagesBySession({});
+    localStorage.removeItem('sessionbridge-messages');
+    setLogs(['[$] session-bridge connected']);
+  }, [setMessagesBySession, setLogs]);
+  const handleToggleCommandPalette = useCallback(() => setShowCommandPalette(v => !v), []);
+  const handleToggleLeftSidebar = useCallback(() => dispatch({ type: 'TOGGLE_SIDEBAR', position: 'left' }), [dispatch]);
+  const handleRestart = useCallback(() => sendCommand('clear'), [sendCommand]);
+
+  useKeyboardShortcuts(messages, handleClearSession, handleToggleCommandPalette, handleToggleLeftSidebar, handleRestart);
+
+  const { ctxMenu, setCtxMenu, handleCtx } = useContextMenu(
+    activeAdapterId, activeInstanceId, projectInfo, messages, createInstance, killInstance, sendCommand, extensionPointsData, viewId, isActiveRunning, workbenchState, workbenchDispatch, getAllAdapterTypes, getAdapterCapabilities, evaluateWhen
+  );
+
+  const handleQuickCompact = useCallback(() => {
+    sendInput('/compact', activeSessionId || undefined);
+    addLog('[System] Sending /compact command');
+  }, [sendInput, addLog, activeSessionId]);
 
   const setMode = useCallback((mode: string) => {
     sendCommand('setMode', { mode });
@@ -677,51 +555,11 @@ function PageContent() {
     return () => document.removeEventListener('mousedown', handler);
   }, [showSearch]);
 
-  // ── Session snapshots (fork) ──────────────
-  const saveSnapshot = useCallback((name?: string) => {
-    const currentMsgs = messagesBySession[sessionKey] || [];
-    if (currentMsgs.length === 0) return;
-    const label = name || `Snapshot ${snapshots.length + 1}`;
-    setSnapshots(prev => [...prev, {
-      id: Date.now().toString(36),
-      name: label,
-      msgs: JSON.parse(JSON.stringify(currentMsgs)),
-      ts: new Date().toISOString().slice(0, 19),
-    }]);
-    addLog(`[System] Snapshot saved: ${label}`);
-  }, [messagesBySession, sessionKey, snapshots.length, addLog]);
-
-  const loadSnapshot = useCallback((snapshotId: string) => {
-    const snap = snapshots.find(s => s.id === snapshotId);
-    if (!snap) return;
-    updateSession(sessionKey, () => JSON.parse(JSON.stringify(snap.msgs)));
-    processedRef.current = 0; // Re-process blocks from server (won't replay, but resets counter)
-    setPhase('idle');
-    setCurrentActivity(null);
-    addLog(`[System] Snapshot loaded: ${snap.name}`);
-  }, [snapshots, sessionKey, updateSession, addLog]);
-
-  const forkFromSnapshot = useCallback((snapshotId: string) => {
-    const snap = snapshots.find(s => s.id === snapshotId);
-    if (!snap) return;
-    // Save current session first
-    saveSnapshot('Auto-save before fork');
-    // Load the snapshot
-    loadSnapshot(snapshotId);
-    addLog(`[System] Forked from snapshot: ${snap.name}`);
-    sendCommand('clear');
-  }, [snapshots, saveSnapshot, loadSnapshot, addLog, sendCommand]);
-
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     actionEndRef.current?.scrollIntoView({ behavior: 'auto' });
   }, [messages]);
   useEffect(() => { logsEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [logs, msgLog]);
-
-  // Reset submitting guard when phase leaves 'running'
-  useEffect(() => {
-    if (phase !== 'running') submittingRef.current = false;
-  }, [phase]);
 
   // ── serverBlocks → Message Store (per-session) ──
   useBlockProcessor({
@@ -755,251 +593,45 @@ function PageContent() {
   const [forkTarget, setForkTarget] = useState<number | null>(null);
   const [forkPrompt, setForkPrompt] = useState('');
 
-  // ── Derived: known files for explorer ──
-  const knownFiles = useMemo(() => {
-    const files = new Map<string, string>();
-    const msgs = messagesBySession[sessionKey] || [];
-    for (const msg of msgs) {
-      for (const b of msg.blocks) {
-        if (b.detail && (b.toolName === 'Read' || b.toolName === 'Edit' || b.toolName === 'Write')) {
-          const parts = b.detail.replace(/\\/g, '/').split('/');
-          parts.forEach((_, i) => {
-            const p = parts.slice(0, i + 1).join('/');
-            if (i === parts.length - 1) files.set(p, 'file');
-            else files.set(p, 'dir');
-          });
-        }
-      }
-    }
-    return files;
-  }, [messagesBySession, sessionKey]);
+  // Fork dialog callbacks
+  const handleForkRewind = useCallback((targetIdx: number) => {
+    const allMsgs = messagesBySession[sessionKey] || [];
+    const turnMsgs: Message[] = [turns[targetIdx].userMsg, ...turns[targetIdx].assistantMsgs];
+    const cutoffIdx = allMsgs.indexOf(turnMsgs[turnMsgs.length - 1]) + 1;
+    updateSession(sessionKey, () => allMsgs.slice(0, cutoffIdx));
+    processedRef.current = 0;
+    setPhase('idle');
+    setCurrentActivity(null);
+    addLog(`[System] Rewound to turn ${targetIdx + 1}`);
+    setForkTarget(null);
+  }, [messagesBySession, sessionKey, turns, updateSession, processedRef, setPhase, setCurrentActivity, addLog, setForkTarget]);
 
-  // ── Submit ─────────────────────────────
-  const handleSubmit = useCallback((overrideCmd?: string) => {
-    const cmd = (overrideCmd || inputValue).trim();
-    if (!cmd || phase === 'running' || submittingRef.current) return;
-    submittingRef.current = true;
-    if (connStatus.status !== 'connected') {
-      addLog('[System] Cannot send — not connected to relay');
-      submittingRef.current = false;
-      return;
-    }
-    setInputValue('');
+  const handleForkSnapshot = useCallback((targetIdx: number) => {
+    saveSnapshot(`Fork from turn ${targetIdx + 1}`);
+    const targetText = turns[targetIdx].userMsg.content;
+    addLog(`[System] Forked from turn ${targetIdx + 1}: "${targetText.slice(0, 60)}..."`);
+    setForkTarget(null);
+  }, [saveSnapshot, turns, addLog, setForkTarget]);
 
-    // Intercept /rewind commands — send as WS command, not user message
-    if (cmd === '/rewind') {
-      setCurrentActivity('Rewinding last change...');
-      sendCommand('rewind');
-      submittingRef.current = false;
-      return;
-    }
-    if (cmd === '/rewind-all') {
-      setCurrentActivity('Rewinding all changes...');
-      sendCommand('rewind-all');
-      submittingRef.current = false;
-      return;
-    }
-
-    setPhase('running');
-    setCurrentActivity('Processing...');
-    sendInput(cmd, activeSessionId || undefined);
-  }, [inputValue, phase, sendInput, sendCommand, activeSessionId]);
-
-  // Detect @ for file autocomplete
-  const handleInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value;
-    setInputValue(val);
-    const atIdx = val.lastIndexOf('@');
-    if (atIdx >= 0 && (atIdx === 0 || val[atIdx - 1] === ' ')) {
-      const query = val.slice(atIdx + 1).toLowerCase();
-      setAtPos(atIdx);
-      const root = fileTree['.']?.items || [];
-      const flat: any[] = [];
-      const walk = (items: any[]) => {
-        for (const item of items) {
-          if (item.name.toLowerCase().includes(query)) flat.push(item);
-          const children = fileTree[item.path || item.name];
-          if (children?.loaded) walk(children.items);
-        }
-      };
-      walk(root);
-      setFileSuggestions(flat.slice(0, 20));
-      setShowFileSuggest(flat.length > 0);
-    } else {
-      setShowFileSuggest(false);
-    }
-  }, [fileTree]);
-
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Escape' && phase === 'running') {
-      e.preventDefault();
-      handleInterrupt();
-      return;
-    }
-    if ((e.key === 'Enter' && !e.shiftKey) || ((e.ctrlKey || e.metaKey) && e.key === 'Enter')) {
-      if (showFileSuggest && fileSuggestions.length > 0) {
-        e.preventDefault();
-        const selected = fileSuggestions[0];
-        setInputValue(prev => prev.slice(0, atPos) + `@${selected.path || selected.name} `);
-        setShowFileSuggest(false);
-        return;
-      }
-      e.preventDefault();
-      handleSubmit();
-    }
-    // Arrow up/down for command history
-    if (e.key === 'ArrowUp' && !e.shiftKey && !showFileSuggest) {
-      e.preventDefault();
-    }
-    if (e.key === 'Escape') setShowFileSuggest(false);
-  }, [handleSubmit, showFileSuggest, fileSuggestions, atPos, phase, handleInterrupt]);
-
-  const handleFileSuggestionClick = useCallback((item: any) => {
-    setInputValue(prev => prev.slice(0, atPos) + `@${item.path || item.name} `);
-    setShowFileSuggest(false);
-  }, [atPos]);
-
-  // ── Global keyboard shortcuts ────────────────
-  useEffect(() => {
-    messagesRef.current = messages;
-    const handleGlobalKey = (e: KeyboardEvent) => {
-      // Ctrl+L: clear main output area
-      if ((e.ctrlKey || e.metaKey) && e.key === 'l') {
-        e.preventDefault();
-        setMessagesBySession({});
-        localStorage.removeItem('sessionbridge-messages');
-        setLogs(['[$] session-bridge connected']);
-        return;
-      }
-      // Ctrl+Shift+C: copy last assistant message
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'c') {
-        e.preventDefault();
-        const msgs = messagesRef.current;
-        const lastAssistant = [...msgs].reverse().find(m => m.role === 'assistant');
-        if (lastAssistant?.content) {
-          navigator.clipboard.writeText(lastAssistant.content).catch(() => {});
-        }
-        return;
-      }
-      // Ctrl+Shift+P: toggle command palette
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'p' || e.key === 'P')) {
-        e.preventDefault();
-        setShowCommandPalette(v => !v);
-        return;
-      }
-      // Ctrl+B: toggle left sidebar
-      if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
-        if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-        e.preventDefault();
-        dispatch({ type: 'TOGGLE_SIDEBAR', position: 'left' });
-        return;
-      }
-      // Ctrl+Shift+M: toggle mode picker
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'm' || e.key === 'M')) {
-        if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-        e.preventDefault();
-        window.dispatchEvent(new CustomEvent('toggle-mode-picker'));
-        return;
-      }
-      // Ctrl+R: restart session (only if not focused in input)
-      if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
-        if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-        e.preventDefault();
-        sendCommand('clear');
-        return;
-      }
-    };
-    window.addEventListener('keydown', handleGlobalKey);
-    return () => window.removeEventListener('keydown', handleGlobalKey);
-  }, [messages, sendCommand, setMessagesBySession, setLogs]);
-  const handleQuickAction = useCallback((cmd: string) => {
-    setInputValue(cmd);
-  }, []);
-
-  // ── Context menu handler ───────────────
-  const handleCtx = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    const activeCaps = getAdapterCapabilities(activeAdapterId);
-    const isTerminalView = activeCaps ? !activeCaps.structuredEvents : true;
-    // Build "New Instance" items from all registered adapter types
-    const allAdapterTypes = getAllAdapterTypes();
-    const newInstanceItems: ContextMenuItem[] = allAdapterTypes
-      .filter(a => a.id !== 'shell' || isTerminalView)
-      .map(a => ({
-        label: `New ${a.meta.label}`,
-        shortcut: '⌘T',
-        action: () => createInstance(projectInfo?.cwd || '.', undefined, a.id),
-      }));
-    const items: ContextMenuItem[] = [
-      ...newInstanceItems,
-      { label: 'Kill Instance', shortcut: '⌘W', action: () => activeInstanceId && killInstance(activeInstanceId), danger: true },
-      { label: '', divider: true, action: () => {} },
-      ...(isTerminalView
-        ? [{ label: 'Clear Terminal', action: () => { /* noop in this view */ } } as ContextMenuItem]
-        : [
-            { label: 'Clear History', action: () => { /* handled in InputForm */ } } as ContextMenuItem,
-            { label: 'Toggle Terminal', shortcut: '⌘`', action: () => {
-              if (workbenchState.bottom) {
-                workbenchDispatch({ type: 'CLOSE_BOTTOM_PANE' });
-              } else {
-                workbenchDispatch({ type: 'ADD_BOTTOM_PANE' });
-              }
-            } } as ContextMenuItem,
-            { label: '', divider: true, action: () => {} } as ContextMenuItem,
-            { label: 'Copy All', shortcut: '⌘⇧C', action: () => {
-              const text = messages.map(m => `[${m.role}] ${m.content}`).join('\n');
-              navigator.clipboard.writeText(text);
-            } } as ContextMenuItem,
-          ]),
-    ];
-
-    // Extension-contributed menu items from manifests (grouped)
-    const extMenus = (extensionPointsData?.menus as any[]) || [];
-    const matchedExtItems = extMenus
-      .filter((m: any) => evaluateWhen(m.when, { view: viewId, activeAdapterId, isRunning: isActiveRunning }))
-      .map((m: any) => ({
-        label: m.title,
-        action: () => sendCommand(m.command),
-        disabled: m.disabled,
-        group: m.group as string | undefined,
-      }));
-    if (matchedExtItems.length > 0) {
-      items.push({ label: '', divider: true, action: () => {} });
-
-      const groupOrder = ['navigation', 'edit', 'debug', 'view'];
-      const byGroup = new Map<string, typeof matchedExtItems>();
-      const noGroup: typeof matchedExtItems = [];
-
-      for (const item of matchedExtItems) {
-        if (item.group && groupOrder.includes(item.group)) {
-          const arr = byGroup.get(item.group) || [];
-          arr.push(item);
-          byGroup.set(item.group, arr);
-        } else {
-          noGroup.push(item);
-        }
-      }
-
-      for (const group of groupOrder) {
-        const arr = byGroup.get(group);
-        if (arr && arr.length > 0) items.push(...arr);
-      }
-
-      if (noGroup.length > 0) items.push(...noGroup);
-    }
-
-    setCtxMenu({ x: e.clientX, y: e.clientY, items });
-  }, [viewId, activeInstanceId, projectInfo, messages, createInstance, killInstance, workbenchState, workbenchDispatch, extensionPointsData, sendCommand, activeAdapterId, isActiveRunning]);
-
-  const handleCommandClick = useCallback((cmd: string) => {
-    setInputValue(cmd + ' ');
-    setShowCommands(false);
-    // Focus the input after selecting a command
+  const handleForkWithPrompt = useCallback((targetIdx: number, prompt: string) => {
+    saveSnapshot(`Fork from turn ${targetIdx + 1}`);
+    const targetText = turns[targetIdx].userMsg.content;
+    addLog(`[System] Forked from turn ${targetIdx + 1}: "${targetText.slice(0, 60)}..." → "${prompt.slice(0, 60)}"`);
+    setInputValue(prompt);
+    setForkTarget(null);
     setTimeout(() => {
       const input = document.querySelector<HTMLInputElement>('.msg-input');
       input?.focus();
-    }, 50);
-  }, []);
+    }, 100);
+  }, [saveSnapshot, turns, addLog, setInputValue, setForkTarget]);
+
+  // ── Sync messagesRef for handleSwitchDir ──
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
+
+  // Reset submitting guard when phase leaves 'running'
+  useEffect(() => {
+    if (phase !== 'running') submittingRef.current = false;
+  }, [phase]);
 
   // Close command panel on outside click
   useEffect(() => {
@@ -1268,56 +900,40 @@ function PageContent() {
         </div>
       )}
 
-      {/* ═══ SEARCH SESSIONS PANEL (overlay) ════ */}
-      {showSearch && (
-        <div className="absolute inset-0 z-40 flex justify-center pt-12 pointer-events-none" style={{ top: '44px' }}>
-          <div ref={searchPanelRef} className="w-full max-w-lg bg-[#151515] border border-gray-700 rounded-lg shadow-2xl shadow-black/60 overflow-hidden pointer-events-auto max-h-[70vh] flex flex-col">
-            {/* Search input */}
-            <div className="flex items-center gap-2 p-3 border-b border-gray-800">
-              <Search className="w-4 h-4 text-gray-500 shrink-0" />
-              <input ref={searchInputRef} type="text" value={searchQuery} onChange={handleSearchInput}
-                placeholder="Search Claude Code sessions..."
-                className="flex-1 bg-transparent outline-none text-gray-200 text-sm placeholder-gray-600"
-              />
-              {searchLoading && (
-                <div className="w-4 h-4 border-2 border-purple-500/30 border-t-purple-500 rounded-full animate-spin" />
-              )}
-              <button onClick={() => setShowSearch(false)} className="text-gray-600 hover:text-gray-400 text-lg leading-none">&times;</button>
-            </div>
-
-            {/* Results */}
-            <div className="flex-1 overflow-y-auto">
-              {searchLoading && (
-                <div className="p-6 text-center text-gray-600 text-xs">Loading sessions...</div>
-              )}
-              {!searchLoading && searchResults.length === 0 && !searchQuery.trim() && (
-                <div className="p-6 text-center text-gray-600 text-xs">
-                  No recent sessions found
-                </div>
-              )}
-              {!searchLoading && searchResults.length === 0 && searchQuery.trim() && (
-                <div className="p-6 text-center text-gray-600 text-xs">No matching sessions found</div>
-              )}
-
-              {/* Group by project */}
-              {searchResults.length > 0 && <SearchResultsPanel results={searchResults} onClose={setShowSearch} onLog={addLog} onLoadSession={handleLoadSession} />}
-            </div>
-
-            <div className="p-2 border-t border-gray-800 text-[8px] text-gray-700 text-center">
-              Searches {searchResults.length > 0 ? `${searchResults.length} sessions` : 'Claude Code history'}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ═══ COMMAND PALETTE (overlay) ════ */}
-      {showCommandPalette && (
-        <CommandPalette
-          commands={extCommands}
-          onCommand={(cmdId) => sendCommand(cmdId)}
-          onClose={() => setShowCommandPalette(false)}
-        />
-      )}
+      {/* ═══ OVERLAYS (extracted to ConsoleOverlays) ════ */}
+      <ConsoleOverlays
+        showSearch={showSearch}
+        searchPanelRef={searchPanelRef}
+        searchQuery={searchQuery}
+        searchInputRef={searchInputRef}
+        handleSearchInput={handleSearchInput}
+        searchLoading={searchLoading}
+        onCloseSearch={() => setShowSearch(false)}
+        searchResults={searchResults}
+        addLog={addLog}
+        handleLoadSession={handleLoadSession}
+        showCommandPalette={showCommandPalette}
+        extCommands={extCommands}
+        sendCommand={sendCommand}
+        onCloseCommandPalette={() => setShowCommandPalette(false)}
+        viewingFile={viewingFile}
+        onCloseFileViewer={() => setViewingFile(null)}
+        forkTarget={forkTarget}
+        turns={turns}
+        forkPrompt={forkPrompt}
+        setForkPrompt={setForkPrompt}
+        onCloseFork={() => setForkTarget(null)}
+        onRewind={handleForkRewind}
+        onForkSnapshot={handleForkSnapshot}
+        onForkWithPrompt={handleForkWithPrompt}
+        ctxMenu={ctxMenu}
+        onCloseContextMenu={() => setCtxMenu(null)}
+        settingsOpen={settingsOpen}
+        onCloseSettings={() => setSettingsOpen(false)}
+        wsUrl={wsUrl}
+        token={token}
+        onConnect={(url, tok) => { setWsUrl(url); setToken(tok); }}
+      />
 
       <div className="flex flex-1 overflow-hidden">
         <SidebarSlot open={state.leftSidebarOpen}>
@@ -1414,12 +1030,12 @@ function PageContent() {
           <RightSidebar
           activeTasks={activeTasks}
           queueInfo={queueInfo}
-          onNewSession={handleNewSession}
+          onNewSession={handleNewSessionWrapper}
           onQuickCompact={handleQuickCompact}
           onSaveSnapshot={() => saveSnapshot()}
           snapshots={snapshots}
-          onLoadSnapshot={loadSnapshot}
-          onForkSnapshot={forkFromSnapshot}
+          onLoadSnapshot={loadSnapshotWrapper}
+          onForkSnapshot={forkFromSnapshotWrapper}
           knownFiles={knownFiles}
           onOpenFile={(filePath) => {
             fetch(`/api/read-file?path=${encodeURIComponent(filePath)}`)
@@ -1438,62 +1054,6 @@ function PageContent() {
         />
         </SidebarSlot>
       </div>
-      {/* File viewer modal */}
-      {viewingFile && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={() => setViewingFile(null)}>
-          <div className="bg-[#111] border border-gray-700 rounded-lg w-3/4 max-w-3xl max-h-[80vh] flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between p-3 border-b border-gray-800">
-              <div className="flex items-center gap-2 text-xs text-gray-300">
-                <FileCode className="w-4 h-4 text-blue-400" />
-                <code className="font-mono">{viewingFile.path}</code>
-              </div>
-              <button onClick={() => setViewingFile(null)} className="text-gray-500 hover:text-gray-300 text-lg leading-none">&times;</button>
-            </div>
-            <pre className="flex-1 overflow-y-auto p-4 text-xs text-gray-300 font-mono leading-relaxed whitespace-pre-wrap bg-[#0a0a0a]">
-              {viewingFile.content}
-            </pre>
-          </div>
-        </div>
-      )}
-
-      {/* ═══ FORK / REWIND DIALOG ════════════ */}
-      {forkTarget !== null && turns[forkTarget] && (
-        <ForkDialog
-          forkTarget={forkTarget}
-          turn={turns[forkTarget]}
-          forkPrompt={forkPrompt}
-          setForkPrompt={setForkPrompt}
-          onClose={() => setForkTarget(null)}
-          onRewind={(targetIdx) => {
-            const allMsgs = messagesBySession[sessionKey] || [];
-            const turnMsgs: Message[] = [turns[targetIdx].userMsg, ...turns[targetIdx].assistantMsgs];
-            const cutoffIdx = allMsgs.indexOf(turnMsgs[turnMsgs.length - 1]) + 1;
-            updateSession(sessionKey, () => allMsgs.slice(0, cutoffIdx));
-            processedRef.current = 0;
-            setPhase('idle');
-            setCurrentActivity(null);
-            addLog(`[System] Rewound to turn ${targetIdx + 1}`);
-            setForkTarget(null);
-          }}
-          onForkSnapshot={(targetIdx) => {
-            saveSnapshot(`Fork from turn ${targetIdx + 1}`);
-            const targetText = turns[targetIdx].userMsg.content;
-            addLog(`[System] Forked from turn ${targetIdx + 1}: "${targetText.slice(0, 60)}..."`);
-            setForkTarget(null);
-          }}
-          onForkWithPrompt={(targetIdx, prompt) => {
-            saveSnapshot(`Fork from turn ${targetIdx + 1}`);
-            const targetText = turns[targetIdx].userMsg.content;
-            addLog(`[System] Forked from turn ${targetIdx + 1}: "${targetText.slice(0, 60)}..." → "${prompt.slice(0, 60)}"`);
-            setInputValue(prompt);
-            setForkTarget(null);
-            setTimeout(() => {
-              const input = document.querySelector<HTMLInputElement>('.msg-input');
-              input?.focus();
-            }, 100);
-          }}
-        />
-      )}
 
       <StatusBar
         queueStatus={queueStatus}
@@ -1514,11 +1074,6 @@ function PageContent() {
         .prose-container ul, .prose-container ol { margin: 2px 0; }
         .prose-container li { overflow-wrap: break-word; }
       `}</style>
-
-      {/* Context menu (right-click) */}
-      {ctxMenu && (
-        <ContextMenu items={ctxMenu.items} x={ctxMenu.x} y={ctxMenu.y} onClose={() => setCtxMenu(null)} />
-      )}
 
       {/* Mobile sidebar overlay */}
       <MobileSidebar
@@ -1550,18 +1105,6 @@ function PageContent() {
         onCreate={() => createInstance(projectInfo?.cwd || '.')}
         onKill={killInstance}
         onQuickAction={handleQuickAction}
-      />
-
-      {/* Settings panel */}
-      <SettingsPanel
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        currentUrl={wsUrl}
-        currentToken={token}
-        onConnect={(url, tok) => {
-          setWsUrl(url);
-          setToken(tok);
-        }}
       />
     </div>
       </RuntimePolicyProvider>
