@@ -6,7 +6,7 @@
 // Uses only Node.js built-in modules — no Express, no framework.
 
 import type { IncomingMessage, ServerResponse } from "http";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import { existsSync, writeFileSync, mkdirSync } from "fs";
 import { basename, isAbsolute, resolve, join } from "path";
 import os from "os";
 
@@ -397,47 +397,21 @@ export function registerApiRoutes(
   }
 
   // ──────────────── GET /api/sessions ──────────────────────────
-  // List recent session metadata from the Claude history file.
+  // List recent sessions via the first available SessionProvider.
   if (method === "GET" && pathname === "/api/sessions") {
     try {
-      const sessions: Array<Record<string, unknown>> = [];
-      const historyPath = adapterRegistry.list().map(a => a.getSessionPaths?.()).find(Boolean)?.historyPath;
-      const historyFile = historyPath || '';
-
-      if (historyFile && existsSync(historyFile)) {
-        const content = readFileSync(historyFile, "utf8");
-        const lines = content
-          .split("\n")
-          .filter(Boolean)
-          .map((l) => {
-            try {
-              return JSON.parse(l);
-            } catch {
-              return null;
-            }
-          })
-          .filter(Boolean);
-
-        const seen = new Set<string>();
-        for (const entry of lines) {
-          const sid = entry.sessionId;
-          if (!sid || seen.has(sid)) continue;
-          seen.add(sid);
-          sessions.push({
-            sessionId: sid,
-            display: (entry.display || "").slice(0, 200),
-            project: entry.project || "",
-            timestamp: entry.timestamp || 0,
-          });
-          if (sessions.length >= 100) break;
-        }
-
-        // Newest first
-        sessions.sort(
-          (a, b) => (b.timestamp as number) - (a.timestamp as number),
-        );
+      const provider = adapterRegistry.list().map(a => a.getSessionProvider?.()).find(Boolean);
+      if (!provider) {
+        json(res, 200, { sessions: [] });
+        return true;
       }
-
+      const results = provider.searchSessions();
+      const sessions = results.slice(0, 100).map(r => ({
+        sessionId: r.sessionId,
+        display: (r.display || '').slice(0, 200),
+        project: r.project || '',
+        timestamp: r.timestamp || 0,
+      }));
       json(res, 200, { sessions });
     } catch (err) {
       json(res, 500, { error: String(err) });

@@ -10,6 +10,8 @@ import type {
 } from '../types';
 import { resolveClaudeCommand, buildClaudeArgs, getClaudeDataDir, getClaudeProjectsDir, getClaudeSessionPath, getClaudeHistoryPath, getProjectSlug } from './runtime';
 import { processStreamLine } from './parser';
+import { ClaudeSessionProvider } from './session-provider';
+import type { SessionProvider } from '../types';
 
 const CLAUDE_CAPABILITIES: AdapterCapabilities = {
   terminal:       true,
@@ -202,6 +204,14 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       sessionPath: (slug: string, sessionId: string) => getClaudeSessionPath(slug, sessionId),
       projectSlug: (dir: string) => getProjectSlug(dir),
     };
+  }
+
+  private _sessionProvider?: ClaudeSessionProvider;
+  getSessionProvider(): SessionProvider {
+    if (!this._sessionProvider) {
+      this._sessionProvider = new ClaudeSessionProvider();
+    }
+    return this._sessionProvider;
   }
 }
 

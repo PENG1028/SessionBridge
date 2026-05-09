@@ -269,9 +269,19 @@ export interface AgentAdapter {
 
   /**
    * Optional: return CLI data paths for persistent session storage.
-   * Used by relay-server to locate session files on disk.
+   * Legacy path metadata — primarily used internally by the adapter's
+   * own SessionProvider implementation, or by older API consumers that
+   * need direct filesystem access to session/history files.
    */
   getSessionPaths?(): CliSessionPaths;
+
+  /**
+   * Optional: return a SessionProvider for reading session history
+   * and conversation detail from persistent storage.
+   * When present, relay-server delegates /api/sessions/* routes to this
+   * provider instead of hardcoding adapter-specific format parsing in core.
+   */
+  getSessionProvider?(): SessionProvider;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -365,6 +375,65 @@ export interface CliSessionPaths {
   historyPath: string;
   sessionPath(slug: string, sessionId: string): string;
   projectSlug(dir: string): string;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// SessionProvider — abstract session/history storage
+// ═══════════════════════════════════════════════════════════════════
+
+export interface SessionSearchResult {
+  sessionId: string;
+  display: string;
+  project: string;
+  timestamp: number;
+  matchedIn?: string;
+  snippet?: string;
+  compactionCount?: number;
+}
+
+export interface SessionMessageBlock {
+  type: string;
+  text?: string;
+  name?: string;
+  input?: string;
+  output?: string;
+}
+
+export interface SessionMessage {
+  role: string;
+  blocks: SessionMessageBlock[];
+  text: string;
+  timestamp: number;
+  isCompactSummary?: boolean;
+  isSystem?: boolean;
+}
+
+export interface SessionDetail {
+  sessionId: string;
+  messages: SessionMessage[];
+  content?: string;
+}
+
+export interface CurrentSessionResult {
+  sessionId: string;
+  messages: SessionMessage[];
+  found: boolean;
+}
+
+/**
+ * Abstract session storage provider.
+ * Adapters with persistent CLI session files implement this to expose
+ * session history, detail, and compaction info to the relay server.
+ */
+export interface SessionProvider {
+  /** Search session history. Empty/falsy query returns all recent sessions. */
+  searchSessions(query?: string): SessionSearchResult[];
+  /** Get full session detail by ID, optionally scoped to a project. */
+  getSessionDetail(sessionId: string, project?: string): SessionDetail | { error: string };
+  /** Get the most recent session for the given working directory. */
+  getCurrentSession(workingDir: string): CurrentSessionResult;
+  /** Count compaction summaries in a session file. */
+  getCompactionCount(project: string, sessionId: string): number;
 }
 
 // ═══════════════════════════════════════════════════════════════════

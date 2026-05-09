@@ -28,13 +28,11 @@ import { tryDecrypt } from "./crypto-layer";
 import { loadOrCreateIdentity } from "./identity-manager";
 import { detectNetwork } from "./network-detect";
 
-// ─── Adapter session path helper — first adapter that provides paths ──
-// Used by session/history APIs to locate persistent session files.
-// Each adapter declares CliSessionPaths via getSessionPaths().
-function adapterSessionPaths() {
+// ─── Session provider helper — first adapter that provides SessionProvider ──
+function sessionProvider() {
   for (const adapter of adapterRegistry.list()) {
-    const paths = adapter.getSessionPaths?.();
-    if (paths) return paths;
+    const provider = adapter.getSessionProvider?.();
+    if (provider) return provider;
   }
   return undefined;
 }
@@ -873,129 +871,19 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
     return;
   }
 
-  // ── Read compaction count from a session file ────────────
-  // TODO: this assumes Claude JSONL format — move to adapter session provider.
-  const compactionCountCache = new Map<string, number>();
-  function getCompactionCount(project: string, sessionId: string): number {
-    const paths = adapterSessionPaths();
-    if (!paths) return 0;
-    const cacheKey = sessionId;
-    if (compactionCountCache.has(cacheKey)) return compactionCountCache.get(cacheKey)!;
-    try {
-      const slug = project.replace(/[\\\/: ]/g, "-");
-      const f = paths.sessionPath(slug, sessionId);
-      if (!existsSync(f)) { compactionCountCache.set(cacheKey, 0); return 0; }
-      const c = readFileSync(f, "utf8");
-      const count = (c.match(/"isCompactSummary":true/g) || []).length;
-      compactionCountCache.set(cacheKey, count);
-      return count;
-    } catch { compactionCountCache.set(cacheKey, 0); return 0; }
-  }
-
-  // ── Group consecutive assistant entries ──────────────────
-  // Claude Code splits a single assistant turn across multiple JSONL entries
-  // (one per content block: thinking, tool_use, text). Merge them back.
-  function groupConsecutiveAssistantEntries(messages: any[]): any[] {
-    const grouped: any[] = [];
-    for (const msg of messages) {
-      const last = grouped[grouped.length - 1];
-      if (last && last.role === 'assistant' && msg.role === 'assistant') {
-        last.blocks.push(...msg.blocks);
-        if (msg.text) last.text = (last.text + ' ' + msg.text).trim().slice(0, 5000);
-        if (msg.timestamp) last.timestamp = msg.timestamp;
-        if (msg.isCompactSummary) last.isCompactSummary = true;
-      } else {
-        grouped.push({ ...msg, blocks: [...msg.blocks] });
-      }
-    }
-    return grouped;
-  }
-
-  // ── API: Search Sessions (adapter-provided paths) ──────────
-  // TODO: session/compaction logic assumes Claude Code JSONL format.
-  // Extract to claude-code adapter as SessionProvider interface.
+  // ── API: Search Sessions (via SessionProvider) ─────────────
   if (path === "/api/sessions/search" && req.method === "GET") {
-    const paths = adapterSessionPaths();
-    if (!paths) {
+    const provider = sessionProvider();
+    if (!provider) {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ results: [], error: null }));
       return;
     }
-    const query = (url.searchParams.get("q") || "").toLowerCase().trim();
-    const historyFile = paths.historyPath;
-    const results: any[] = [];
-
+    const query = url.searchParams.get("q") || "";
     try {
-      if (existsSync(historyFile)) {
-        const content = readFileSync(historyFile, "utf8");
-        const lines = content.split("\n").filter(Boolean).map(l => {
-          try { return JSON.parse(l); } catch { return null; }
-        }).filter(Boolean);
-
-        for (const entry of lines) {
-          const display = entry.display || "";
-          const project = entry.project || "";
-          const sessionId = entry.sessionId || "";
-          const ts = entry.timestamp || 0;
-
-          const inDisplay = query ? display.toLowerCase().includes(query) : false;
-          const inProject = query ? project.toLowerCase().includes(query) : false;
-
-          if (query && !inDisplay && !inProject) {
-            const projectSlug = project.replace(/[\\\/: ]/g, "-");
-            const sessionFile = paths.sessionPath(projectSlug, sessionId);
-            try {
-              const st = statSync(sessionFile);
-              if (st.size > 0 && st.size <= 100 * 1024) {  // skip large files to avoid OOM
-                const sessionContent = readFileSync(sessionFile, "utf8");
-                if (sessionContent.toLowerCase().includes(query)) {
-                  const idx = sessionContent.toLowerCase().indexOf(query);
-                  const start = Math.max(0, idx - 60);
-                  const end = Math.min(sessionContent.length, idx + query.length + 120);
-                  results.push({
-                    sessionId,
-                    display: display.slice(0, 200),
-                    project,
-                    timestamp: ts,
-                    matchedIn: "content",
-                    snippet: sessionContent.slice(start, end).replace(/\n/g, " ").trim(),
-                    compactionCount: (sessionContent.match(/"isCompactSummary":true/g) || []).length,
-                  });
-                  continue;
-                }
-              }
-            } catch {}
-          }
-
-          if (!query || inDisplay || inProject) {
-            results.push({
-              sessionId,
-              display: display.slice(0, 300),
-              project,
-              timestamp: ts,
-              matchedIn: query ? (inDisplay ? "display" : "project") : "",
-              snippet: "",
-            });
-          }
-        }
-      }
-
-      results.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-      // Deduplicate by sessionId (keep most recent entry per session)
-      const seen = new Set<string>();
-      const deduped = results.filter(r => {
-        if (seen.has(r.sessionId)) return false;
-        seen.add(r.sessionId);
-        return true;
-      });
-      const limited = deduped.slice(0, 50);
-      // Compute compaction count for all limited results
-      for (const r of limited) {
-        r.compactionCount = getCompactionCount(r.project, r.sessionId);
-      }
-
+      const results = provider.searchSessions(query);
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ results: limited }));
+      res.end(JSON.stringify({ results }));
     } catch (err) {
       res.writeHead(500, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: String(err) }));
@@ -1003,167 +891,25 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
     return;
   }
 
-  // ── API: Session detail (full conversation) ─────────────
-  // TODO: session detail assumes Claude JSONL format — move to adapter provider
+  // ── API: Session detail (via SessionProvider) ─────────────
   if (path === "/api/sessions/detail" && req.method === "GET") {
-    const paths = adapterSessionPaths();
-    if (!paths) {
-      res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "No session provider available" }));
-      return;
-    }
     const sessionId = url.searchParams.get("id") || "";
-    const project = url.searchParams.get("project") || "";
-
     if (!sessionId) {
       res.writeHead(400, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Missing sessionId" }));
       return;
     }
-
+    const provider = sessionProvider();
+    if (!provider) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "No session provider available" }));
+      return;
+    }
+    const project = url.searchParams.get("project") || "";
     try {
-      let sessionContent = "";
-      if (project) {
-        const projectSlug = project.replace(/[\\\/: ]/g, "-");
-        const sessionFile = paths.sessionPath(projectSlug, sessionId);
-        if (existsSync(sessionFile)) {
-          sessionContent = readFileSync(sessionFile, "utf8");
-        }
-      }
-
-      if (!sessionContent) {
-        const projectsDir = paths.projectsDir;
-        if (existsSync(projectsDir)) {
-          const projectDirs = readdirSync(projectsDir);
-          for (const pdir of projectDirs) {
-            const candidateFile = paths.sessionPath(pdir, sessionId);
-            if (existsSync(candidateFile)) {
-              sessionContent = readFileSync(candidateFile, "utf8");
-              break;
-            }
-          }
-        }
-      }
-
-      const messages: any[] = [];
-      if (sessionContent) {
-        const lines = sessionContent.split("\n").filter(Boolean);
-
-        // Pre-scan: queue-operation enqueue content → used to detect system-generated user messages
-        const systemContents = new Set<string>();
-        for (const line of lines) {
-          try {
-            const p = JSON.parse(line);
-            if (p.type === "queue-operation" && p.operation === "enqueue" && typeof p.content === "string") {
-              systemContents.add(p.content.slice(0, 200));
-            }
-          } catch {}
-        }
-
-        for (const line of lines) {
-          try {
-            const parsed = JSON.parse(line);
-            const entryType = parsed.type || "";
-            if (entryType === "queue-operation") continue;
-
-            const message = parsed.message || {};
-            const role = message.role || "";
-            const contentArr = Array.isArray(message.content) ? message.content : [];
-            const textContent = typeof message.content === 'string' ? message.content : '';
-
-            if (!role) continue;
-            if (contentArr.length === 0 && !textContent) continue;
-
-            const blocks: any[] = [];
-            let combinedText = "";
-
-            for (const c of contentArr) {
-              switch (c.type) {
-                case "text":
-                  blocks.push({ type: "text", text: c.text || "" });
-                  combinedText += (c.text || "") + " ";
-                  break;
-                case "thinking":
-                  blocks.push({ type: "thinking", text: c.thinking || "" });
-                  break;
-                case "tool_use":
-                  blocks.push({
-                    type: "tool_use",
-                    name: c.name || "",
-                    input: JSON.stringify(c.input || {}),
-                  });
-                  combinedText += `[${c.name}] `;
-                  break;
-                case "plan":
-                  blocks.push({ type: "plan", text: c.plan || c.text || "" });
-                  combinedText += "[Plan] ";
-                  break;
-                case "tool_result": {
-                  const resultText = typeof c.content === "string" ? c.content
-                    : Array.isArray(c.content) ? c.content.map((x: any) => x.text || x.content || "").join("\n")
-                    : JSON.stringify(c.content || "");
-                  blocks.push({ type: "tool_result", text: resultText.slice(0, 2000) });
-                  break;
-                }
-              }
-            }
-
-            if (contentArr.length === 0 && textContent) {
-              blocks.push({ type: "text", text: textContent });
-              combinedText = textContent;
-            }
-
-            const isSystem = role === "user" && textContent && systemContents.has(textContent.slice(0, 200));
-
-            messages.push({
-              role,
-              blocks,
-              text: combinedText.trim().slice(0, 5000),
-              timestamp: parsed.timestamp || 0,
-              isCompactSummary: parsed.isCompactSummary === true || message.isCompactSummary === true,
-              isSystem,
-            });
-          } catch {}
-        }
-      }
-
-      const groupedMessages = groupConsecutiveAssistantEntries(messages);
-      const mergedMessages: any[] = [];
-      for (const msg of groupedMessages) {
-        if (msg.role === "user" && msg.blocks.length > 0 && msg.blocks.every((b: any) => b.type === "tool_result")) {
-          if (mergedMessages.length > 0) {
-            const prev = mergedMessages[mergedMessages.length - 1];
-            // Distribute tool_results in order to unmatched tool_use blocks
-            let ti = 0;
-            for (const block of msg.blocks) {
-              if (block.type === "tool_result") {
-                let found = false;
-                for (let i = ti; i < prev.blocks.length; i++) {
-                  if (prev.blocks[i].type === "tool_use" && !prev.blocks[i].output) {
-                    prev.blocks[i].output = block.text.slice(0, 3000);
-                    ti = i + 1;
-                    found = true;
-                    break;
-                  }
-                }
-                if (!found) {
-                  for (let i = prev.blocks.length - 1; i >= 0; i--) {
-                    if (prev.blocks[i].type === "tool_use") {
-                      prev.blocks[i].output = (prev.blocks[i].output || '') + '\n' + block.text.slice(0, 3000);
-                      break;
-                    }
-                  }
-                }
-              }
-            }
-          }
-        } else {
-          mergedMessages.push({ role: msg.role, blocks: msg.blocks, text: msg.text, timestamp: msg.timestamp, isCompactSummary: msg.isCompactSummary, isSystem: msg.isSystem });
-        }
-      }
-
+      const result = provider.getSessionDetail(sessionId, project);
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ sessionId, messages: mergedMessages, content: sessionContent.slice(0, 50000) }));
+      res.end(JSON.stringify(result));
     } catch (err) {
       res.writeHead(500, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: String(err) }));
@@ -1171,151 +917,18 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
     return;
   }
 
-  // ── API: Current session detail ──────────────────────────
-  // TODO: assumes Claude JSONL data layout — extract to adapter session provider.
+  // ── API: Current session detail (via SessionProvider) ─────
   if (path === "/api/sessions/current") {
-    const paths = adapterSessionPaths();
-    if (!paths) {
-      res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "No session provider available" }));
+    const provider = sessionProvider();
+    if (!provider) {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ sessionId: "", messages: [], found: false }));
       return;
     }
     try {
-      const projectSlug = ROOT_DIR.replace(/[^a-zA-Z0-9-]/g, "-");
-      const projectsDir = join(paths.projectsDir, projectSlug);
-      let latestFile = "";
-      let latestTime = 0;
-
-      if (existsSync(projectsDir)) {
-        const files = readdirSync(projectsDir).filter(f => f.endsWith(".jsonl"));
-        for (const f of files) {
-          const fp = join(projectsDir, f);
-          const mtime = statSync(fp).mtimeMs;
-          if (mtime > latestTime) { latestTime = mtime; latestFile = fp; }
-        }
-      }
-
-      if (!latestFile) {
-        const debugInfo = { ROOT_DIR, projectSlug, projectsDir, dataDir: paths.dataDir, dirExists: existsSync(projectsDir) };
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ sessionId: "", messages: [], found: false, debug: debugInfo }));
-        return;
-      }
-
-      const sessionId = basename(latestFile, ".jsonl");
-      const sessionContent = readFileSync(latestFile, "utf8");
-
-      const lines = sessionContent.split("\n").filter(Boolean);
-
-      // Pre-scan: queue-operation enqueue content → used to detect system-generated user messages
-      const systemContents = new Set<string>();
-      for (const line of lines) {
-        try {
-          const p = JSON.parse(line);
-          if (p.type === "queue-operation" && p.operation === "enqueue" && typeof p.content === "string") {
-            systemContents.add(p.content.slice(0, 200));
-          }
-        } catch {}
-      }
-
-      const messages: any[] = [];
-      for (const line of lines) {
-        try {
-          const parsed = JSON.parse(line);
-          const entryType = parsed.type || "";
-          if (entryType === "queue-operation") continue;
-
-          const message = parsed.message || {};
-          const role = message.role || "";
-          const contentArr = Array.isArray(message.content) ? message.content : [];
-          const textContent = typeof message.content === 'string' ? message.content : '';
-          if (!role) continue;
-          if (contentArr.length === 0 && !textContent) continue;
-
-          const blocks: any[] = [];
-          let combinedText = "";
-
-          for (const c of contentArr) {
-            switch (c.type) {
-              case "text":
-                blocks.push({ type: "text", text: c.text || "" });
-                combinedText += (c.text || "") + " ";
-                break;
-              case "thinking":
-                blocks.push({ type: "thinking", text: c.thinking || "" });
-                break;
-              case "tool_use":
-                blocks.push({ type: "tool_use", name: c.name || "", input: JSON.stringify(c.input || {}) });
-                combinedText += `[${c.name}] `;
-                break;
-              case "plan":
-                blocks.push({ type: "plan", text: c.plan || c.text || "" });
-                combinedText += "[Plan] ";
-                break;
-              case "tool_result": {
-                const resultText = typeof c.content === "string" ? c.content
-                  : Array.isArray(c.content) ? c.content.map((x: any) => x.text || x.content || "").join("\n")
-                  : JSON.stringify(c.content || "");
-                blocks.push({ type: "tool_result", text: resultText.slice(0, 2000) });
-                break;
-              }
-            }
-          }
-
-          if (contentArr.length === 0 && textContent) {
-            blocks.push({ type: "text", text: textContent });
-            combinedText = textContent;
-          }
-
-          const isSystem = role === "user" && textContent && systemContents.has(textContent.slice(0, 200));
-
-          messages.push({
-            role, blocks,
-            text: combinedText.trim().slice(0, 5000),
-            timestamp: parsed.timestamp || 0,
-            isCompactSummary: parsed.isCompactSummary === true || message.isCompactSummary === true,
-            isSystem,
-          });
-        } catch {}
-      }
-
-      const groupedMessages = groupConsecutiveAssistantEntries(messages);
-      const mergedMessages: any[] = [];
-      for (const msg of groupedMessages) {
-        if (msg.role === "user" && msg.blocks.length > 0 && msg.blocks.every((b: any) => b.type === "tool_result")) {
-          if (mergedMessages.length > 0) {
-            const prev = mergedMessages[mergedMessages.length - 1];
-            // Distribute tool_results in order to unmatched tool_use blocks
-            let ti = 0;
-            for (const block of msg.blocks) {
-              if (block.type === "tool_result") {
-                let found = false;
-                for (let i = ti; i < prev.blocks.length; i++) {
-                  if (prev.blocks[i].type === "tool_use" && !prev.blocks[i].output) {
-                    prev.blocks[i].output = block.text.slice(0, 3000);
-                    ti = i + 1;
-                    found = true;
-                    break;
-                  }
-                }
-                if (!found) {
-                  for (let i = prev.blocks.length - 1; i >= 0; i--) {
-                    if (prev.blocks[i].type === "tool_use") {
-                      prev.blocks[i].output = (prev.blocks[i].output || '') + '\n' + block.text.slice(0, 3000);
-                      break;
-                    }
-                  }
-                }
-              }
-            }
-          }
-        } else {
-          mergedMessages.push({ role: msg.role, blocks: msg.blocks, text: msg.text, timestamp: msg.timestamp, isCompactSummary: msg.isCompactSummary, isSystem: msg.isSystem });
-        }
-      }
-
+      const result = provider.getCurrentSession(ROOT_DIR);
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ sessionId, messages: mergedMessages, found: true }));
+      res.end(JSON.stringify(result));
     } catch (err) {
       res.writeHead(500, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: String(err) }));
