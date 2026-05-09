@@ -45,7 +45,13 @@ export default function ShellTerminal({ wsUrl, instanceId, token }: ShellTermina
       reconnectAttemptRef.current = 0; // reset on successful connect
       term.focus();
       // Hello + spawn shell
-      const helloBody: Record<string, unknown> = { role: "browser", features: ["shell"] };
+      // Use stable clientToken so the relay preserves the shell across page
+      // refreshes (60s grace period). Derived from instanceId for stability.
+      const helloBody: Record<string, unknown> = {
+        role: "browser",
+        features: ["shell"],
+        clientToken: `shell:${instanceId}`,
+      };
       if (token) helloBody.token = token;
       ws.send(env("hello", helloBody));
       ws.send(env("shell.spawn", { instanceId }));

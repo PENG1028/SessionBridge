@@ -1,6 +1,6 @@
 'use client';
 
-import type { ComponentType } from 'react';
+import type { ComponentType, ReactNode } from 'react';
 import { evaluateWhen, type WhenContext } from '../../../lib/evaluate-when';
 
 // ── Panel Registration ────────────────────────────────────────
@@ -13,6 +13,16 @@ export interface PanelRegistration {
   /** Optional when-condition for visibility. */
   when?: string;
   component: ComponentType<any>;
+  /** Icon component rendered in the DockPanelFrame header. Stable — visible even when collapsed. */
+  icon?: ComponentType<{ className?: string }>;
+  /**
+   * Returns action ReactNodes rendered in the DockPanelFrame header.
+   * Called with the panel's props at sidebar render time, so actions
+   * are always available regardless of collapse state.
+   * For stateful actions that need to reach into the panel, use
+   * {@link onPanelAction} / {@link emitPanelAction}.
+   */
+  getActions?: (props: Record<string, any>) => ReactNode;
 }
 
 const registry = new Map<string, PanelRegistration>();

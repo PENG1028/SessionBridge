@@ -1,29 +1,23 @@
 'use client';
 
-import { createContext, useContext, useState, useCallback, useRef, useEffect, type ReactNode, type DragEvent } from 'react';
-import { GripVertical, ChevronRight } from 'lucide-react';
+import { useState, useCallback, useRef, useEffect, type ReactNode, type DragEvent } from 'react';
+import { GripVertical, ChevronDown, ChevronRight } from 'lucide-react';
 
-// ── Collapse Context ─────────────────────────────────────────
-// Lets panel components render their own collapse toggle inline.
+// ── DockPanelFrame ────────────────────────────────────────────
+// Unified sidebar panel frame providing:
+//   - Collapse/expand via chevron (persisted to localStorage)
+//   - Drag-and-drop reorder via absolute-positioned drag handle
+//   - Absolute drop indicator overlay (no layout shift)
+//   - Action slot in the header from props (stable regardless of collapse)
 
-interface PanelCollapseValue {
-  collapsed: boolean;
-  onToggle: () => void;
-}
-
-const PanelCollapseContext = createContext<PanelCollapseValue | null>(null);
-
-export function usePanelCollapse(): PanelCollapseValue {
-  const ctx = useContext(PanelCollapseContext);
-  return ctx ?? { collapsed: false, onToggle: () => {} };
-}
-
-// ── PanelDndWrapper ──────────────────────────────────────────
-
-interface PanelDndWrapperProps {
+interface DockPanelFrameProps {
   panelId: string;
-  index: number;
   title: string;
+  icon?: ReactNode;
+  /** Action buttons rendered in the header. Resolved from panel
+   *  registration at the sidebar level — always available even
+   *  when the panel body is collapsed. */
+  actions?: ReactNode;
   children: ReactNode;
   onReorder: (dragId: string, targetId: string) => void;
 }
@@ -43,7 +37,7 @@ function saveCollapsed(ids: string[]): void {
   try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify(ids)); } catch {}
 }
 
-export function PanelDndWrapper({ panelId, index, title, children, onReorder }: PanelDndWrapperProps) {
+export function DockPanelFrame({ panelId, title, icon, actions, children, onReorder }: DockPanelFrameProps) {
   const [dragOver, setDragOver] = useState(false);
   const [collapsed, setCollapsed] = useState(() => loadCollapsed().includes(panelId));
   const dragRef = useRef<string | null>(null);
@@ -102,49 +96,72 @@ export function PanelDndWrapper({ panelId, index, title, children, onReorder }: 
   }, [panelId, onReorder]);
 
   return (
-    <PanelCollapseContext.Provider value={{ collapsed, onToggle: toggleCollapse }}>
+    <div
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      className="group relative"
+    >
+      {/* Drop indicator overlay — absolute, no layout impact */}
+      {dragOver && (
+        <div className="absolute inset-x-0 top-0 h-[2px] bg-purple-500 z-20 pointer-events-none shadow-[0_0_6px_rgba(168,85,247,0.4)]" />
+      )}
+
+      {/* Drag handle — absolute left edge, visible on group hover */}
       <div
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-        className={`group relative transition-colors ${
-          dragOver ? 'border-l-2 border-purple-500' : ''
+        draggable
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+        className="absolute left-0 top-0 bottom-0 w-[3px] cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 hover:bg-purple-500/40 transition-opacity z-10 rounded-full"
+      >
+        <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 bg-gray-700/80 rounded-sm p-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+          <GripVertical className="w-2 h-2 text-gray-400" />
+        </div>
+      </div>
+
+      {/* Header — always visible, same density collapsed or expanded */}
+      <div
+        className={`flex items-center h-8 px-2 gap-1.5 border-b border-gray-800 bg-[#0d0d0d] select-none ${
+          collapsed ? '' : ''
         }`}
       >
-        {collapsed ? (
-          // Compact bar when collapsed — draggable to reorder, click to expand
-          <div
-            draggable
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
-            onClick={toggleCollapse}
-            className="flex items-center gap-2 h-8 px-2 text-[10px] text-gray-600 border-b border-gray-800 bg-[#111] cursor-pointer hover:text-gray-400 hover:bg-gray-800/30 transition-colors select-none"
-          >
-            <ChevronRight className="w-3 h-3 text-gray-600 shrink-0" />
-            <span className="truncate font-medium">{title}</span>
+        <button
+          onClick={toggleCollapse}
+          className="text-gray-600 hover:text-gray-300 transition-colors p-0.5 -ml-0.5 shrink-0"
+          title={collapsed ? 'Expand panel' : 'Collapse panel'}
+        >
+          {collapsed ? (
+            <ChevronRight className="w-3 h-3" />
+          ) : (
+            <ChevronDown className="w-3 h-3" />
+          )}
+        </button>
+
+        {icon && <span className="text-gray-500 shrink-0 [&>svg]:w-3 [&>svg]:h-3">{icon}</span>}
+
+        <span className="text-[10px] font-bold text-gray-500 tracking-wider truncate">{title}</span>
+
+        <div className="flex-1" />
+
+        {/* Action slot — passed as prop from sidebar (resolved from registry), always visible */}
+        {actions && (
+          <div className="flex items-center gap-0.5 text-gray-600 [&>button]:hover:text-gray-300 [&>button]:transition-colors [&>button]:p-0.5">
+            {actions}
           </div>
-        ) : (
-          /* Expanded: drag handle on top (hover visible), content below is NOT draggable for text selection */
-          <>
-            <div
-              draggable
-              onDragStart={handleDragStart}
-              onDragEnd={handleDragEnd}
-              className="flex justify-center cursor-grab active:cursor-grabbing hover:bg-gray-800/30 transition-colors select-none opacity-0 group-hover:opacity-100 h-4 items-center border-b border-transparent group-hover:border-gray-800"
-            >
-              <GripVertical className="w-2.5 h-2.5 text-gray-600" />
-            </div>
-            <div draggable={false} className="select-text">
-              {children}
-            </div>
-          </>
         )}
       </div>
-    </PanelCollapseContext.Provider>
+
+      {/* Body — visually clipped when collapsed, but children still mount
+          so panels that manage internal state (e.g. InstanceList polling)
+          continue to work. */}
+      <div className={collapsed ? 'hidden' : 'bg-[#0d0d0d]'}>
+        {children}
+      </div>
+    </div>
   );
 }
 
-// ── Panel order persistence ──────────────────────────────────
+// ── Panel order persistence (kept from PanelDndWrapper) ───────
 
 const ORDER_KEY = 'sessionbridge-sidebar-order';
 

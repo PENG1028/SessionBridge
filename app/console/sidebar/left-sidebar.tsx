@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { getPanels } from '../panels/panel-registry';
-import { PanelDndWrapper, loadPanelOrder, savePanelOrder, applyPanelOrder } from './panel-dnd-wrapper';
+import { DockPanelFrame, loadPanelOrder, savePanelOrder, applyPanelOrder } from './panel-dnd-wrapper';
 import { useFocus } from '../workbench/focus-context';
 
 interface LeftSidebarProps {
@@ -67,11 +67,9 @@ export function LeftSidebar(props: LeftSidebarProps) {
         {panels.map((p, i) => {
           const PanelComponent = p.component;
           return (
-            <PanelDndWrapper key={p.id} panelId={p.id} index={i} title={p.title} onReorder={handleReorder}>
-              <div className="overflow-y-auto max-h-[60vh]">
-                <PanelComponent {...props} />
-              </div>
-            </PanelDndWrapper>
+            <DockPanelFrame key={p.id} panelId={p.id} title={p.title} icon={p.icon && <p.icon className="w-3 h-3" />} actions={p.getActions?.(props)} onReorder={handleReorder}>
+              <PanelComponent {...props} />
+            </DockPanelFrame>
           );
         })}
       </div>

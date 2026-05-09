@@ -50,9 +50,8 @@ export function useContextMenu(
       ...newInstanceItems,
       { label: 'Kill Instance', shortcut: '⌘W', action: () => activeInstanceId && killInstance(activeInstanceId), danger: true },
       { label: '', divider: true, action: () => {} },
-      ...(isTerminalView
-        ? [{ label: 'Clear Terminal', action: () => {} } as ContextMenuItem]
-        : [
+      ...(!isTerminalView
+        ? [
             { label: 'Clear History', action: () => {} } as ContextMenuItem,
             { label: 'Toggle Terminal', shortcut: '⌘`', action: () => {
               if (workbenchState.bottom) {
@@ -66,7 +65,8 @@ export function useContextMenu(
               const text = messages.map((m: any) => `[${m.role}] ${m.content}`).join('\n');
               navigator.clipboard.writeText(text);
             } } as ContextMenuItem,
-          ]),
+          ]
+        : []),
     ];
 
     // Extension-contributed menu items from manifests (grouped)

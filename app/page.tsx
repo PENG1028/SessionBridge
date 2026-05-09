@@ -359,6 +359,24 @@ function PageContent() {
     }
   }, [activeInstanceId]);
 
+  // When instances arrive from server (after refresh/reconnect), restore
+  // terminal tabs for existing shell instances that survived via clientToken.
+  // ensureInstanceTab is idempotent — skips if a tab for the instance exists.
+  useEffect(() => {
+    if (instances.length > 0) {
+      setWorkbenchState(prev => {
+        let state = prev;
+        for (const inst of instances) {
+          if (inst.adapterId === 'shell') {
+            const viewType = getAdapterViewId('shell') || 'terminal';
+            state = ensureInstanceTab(state, inst.id, inst.label || inst.id.slice(0, 12), viewType);
+          }
+        }
+        return state;
+      });
+    }
+  }, [instances]);
+
   // When an instance is killed/removed, clear any tabs bound to it.
   const prevInstanceIds = useRef<string[]>([]);
   useEffect(() => {
@@ -872,6 +890,7 @@ function PageContent() {
     setForkTarget,
     setForkPrompt,
     createInstance,
+    instances,
     bindCurrentTabInstance: handleBindCurrentTabInstance,
     activeInstanceId,
     projectCwd: projectInfo?.cwd || '.',

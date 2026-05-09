@@ -96,6 +96,7 @@ export interface WorkbenchContextValue {
   setForkPrompt: (v: string) => void;
 
   // Instance management (Phase 4F: explicit instance creation, no auto-bind)
+  instances: any[];
   createInstance: (dir: string, label?: string, adapterId?: string) => Promise<any>;
   bindCurrentTabInstance: (instanceId: string) => void;
   activeInstanceId: string | null;

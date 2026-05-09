@@ -66,3 +66,9 @@ For the full ownership and slot policy, see
 | 贡献点 | Contribution Point | Contribution | Manifest/API declarations for views, panels, menus, commands, keybindings, chrome items |
 | 主视图外壳策略 | View Chrome Policy | Chrome Policy | `ViewMeta.chrome`, e.g. header/status bar/command palette/shortcut availability |
 | 放置能力 | Placement Capability | Placement | Allowed placements such as `main`, `left`, `right`, `bottom`, `floating`, `popout` |
+| 客户端 | Client | Client | One connected UI session, such as a desktop browser tab or a mobile browser |
+| 设备类型 | Device Type | Device | Coarse client class: `desktop`, `tablet`, or `mobile` |
+| 客户端能力 | Client Capability | Capability | Available UI/input features such as keyboard, touch, dragDrop, popover, contextMenu |
+| 布局配置档 | Layout Profile | Layout Profile | Per-device layout behavior, e.g. desktop split panes vs mobile sheets |
+| 在线状态 | Presence | Presence | Which clients are connected and what each client is focused on |
+| 响应式契约 | Responsive Contract | Responsive Contract | Plugin declaration of desktop/tablet/mobile support and fallback behavior |

@@ -99,6 +99,44 @@ Shared System UI is reusable but must have a stable public API. Plugins may comp
 
 Rule: shared components are a product surface. Export fewer, stable components first. Do not make every internal component public by default.
 
+### 2.4.1 Shared UI Availability
+
+Shared UI must declare where it works. A component being available on desktop does not automatically mean it is comfortable or safe on mobile.
+
+| Component type | 中文名 | Desktop | Tablet | Mobile | Default host fallback |
+|---|---|---:|---:|---:|---|
+| `DockPanelFrame` | 停靠面板框架 | Yes | Yes | Yes | Render as sheet/accordion if fixed sidebars are unavailable |
+| `ResourceTree` | 资源树 | Yes | Yes | Limited | Render compact tree or searchable list |
+| `RuntimeList` | 运行时列表 | Yes | Yes | Yes | Render as full-width list inside mobile sheet |
+| `LogViewer` | 日志查看器 | Yes | Yes | Limited | Disable dense columns; prefer wrapped text |
+| `DataTable` | 数据表 | Yes | Limited | Limited | Render cards/list rows if width is too small |
+| `TerminalWidget` | 终端控件 | Yes | Limited | Limited | Provide touch toolbar for Esc/Ctrl/Cmd/paste/resize |
+| `CommandPalette` | 命令面板 | Yes | Yes | Limited | Render as fullscreen command sheet |
+| `ContextMenu` | 右键菜单 | Yes | Limited | No native right-click | Render as long-press or action sheet |
+| `FloatingWindow` | 浮动窗口 | Yes | No | No | Render as modal/sheet or disable placement |
+
+Rules:
+
+1. Shared UI exports must include a support level: `supported`, `limited`, or `unsupported` per platform.
+2. `limited` means the host may adapt the presentation while preserving the action contract.
+3. `unsupported` means the host must hide the contribution or show an explicit unsupported state.
+4. Plugins should not implement their own desktop/mobile fork unless the shared component API cannot express the desired behavior.
+
+Suggested metadata shape:
+
+```ts
+type PlatformKind = 'desktop' | 'tablet' | 'mobile';
+
+type ComponentSupport = 'supported' | 'limited' | 'unsupported';
+
+interface SharedComponentMeta {
+  id: string;
+  displayName: string;
+  support: Record<PlatformKind, ComponentSupport>;
+  fallback?: 'hide' | 'sheet' | 'list' | 'readonly' | 'unsupported-message';
+}
+```
+
 ### 2.5 Plugin-Owned UI
 
 Plugin-Owned UI is controlled by the plugin that registers it.
@@ -130,6 +168,99 @@ Example:
   }
 }
 ```
+
+### 2.6 Device and Client API
+
+SessionBridge is expected to run from desktop browsers, tablets, phones, and future native shells. The host must expose device/client capabilities so plugins can make intentional choices instead of guessing from CSS or user-agent strings.
+
+| 中文名 | English name | Meaning | Example |
+|---|---|---|---|
+| 客户端 | Client | One connected UI session | A Chrome tab on PC, Safari on iPhone |
+| 设备类型 | Device Type | Coarse device class | `desktop`, `tablet`, `mobile` |
+| 客户端能力 | Client Capability | Input/layout features available to this client | `keyboard`, `touch`, `dragDrop`, `popover` |
+| 布局配置档 | Layout Profile | Per-device layout shape | desktop split panes vs mobile sheets |
+| 在线状态 | Presence | Which clients are connected and what they focus | PC observing terminal, phone controlling instance |
+
+Target client context:
+
+```ts
+interface ClientContext {
+  clientId: string;
+  deviceType: 'desktop' | 'tablet' | 'mobile';
+  viewport: { width: number; height: number; density?: number };
+  input: {
+    keyboard: boolean;
+    touch: boolean;
+    pointer: 'mouse' | 'touch' | 'pen' | 'unknown';
+    modifierKeys: boolean;
+  };
+  ui: {
+    dragDrop: boolean;
+    splitPane: boolean;
+    floatingWindow: boolean;
+    popover: boolean;
+    contextMenu: 'right-click' | 'long-press' | 'action-sheet' | 'none';
+    sidebars: 'fixed' | 'overlay' | 'hidden';
+  };
+}
+```
+
+Default ownership rules:
+
+1. `Instance`, `Session`, and extension manifests are shared resources.
+2. `Layout`, `activePane`, open mobile sheets, sidebar visibility, and command palette state are per-client by default.
+3. `ViewTab` state is per-client unless a future sync API explicitly marks it shared.
+4. `activeInstanceId` must not be treated as a single global UI focus in multi-client scenarios. Prefer pane/tab-bound `instanceId` and client-local focus.
+5. A phone opening the same relay must not unexpectedly rearrange the desktop layout.
+
+### 2.7 Plugin Responsive Contract
+
+Plugins should be able to declare whether their views, panels, menus, actions, and shared UI usage are supported on desktop/tablet/mobile. If a plugin does not declare anything, the host applies safe defaults.
+
+Suggested manifest extension:
+
+```json
+{
+  "contributes": {
+    "views": {
+      "sidebar-right": [
+        {
+          "id": "my.stats",
+          "title": "Stats",
+          "component": "DataTable",
+          "platforms": {
+            "desktop": "supported",
+            "tablet": "limited",
+            "mobile": "limited"
+          },
+          "fallback": "list"
+        }
+      ]
+    },
+    "menus": [
+      {
+        "id": "my.menu.inspect",
+        "menu": "workbench/context",
+        "title": "Inspect",
+        "command": "my.inspect",
+        "platforms": {
+          "desktop": "supported",
+          "mobile": "action-sheet"
+        }
+      }
+    ]
+  }
+}
+```
+
+Policy:
+
+1. Missing `platforms` means `desktop: supported`, `tablet: limited`, `mobile: limited`.
+2. If a contribution uses only shared system components, the host may automatically adapt it to the current platform.
+3. If a contribution declares `mobile: unsupported`, the host hides it on mobile and may show an explanatory placeholder if the user opens it directly.
+4. If a plugin declares all platforms supported but uses a component that is unsupported on the current platform, the component support rule wins.
+5. Plugins should declare required input features when needed, for example `requires: ["keyboard", "dragDrop"]`.
+6. Host-provided fallbacks must preserve commands/actions where possible even if visual placement changes.
 
 ## 3. Current Ownership Audit
 
@@ -296,7 +427,25 @@ When a user clicks "Create New Terminal/Runtime" in an empty view:
 | `app/console/panels/instances-panel.tsx` | Inline form with adapterId selector instead of `prompt()` |
 | `app/console/sidebar/mobile-sidebar.tsx` | Removed implicit `onCreate` prop
 
-## 6. Phase Guidance
+## 7. API Contract Gaps
+
+The following APIs should be treated as first-class contracts before adding more large features. They prevent desktop/mobile behavior and plugin behavior from drifting apart.
+
+| API | 中文名 | Why it matters | Suggested document |
+|---|---|---|---|
+| Client Device API | 客户端设备 API | Defines client identity, device type, input capabilities, viewport, presence | `docs/api/client-device-api.md` |
+| Workbench State API | 工作台状态 API | Defines per-client layout, tab, pane, and instance binding semantics | `docs/api/workbench-state-api.md` |
+| Action API | 动作 API | Unifies command palette, context menus, header buttons, panel actions, mobile action sheets | `docs/api/action-api.md` |
+| Shared UI API | 共享组件 API | Defines stable host components and platform support | `docs/api/shared-ui-api.md` |
+| Error/Diagnostics API | 错误诊断 API | Standardizes error codes and debugging boundaries | `docs/api/error-diagnostics-api.md` |
+
+Priority:
+
+1. Document `ClientContext` and per-client vs shared state before deeper mobile work.
+2. Make all action surfaces consume one `Action` contract before expanding menus/keybindings.
+3. Promote shared UI support metadata before exporting more components to plugins.
+
+## 8. Phase Guidance
 
 ### Phase 4D: Host Chrome Policy
 
@@ -324,3 +473,18 @@ Future scope:
 - `contributes.keybindings`
 - Built-in system plugins for Files, Instances, Dashboard, Settings.
 - Stable shared component export surface.
+
+### Phase 4H: API Contract Documentation
+
+Scope:
+
+- Create `docs/api/` as the stable API contract home.
+- Move or summarize protocol details from design documents into API-shaped references.
+- Add compatibility status to each API: `stable`, `experimental`, or `internal`.
+- Add test matrix entries for browser, REST, WebSocket, and mobile/manual checks.
+
+Do not:
+
+- Rewrite protocol implementation while documenting it.
+- Invent unsupported marketplace behavior as if it already exists.
+- Treat design sketches as stable API without a status label.
