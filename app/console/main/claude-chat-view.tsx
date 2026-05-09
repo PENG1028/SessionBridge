@@ -147,6 +147,8 @@ function MarkdownRenderer({ content }: { content: string }) {
 export function ClaudeChatView({ instanceId }: { instanceId?: string }) {
   // Phase 4F: When no instanceId is bound, show attach state instead of
   // implicitly reusing the global activeInstanceId from workbench context.
+  // Phase 4I: instanceId comes from PaneTab.instanceId — this tab's binding.
+  // The global activeInstanceId (sidebar selection) is NEVER used as fallback.
   if (!instanceId) {
     return <ClaudeChatEmptyState />;
   }

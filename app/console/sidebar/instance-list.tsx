@@ -22,6 +22,11 @@ function statusColor(status: string) {
 }
 
 export function InstanceList({ instances, activeInstanceId, onActivate, onKill }: InstanceListProps) {
+  // Phase 4I: This list shows ALL instances. Clicking an instance sets
+  // activeInstanceId (the "management selection" in the sidebar). It does
+  // NOT auto-create tabs or auto-bind to the active tab. Tab is the
+  // subject — instance is a tab's binding, set via Attach Existing or
+  // Create New.
   if (instances.length === 0) {
     return <div className="text-gray-700 text-[10px] px-3 py-2 italic">No instances</div>;
   }

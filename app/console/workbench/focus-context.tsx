@@ -46,23 +46,30 @@ export function FocusProvider({
   instances, activeInstanceId, activeViewId, sessionKey, paneFocus, children,
 }: FocusProviderProps) {
   const value = useMemo<FocusState>(() => {
-    // Phase 4F: prefer the tab-bound instanceId from paneFocus over global activeInstanceId.
-    const effectiveInstanceId = paneFocus?.instanceId || activeInstanceId;
+    // Phase 4I: effectiveInstanceId comes SOLELY from the tab-bound instanceId.
+    // The global activeInstanceId (management selection in the sidebar) is no
+    // longer a fallback — tab is the subject, instance is a tab's binding.
+    const effectiveInstanceId = paneFocus?.instanceId ?? null;
     const activeInstance = instances.find(i => i.id === effectiveInstanceId) ?? null;
     const adapterId = activeInstance?.adapterId ?? null;
-    const defaultAdapterId = getAllAdapterTypes()[0]?.id || getDefaultAdapterId();
-    const viewId = getAdapterViewId(adapterId || defaultAdapterId) || getDefaultAdapterId();
     const isRunning = activeInstance?.status === 'running';
+
+    // Phase 4I: adapterId can be null (no instance bound to tab). We intentionally
+    // pass '' instead of defaultAdapterId so right-side panels with when conditions
+    // won't fire for unbounded tabs. When a view is rendered, the view component
+    // receives the correct instanceId through its own props.
+    const safeAdapterId = adapterId || '';
+    const viewId = paneFocus?.viewType || getAdapterViewId(safeAdapterId) || '';
 
     const whenContext: WhenContext = {
       view: paneFocus?.viewType || viewId,
-      activeAdapterId: adapterId || defaultAdapterId,
+      activeAdapterId: safeAdapterId,
       isRunning,
       instanceId: effectiveInstanceId ?? undefined,
     };
 
     return {
-      viewId: paneFocus?.viewType || viewId,
+      viewId,
       instanceId: effectiveInstanceId,
       adapterId,
       isRunning,

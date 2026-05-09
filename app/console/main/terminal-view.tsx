@@ -10,6 +10,11 @@ interface TerminalViewProps {
 }
 
 export function TerminalView({ instanceId }: TerminalViewProps) {
+  // Phase 4F: instanceId comes from PaneTab.instanceId.
+  // Phase 4I: NO fallback to activeInstanceId. If instanceId is undefined,
+  // the empty state is shown with Attach Existing / Create New Terminal.
+  // This ensures the activeInstanceId (sidebar management selection) does
+  // NOT influence terminal tab behavior.
   const { wsUrl, token, createInstance, bindCurrentTabInstance, projectCwd, instances, activateInstance } = useWorkbench();
   const [creating, setCreating] = useState(false);
 

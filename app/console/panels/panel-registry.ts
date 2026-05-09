@@ -56,8 +56,8 @@ const componentOverrides = new Map<string, ComponentType<any>>();
 
 /**
  * Register a React component for a panel ID.
- * When syncExtensionPanels encounters this ID, it uses this component
- * instead of the default PlaceholderPanel.
+ * When syncExtensionPanels encounters this ID, it uses this component.
+ * Panels without a registered component override are skipped.
  */
 export function registerPanelComponent(id: string, component: ComponentType<any>): void {
   componentOverrides.set(id, component);
@@ -86,7 +86,7 @@ export function getPanels(side: 'left' | 'right', ctx?: WhenContext): PanelRegis
  * Removes any panels from a previous sync, then re-adds from current views.
  * Core panels (registered before the first sync) are never removed.
  * Uses component overrides (registered via registerPanelComponent) for known
- * panel types, falling back to a placeholder for unknown types.
+ * panel types. Panels without a registered component are skipped.
  */
 export function syncExtensionPanels(
   leftViews?: { id: string; title: string; icon: string; defaultVisible: boolean; when?: string }[],
@@ -102,13 +102,15 @@ export function syncExtensionPanels(
     if (!views) return;
     for (const v of views) {
       if (registry.has(v.id)) continue; // core panel — never overwrite
+      const comp = getPanelComponentOverride(v.id);
+      if (!comp) continue; // skip — no React component registered for this extension panel
       registerPanel({
         id: v.id,
         side,
         title: v.title,
         order: 100,
         when: v.when,
-        component: getPanelComponentOverride(v.id) ?? PlaceholderPanel,
+        component: comp,
       });
       extensionPanelIds.add(v.id);
     }
@@ -118,6 +120,5 @@ export function syncExtensionPanels(
 }
 
 /** Fallback component for extension panels without a registered view. */
-function PlaceholderPanel() {
-  return null;
-}
+// Removed in Phase 4I — panels without component overrides are now
+// skipped in syncExtensionPanels instead of rendering empty frames.

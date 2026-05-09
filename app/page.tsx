@@ -320,21 +320,9 @@ function PageContent() {
   }, [notify]);
 
   const { connStatus, msgLog, sendInput, sendCommand, serverBlocks, sessions, activeSessionId, activateSession, spawnSession, isWorkspace, queueStatus, instances, activeInstanceId, activateInstance, createInstance, killInstance, extensionPointsData } = useSession(wsUrl, token ?? undefined, undefined, undefined, undefined, onSystemNotify, dismiss);
-  // Derived from instances for extCommands filtering and context menu
-  const activeAdapterId = instances.find(i => i.id === activeInstanceId)?.adapterId || getAllAdapterTypes()[0]?.id || getDefaultAdapterId();
-  const viewId = getAdapterViewId(activeAdapterId) || getDefaultAdapterId();
-  const isActiveRunning = instances.some(i => i.id === activeInstanceId && i.status === 'running');
-  const whenContext = { activeAdapterId, view: viewId, isRunning: isActiveRunning };
-
-  // Filter extension commands by when-condition
-  const extCommands = useMemo(() => {
-    if (!extensionPointsData?.commands) return [];
-    const cmds = extensionPointsData.commands as Array<{ id: string; title: string; category?: string; when?: string }>;
-    return cmds.filter(cmd => {
-      if (!cmd.when) return true;
-      return evaluateWhen(cmd.when, whenContext);
-    });
-  }, [extensionPointsData, whenContext]);
+  // Phase 4I: activeAdapterId/viewId/isActiveRunning/whenContext are derived
+  // from paneFocus below — context menu and extension commands follow the
+  // current tab's binding, not the global activeInstanceId.
 
   // Sync adapter→viewId mapping and extension panels from extension points data
   useEffect(() => {
@@ -352,12 +340,9 @@ function PageContent() {
   const workbenchDispatch = useCallback((action: import('./console/stage/workbench-state').WorkbenchAction) => {
     setWorkbenchState(prev => workbenchReducer(prev, action));
   }, []);
-  // Sync activeInstanceId → ensure a tab exists
-  useEffect(() => {
-    if (activeInstanceId) {
-      setWorkbenchState(prev => ensureInstanceTab(prev, activeInstanceId));
-    }
-  }, [activeInstanceId]);
+  // Phase 4I: Instance changes (sidebar click) no longer auto-create tabs.
+  // Tab is the subject — instance is a tab's binding. Only shell tabs are
+  // restored on reconnect via the instances[] effect below.
 
   // When instances arrive from server (after refresh/reconnect), restore
   // terminal tabs for existing shell instances that survived via clientToken.
@@ -402,6 +387,32 @@ function PageContent() {
   const activeViewChrome = paneFocus ? getViewEntry(paneFocus.viewType)?.meta.chrome : undefined;
   const chromePolicy = resolveChromePolicy(activeViewChrome);
   const showStatusBar = chromePolicy.statusBar !== 'hidden';
+
+  // ── Focus-based context (for context menu + extCommands) ───
+  // Phase 4I: These follow the pane focus (current tab's binding), NOT the
+  // global activeInstanceId. When the tab has no bound instance, adapterId
+  // and viewId are '' so when-conditions don't accidentally fire.
+  const focusInstanceId = paneFocus?.instanceId ?? null;
+  const focusAdapterId = focusInstanceId
+    ? instances.find(i => i.id === focusInstanceId)?.adapterId ?? ''
+    : '';
+  // viewId comes from the pane's viewType. Empty when no pane/relevant view,
+  // so when-conditions like `view == "terminal"` won't fire on blank tabs.
+  const focusViewId = paneFocus?.viewType || '';
+  const focusIsRunning = focusInstanceId
+    ? instances.some(i => i.id === focusInstanceId && i.status === 'running')
+    : false;
+  const focusWhenContext = { activeAdapterId: focusAdapterId, view: focusViewId, isRunning: focusIsRunning };
+
+  // Filter extension commands by when-condition (uses focus-based context)
+  const extCommands = useMemo(() => {
+    if (!extensionPointsData?.commands) return [];
+    const cmds = extensionPointsData.commands as Array<{ id: string; title: string; category?: string; when?: string }>;
+    return cmds.filter(cmd => {
+      if (!cmd.when) return true;
+      return evaluateWhen(cmd.when, focusWhenContext);
+    });
+  }, [extensionPointsData, focusWhenContext]);
 
   // Close command palette when the active view disables it
   useEffect(() => {
@@ -487,7 +498,7 @@ function PageContent() {
   useKeyboardShortcuts(messages, handleClearSession, handleToggleCommandPalette, handleToggleLeftSidebar, handleRestart, chromePolicy.globalShortcuts);
 
   const { ctxMenu, setCtxMenu, handleCtx } = useContextMenu(
-    activeAdapterId, activeInstanceId, projectInfo, messages, createInstance, killInstance, sendCommand, extensionPointsData, viewId, isActiveRunning, workbenchState, workbenchDispatch, getAllAdapterTypes, getAdapterCapabilities, evaluateWhen
+    focusAdapterId, focusInstanceId, projectInfo, messages, createInstance, killInstance, sendCommand, extensionPointsData, focusViewId, focusIsRunning, workbenchState, workbenchDispatch, getAllAdapterTypes, getAdapterCapabilities, evaluateWhen
   );
 
   const handleQuickCompact = useCallback(() => {

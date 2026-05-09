@@ -39,7 +39,10 @@ function saveCollapsed(ids: string[]): void {
 
 export function DockPanelFrame({ panelId, title, icon, actions, children, onReorder }: DockPanelFrameProps) {
   const [dragOver, setDragOver] = useState(false);
-  const [collapsed, setCollapsed] = useState(() => loadCollapsed().includes(panelId));
+  // Initialized to false for SSR/hydration consistency — read from
+  // localStorage happens in the useEffect below, which flips the state
+  // on mount if the panel was previously collapsed by the user.
+  const [collapsed, setCollapsed] = useState(false);
   const dragRef = useRef<string | null>(null);
 
   const toggleCollapse = useCallback(() => {

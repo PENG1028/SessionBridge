@@ -51,23 +51,27 @@ registerPanel({
 registerPanel({
   id: 'session-actions', side: 'right', title: 'Actions', order: 20,
   icon: Play,
+  when: 'view == "claude-chat"',
   component: SessionActionsPanel,
 });
 
 registerPanel({
   id: 'snapshots', side: 'right', title: 'Snapshots', order: 30,
   icon: Camera,
+  when: 'view == "claude-chat"',
   component: SnapshotsPanel,
 });
 
 registerPanel({
   id: 'files-context', side: 'right', title: 'Files in Context', order: 40,
   icon: FileText,
+  when: 'view == "claude-chat"',
   component: FilesContextPanel,
 });
 
 registerPanel({
   id: 'terminal-log', side: 'right', title: 'Terminal Log', order: 50,
   icon: Terminal,
+  when: 'view == "terminal"',
   component: TerminalLogPanel,
 });
