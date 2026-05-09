@@ -1,10 +1,27 @@
 # Runtime Execution Audit
 
 > Phase 4: 执行底座统一审计 — 2026-05-09
+> Phase 4A: 旁路权限检查收口 — 2026-05-09（当前状态）
 
 ## 概述
 
 当前存在四条独立的命令/Shell 执行路径，各有不同的生命周期管理、输出转发、权限检查和 adapter 集成深度。
+
+## Phase 4A 完成状态
+
+| 执行路径 | 权限检查 | 走 adapter | Phase 4A 动作 |
+|---|---|---|---|
+| Browser → relay-server shell.spawn | ✅ 已有 | ✅ | 无变更 |
+| node-runtime spawnShell() | ✅ 新增 | ❌ 仍直连 spawn | 添加 `this.permissions.check('shellAccess')` |
+| dashboard-server /api/shell/run | ✅ 新增 | ❌ 仍直连 spawn | 添加 `permissions.check('shellAccess')`，拒时回 403 |
+| bridge run → dashboard-server | ✅ 继承 | ❌ 委托 Path 3 | 无变更，继承 Path 3 的保护 |
+
+### 本阶段明确不做的事
+
+- ❌ 没有统一进程生命周期到 InstanceManager
+- ❌ 没有把所有 spawn 统一到 adapter 体系
+- ❌ 没有实现插件级细粒度 command permission
+- ❌ 没有实现 marketplace / install 流程
 
 ---
 
@@ -92,7 +109,7 @@ agent 注册成功
 
 ### 权限
 
-**无** — 不在 agent 侧做权限检查。relay-server 侧如果收到这个 shell 的输出会按 `agent.stdout` 处理，但 spawn 过程本身无权限关卡。
+**Phase 4A 已修复** — `spawnShell()` 入口调用 `this.permissions.check('shellAccess')`，拒绝时记录日志并跳过 spawn。
 
 ### 是否走 adapter
 
@@ -141,7 +158,7 @@ HTTP POST /api/shell/run { command, cwd }
 
 ### 权限
 
-**无** — dashboard-server 自身不做权限检查。如果通过 relay 转发，relay-server 侧以 `agent.stdout` 处理，也不检查 shell 权限。
+**Phase 4A 已修复** — `/api/shell/run` handler 在 spawn 前调用 `permissions.check('shellAccess', { command })`，拒绝时返回 403 JSON 错误。
 
 ### 是否走 adapter
 
@@ -210,7 +227,7 @@ bridge run "<command>"
 | **进程创建** | adapter.start() → adapter 内 spawn | 直接 child_process.spawn | 直接 child_process.spawn | 委托 dashboard-server |
 | **进程跟踪** | InstanceManager (InstanceData) | NodeRuntime.shellProc 私有字段 | shellInstances Map | 委托 dashboard-server |
 | **输出转发** | WS broadcastShellOutput | relay.sendStdout/sendStderr | SSE + relay.sendStdoutForInstance | SSE → stdout |
-| **权限检查** | ✅ permissions.check('shellAccess') | ❌ 无 | ❌ 无 | ❌ 无 |
+| **权限检查** | ✅ permissions.check('shellAccess') | ✅ permissions.check('shellAccess')（Phase 4A） | ✅ permissions.check('shellAccess')（Phase 4A） | ✅ 继承 Path 3 |
 | **走 adapter** | ✅ 是（terminal adapter） | ❌ 否 | ❌ 否 | ❌ 否 |
 | **插件可复用** | ✅ 是 | ❌ 否 | ❌ 否 | ❌ 否 |
 | **背压控制** | ❌ 无 | ✅ 有（256KB/64KB） | ❌ 无 | N/A |
@@ -230,15 +247,15 @@ bridge run "<command>"
 
 ### 建议方向
 
-#### A. 短期（低风险，立即可做）
+#### A. 短期（已完成的 Phase 4A）
 
-1. **给 dashboard-server /api/shell/run 加权限检查** — 在 spawn 前调用 `permissions.check('shellAccess')`。dashboard-server 已有 `PermissionModel` 引用（传给 `startDashboard`），可以直接使用。
+1. ~~**给 dashboard-server /api/shell/run 加权限检查**~~ — ✅ 已完成（Phase 4A）。在 spawn 前调用 `permissions.check('shellAccess')`。dashboard-server 已有 `PermissionModel` 引用（传给 `startDashboard`），可以直接使用。
 
-2. **给 node-runtime spawnShell() 加权限检查** — 同样通过 `this.permissions.check('shellAccess')`。
+2. ~~**给 node-runtime spawnShell() 加权限检查**~~ — ✅ 已完成（Phase 4A）。通过 `this.permissions.check('shellAccess')`。
 
 3. **清理 bridge run 文档** — 当前 `bridge run` 的 agent 启动路径（`startAgentBg`）和 relay 连接检测逻辑比较脆弱，建议明确是否作为 stable API。
 
-#### B. 中期（需设计）
+#### B. 中期（需设计，下一阶段候选）
 
 4. **统一 Shell 抽象层** — 在 `adapters/` 层新增 `ShellService` 接口：
    - 统一 `spawn(cmd, cwd) → ShellHandle`
@@ -302,6 +319,11 @@ Agent (NodeRuntime)
   │
   ├─WS─► upstream relay ──► relay-server ──► adapter.parseLine()    [Path 2: stdout via agent.stdout]
   │
-  └─ spawnShell() ──► child_process                                  [Path 2: node-runtime shell]
-       (bash/powershell, direct spawn, no adapter)
+  └─ spawnShell() ──► [permissions.check] ──► child_process         [Path 2: node-runtime shell]
+       (bash/powershell, direct spawn, no adapter, Phase 4A: +perm)
+
+Dashboard (dashboard-server)
+  │
+  POST /api/shell/run ──► [permissions.check] ──► child_process     [Path 3: Phase 4A: +perm]
+       (cmd.exe / sh, direct spawn, no adapter, 403 on deny)
 ```

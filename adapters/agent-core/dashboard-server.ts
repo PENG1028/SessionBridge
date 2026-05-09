@@ -271,6 +271,11 @@ export function startDashboard(config: AgentConfig, permissions: PermissionModel
             const body = await readBody(req);
             const { command, cwd } = JSON.parse(body);
             if (!command) { jsonReply(res, 400, { error: 'Missing command' }); return; }
+            const permCheck = permissions.check('shellAccess', { command });
+            if (!permCheck.allowed) {
+              jsonReply(res, 403, { error: permCheck.reason || 'Permission denied: shellAccess' });
+              return;
+            }
             const instanceId = 'sh_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
             const shellCmd = process.platform === 'win32' ? 'cmd.exe' : 'sh';
             const shellArgs = process.platform === 'win32' ? ['/c', command] : ['-c', command];

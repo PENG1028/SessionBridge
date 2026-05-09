@@ -331,6 +331,11 @@ export class NodeRuntime {
   }
 
   private spawnShell(): void {
+    const permCheck = this.permissions.check('shellAccess');
+    if (!permCheck.allowed) {
+      addDashboardLog(`[node] Shell spawn blocked: ${permCheck.reason}`);
+      return;
+    }
     if (this.shellProc) this.killShell();
     this.cleanupOrphanShell();
 

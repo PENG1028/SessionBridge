@@ -71,8 +71,10 @@ function createFsCapability(pm: PermissionModel): FileSystemCapability {
 function createProcessCapability(pm: PermissionModel): ProcessCapability {
   return {
     spawn(cmd: string, args: string[], opts?: SpawnOptions) {
-      pm.check('processManagement');
-      pm.check('shellAccess', { command: cmd });
+      const pmCheck = pm.check('processManagement');
+      if (!pmCheck.allowed) throw new Error(pmCheck.reason);
+      const saCheck = pm.check('shellAccess', { command: cmd });
+      if (!saCheck.allowed) throw new Error(saCheck.reason);
       return spawnRaw(cmd, args, {
         cwd: opts?.cwd,
         env: opts?.env ? { ...process.env, ...opts.env } : process.env,
@@ -95,8 +97,10 @@ function createProcessCapability(pm: PermissionModel): ProcessCapability {
 function createTerminalCapability(pm: PermissionModel): TerminalCapability {
   return {
     spawn(cmd: string, args: string[], opts?: TerminalOptions): TerminalHandle {
-      pm.check('shellAccess', { command: cmd });
-      pm.check('processManagement');
+      const saCheck = pm.check('shellAccess', { command: cmd });
+      if (!saCheck.allowed) throw new Error(saCheck.reason);
+      const pmCheck = pm.check('processManagement');
+      if (!pmCheck.allowed) throw new Error(pmCheck.reason);
 
       const proc = spawnRaw(cmd, args, {
         cwd: opts?.cwd,
