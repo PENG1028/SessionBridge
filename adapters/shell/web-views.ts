@@ -6,7 +6,18 @@ import { TerminalView } from '../../app/console/main/terminal-view';
 
 registerView('terminal', {
   component: TerminalView,
-  meta: { title: 'Terminal', icon: TerminalIcon, sidebarRequirements: { left: 'auto', right: 'auto' } },
+  meta: {
+    title: 'Terminal',
+    icon: TerminalIcon,
+    sidebarRequirements: { left: 'auto', right: 'auto' },
+    chrome: {
+      header: 'minimal',
+      statusBar: 'hidden',
+      commandPalette: false,
+      globalShortcuts: false,
+    },
+    openMode: 'instance-bound',
+  },
 });
 
 registerAdapterMapping('shell', 'terminal');

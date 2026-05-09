@@ -95,6 +95,13 @@ export interface WorkbenchContextValue {
   setForkTarget: (v: number | null) => void;
   setForkPrompt: (v: string) => void;
 
+  // Instance management (Phase 4F: explicit instance creation, no auto-bind)
+  createInstance: (dir: string, label?: string, adapterId?: string) => Promise<any>;
+  bindCurrentTabInstance: (instanceId: string) => void;
+  activeInstanceId: string | null;
+  projectCwd: string;
+  activateInstance: (id: string) => void;
+
   // External session
   activeExternalSession: string | null;
   clearExternalSession: () => void;

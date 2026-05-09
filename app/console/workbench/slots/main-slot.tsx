@@ -14,7 +14,7 @@ export function MainSlot({ viewId, instanceId }: MainSlotProps) {
 
   const Component = entry.component as ComponentType<{ instanceId?: string }>;
   return (
-    <div key={viewId} className="flex-1 flex flex-col min-w-0 animate-fadeIn">
+    <div key={viewId} className="flex-1 flex flex-col min-w-0 min-h-0 animate-fadeIn">
       <Component instanceId={instanceId} />
     </div>
   );

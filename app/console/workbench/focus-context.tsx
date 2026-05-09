@@ -21,6 +21,10 @@ export interface FocusState {
 export type PaneFocusInfo = {
   paneId: string;
   viewType: string;
+  /** Phase 4F: instanceId from the active tab, so FocusProvider can resolve
+   *  adapterId/isRunning from the tab-bound instance instead of the global
+   *  activeInstanceId. */
+  instanceId?: string;
 };
 
 interface FocusProviderProps {
@@ -42,7 +46,9 @@ export function FocusProvider({
   instances, activeInstanceId, activeViewId, sessionKey, paneFocus, children,
 }: FocusProviderProps) {
   const value = useMemo<FocusState>(() => {
-    const activeInstance = instances.find(i => i.id === activeInstanceId) ?? null;
+    // Phase 4F: prefer the tab-bound instanceId from paneFocus over global activeInstanceId.
+    const effectiveInstanceId = paneFocus?.instanceId || activeInstanceId;
+    const activeInstance = instances.find(i => i.id === effectiveInstanceId) ?? null;
     const adapterId = activeInstance?.adapterId ?? null;
     const defaultAdapterId = getAllAdapterTypes()[0]?.id || getDefaultAdapterId();
     const viewId = getAdapterViewId(adapterId || defaultAdapterId) || getDefaultAdapterId();
@@ -52,12 +58,12 @@ export function FocusProvider({
       view: paneFocus?.viewType || viewId,
       activeAdapterId: adapterId || defaultAdapterId,
       isRunning,
-      instanceId: activeInstanceId ?? undefined,
+      instanceId: effectiveInstanceId ?? undefined,
     };
 
     return {
       viewId: paneFocus?.viewType || viewId,
-      instanceId: activeInstanceId,
+      instanceId: effectiveInstanceId,
       adapterId,
       isRunning,
       sessionKey,

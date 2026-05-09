@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { Plus, LayoutDashboard } from 'lucide-react';
 import { getAdapterMeta, type AdapterMeta } from './view-registry';
 import type { InstanceInfo } from '../../../lib/ws-client';
@@ -11,11 +11,8 @@ interface InstanceTabBarProps {
   onActivate: (id: string) => void;
   onCreate: (dir: string, adapterId: string) => void;
   projectCwd: string;
-  /** Active workbench view ID (for highlighting system tabs). */
   activeViewId?: string;
-  /** Callback when a system view tab is clicked. */
   onSelectSystemView?: (viewId: string) => void;
-  /** Available adapter types for the + menu. */
   adapterTypes?: Array<{ id: string; meta: AdapterMeta }>;
 }
 
@@ -31,10 +28,14 @@ export function InstanceTabBar({
 }: InstanceTabBarProps) {
   const [showNewMenu, setShowNewMenu] = useState(false);
 
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    // Reserved for global context menu integration
+    e.preventDefault();
+  }, []);
+
   return (
-    <div className="flex items-center border-b border-gray-800 bg-[#0a0a0a] shrink-0">
+    <div className="flex items-center border-b border-gray-800 bg-[#0a0a0a] shrink-0 select-none">
       <div className="flex-1 flex items-center overflow-x-auto">
-        {/* System view tabs */}
         {onSelectSystemView && (
           <button
             onClick={() => onSelectSystemView('dashboard')}
@@ -55,9 +56,7 @@ export function InstanceTabBar({
             <button
               key={inst.id}
               onClick={() => onActivate(inst.id)}
-              onContextMenu={(e) => {
-                e.preventDefault();
-              }}
+              onContextMenu={handleContextMenu}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] border-r border-gray-800 transition-colors shrink-0 ${
                 isActive
                   ? 'bg-[#111] text-gray-200 border-b-2 border-b-purple-500'

@@ -5,6 +5,15 @@ import type { ContextMenuItem } from '../shell/context-menu';
 
 /**
  * Context menu construction for right-click on the main area.
+ *
+ * TODO(Phase 4E): Migrate hardcoded items to contributes.menus + context-menu-registry.ts.
+ * See docs/component-ownership-and-slots.md#4-context-menu-ownership for the target design.
+ *
+ * Currently hardcoded debt:
+ *  - isTerminalView inferred from structuredEvents instead of `view == terminal`
+ *  - a.id !== 'shell' || isTerminalView — shell-specific filter in core hook
+ *  - Clear Terminal / Clear History / Toggle Terminal / Copy All all hardcoded
+ *  - Extension menus are not filtered by menu target ID
  */
 export function useContextMenu(
   activeAdapterId: string,

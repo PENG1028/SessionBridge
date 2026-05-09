@@ -796,3 +796,11 @@ System Status 插件:                File Explorer 插件:
 5. **性能** — 100 个插件同时激活对启动时间和内存的影响？
 6. **干净卸载** — 插件卸载能否完整清除所有状态？
 7. **跨插件 Tab 嵌套** — 插件 A 能否嵌入插件 B 的视图？
+---
+
+## Related ownership document
+
+Before changing host chrome, workbench layout, shared UI, or plugin-owned views,
+consult [component-ownership-and-slots.md](./component-ownership-and-slots.md).
+That document defines the Chinese/English names, ownership layers, slot boundaries,
+and the Phase 4D/4E split for Host Chrome pluginization.

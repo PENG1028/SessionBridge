@@ -161,7 +161,9 @@ export type WorkbenchAction =
   | { type: 'REMOVE_PANE'; paneId: string }
   | { type: 'CLOSE_BOTTOM_PANE' }
   | { type: 'SPLIT_PANE_VERTICAL'; paneId: string; newInstanceId?: string }
-  | { type: 'SPLIT_PANE_HORIZONTAL'; paneId: string; newInstanceId?: string };
+  | { type: 'SPLIT_PANE_HORIZONTAL'; paneId: string; newInstanceId?: string }
+  | { type: 'REORDER_TABS'; paneId: string; tabId: string; targetId: string }
+  | { type: 'CLEAR_INSTANCE_TABS'; instanceId: string };
 
 export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction): WorkbenchState {
   switch (action.type) {
@@ -343,6 +345,39 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         newFocus = first?.id || state.activePaneId;
       }
       return { ...state, root: newRoot, activePaneId: newFocus };
+    }
+
+    case 'REORDER_TABS': {
+      const pane = findPane(state.root, action.paneId) || state.bottom;
+      if (!pane || pane.kind !== 'pane') return state;
+      const tabs = [...pane.tabs];
+      const srcIdx = tabs.findIndex(t => t.id === action.tabId);
+      const tgtIdx = tabs.findIndex(t => t.id === action.targetId);
+      if (srcIdx < 0 || tgtIdx < 0) return state;
+      const [moved] = tabs.splice(srcIdx, 1);
+      tabs.splice(tgtIdx, 0, moved);
+      const updatedPane: PaneState = { ...pane, tabs };
+      if (pane.zone === 'bottom') {
+        return { ...state, bottom: updatedPane };
+      }
+      return { ...state, root: replaceNode(state.root, action.paneId, updatedPane) };
+    }
+
+    case 'CLEAR_INSTANCE_TABS': {
+      const clearTab = (t: PaneTab) =>
+        t.instanceId === action.instanceId
+          ? { ...t, viewType: 'empty' as ViewType, title: 'Empty', instanceId: undefined }
+          : t;
+      const clearPane = (p: PaneState) =>
+        p ? { ...p, tabs: p.tabs.map(clearTab) } : p;
+      let root = state.root;
+      if (root.kind === 'pane') {
+        root = clearPane(root);
+      } else {
+        root = { ...root, children: root.children.map(c => c.kind === 'pane' ? clearPane(c) : c) };
+      }
+      const bottom = state.bottom ? clearPane(state.bottom) : null;
+      return { ...state, root, bottom };
     }
 
     default:

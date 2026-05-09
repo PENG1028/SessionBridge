@@ -647,6 +647,17 @@ const OUT_DIR = join(__dirname, "../out");
 let ROOT_DIR = inst().dir;
 
 const serverRequestHandler = (req: import("http").IncomingMessage, res: import("http").ServerResponse) => {
+  // CORS headers: allow any origin so the Next.js dev server (port 3000)
+  // can call the relay API (port 8080) during development.
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  if (req.method === "OPTIONS") {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
   // Delegate to structured API routes first
   if (registerApiRoutes(req, res, { instanceManager, broadcast, auditLog, checkPermission: checkHttpPermission, configManager: appConfig, relayConfig: relayConfigManager })) return;
 

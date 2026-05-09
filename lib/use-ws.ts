@@ -255,6 +255,11 @@ export function useSession(
 
   const killInstance = useCallback(async (id: string) => {
     const httpBase = wsUrl.replace(/^ws/, 'http');
+    // Optimistic removal from local state so the instance disappears from
+    // the UI immediately — prevents repeated clicks while the API call is
+    // in flight. The server broadcast (instance.removed) handles cleanup
+    // for other clients; this is just for local responsiveness.
+    setInstances(prev => prev.filter(i => i.id !== id));
     try {
       const res = await fetch(`${httpBase}/api/instances/${id}`, { method: 'DELETE' });
       const result = await res.json();
@@ -264,7 +269,7 @@ export function useSession(
       addMsgLog('error', `Kill instance failed: ${err}`);
       return { success: false, error: String(err) };
     }
-  }, [wsUrl, addMsgLog]);
+  }, [wsUrl, addMsgLog, setInstances]);
 
   const spawnSession = useCallback(async (directory: string, label?: string) => {
     const httpBase = wsUrl.replace(/^ws/, 'http');

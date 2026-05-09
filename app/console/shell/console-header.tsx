@@ -1,9 +1,9 @@
 'use client';
 
-import { Cpu, Folder, FileCode, Search, ChevronDown, Settings, LayoutDashboard, Terminal } from 'lucide-react';
+import { Cpu, Folder, Search, ChevronDown, Settings, LayoutDashboard, Terminal } from 'lucide-react';
 import { useFocus } from '../workbench/focus-context';
 import { useRuntimePolicy } from '../workbench/runtime-policy-context';
-import { getAdapterMeta, getViewEntry, getAdapterCapabilities } from '../main/view-registry';
+import { getAdapterMeta, getViewEntry, getAdapterCapabilities, type ChromePolicy } from '../main/view-registry';
 
 export interface ConsoleHeaderProps {
   onMobileOpen: () => void;
@@ -33,6 +33,8 @@ export interface ConsoleHeaderProps {
   rightSidebarOpen?: boolean;
   onToggleLeftSidebar?: () => void;
   onToggleRightSidebar?: () => void;
+  /** Chrome policy from the active view. */
+  chromePolicy?: ChromePolicy;
 }
 
 export function ConsoleHeader({
@@ -63,7 +65,15 @@ export function ConsoleHeader({
   rightSidebarOpen,
   onToggleLeftSidebar,
   onToggleRightSidebar,
+  chromePolicy,
 }: ConsoleHeaderProps) {
+  const policy = chromePolicy || { header: 'full', statusBar: 'auto', commandPalette: true, globalShortcuts: true };
+
+  // hidden → render nothing
+  if (policy.header === 'hidden') return null;
+
+  const isMinimal = policy.header === 'minimal';
+
   let runtimeBadge: string | null = null;
   try {
     const { paneViewType, adapterId } = useFocus();
@@ -80,6 +90,7 @@ export function ConsoleHeader({
       runtimeBadge = `${label} [${modeBadge}] T:${effortBadge}`;
     }
   } catch {}
+
   return (
     <header className="h-11 flex items-center justify-between px-4 border-b border-gray-800 bg-[#111] shrink-0">
       <div className="flex items-center space-x-4">
@@ -112,36 +123,43 @@ export function ConsoleHeader({
           <span className={`w-2 h-2 rounded-full ${statusColor} ${connStatus.status === 'connected' ? 'animate-pulse' : ''}`} />
           {statusText}
         </span>
-        {/* Phase badge */}
-        <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${phaseColor} ${
-          phase === 'idle' ? 'border-gray-700 bg-gray-900/50'
-          : phase === 'running' ? 'border-purple-700 bg-purple-900/20 animate-pulse'
-          : phase === 'done' ? 'border-emerald-700 bg-emerald-900/20'
-          : 'border-red-700 bg-red-900/20'
-        }`}>
-          {phaseLabel}
-        </span>
-        {/* Runtime info badge */}
-        {runtimeBadge && (
-          <span className="text-[9px] text-gray-500 bg-gray-900/80 px-1.5 py-0.5 border border-gray-800 font-mono tracking-tight hidden md:inline">
-            {runtimeBadge}
-          </span>
-        )}
-        {/* Current activity */}
-        {currentActivity && phase === 'running' && (
-          <span className="text-[10px] text-purple-400 bg-purple-900/10 px-2 py-0.5 rounded-full border border-purple-800/30 truncate max-w-[200px] hidden sm:inline">
-            {currentActivity}
-          </span>
-        )}
-        {parsed?.model && (
-          <span className="text-[10px] text-gray-500 bg-gray-900 px-2 py-0.5 rounded border border-gray-800 hidden md:inline">
-            {parsed.model}
-          </span>
+
+        {/* ── Minimal header: show only brand + connection, no chat-specific items ── */}
+        {!isMinimal && (
+          <>
+            {/* Phase badge */}
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${phaseColor} ${
+              phase === 'idle' ? 'border-gray-700 bg-gray-900/50'
+              : phase === 'running' ? 'border-purple-700 bg-purple-900/20 animate-pulse'
+              : phase === 'done' ? 'border-emerald-700 bg-emerald-900/20'
+              : 'border-red-700 bg-red-900/20'
+            }`}>
+              {phaseLabel}
+            </span>
+            {/* Runtime info badge */}
+            {runtimeBadge && (
+              <span className="text-[9px] text-gray-500 bg-gray-900/80 px-1.5 py-0.5 border border-gray-800 font-mono tracking-tight hidden md:inline">
+                {runtimeBadge}
+              </span>
+            )}
+            {/* Current activity */}
+            {currentActivity && phase === 'running' && (
+              <span className="text-[10px] text-purple-400 bg-purple-900/10 px-2 py-0.5 rounded-full border border-purple-800/30 truncate max-w-[200px] hidden sm:inline">
+                {currentActivity}
+              </span>
+            )}
+            {parsed?.model && (
+              <span className="text-[10px] text-gray-500 bg-gray-900 px-2 py-0.5 rounded border border-gray-800 hidden md:inline">
+                {parsed.model}
+              </span>
+            )}
+          </>
         )}
       </div>
       <div className="flex items-center space-x-4 text-xs">
-        {parsed?.cost && <span className="text-gray-400 hidden sm:inline">TOKENS: <span className="text-gray-200">{parsed.cost}</span></span>}
-        {/* Right sidebar toggle */}
+        {!isMinimal && parsed?.cost && <span className="text-gray-400 hidden sm:inline">TOKENS: <span className="text-gray-200">{parsed.cost}</span></span>}
+
+        {/* Right sidebar toggle — shown in both full and minimal */}
         {onToggleRightSidebar && (
           <button
             onClick={onToggleRightSidebar}
@@ -154,34 +172,37 @@ export function ConsoleHeader({
             </svg>
           </button>
         )}
+
         {/* Project info */}
         <div className="flex items-center gap-2 relative">
-          {/* Search sessions button */}
-          <button
-            onClick={openSearchPanel}
-            className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#1a1a1a] border border-gray-700 hover:border-purple-500 text-gray-400 hover:text-gray-200 text-[10px] transition-colors"
-            title="Search past sessions"
-          >
-            <Search className="w-3 h-3" />
-          </button>
+          {/* Search sessions button — full only */}
+          {!isMinimal && (
+            <button
+              onClick={openSearchPanel}
+              className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#1a1a1a] border border-gray-700 hover:border-purple-500 text-gray-400 hover:text-gray-200 text-[10px] transition-colors"
+              title="Search past sessions"
+            >
+              <Search className="w-3 h-3" />
+            </button>
+          )}
 
-          {/* Dashboard button */}
-              {onToggleDashboard && (
-                <button
-                  onClick={onToggleDashboard}
-                  className={`flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] transition-colors ${
-                    showDashboard
-                      ? 'bg-purple-900/30 border-purple-600 text-purple-300'
-                      : 'bg-[#1a1a1a] border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-500'
-                  }`}
-                  title="Dashboard"
-                >
-                  <LayoutDashboard className="w-3 h-3" />
-                </button>
-              )}
+          {/* Dashboard button — full only */}
+          {!isMinimal && onToggleDashboard && (
+            <button
+              onClick={onToggleDashboard}
+              className={`flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] transition-colors ${
+                showDashboard
+                  ? 'bg-purple-900/30 border-purple-600 text-purple-300'
+                  : 'bg-[#1a1a1a] border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-500'
+              }`}
+              title="Dashboard"
+            >
+              <LayoutDashboard className="w-3 h-3" />
+            </button>
+          )}
 
-          {/* Settings button */}
-          {onOpenSettings && (
+          {/* Settings button — full only */}
+          {!isMinimal && onOpenSettings && (
             <button
               onClick={onOpenSettings}
               className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#1a1a1a] border border-gray-700 hover:border-gray-500 text-gray-400 hover:text-gray-200 text-[10px] transition-colors"
@@ -191,8 +212,8 @@ export function ConsoleHeader({
             </button>
           )}
 
-          {/* Command palette button */}
-          {onToggleCommandPalette && (
+          {/* Command palette button — full only when enabled */}
+          {!isMinimal && policy.commandPalette && onToggleCommandPalette && (
             <button
               onClick={onToggleCommandPalette}
               className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#1a1a1a] border border-gray-700 hover:border-purple-500 text-gray-400 hover:text-gray-200 text-[10px] transition-colors"
@@ -244,7 +265,9 @@ export function ConsoleHeader({
                         onClick={() => onSelectSavedSession(s)}
                         className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-gray-800 text-left transition-colors"
                       >
-                        <FileCode className="w-2.5 h-2.5 text-gray-600 shrink-0" />
+                        <svg className="w-2.5 h-2.5 text-gray-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
                         <span className="text-[10px] text-gray-400 truncate">{s.label}</span>
                         <span className="text-[8px] text-gray-700 ml-auto shrink-0">{s.ts.slice(5, 16)}</span>
                       </button>

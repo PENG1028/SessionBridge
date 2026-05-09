@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useContext, useState, useCallback, useRef, useEffect, type ReactNode, type DragEvent } from 'react';
-import { GripVertical, ChevronDown, ChevronRight } from 'lucide-react';
+import { GripVertical, ChevronRight } from 'lucide-react';
 
 // ── Collapse Context ─────────────────────────────────────────
 // Lets panel components render their own collapse toggle inline.
@@ -104,28 +104,40 @@ export function PanelDndWrapper({ panelId, index, title, children, onReorder }: 
   return (
     <PanelCollapseContext.Provider value={{ collapsed, onToggle: toggleCollapse }}>
       <div
-        draggable
-        onDragStart={handleDragStart}
-        onDragEnd={handleDragEnd}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         className={`group relative transition-colors ${
-          dragOver ? 'border-t border-purple-500' : ''
+          dragOver ? 'border-l-2 border-purple-500' : ''
         }`}
       >
         {collapsed ? (
-          // Compact bar when collapsed — same h-8 as expanded header
+          // Compact bar when collapsed — draggable to reorder, click to expand
           <div
+            draggable
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
             onClick={toggleCollapse}
-            className="flex items-center gap-2 h-8 px-2 text-[10px] text-gray-600 border-b border-gray-800 bg-[#111] cursor-pointer hover:text-gray-400 hover:bg-gray-800/30 transition-colors"
+            className="flex items-center gap-2 h-8 px-2 text-[10px] text-gray-600 border-b border-gray-800 bg-[#111] cursor-pointer hover:text-gray-400 hover:bg-gray-800/30 transition-colors select-none"
           >
             <ChevronRight className="w-3 h-3 text-gray-600 shrink-0" />
             <span className="truncate font-medium">{title}</span>
           </div>
         ) : (
-          /* Expanded: render children directly (panels include their own compact header with collapse button via context) */
-          children
+          /* Expanded: drag handle on top (hover visible), content below is NOT draggable for text selection */
+          <>
+            <div
+              draggable
+              onDragStart={handleDragStart}
+              onDragEnd={handleDragEnd}
+              className="flex justify-center cursor-grab active:cursor-grabbing hover:bg-gray-800/30 transition-colors select-none opacity-0 group-hover:opacity-100 h-4 items-center border-b border-transparent group-hover:border-gray-800"
+            >
+              <GripVertical className="w-2.5 h-2.5 text-gray-600" />
+            </div>
+            <div draggable={false} className="select-text">
+              {children}
+            </div>
+          </>
         )}
       </div>
     </PanelCollapseContext.Provider>

@@ -101,6 +101,7 @@ function instanceToJSON(inst: InstanceData): Record<string, unknown> {
     label: inst.label,
     status: inst.status,
     source: inst.source,
+    // Backward-compat: legacy instances stored without adapterId fall back.
     adapterId: inst.adapterId || getDefaultAdapterId(),
     model: inst.model,
     blockCount: inst.blockBuffer.length,
@@ -170,7 +171,7 @@ export function registerApiRoutes(
         instanceId: inst.id,
         status: inst.status,
         source: inst.source,
-        adapterId: inst.adapterId || getDefaultAdapterId(),
+        adapterId: inst.adapterId || getDefaultAdapterId(), // backward-compat
         model: inst.model,
         isProcessing: inst.isProcessing,
         queueDepth: inst.pendingQueue.length,
@@ -295,6 +296,13 @@ export function registerApiRoutes(
         }
 
         const { dir, label, adapterId } = parsed;
+
+        // Phase 4F: adapterId is required — no silent fallback to default.
+        if (!adapterId) {
+          json(res, 400, { error: "adapterId is required. Use an explicit adapter (e.g. 'claude-code', 'shell')." });
+          return;
+        }
+
         const targetDir = dir
           ? isAbsolute(dir)
             ? resolve(dir)
@@ -310,7 +318,7 @@ export function registerApiRoutes(
           targetDir,
           label || basename(targetDir),
           "local",
-          adapterId || getDefaultAdapterId(),
+          adapterId,
         );
 
         // Audit

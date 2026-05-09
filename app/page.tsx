@@ -14,7 +14,7 @@ import { LeftSidebar } from './console/sidebar/left-sidebar';
 import { RightSidebar } from './console/sidebar/right-sidebar';
 import { StatusBar } from './console/shell/status-bar';
 import { ConsoleHeader } from './console/shell/console-header';
-import { getAdapterViewId, getAdapterIdForView, getAdapterCapabilities, syncAdapterViewsFromExtensionData, syncAdapterMetaFromExtensionData, syncAdapterCapabilitiesFromExtensionData, getViewEntry, getAllAdapterTypes } from './console/main/view-registry';
+import { getAdapterViewId, getAdapterCapabilities, syncAdapterViewsFromExtensionData, syncAdapterMetaFromExtensionData, syncAdapterCapabilitiesFromExtensionData, getViewEntry, getAllAdapterTypes, resolveChromePolicy, type ChromePolicy } from './console/main/view-registry';
 import { __coreViewsRegistered } from './console/main/register-core-views';
 import { syncExtensionPanels } from './console/panels/panel-registry';
 import { __corePanelsRegistered } from './console/panels/register-core-panels';
@@ -31,10 +31,11 @@ import { useHistoryLoader } from './console/hooks/use-history-loader';
 import { useCommandHandlers } from './console/hooks/use-command-handlers';
 import { useKeyboardShortcuts } from './console/hooks/use-keyboard-shortcuts';
 import { useContextMenu } from './console/hooks/use-context-menu';
+import type { ContextMenuItem } from './console/shell/context-menu';
 import { ConsoleOverlays } from './console/overlays/console-overlays';
 import { LayoutProvider, useLayout, SidebarSlot, MainSlot, FocusProvider, RuntimePolicyProvider, useFocus, useRuntimePolicy, WorkbenchProvider } from './console/workbench';
 import { WorkbenchLayout } from './console/stage/workbench-layout';
-import { workbenchReducer, createInitialState, ensureInstanceTab, findPane as findPaneInTree, type ViewType } from './console/stage/workbench-state';
+import { workbenchReducer, createInitialState, ensureInstanceTab, findPane as findPaneInTree, type ViewType, type PaneTab } from './console/stage/workbench-state';
 
 // ==========================================
 // Types
@@ -358,6 +359,39 @@ function PageContent() {
     }
   }, [activeInstanceId]);
 
+  // When an instance is killed/removed, clear any tabs bound to it.
+  const prevInstanceIds = useRef<string[]>([]);
+  useEffect(() => {
+    const currentIds = instances.map((i: any) => i.id);
+    const removed = prevInstanceIds.current.filter(id => !currentIds.includes(id));
+    prevInstanceIds.current = currentIds;
+    for (const id of removed) {
+      workbenchDispatch({ type: 'CLEAR_INSTANCE_TABS', instanceId: id });
+    }
+  }, [instances, workbenchDispatch]);
+
+  // ── Pane focus / Chrome policy ────────────
+  const paneFocus = useMemo(() => {
+    if (!workbenchState) return null;
+    const activePane = workbenchState.root.kind === 'pane'
+      ? workbenchState.root
+      : findPaneInTree(workbenchState.root, workbenchState.activePaneId);
+    if (!activePane) return null;
+    const activeTab = activePane.tabs.find(t => t.id === activePane.activeTabId) || activePane.tabs[0];
+    if (!activeTab) return null;
+    return { paneId: activePane.id, viewType: activeTab.viewType, instanceId: activeTab.instanceId };
+  }, [workbenchState]);
+  const activeViewChrome = paneFocus ? getViewEntry(paneFocus.viewType)?.meta.chrome : undefined;
+  const chromePolicy = resolveChromePolicy(activeViewChrome);
+  const showStatusBar = chromePolicy.statusBar !== 'hidden';
+
+  // Close command palette when the active view disables it
+  useEffect(() => {
+    if (!chromePolicy.commandPalette) {
+      setShowCommandPalette(false);
+    }
+  }, [chromePolicy.commandPalette]);
+
   // ── Instance lifecycle → notifications ──
   const prevInstanceIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
@@ -432,7 +466,7 @@ function PageContent() {
   const handleToggleLeftSidebar = useCallback(() => dispatch({ type: 'TOGGLE_SIDEBAR', position: 'left' }), [dispatch]);
   const handleRestart = useCallback(() => sendCommand('clear'), [sendCommand]);
 
-  useKeyboardShortcuts(messages, handleClearSession, handleToggleCommandPalette, handleToggleLeftSidebar, handleRestart);
+  useKeyboardShortcuts(messages, handleClearSession, handleToggleCommandPalette, handleToggleLeftSidebar, handleRestart, chromePolicy.globalShortcuts);
 
   const { ctxMenu, setCtxMenu, handleCtx } = useContextMenu(
     activeAdapterId, activeInstanceId, projectInfo, messages, createInstance, killInstance, sendCommand, extensionPointsData, viewId, isActiveRunning, workbenchState, workbenchDispatch, getAllAdapterTypes, getAdapterCapabilities, evaluateWhen
@@ -663,9 +697,30 @@ function PageContent() {
     : phase === 'done' ? 'Completed'
     : 'Error';
 
-  // ==========================================
-  // Render
-  // ==========================================
+  // ── Handle context menu on tab right-click ──
+  const handleContextTab = useCallback((tab: PaneTab, e: React.MouseEvent) => {
+    e.preventDefault();
+    const items: ContextMenuItem[] = [
+      { label: 'Copy Name', action: () => navigator.clipboard.writeText(tab.title).catch(() => {}) },
+      { label: 'Copy Tab ID', action: () => navigator.clipboard.writeText(tab.id).catch(() => {}) },
+      { label: '', divider: true, action: () => {} },
+      { label: `Type: ${tab.viewType}`, action: () => {} },
+    ];
+    if (tab.instanceId) {
+      items.push(
+        { label: '', divider: true, action: () => {} },
+        { label: `Instance: ${tab.instanceId.slice(0, 12)}...`, action: () => {} },
+      );
+    }
+    setCtxMenu({ x: e.clientX, y: e.clientY, items });
+  }, [setCtxMenu]);
+
+  // ── Handle tab reorder via drag/drop ──
+  const handleReorderTabs = useCallback((paneId: string, tabId: string, targetId: string) => {
+    workbenchDispatch({ type: 'REORDER_TABS', paneId, tabId, targetId });
+  }, [workbenchDispatch]);
+
+  // ── Render ──
   // Fetch saved connections for the connect screen
   const [savedRelays, setSavedRelays] = useState<{id:string;name:string;url:string;token?:string}[]>([]);
   useEffect(() => {
@@ -754,39 +809,34 @@ function PageContent() {
   }
 
   // ── Handle view request from pane (user picks view in EmptyPane) ──
-  const handleRequestView = useCallback(async (paneId: string, tabId: string, viewType: ViewType) => {
+  // Phase 4F: Opening a view NEVER auto-creates an instance. The tab is a UI
+  // window that can later bind to a runtime instance via the InstancesPanel or
+  // explicit "New Runtime" actions. Instance-bound views (openMode:
+  // 'instance-bound') without an attached instance show an attach state.
+  const handleRequestView = useCallback((paneId: string, tabId: string, viewType: ViewType) => {
     const entry = getViewEntry(viewType);
     const defaultTitle = entry?.meta.title || viewType.charAt(0).toUpperCase() + viewType.slice(1);
+    workbenchDispatch({ type: 'SET_TAB_VIEW', paneId, tabId, viewType, title: defaultTitle });
+  }, [workbenchDispatch]);
 
-    // Instance-requiring views: look up adapter, create instance, bind the tab
-    const adapterId = getAdapterIdForView(viewType);
-    if (adapterId) {
-      const result = await createInstance(projectInfo?.cwd || '.', undefined, adapterId);
-      if (result?.instance?.id) {
-        workbenchDispatch({
-          type: 'SET_TAB_VIEW', paneId, tabId,
-          viewType,
-          title: defaultTitle,
-          instanceId: result.instance.id,
-        });
-      }
-    } else {
-      // Static views — no instance needed
-      workbenchDispatch({ type: 'SET_TAB_VIEW', paneId, tabId, viewType, title: defaultTitle });
-    }
-  }, [createInstance, projectInfo?.cwd, workbenchDispatch]);
-
-  // Derive pane focus from workbenchState
-  const paneFocus = useMemo(() => {
-    if (!workbenchState) return null;
-    const activePane = workbenchState.root.kind === 'pane'
-      ? workbenchState.root
-      : findPaneInTree(workbenchState.root, workbenchState.activePaneId);
-    if (!activePane) return null;
-    const activeTab = activePane.tabs.find(t => t.id === activePane.activeTabId) || activePane.tabs[0];
-    if (!activeTab) return null;
-    return { paneId: activePane.id, viewType: activeTab.viewType };
-  }, [workbenchState]);
+  // Phase 4F: Bind the active pane's current tab to an instanceId (called by views after explicit create).
+  const workbenchStateRef = useRef(workbenchState);
+  workbenchStateRef.current = workbenchState;
+  const handleBindCurrentTabInstance = useCallback((instanceId: string) => {
+    const state = workbenchStateRef.current;
+    const activePane = findPaneInTree(state.root, state.activePaneId);
+    if (!activePane) return;
+    const activeTab = activePane.tabs.find(t => t.id === activePane.activeTabId);
+    if (!activeTab) return;
+    workbenchDispatch({
+      type: 'SET_TAB_VIEW',
+      paneId: activePane.id,
+      tabId: activeTab.id,
+      viewType: activeTab.viewType,
+      title: activeTab.title,
+      instanceId,
+    });
+  }, [workbenchDispatch]);
 
   // ── Workbench context value (provides session/chat state to all view components) ──
   const workbenchContextValue = useMemo(() => ({
@@ -821,6 +871,11 @@ function PageContent() {
     handleInterrupt,
     setForkTarget,
     setForkPrompt,
+    createInstance,
+    bindCurrentTabInstance: handleBindCurrentTabInstance,
+    activeInstanceId,
+    projectCwd: projectInfo?.cwd || '.',
+    activateInstance,
     activeExternalSession,
     clearExternalSession: () => {
       setActiveExternalSession(null);
@@ -842,8 +897,10 @@ function PageContent() {
     showCommands, setShowCommands, handleCommandClick,
     handleInterrupt,
     setForkTarget, setForkPrompt,
+    createInstance, handleBindCurrentTabInstance, activateInstance, activeInstanceId,
+    projectInfo?.cwd,
     activeExternalSession,
-    cmdPanelRef, scrollContainerRef, actionEndRef,
+    cmdPanelRef, scrollContainerRef, actionEndRef, projectInfo?.cwd,
   ]);
 
   return (
@@ -851,6 +908,7 @@ function PageContent() {
       <RuntimePolicyProvider>
     <div className="flex flex-col h-screen bg-[#0a0a0a] text-gray-300 font-mono text-sm overflow-hidden selection:bg-purple-900 selection:text-white relative" onContextMenu={handleCtx}>
       <ConsoleHeader
+        chromePolicy={chromePolicy}
         onMobileOpen={() => setMobileOpen(true)}
         statusColor={statusColor}
         statusText={statusText}
@@ -973,7 +1031,7 @@ function PageContent() {
         </SidebarSlot>
 
         {/* ═══ CENTER: WorkbenchLayout ════════ */}
-        <main className="flex-1 flex flex-col relative bg-black min-w-0">
+        <main className="flex-1 flex flex-col relative bg-black min-w-0 min-h-0">
           <WorkbenchProvider value={workbenchContextValue}>
           <div className="flex items-center justify-between h-7 px-2 border-b border-gray-800 bg-[#0a0a0a] shrink-0">
             <span className="flex items-center gap-2 text-[10px] font-bold text-gray-500 tracking-wider">
@@ -1013,6 +1071,8 @@ function PageContent() {
             state={workbenchState}
             dispatch={workbenchDispatch}
             onRequestView={handleRequestView}
+            onContextTab={handleContextTab}
+            onReorderTabs={handleReorderTabs}
             renderView={(viewType, instanceId) => {
               // Generic view resolution: instance-bound views resolve through adapter system,
               // static views use viewType directly as the registry key.
@@ -1020,7 +1080,7 @@ function PageContent() {
               const resolvedViewId = instanceId
                 ? getAdapterViewId(instances.find((i: any) => i.id === instanceId)?.adapterId || getAllAdapterTypes()[0]?.id || getDefaultAdapterId()) || viewType
                 : viewType;
-              return <MainSlot viewId={resolvedViewId} />;
+              return <MainSlot viewId={resolvedViewId} instanceId={instanceId} />;
             }}
           />
           </WorkbenchProvider>
@@ -1055,11 +1115,13 @@ function PageContent() {
         </SidebarSlot>
       </div>
 
-      <StatusBar
-        queueStatus={queueStatus}
-        onSetMode={setMode}
-        onSetEffort={setEffort}
-      />
+      {showStatusBar && (
+        <StatusBar
+          queueStatus={queueStatus}
+          onSetMode={setMode}
+          onSetEffort={setEffort}
+        />
+      )}
 
       {/* Custom scrollbar styles */}
       <style>{`
@@ -1102,7 +1164,6 @@ function PageContent() {
         instances={instances}
         activeInstanceId={activeInstanceId}
         onActivate={activateInstance}
-        onCreate={() => createInstance(projectInfo?.cwd || '.')}
         onKill={killInstance}
         onQuickAction={handleQuickAction}
       />
@@ -1111,4 +1172,3 @@ function PageContent() {
     </FocusProvider>
   );
 }
-

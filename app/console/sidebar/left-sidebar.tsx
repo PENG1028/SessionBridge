@@ -23,7 +23,9 @@ interface LeftSidebarProps {
 
 export function LeftSidebar(props: LeftSidebarProps) {
   const { whenContext } = useFocus();
-  const registryPanels = getPanels('left', whenContext);
+  // Must memoize: getPanels creates a new array every call, and without memo the
+  // registryPanels → panelIds → useEffect([panelIds]) chain causes an infinite loop.
+  const registryPanels = useMemo(() => getPanels('left', whenContext), [whenContext]);
   const [savedOrder, setSavedOrder] = useState<string[] | null>(null);
 
   useEffect(() => {

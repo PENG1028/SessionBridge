@@ -3,7 +3,7 @@
 import type { ReactNode } from 'react';
 import { PaneTabBar } from './pane-tab-bar';
 import { EmptyPane } from './empty-pane';
-import type { PaneState, ViewType } from './workbench-state';
+import type { PaneState, PaneTab, ViewType } from './workbench-state';
 
 interface PaneViewProps {
   pane: PaneState;
@@ -14,9 +14,11 @@ interface PaneViewProps {
   onAddTab: () => void;
   onRequestView?: (tabId: string, viewType: ViewType) => void;
   renderView: (viewType: ViewType, instanceId?: string) => ReactNode;
+  onContextTab?: (tab: PaneTab, e: React.MouseEvent) => void;
+  onReorderTabs?: (tabId: string, targetId: string) => void;
 }
 
-export function PaneView({ pane, isActive, onFocus, onSelectTab, onCloseTab, onAddTab, onRequestView, renderView }: PaneViewProps) {
+export function PaneView({ pane, isActive, onFocus, onSelectTab, onCloseTab, onAddTab, onRequestView, renderView, onContextTab, onReorderTabs }: PaneViewProps) {
   const activeTab = pane.tabs.find(t => t.id === pane.activeTabId) || pane.tabs[0];
   if (!activeTab) {
     return (
@@ -37,9 +39,11 @@ export function PaneView({ pane, isActive, onFocus, onSelectTab, onCloseTab, onA
         onSelectTab={onSelectTab}
         onCloseTab={onCloseTab}
         onAddTab={onAddTab}
+        onContextTab={onContextTab}
+        onReorderTabs={onReorderTabs}
       />
 
-      <div className="flex-1 min-w-0 min-h-0">
+      <div className="flex-1 flex flex-col min-w-0 min-h-0">
         {activeTab.viewType === 'empty' ? (
           <EmptyPane onSelectView={(vt) => onRequestView?.(pane.activeTabId, vt)} />
         ) : (

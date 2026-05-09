@@ -26,7 +26,7 @@ interface RightSidebarProps {
 
 export function RightSidebar(props: RightSidebarProps) {
   const { whenContext } = useFocus();
-  const registryPanels = getPanels('right', whenContext);
+  const registryPanels = useMemo(() => getPanels('right', whenContext), [whenContext]);
   const [savedOrder, setSavedOrder] = useState<string[] | null>(null);
 
   useEffect(() => {

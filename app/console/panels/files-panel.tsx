@@ -40,6 +40,13 @@ export function FilesPanel(props: FilesPanelProps) {
     <>
       {/* Compact header: h-8, title + actions + collapse in one row */}
       <div className="flex items-center h-8 px-2 border-b border-gray-800 gap-1.5 bg-[#0d0d0d]">
+        <button
+          onClick={onToggle}
+          className="text-gray-600 hover:text-gray-300 transition-colors p-0.5 -ml-0.5"
+          title="Collapse panel"
+        >
+          <ChevronDown className="w-3 h-3 transition-transform duration-200" />
+        </button>
         <Folder className="w-3 h-3 text-gray-500 shrink-0" />
         <span className="text-[10px] font-bold text-gray-500 tracking-wider">FILES</span>
         <div className="flex-1" />
@@ -51,13 +58,6 @@ export function FilesPanel(props: FilesPanelProps) {
           <Upload className="w-3 h-3" />
         </button>
         <input ref={fileInputRef} type="file" className="hidden" onChange={handleUpload} />
-        <button
-          onClick={onToggle}
-          className="text-gray-600 hover:text-gray-300 transition-colors p-0.5"
-          title="Collapse panel"
-        >
-          <ChevronDown className="w-3 h-3" />
-        </button>
       </div>
       <div className="flex-1 overflow-y-auto p-1.5 text-xs min-h-0">
         {!fileTree?.['.']?.loaded ? (

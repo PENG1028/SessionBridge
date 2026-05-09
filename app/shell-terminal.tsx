@@ -32,6 +32,12 @@ export default function ShellTerminal({ wsUrl, instanceId, token }: ShellTermina
   function connect(term: Terminal, fitAddon: FitAddon) {
     if (!mountedRef.current) return;
 
+    // Phase 4F: Do NOT connect without an instanceId — shell.spawn without
+    // instanceId creates a new runtime, which is an implicit side effect.
+    // The caller (TerminalView) is responsible for rendering ShellTerminal
+    // only when a valid instanceId is available.
+    if (!instanceId) return;
+
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
@@ -42,7 +48,7 @@ export default function ShellTerminal({ wsUrl, instanceId, token }: ShellTermina
       const helloBody: Record<string, unknown> = { role: "browser", features: ["shell"] };
       if (token) helloBody.token = token;
       ws.send(env("hello", helloBody));
-      ws.send(env("shell.spawn", instanceId ? { instanceId } : {}));
+      ws.send(env("shell.spawn", { instanceId }));
       // Initial resize
       const dims = fitAddon.proposeDimensions();
       if (dims) {
@@ -169,9 +175,8 @@ export default function ShellTerminal({ wsUrl, instanceId, token }: ShellTermina
   return (
     <div
       ref={containerRef}
+      className="flex-1 w-full min-h-0"
       style={{
-        width: '100%',
-        height: '100%',
         background: '#0a0a0a',
         overflow: 'hidden',
       }}

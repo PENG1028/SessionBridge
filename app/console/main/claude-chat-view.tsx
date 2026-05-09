@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Terminal, Folder, FileCode, Eye, Search, Play,
   Square, GitBranch, ChevronRight,
@@ -144,7 +144,53 @@ function MarkdownRenderer({ content }: { content: string }) {
 
 // ─── ClaudeChatView ─────────────────────────────────────
 
-export function ClaudeChatView() {
+export function ClaudeChatView({ instanceId }: { instanceId?: string }) {
+  // Phase 4F: When no instanceId is bound, show attach state instead of
+  // implicitly reusing the global activeInstanceId from workbench context.
+  if (!instanceId) {
+    return <ClaudeChatEmptyState />;
+  }
+
+  return <ClaudeChatInner instanceId={instanceId} />;
+}
+
+function ClaudeChatEmptyState() {
+  const { createInstance, bindCurrentTabInstance, projectCwd } = useWorkbench();
+  const [creating, setCreating] = useState(false);
+
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center bg-[#0a0a0a] min-h-0 gap-4">
+      <Sparkles className="w-10 h-10 text-gray-700" />
+      <div className="text-center space-y-1">
+        <p className="text-xs text-gray-500">No Claude runtime instance attached</p>
+        <p className="text-[10px] text-gray-700">Attach an existing instance or create a new one</p>
+      </div>
+      <div className="flex flex-col items-center gap-2">
+        <p className="text-[9px] text-gray-700 italic">(Instance selector coming soon)</p>
+        <button
+          onClick={async () => {
+            setCreating(true);
+            try {
+              const result = await createInstance(projectCwd || '.', 'Claude Chat', 'claude-code');
+              if (result?.instance?.id) {
+                bindCurrentTabInstance(result.instance.id);
+              }
+            } finally {
+              setCreating(false);
+            }
+          }}
+          disabled={creating}
+          className="flex items-center gap-2 px-4 py-2 bg-purple-700 hover:bg-purple-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold rounded border border-purple-600 transition-colors"
+        >
+          <Sparkles className="w-4 h-4" />
+          {creating ? 'Creating...' : 'Create New Runtime'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ClaudeChatInner({ instanceId }: { instanceId: string }) {
   const {
     messages, turns,
     phase, setPhase, currentActivity, setCurrentActivity,
@@ -157,7 +203,13 @@ export function ClaudeChatView() {
     setForkTarget, setForkPrompt,
     activeExternalSession, clearExternalSession,
     scrollContainerRef, actionEndRef,
+    activeInstanceId, activateInstance,
   } = useWorkbench();
+
+  // Phase 4F: When this tab's instanceId doesn't match the global active instance,
+  // the chat state shown is global (not scoped to this tab's instance). Block
+  // input/commands/interrupt to prevent accidental cross-instance interference.
+  const isActiveInstance = instanceId === activeInstanceId;
 
   return (
     <>
@@ -212,8 +264,31 @@ export function ClaudeChatView() {
         </div>
       )}
 
+      {/* ── Phase 4F: instance mismatch banner ── */}
+      {!isActiveInstance && (
+        <div className="shrink-0 px-4 py-2 bg-amber-900/20 border-b border-amber-700/30 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+            <span className="text-[10px] text-amber-300">
+              This tab is bound to a non-active instance. Messages shown are from the global session.
+            </span>
+          </div>
+          <button
+            onClick={() => activateInstance(instanceId)}
+            className="text-[9px] px-2 py-1 bg-amber-700 hover:bg-amber-600 text-white rounded border border-amber-600 transition-colors shrink-0"
+          >
+            Switch to this instance
+          </button>
+        </div>
+      )}
+      {/* TODO(Phase 4F): Instance-scoped message store. Currently all chat state
+       * (messages, turns, phase, input) is global — not scoped per instanceId.
+       * When this tab's instanceId differs from activeInstanceId, the messages
+       * shown belong to the global active instance. A future phase should scope
+       * message storage by instanceId so each tab shows its own conversation. */}
+
       {/* ── Message stream ── */}
-      <div className="flex-1 overflow-y-auto" ref={scrollContainerRef}>
+      <div className="flex-1 overflow-y-auto min-h-0" ref={scrollContainerRef}>
         <div className="px-4 py-4">
         {isRestoring ? (
           <div className="flex items-center justify-center h-full">
@@ -426,6 +501,25 @@ export function ClaudeChatView() {
 
       {/* ── Input bar ── */}
       <div className="shrink-0 px-4 py-3 bg-gradient-to-t from-black via-[#0a0a0a] to-transparent relative">
+        {!isActiveInstance ? (
+          /* Disabled input when this tab's instance is not the global active one */
+          <div className="flex items-center gap-1.5 bg-[#151515] border border-gray-700 p-2 rounded-lg opacity-50">
+            <button type="button" disabled
+              className="text-xs font-bold px-1.5 py-0.5 rounded shrink-0 text-gray-600 cursor-not-allowed">
+              {'/>'}
+            </button>
+            <ChevronRight className="w-3.5 h-3.5 text-gray-600 shrink-0" />
+            <input type="text" disabled
+              placeholder="Switch to this instance to send commands"
+              className="flex-1 bg-transparent outline-none text-gray-200 placeholder-gray-700 text-sm min-w-0 cursor-not-allowed"
+            />
+            <button disabled
+              className="px-4 py-1.5 bg-gray-800 text-gray-600 text-xs font-bold rounded flex items-center gap-1.5 shrink-0 cursor-not-allowed">
+              <Play className="w-3 h-3 fill-current" /> EXEC
+            </button>
+          </div>
+        ) : (
+        <>
         {/* Slash command panel */}
         {showCommands && (
           <div ref={cmdPanelRef}
@@ -506,6 +600,8 @@ export function ClaudeChatView() {
             </button>
           )}
         </form>
+        </>
+        )}
       </div>
 
     </>

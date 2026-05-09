@@ -12,6 +12,22 @@ export interface ViewMeta {
     left?: 'auto' | 'hidden' | 'shown';
     right?: 'auto' | 'hidden' | 'shown';
   };
+  /** Optional host chrome preferences for this view. */
+  chrome?: {
+    header?: 'full' | 'minimal' | 'hidden';
+    statusBar?: 'auto' | 'hidden' | 'shown';
+    commandPalette?: boolean;
+    globalShortcuts?: boolean;
+  };
+  /**
+   * How this view handles instance binding.
+   * - 'singleton': static view, no instance needed (default)
+   * - 'instance-bound': requires a runtime instance (terminal, claude-chat)
+   * - 'session-bound': binds to a session (future)
+   * - 'node-bound': binds to a workspace node (future)
+   * - 'runtime-create': creating this view should prompt for new instance (future)
+   */
+  openMode?: 'singleton' | 'instance-bound' | 'session-bound' | 'node-bound' | 'runtime-create';
   /** Show this view in the "Open View" selector. Core workspace views set this. */
   showInSelector?: boolean;
   /** Category label in the view selector (e.g. "workspace", "adapter"). */
@@ -146,4 +162,23 @@ export function syncAdapterCapabilitiesFromExtensionData(eps: Record<string, unk
 
 export function getAdapterCapabilities(adapterId: string): Record<string, boolean> | undefined {
   return dynamicAdapterCapabilities.get(adapterId);
+}
+
+// ─── Chrome Policy ─────────────────────────────────────────────
+// Resolved per-view chrome policy with defaults filled in.
+
+export interface ChromePolicy {
+  header: 'full' | 'minimal' | 'hidden';
+  statusBar: 'auto' | 'hidden' | 'shown';
+  commandPalette: boolean;
+  globalShortcuts: boolean;
+}
+
+export function resolveChromePolicy(chrome?: ViewMeta['chrome']): ChromePolicy {
+  return {
+    header: chrome?.header ?? 'full',
+    statusBar: chrome?.statusBar ?? 'auto',
+    commandPalette: chrome?.commandPalette ?? true,
+    globalShortcuts: chrome?.globalShortcuts ?? true,
+  };
 }

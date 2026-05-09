@@ -98,6 +98,10 @@ export class InstanceManager {
 
   /** Create a new instance and register it */
   create(dir: string, label?: string, source?: InstanceSource, adapterId?: string): InstanceData {
+    // TODO(Phase 4F): Require explicit adapterId. The fallback below is only
+    // for internal callers (shell.spawn, remote agent registration) that
+    // resolve the adapter themselves before calling create(). The REST API
+    // route (POST /api/instances) now rejects missing adapterId.
     const id = `inst_${++this.idCounter}_${Date.now().toString(36)}`;
     const instance: InstanceData = {
       id,

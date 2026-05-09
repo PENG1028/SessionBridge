@@ -15,7 +15,6 @@ interface MobileSidebarProps {
   instances: any[];
   activeInstanceId: string | null;
   onActivate: (id: string) => void;
-  onCreate: () => void;
   onKill: (id: string) => void;
   onQuickAction: (cmd: string) => void;
 }
@@ -23,7 +22,7 @@ interface MobileSidebarProps {
 export function MobileSidebar({
   open, onClose,
   fileTree, expandedDirs, onToggleDir, onOpenFile, onSendFile,
-  instances, activeInstanceId, onActivate, onCreate, onKill, onQuickAction,
+  instances, activeInstanceId, onActivate, onKill, onQuickAction,
 }: MobileSidebarProps) {
   if (!open) return null;
 

@@ -2,7 +2,7 @@
 
 import { useCallback, useRef, useState, type ReactNode, type MouseEvent as ReactMouseEvent } from 'react';
 import { PaneView } from './pane-view';
-import type { LayoutNode, SplitNode, PaneState, ViewType, WorkbenchState, WorkbenchAction } from './workbench-state';
+import type { LayoutNode, SplitNode, PaneState, PaneTab, ViewType, WorkbenchState, WorkbenchAction } from './workbench-state';
 import { genTabId } from './workbench-state';
 import { Terminal, X } from 'lucide-react';
 
@@ -11,6 +11,8 @@ interface WorkbenchLayoutProps {
   dispatch: (action: WorkbenchAction) => void;
   renderView: (viewType: ViewType, instanceId?: string) => ReactNode;
   onRequestView?: (paneId: string, tabId: string, viewType: ViewType) => void;
+  onContextTab?: (tab: PaneTab, e: React.MouseEvent) => void;
+  onReorderTabs?: (paneId: string, tabId: string, targetId: string) => void;
 }
 
 // ─── Draggable divider ─────────────────────────────────────────
@@ -44,6 +46,8 @@ function LayoutNodeRenderer({
   onAddTab,
   onRequestView,
   renderView,
+  onContextTab,
+  onReorderTabs,
 }: {
   node: LayoutNode;
   activePaneId: string;
@@ -53,6 +57,8 @@ function LayoutNodeRenderer({
   onAddTab: (paneId: string) => void;
   onRequestView?: (paneId: string, tabId: string, viewType: ViewType) => void;
   renderView: (viewType: ViewType, instanceId?: string) => ReactNode;
+  onContextTab?: (tab: PaneTab, e: React.MouseEvent) => void;
+  onReorderTabs?: (paneId: string, tabId: string, targetId: string) => void;
 }) {
   if (node.kind === 'pane') {
     const isActive = node.id === activePaneId;
@@ -71,6 +77,8 @@ function LayoutNodeRenderer({
           onAddTab={() => onAddTab(node.id)}
           onRequestView={(tabId, viewType) => onRequestView?.(node.id, tabId, viewType)}
           renderView={renderView}
+          onContextTab={onContextTab}
+          onReorderTabs={(tabId, targetId) => onReorderTabs?.(node.id, tabId, targetId)}
         />
       </div>
     );
@@ -85,6 +93,8 @@ function LayoutNodeRenderer({
     onAddTab={onAddTab}
     onRequestView={onRequestView}
     renderView={renderView}
+    onContextTab={onContextTab}
+    onReorderTabs={onReorderTabs}
   />;
 }
 
@@ -99,6 +109,8 @@ function SplitRenderer({
   onAddTab,
   onRequestView,
   renderView,
+  onContextTab,
+  onReorderTabs,
 }: {
   split: SplitNode;
   activePaneId: string;
@@ -108,6 +120,8 @@ function SplitRenderer({
   onAddTab: (paneId: string) => void;
   onRequestView?: (paneId: string, tabId: string, viewType: ViewType) => void;
   renderView: (viewType: ViewType, instanceId?: string) => ReactNode;
+  onContextTab?: (tab: PaneTab, e: React.MouseEvent) => void;
+  onReorderTabs?: (paneId: string, tabId: string, targetId: string) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState<{ index: number; start: number; startSizes: number[] } | null>(null);
@@ -196,6 +210,8 @@ function SplitRenderer({
               onAddTab={onAddTab}
               onRequestView={onRequestView}
               renderView={renderView}
+              onContextTab={onContextTab}
+              onReorderTabs={onReorderTabs}
             />
           </div>
         );
@@ -271,7 +287,7 @@ function BottomDock({
       </div>
 
       {/* Content */}
-      <div className="flex-1 min-h-0 overflow-hidden">
+      <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
         {activeTab && renderView(activeTab.viewType, activeTab.instanceId)}
       </div>
     </div>
@@ -280,7 +296,7 @@ function BottomDock({
 
 // ─── Main layout ───────────────────────────────────────────────
 
-export function WorkbenchLayout({ state, dispatch, renderView, onRequestView }: WorkbenchLayoutProps) {
+export function WorkbenchLayout({ state, dispatch, renderView, onRequestView, onContextTab, onReorderTabs }: WorkbenchLayoutProps) {
   const onFocusPane = useCallback((id: string) => {
     dispatch({ type: 'FOCUS_PANE', paneId: id });
   }, [dispatch]);
@@ -302,6 +318,10 @@ export function WorkbenchLayout({ state, dispatch, renderView, onRequestView }: 
     });
   }, [dispatch]);
 
+  const handleReorderTabs = useCallback((paneId: string, tabId: string, targetId: string) => {
+    dispatch({ type: 'REORDER_TABS', paneId, tabId, targetId });
+  }, [dispatch]);
+
   return (
     <div className="flex flex-col flex-1 min-w-0 min-h-0">
       {/* Main area */}
@@ -314,6 +334,8 @@ export function WorkbenchLayout({ state, dispatch, renderView, onRequestView }: 
         onAddTab={onAddTab}
         onRequestView={onRequestView}
         renderView={renderView}
+        onContextTab={onContextTab}
+        onReorderTabs={handleReorderTabs}
       />
 
       {/* Bottom dock */}

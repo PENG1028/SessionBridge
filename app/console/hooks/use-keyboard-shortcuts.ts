@@ -12,11 +12,13 @@ export function useKeyboardShortcuts(
   onToggleCommandPalette: () => void,
   onToggleLeftSidebar: () => void,
   onRestart: () => void,
+  enabled = true,
 ) {
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
 
   useEffect(() => {
+    if (!enabled) return;
     const handleGlobalKey = (e: KeyboardEvent) => {
       // Ctrl+L: clear main output area
       if ((e.ctrlKey || e.metaKey) && e.key === 'l') {
@@ -64,5 +66,5 @@ export function useKeyboardShortcuts(
     };
     window.addEventListener('keydown', handleGlobalKey);
     return () => window.removeEventListener('keydown', handleGlobalKey);
-  }, [onClearSession, onToggleCommandPalette, onToggleLeftSidebar, onRestart]);
+  }, [enabled, onClearSession, onToggleCommandPalette, onToggleLeftSidebar, onRestart]);
 }

@@ -49,3 +49,20 @@ Scene Tab 切换     → InstanceTabBar 组件（click 触发 activateInstance�
 | `src/instance-manager.ts` | 实例管理器 |
 | `adapters/shell/index.ts` | Shell 适配器实现 |
 | `adapters/claude-code/` | Claude Code 适配器 |
+
+## Component Ownership / 组件所有权命名
+
+For the full ownership and slot policy, see
+[component-ownership-and-slots.md](./component-ownership-and-slots.md).
+
+| 中文名 | English name | Short name | Code / policy mapping |
+|---|---|---|---|
+| 系统内核 | System Kernel | Kernel | `InstanceManager`, `PermissionModel`, `ExtensionLoader`, `ExtensionHost`, transport, workbench state |
+| 宿主外壳 | Host Chrome | Chrome | `ConsoleHeader`, `StatusBar`, command palette shell, context menu shell, settings shell |
+| 工作台表面 | Workbench Surface | Surface | `WorkbenchLayout`, `MainSlot`, sidebars, bottom pane, floating/popup placement |
+| 共享系统组件 | Shared System UI | Shared UI | File tree, process list, terminal widget, markdown renderer, UI primitives |
+| 插件自有组件 | Plugin-Owned UI | Plugin UI | Adapter/plugin views and panels such as `TerminalView`, `ClaudeChatView`, `TaskPanel` |
+| 插槽 | Slot | Slot | Public host placement area such as `header.right`, `statusBar.left`, `sidebar.right`, `main`, `bottom` |
+| 贡献点 | Contribution Point | Contribution | Manifest/API declarations for views, panels, menus, commands, keybindings, chrome items |
+| 主视图外壳策略 | View Chrome Policy | Chrome Policy | `ViewMeta.chrome`, e.g. header/status bar/command palette/shortcut availability |
+| 放置能力 | Placement Capability | Placement | Allowed placements such as `main`, `left`, `right`, `bottom`, `floating`, `popout` |
