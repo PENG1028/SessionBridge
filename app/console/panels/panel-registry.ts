@@ -16,6 +16,8 @@ export interface PanelRegistration {
 }
 
 const registry = new Map<string, PanelRegistration>();
+/** Tracks panel IDs added by syncExtensionPanels, so stale entries can be removed on re-sync. */
+const extensionPanelIds = new Set<string>();
 
 export function registerPanel(reg: PanelRegistration): void {
   registry.set(reg.id, reg);
@@ -23,10 +25,36 @@ export function registerPanel(reg: PanelRegistration): void {
 
 export function unregisterPanel(id: string): void {
   registry.delete(id);
+  extensionPanelIds.delete(id);
 }
 
 export function clearPanels(): void {
   registry.clear();
+  extensionPanelIds.clear();
+}
+
+// ── Panel Component Overrides ──────────────────────────────────
+// Allows core to register known React components for panel IDs
+// that are declared in extension manifests. Extension manifests
+// describe the panel (title, side, order) but don't ship React
+// components — these overrides fill in the rendering.
+//
+// Register a component override BEFORE syncExtensionPanels runs,
+// typically at module init time.
+
+const componentOverrides = new Map<string, ComponentType<any>>();
+
+/**
+ * Register a React component for a panel ID.
+ * When syncExtensionPanels encounters this ID, it uses this component
+ * instead of the default PlaceholderPanel.
+ */
+export function registerPanelComponent(id: string, component: ComponentType<any>): void {
+  componentOverrides.set(id, component);
+}
+
+export function getPanelComponentOverride(id: string): ComponentType<any> | undefined {
+  return componentOverrides.get(id);
 }
 
 /**
@@ -45,24 +73,34 @@ export function getPanels(side: 'left' | 'right', ctx?: WhenContext): PanelRegis
 
 /**
  * Sync extension panel descriptors from server manifests into the registry.
- * Only adds panels whose IDs are not already registered by core panels.
+ * Removes any panels from a previous sync, then re-adds from current views.
+ * Core panels (registered before the first sync) are never removed.
+ * Uses component overrides (registered via registerPanelComponent) for known
+ * panel types, falling back to a placeholder for unknown types.
  */
 export function syncExtensionPanels(
   leftViews?: { id: string; title: string; icon: string; defaultVisible: boolean; when?: string }[],
   rightViews?: { id: string; title: string; icon: string; defaultVisible: boolean; when?: string }[],
 ): void {
+  // Remove all panels from the previous sync — stale entries must not linger.
+  for (const id of extensionPanelIds) {
+    registry.delete(id);
+  }
+  extensionPanelIds.clear();
+
   const addViews = (views: typeof leftViews, side: 'left' | 'right') => {
     if (!views) return;
     for (const v of views) {
-      if (registry.has(v.id)) continue;
+      if (registry.has(v.id)) continue; // core panel — never overwrite
       registerPanel({
         id: v.id,
         side,
         title: v.title,
         order: 100,
         when: v.when,
-        component: PlaceholderPanel,
+        component: getPanelComponentOverride(v.id) ?? PlaceholderPanel,
       });
+      extensionPanelIds.add(v.id);
     }
   };
   addViews(leftViews, 'left');

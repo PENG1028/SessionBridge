@@ -21,9 +21,11 @@ import { getAdapterViewId, getAdapterIdForView, getAdapterCapabilities, syncAdap
 import { __coreViewsRegistered } from './console/main/register-core-views';
 import { syncExtensionPanels } from './console/panels/panel-registry';
 import { __corePanelsRegistered } from './console/panels/register-core-panels';
+import { __extensionPanelComponentsRegistered } from './console/panels/register-panel-components';
 import { evaluateWhen } from '../lib/evaluate-when';
 import { getDefaultAdapterId } from '../adapters/registry';
 void __corePanelsRegistered;
+void __extensionPanelComponentsRegistered;
 void __coreViewsRegistered;
 import { useNotification } from './console/shared/notification-context';
 import { sessionStore } from '../lib/session-store';

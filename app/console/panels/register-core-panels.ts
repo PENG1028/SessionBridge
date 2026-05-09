@@ -8,7 +8,11 @@ import { SessionActionsPanel } from './session-actions-panel';
 import { SnapshotsPanel } from './snapshots-panel';
 import { FilesContextPanel } from './files-context-panel';
 import { TerminalLogPanel } from './terminal-log-panel';
-import { LogsPanel, TerminalPanel, SystemPanel, ProcessesPanel } from './extension-panels';
+
+// Extension panels (logs, terminal, system, processes) are declared in
+// adapter manifests (sb-extension.json contributes.views) and synced
+// into the registry at runtime via syncExtensionPanels().  Core provides
+// the React components via register-panel-components.ts.
 
 /** Dummy symbol to prevent tree-shaking of module-level side effects. */
 export const __corePanelsRegistered = true;
@@ -22,9 +26,3 @@ registerPanel({ id: 'session-actions', side: 'right', title: 'Actions', order: 2
 registerPanel({ id: 'snapshots', side: 'right', title: 'Snapshots', order: 30, component: SnapshotsPanel });
 registerPanel({ id: 'files-context', side: 'right', title: 'Files in Context', order: 40, component: FilesContextPanel });
 registerPanel({ id: 'terminal-log', side: 'right', title: 'Terminal Log', order: 50, component: TerminalLogPanel });
-
-// Extension panels (from adapter manifests)
-registerPanel({ id: 'logs', side: 'right', title: 'Logs', order: 61, component: LogsPanel });
-registerPanel({ id: 'terminal', side: 'right', title: 'Terminal', order: 62, component: TerminalPanel });
-registerPanel({ id: 'system', side: 'right', title: 'System', order: 63, component: SystemPanel });
-registerPanel({ id: 'processes', side: 'right', title: 'Processes', order: 64, component: ProcessesPanel });
