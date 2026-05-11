@@ -45,6 +45,7 @@ registerPanel({
 registerPanel({
   id: 'quick-actions', side: 'left', title: 'Quick Actions', order: 30,
   icon: Zap,
+  when: 'view == "claude-chat"',
   component: QuickActionsPanel,
 });
 

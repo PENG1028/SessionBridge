@@ -9,9 +9,9 @@ Current implementation supports `left` and `right` dock areas through `LeftSideb
 | Concept | Current status | Target |
 |---|---|---|
 | Dock areas | `left`, `right` implemented | `left`, `right`, `bottom`, `floating` |
-| Panel order | Persisted per side globally | Persist per Focus Scope / Dock Profile |
-| Collapse state | Persisted globally by panel id | Persist per Focus Scope / Dock Profile |
-| Panel size | Not first-class | Persist per Focus Scope / Dock Profile |
+| Panel order | Persisted per view Dock Profile | Persist per Focus Scope / Dock Profile |
+| Collapse state | Persisted per view Dock Profile | Persist per Focus Scope / Dock Profile |
+| Panel size | API prepared, resize UI pending | Persist per Focus Scope / Dock Profile |
 | Mobile mapping | Partially via mobile sidebar | Host maps dock areas to drawer/sheet/fullscreen |
 
 Dock areas are stable host layout regions. Focus changes should filter dock panels and restore a profile; they should not destroy the whole dock area.
@@ -24,9 +24,10 @@ Unified wrapper for all sidebar panels. Renders a consistent header (title, icon
 
 ```typescript
 interface DockPanelFrameProps {
-  panelId: string;                                                  // unique panel ID, used for collapse localStorage key + DnD
+  panelId: string;                                                  // unique panel ID, used for collapse state + DnD
   title: string;                                                    // display title in header
   icon?: ReactNode;                                                 // icon element rendered in header (resolved from PanelRegistration.icon)
+  profileKey: string;                                               // dock profile key for persisting collapse state per view scope
   actions?: ReactNode;                                              // action buttons in header (resolved from PanelRegistration.getActions)
   children: ReactNode;                                              // panel body — always mounted (hidden when collapsed via CSS)
   onReorder: (dragId: string, targetId: string) => void;            // called when this panel is dropped on another
@@ -37,29 +38,60 @@ interface DockPanelFrameProps {
 
 | Feature | Implementation |
 |---------|---------------|
-| **Collapse** | Chevron button toggles collapse, currently persisted to localStorage key `sessionbridge-collapsed-panels` as JSON string array. Target: scope by Dock Profile. |
+| **Collapse** | Chevron button toggles collapse, persisted per view Dock Profile. |
 | **Drag & Drop** | Absolute-positioned drag handle on the left edge, visible on group hover. Drop indicator is an absolute `2px` purple line overlay |
 | **Actions** | Rendered in header right side, always visible regardless of collapse state |
 | **Children** | Always mounted in the React tree; hidden via `className="hidden"` when collapsed. Rationale: panels with internal timers/polling (e.g. InstanceList) continue to work |
-| **Sync** | Collapse state re-reads from localStorage when `panelId` changes (DnD replacement) |
+| **Sync** | Collapse state re-reads from Dock Profile when `profileKey` or `panelId` changes (focus switch or DnD replacement) |
 
 ### Collapse Persistence
 
+See `app/console/sidebar/dock-profile.ts`:
+
 ```typescript
-const COLLAPSE_KEY = 'sessionbridge-collapsed-panels';
-// Format: string[] of panel IDs that are collapsed
+function isPanelCollapsed(profileKey: string, panelId: string): boolean;
+function setPanelCollapsed(profileKey: string, panelId: string, collapsed: boolean): void;
 ```
+
+Stored under `sessionbridge-dock-profiles` key as a JSON object keyed by profile key (`view:<viewType>`).
 
 ### Panel Order Persistence
 
-```typescript
-const ORDER_KEY = 'sessionbridge-sidebar-order';
-// Format: { left: string[], right: string[] } — panel IDs in display order
+See `app/console/sidebar/dock-profile.ts`:
 
-function loadPanelOrder(side: 'left' | 'right'): string[] | null;
-function savePanelOrder(side: 'left' | 'right', order: string[]): void;
+```typescript
+function loadPanelOrder(area: DockArea, profileKey: string): string[] | null;
+function savePanelOrder(area: DockArea, profileKey: string, order: string[]): void;
 function applyPanelOrder<T extends { id: string }>(panels: T[], savedOrder: string[] | null): T[];
 ```
+
+Legacy keys `sessionbridge-sidebar-order` and `sessionbridge-collapsed-panels` are migrated on first read and then cleared.
+
+## DockProfile
+
+Location: `app/console/sidebar/dock-profile.ts`
+
+```typescript
+type DockArea = 'left' | 'right';
+
+interface DockProfileState {
+  order?: Partial<Record<DockArea, string[]>>;
+  collapsed?: string[];
+  sizes?: Record<string, number>;
+}
+
+// Public API
+function loadPanelOrder(area: DockArea, profileKey: string): string[] | null;
+function savePanelOrder(area: DockArea, profileKey: string, order: string[]): void;
+function loadCollapsedPanels(profileKey: string): string[];
+function isPanelCollapsed(profileKey: string, panelId: string): boolean;
+function setPanelCollapsed(profileKey: string, panelId: string, collapsed: boolean): void;
+function loadPanelSize(profileKey: string, panelId: string): number | null;    // API prepared, UI pending
+function savePanelSize(profileKey: string, panelId: string, size: number): void;
+function applyPanelOrder<T extends { id: string }>(panels: T[], savedOrder: string[] | null): T[];
+```
+
+Profile keys are formatted as `view:<viewType>`, e.g. `view:claude-chat`, `view:terminal`. Instance-scoped profiles (`instance:<instanceId>`) are future.
 
 ## PanelRegistration
 
@@ -68,13 +100,26 @@ Location: `app/console/panels/panel-registry.ts`
 ```typescript
 interface PanelRegistration {
   id: string;
-  side: 'left' | 'right';
+  side: 'left' | 'right';                                          // Future: replace with dock area
   title: string;
   order: number;
-  when?: string;                                            // when-condition for visibility (evaluateWhen syntax)
-  component: ComponentType<any>;                            // React component rendered in the panel body
-  icon?: ComponentType<{ className?: string }>;             // Icon component resolved at sidebar render time
-  getActions?: (props: Record<string, any>) => ReactNode;    // Action buttons resolved at sidebar render time
+  when?: string;                                                    // when-condition for visibility (evaluateWhen syntax)
+  component: ComponentType<any>;                                    // React component rendered in the panel body
+  icon?: ComponentType<{ className?: string }>;                     // Icon component resolved at sidebar render time
+  getActions?: (props: Record<string, any>) => ReactNode;           // Action buttons resolved at sidebar render time
+
+  // Dock Profile / Layout hints (Phase 4I+, prepared but not enforced)
+  defaultSize?: 'compact' | 'normal' | 'expanded' | number;
+  minSize?: number;
+  maxSize?: number;
+  keepMounted?: boolean;
+  preferredArea?: 'left' | 'right' | 'bottom' | 'floating';
+  allowedAreas?: Array<'left' | 'right' | 'bottom' | 'floating'>;
+  mobile?: {
+    placement?: 'auto' | 'drawer' | 'sheet' | 'fullscreen' | 'hidden';
+    priority?: number;
+    custom?: boolean;
+  };
 }
 ```
 
@@ -101,20 +146,33 @@ function syncExtensionPanels(
 ```
 
 Core panels (registered before sync) are never overwritten by extension panels.
+Extension panels without a registered component override are skipped with a dev console warning (`[panel-registry] Skipping extension panel ...`).
 
 ### Core Panel Registrations
 
 Defined in `app/console/panels/register-core-panels.tsx`.
 
-| ID | Side | Order | Icon | Actions |
-|----|------|-------|------|---------|
-| `files` | left | 10 | `Folder` | Upload button → `emitPanelAction('files-upload')` |
-| `instances` | left | 20 | `Cpu` | New Instance button → `emitPanelAction('instances-new')` |
-| `quick-actions` | left | 30 | `Zap` | — |
-| `session-actions` | right | 20 | `Play` | — |
-| `snapshots` | right | 30 | `Camera` | — |
-| `files-context` | right | 40 | `FileText` | — |
-| `terminal-log` | right | 50 | `Terminal` | — |
+| ID | Side | Order | Icon | When | Actions |
+|----|------|-------|------|------|---------|
+| `files` | left | 10 | `Folder` | _(always)_ | Upload button → `emitPanelAction('files-upload')` |
+| `instances` | left | 20 | `Cpu` | _(always)_ | New Instance button → `emitPanelAction('instances-new')` |
+| `quick-actions` | left | 30 | `Zap` | `view == "claude-chat"` | — |
+| `session-actions` | right | 20 | `Play` | `view == "claude-chat"` | — |
+| `snapshots` | right | 30 | `Camera` | `view == "claude-chat"` | — |
+| `files-context` | right | 40 | `FileText` | `view == "claude-chat"` | — |
+| `terminal-log` | right | 50 | `Terminal` | `view == "terminal"` | — |
+
+### Extension Panel Registrations
+
+Extension panels are declared in adapter manifests (`sb-extension.json` `contributes.views`) and synced via `syncExtensionPanels()`. Core provides React components via `registerPanelComponent()`.
+
+| ID | Side | Order | When | Component Override | Manifest Owner |
+|----|------|-------|------|--------------------|----------------|
+| `logs` | right | 100 | `view == "claude-chat"` | `LogsPanel` | claude-code |
+| `terminal` | right | 100 | `view == "claude-chat"` | `TerminalPanel` | claude-code |
+| `tasks` | right | 100 | `view == "claude-chat"` | `TaskPanel` | claude-code |
+| `processes` | right | 100 | `view == "terminal"` | `ProcessesPanel` | shell |
+| `system` | right | 100 | `view == "dashboard"` | `SystemPanel` | system-info |
 
 ## Notification System
 
@@ -173,6 +231,7 @@ interface FocusState {
   paneId: string | null;
   paneViewType: string | null;
   whenContext: WhenContext;
+  dockProfileKey: string;                      // "view:<viewType>" e.g. "view:claude-chat"
 }
 
 interface PaneFocusInfo {
@@ -185,6 +244,8 @@ interface PaneFocusInfo {
 function useFocus(): FocusState;
 function useWhenContext(): WhenContext;
 ```
+
+`dockProfileKey` is derived from the pane focus view type. Always `view:<viewType>`. Never contains `activeInstanceId`. Instance-scoped profiles are future.
 
 Resolution order for `instanceId`: `paneFocus.instanceId` only. `activeInstanceId` is a sidebar/management selection and must not be used as a fallback for UI focus.
 

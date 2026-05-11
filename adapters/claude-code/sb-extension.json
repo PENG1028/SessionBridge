@@ -24,10 +24,10 @@
   "contributes": {
     "views": {
       "sidebar-right": [
-        { "id": "tasks", "title": "Tasks", "icon": "list-checks", "defaultVisible": true },
+        { "id": "tasks", "title": "Tasks", "icon": "list-checks", "defaultVisible": true, "when": "view == \"claude-chat\"" },
         { "id": "files", "title": "Files", "icon": "folder-tree", "defaultVisible": true },
-        { "id": "logs", "title": "Logs", "icon": "scroll-text", "defaultVisible": false },
-        { "id": "terminal", "title": "Terminal", "icon": "terminal", "defaultVisible": false }
+        { "id": "logs", "title": "Logs", "icon": "scroll-text", "defaultVisible": false, "when": "view == \"claude-chat\"" },
+        { "id": "terminal", "title": "Terminal", "icon": "terminal", "defaultVisible": false, "when": "view == \"claude-chat\"" }
       ]
     },
     "notifications": [

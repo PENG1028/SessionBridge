@@ -23,7 +23,7 @@
   "contributes": {
     "views": {
       "sidebar-right": [
-        { "id": "system", "title": "System", "icon": "cpu", "defaultVisible": true }
+        { "id": "system", "title": "System", "icon": "cpu", "defaultVisible": true, "when": "view == \"dashboard\"" }
       ]
     },
     "commands": [

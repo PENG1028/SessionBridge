@@ -2,18 +2,21 @@
 
 import { useState, useCallback, useRef, useEffect, type ReactNode, type DragEvent } from 'react';
 import { GripVertical, ChevronDown, ChevronRight } from 'lucide-react';
+import { isPanelCollapsed, setPanelCollapsed, applyPanelOrder } from './dock-profile';
 
 // ── DockPanelFrame ────────────────────────────────────────────
 // Unified sidebar panel frame providing:
-//   - Collapse/expand via chevron (persisted to localStorage)
+//   - Collapse/expand via chevron (persisted per Dock Profile)
 //   - Drag-and-drop reorder via absolute-positioned drag handle
 //   - Absolute drop indicator overlay (no layout shift)
 //   - Action slot in the header from props (stable regardless of collapse)
 
-interface DockPanelFrameProps {
+export interface DockPanelFrameProps {
   panelId: string;
   title: string;
   icon?: ReactNode;
+  /** Dock profile key for persisting collapse state. */
+  profileKey: string;
   /** Action buttons rendered in the header. Resolved from panel
    *  registration at the sidebar level — always available even
    *  when the panel body is collapsed. */
@@ -22,48 +25,23 @@ interface DockPanelFrameProps {
   onReorder: (dragId: string, targetId: string) => void;
 }
 
-const COLLAPSE_KEY = 'sessionbridge-collapsed-panels';
-
-function loadCollapsed(): string[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const saved = localStorage.getItem(COLLAPSE_KEY);
-    return saved ? JSON.parse(saved) : [];
-  } catch { return []; }
-}
-
-function saveCollapsed(ids: string[]): void {
-  if (typeof window === 'undefined') return;
-  try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify(ids)); } catch {}
-}
-
-export function DockPanelFrame({ panelId, title, icon, actions, children, onReorder }: DockPanelFrameProps) {
+export function DockPanelFrame({ panelId, title, icon, profileKey, actions, children, onReorder }: DockPanelFrameProps) {
   const [dragOver, setDragOver] = useState(false);
-  // Initialized to false for SSR/hydration consistency — read from
-  // localStorage happens in the useEffect below, which flips the state
-  // on mount if the panel was previously collapsed by the user.
   const [collapsed, setCollapsed] = useState(false);
   const dragRef = useRef<string | null>(null);
 
   const toggleCollapse = useCallback(() => {
     setCollapsed(prev => {
       const next = !prev;
-      const ids = loadCollapsed();
-      if (next) {
-        if (!ids.includes(panelId)) ids.push(panelId);
-      } else {
-        const idx = ids.indexOf(panelId);
-        if (idx >= 0) ids.splice(idx, 1);
-      }
-      saveCollapsed(ids);
+      setPanelCollapsed(profileKey, panelId, next);
       return next;
     });
-  }, [panelId]);
+  }, [profileKey, panelId]);
 
-  // Sync collapsed state when panelId changes (DnD replacement)
+  // Sync collapsed state when profileKey or panelId changes
   useEffect(() => {
-    setCollapsed(loadCollapsed().includes(panelId));
-  }, [panelId]);
+    setCollapsed(isPanelCollapsed(profileKey, panelId));
+  }, [profileKey, panelId]);
 
   const handleDragStart = useCallback((e: DragEvent<HTMLDivElement>) => {
     dragRef.current = panelId;
@@ -162,49 +140,4 @@ export function DockPanelFrame({ panelId, title, icon, actions, children, onReor
       </div>
     </div>
   );
-}
-
-// ── Panel order persistence (kept from PanelDndWrapper) ───────
-
-const ORDER_KEY = 'sessionbridge-sidebar-order';
-
-export function loadPanelOrder(side: 'left' | 'right'): string[] | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const saved = localStorage.getItem(ORDER_KEY);
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      return parsed[side] || null;
-    }
-  } catch {}
-  return null;
-}
-
-export function savePanelOrder(side: 'left' | 'right', order: string[]): void {
-  if (typeof window === 'undefined') return;
-  try {
-    const existing = JSON.parse(localStorage.getItem(ORDER_KEY) || '{}');
-    existing[side] = order;
-    localStorage.setItem(ORDER_KEY, JSON.stringify(existing));
-  } catch {}
-}
-
-export function applyPanelOrder<T extends { id: string }>(panels: T[], savedOrder: string[] | null): T[] {
-  if (!savedOrder || savedOrder.length === 0) return panels;
-  const panelMap = new Map(panels.map(p => [p.id, p]));
-  const ordered: T[] = [];
-  const remaining = new Set(panels.map(p => p.id));
-
-  for (const id of savedOrder) {
-    if (remaining.has(id)) {
-      ordered.push(panelMap.get(id)!);
-      remaining.delete(id);
-    }
-  }
-  for (const p of panels) {
-    if (remaining.has(p.id)) {
-      ordered.push(p);
-    }
-  }
-  return ordered;
 }

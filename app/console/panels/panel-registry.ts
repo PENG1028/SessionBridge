@@ -7,6 +7,7 @@ import { evaluateWhen, type WhenContext } from '../../../lib/evaluate-when';
 
 export interface PanelRegistration {
   id: string;
+  /** Future: replace side with dock area once bottom/floating panel hosting exists. */
   side: 'left' | 'right';
   title: string;
   order: number;
@@ -23,11 +24,31 @@ export interface PanelRegistration {
    * {@link onPanelAction} / {@link emitPanelAction}.
    */
   getActions?: (props: Record<string, any>) => ReactNode;
+
+  // ── Dock Profile / Layout hints (Phase 4I+, prepared but not enforced) ──
+
+  /** Default panel size hint before user customization. */
+  defaultSize?: 'compact' | 'normal' | 'expanded' | number;
+  minSize?: number;
+  maxSize?: number;
+  /** Keep panel mounted even when filtered out by when? */
+  keepMounted?: boolean;
+  /** Preferred and allowed dock areas for this panel. */
+  preferredArea?: 'left' | 'right' | 'bottom' | 'floating';
+  allowedAreas?: Array<'left' | 'right' | 'bottom' | 'floating'>;
+  /** Mobile placement hint — host may override for safety. */
+  mobile?: {
+    placement?: 'auto' | 'drawer' | 'sheet' | 'fullscreen' | 'hidden';
+    priority?: number;
+    custom?: boolean;
+  };
 }
 
 const registry = new Map<string, PanelRegistration>();
 /** Tracks panel IDs added by syncExtensionPanels, so stale entries can be removed on re-sync. */
 const extensionPanelIds = new Set<string>();
+/** Tracks panel IDs that have already been warned about missing component overrides, to avoid console spam. */
+const warnedMissingComponents = new Set<string>();
 
 export function registerPanel(reg: PanelRegistration): void {
   registry.set(reg.id, reg);
@@ -103,13 +124,21 @@ export function syncExtensionPanels(
     for (const v of views) {
       if (registry.has(v.id)) continue; // core panel — never overwrite
       const comp = getPanelComponentOverride(v.id);
-      if (!comp) continue; // skip — no React component registered for this extension panel
+      if (!comp) {
+        const warnKey = `${side}:${v.id}`;
+        if (!warnedMissingComponents.has(warnKey)) {
+          warnedMissingComponents.add(warnKey);
+          console.warn(`[panel-registry] Skipping extension panel "${v.id}" (${side}): no component override registered`);
+        }
+        continue;
+      }
       registerPanel({
         id: v.id,
         side,
         title: v.title,
         order: 100,
         when: v.when,
+        // TODO: map manifest icon names to lucide icons for extension panels.
         component: comp,
       });
       extensionPanelIds.add(v.id);

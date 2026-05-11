@@ -334,7 +334,60 @@ Policy:
 | `TerminalView` | 终端视图 | Adapter-owned view | Shell plugin-owned | Already aligned |
 | `ClaudeChatView` | Claude 聊天视图 | Adapter-owned view | Claude plugin-owned | Already aligned |
 
-## 4. Context Menu Ownership
+## 4. Dock Panel Ownership (Phase 4I‑c)
+
+> Last updated: 2026-05-11
+
+Dock panels are classified by ownership scope. The `when` condition in panel registration determines visibility relative to focus context.
+
+### 4.1 Host/System Persistent Panels
+
+Always visible regardless of focus. These represent core workspace infrastructure:
+
+| Panel ID | Side | When | Reason |
+|----------|------|------|--------|
+| `files` | left | (none) | Workspace file tree — cross-view utility |
+| `instances` | left | (none) | Runtime/instance management — cross-view utility |
+
+### 4.2 Claude‑Scoped Panels
+
+Only visible when focus is on a Claude‑Chat view (`view == "claude-chat"`):
+
+| Panel ID | Side | When | Notes |
+|----------|------|------|-------|
+| `quick-actions` | left | `view == "claude-chat"` | Claude‑specific quick commands |
+| `session-actions` | right | `view == "claude-chat"` | Session-level actions |
+| `snapshots` | right | `view == "claude-chat"` | Snapshot management |
+| `files-context` | right | `view == "claude-chat"` | File context for current session |
+| `tasks` | right | `view == "claude-chat"` | Task tracking — declared in claude-code manifest |
+| `logs` | right | `view == "claude-chat"` | Claude session logs — declared in claude-code manifest |
+| `terminal` | right | `view == "claude-chat"` | Claude quick terminal — declared in claude-code manifest |
+
+### 4.3 Shell‑Scoped Panels
+
+Only visible when focus is on a terminal view (`view == "terminal"`):
+
+| Panel ID | Side | When | Notes |
+|----------|------|------|-------|
+| `terminal-log` | right | `view == "terminal"` | Raw terminal output log |
+| `processes` | right | `view == "terminal"` | Process list — declared in shell manifest |
+
+### 4.4 System/Dashboard‑Scoped Panels
+
+| Panel ID | Side | When | Notes |
+|----------|------|------|-------|
+| `system` | right | `view == "dashboard"` | System info panel — declared in system-info manifest |
+
+### 4.5 Ownership Rules
+
+1. **Dock areas stay stable** — left and right dock areas do not close on focus change.
+2. **Panel visibility follows `when`** — panels not matching the current focus context are filtered out by `getPanels()`.
+3. **Dock Profile restores order/collapse/size per view** — panel layout memory is scoped by `dockProfileKey` (`view:<viewType>`).
+4. **Extension panels require component override** — manifests declare structure (id, title, icon, when); core provides the React component via `registerPanelComponent()`. Panels without a registered component are skipped with a dev console warning.
+5. **Dynamic React panel loading** remains future work — external plugins cannot currently ship their own panel components.
+6. **Core panels always win** — `syncExtensionPanels()` skips IDs already registered by core, preventing manifest declarations from overwriting built-in panels.
+
+## 5. Context Menu Ownership
 
 The context menu is currently only half componentized:
 
@@ -396,7 +449,7 @@ Phase 4E should introduce a front-end `context-menu-registry.ts`:
 - `ContextMenu` remains a dumb rendering shell.
 - `useContextMenu` becomes a thin adapter from browser events to registry lookup.
 
-## 5. Placement and Drag Rules
+## 6. Placement and Drag Rules
 
 SessionBridge should follow a Photoshop/VS Code-like model:
 
@@ -411,9 +464,9 @@ SessionBridge should follow a Photoshop/VS Code-like model:
 
 Plugins should not implement their own dock/floating system. They should declare placement ability and let Workbench host them.
 
-## 6. Open Target Model (Phase 4F)
+## 7. Open Target Model (Phase 4F)
 
-### 6.1 Core Concept: View ≠ Instance
+### 7.1 Core Concept: View ≠ Instance
 
 Pre-Phase 4F, "opening a view" implicitly created a runtime instance (e.g. opening Terminal → `shell.spawn`, opening Claude Chat → `POST /api/instances`). Phase 4F separates these concepts:
 
@@ -423,7 +476,7 @@ Pre-Phase 4F, "opening a view" implicitly created a runtime instance (e.g. openi
 | Runtime Instance | 运行时实例 | A server-side process that executes commands or runs an AI agent | `InstanceData` in `InstanceManager` |
 | Binding | 绑定 | Assigning an instanceId to a tab so the view can communicate with the runtime | `SET_TAB_VIEW` with `instanceId` |
 
-### 6.2 `ViewMeta.openMode`
+### 7.2 `ViewMeta.openMode`
 
 Each view declares how it relates to runtime instances via `openMode` in `view-registry.ts`:
 
@@ -435,7 +488,7 @@ Each view declares how it relates to runtime instances via `openMode` in `view-r
 | `node-bound` | (Future) Binds to a workspace node | — |
 | `runtime-create` | (Future) Creating this view should prompt for a new instance | — |
 
-### 6.3 Rules
+### 7.3 Rules
 
 1. **Opening a view never auto-creates an instance.** `handleRequestView` in page.tsx only sets `viewType`/`title` on the tab — no `createInstance()` call.
 
@@ -452,7 +505,7 @@ Each view declares how it relates to runtime instances via `openMode` in `view-r
 
 6. **Kill button is always visible** for all instances (not only on hover). Active instances require `window.confirm()` before killing.
 
-### 6.4 Instance → Tab Binding
+### 7.4 Instance → Tab Binding
 
 When a user clicks "Create New Terminal/Runtime" in an empty view:
 
@@ -461,7 +514,7 @@ When a user clicks "Create New Terminal/Runtime" in an empty view:
 3. View calls `workbench.bindCurrentTabInstance(instanceId)` which dispatches `SET_TAB_VIEW` to attach the instance to the current tab
 4. Pane re-renders, view receives `instanceId` prop, renders runtime component (ShellTerminal etc.)
 
-### 6.5 File Manifest
+### 7.5 File Manifest
 
 | File | Change |
 |---|---|
@@ -479,7 +532,7 @@ When a user clicks "Create New Terminal/Runtime" in an empty view:
 | `app/console/panels/instances-panel.tsx` | Inline form with adapterId selector instead of `prompt()` |
 | `app/console/sidebar/mobile-sidebar.tsx` | Removed implicit `onCreate` prop
 
-## 7. API Contract Gaps
+## 8. API Contract Gaps
 
 The following APIs should be treated as first-class contracts before adding more large features. They prevent desktop/mobile behavior and plugin behavior from drifting apart.
 
@@ -497,7 +550,7 @@ Priority:
 2. Make all action surfaces consume one `Action` contract before expanding menus/keybindings.
 3. Promote shared UI support metadata before exporting more components to plugins.
 
-## 8. Phase Guidance
+## 9. Phase Guidance
 
 ### Phase 4D: Host Chrome Policy
 

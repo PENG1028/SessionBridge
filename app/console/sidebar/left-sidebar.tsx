@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { getPanels } from '../panels/panel-registry';
-import { DockPanelFrame, loadPanelOrder, savePanelOrder, applyPanelOrder } from './panel-dnd-wrapper';
+import { DockPanelFrame } from './panel-dnd-wrapper';
+import { loadPanelOrder, savePanelOrder, applyPanelOrder } from './dock-profile';
 import { useFocus } from '../workbench/focus-context';
 
 interface LeftSidebarProps {
@@ -22,15 +23,15 @@ interface LeftSidebarProps {
 }
 
 export function LeftSidebar(props: LeftSidebarProps) {
-  const { whenContext } = useFocus();
+  const { whenContext, dockProfileKey } = useFocus();
   // Must memoize: getPanels creates a new array every call, and without memo the
   // registryPanels → panelIds → useEffect([panelIds]) chain causes an infinite loop.
   const registryPanels = useMemo(() => getPanels('left', whenContext), [whenContext]);
   const [savedOrder, setSavedOrder] = useState<string[] | null>(null);
 
   useEffect(() => {
-    setSavedOrder(loadPanelOrder('left'));
-  }, []);
+    setSavedOrder(loadPanelOrder('left', dockProfileKey));
+  }, [dockProfileKey]);
 
   const panelIds = useMemo(() => registryPanels.map(p => p.id), [registryPanels]);
   useEffect(() => {
@@ -56,10 +57,10 @@ export function LeftSidebar(props: LeftSidebarProps) {
       const next = [...current];
       next.splice(fromIdx, 1);
       next.splice(toIdx, 0, dragId);
-      savePanelOrder('left', next);
+      savePanelOrder('left', dockProfileKey, next);
       return next;
     });
-  }, [registryPanels]);
+  }, [registryPanels, dockProfileKey]);
 
   return (
     <aside className="w-56 border-r border-gray-800 bg-[#0d0d0d] flex flex-col hidden md:flex shrink-0 overflow-hidden">
@@ -67,7 +68,7 @@ export function LeftSidebar(props: LeftSidebarProps) {
         {panels.map((p, i) => {
           const PanelComponent = p.component;
           return (
-            <DockPanelFrame key={p.id} panelId={p.id} title={p.title} icon={p.icon && <p.icon className="w-3 h-3" />} actions={p.getActions?.(props)} onReorder={handleReorder}>
+            <DockPanelFrame key={p.id} panelId={p.id} title={p.title} icon={p.icon && <p.icon className="w-3 h-3" />} profileKey={dockProfileKey} actions={p.getActions?.(props)} onReorder={handleReorder}>
               <PanelComponent {...props} />
             </DockPanelFrame>
           );

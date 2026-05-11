@@ -23,7 +23,7 @@
   "contributes": {
     "views": {
       "sidebar-right": [
-        { "id": "processes", "title": "Processes", "icon": "activity", "defaultVisible": true }
+        { "id": "processes", "title": "Processes", "icon": "activity", "defaultVisible": true, "when": "view == \"terminal\"" }
       ]
     },
     "commands": [

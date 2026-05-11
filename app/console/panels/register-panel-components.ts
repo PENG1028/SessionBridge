@@ -13,12 +13,14 @@
 
 import { registerPanelComponent } from './panel-registry';
 import { LogsPanel, TerminalPanel, SystemPanel, ProcessesPanel } from './extension-panels';
+import { TaskPanel } from './task-panel';
 
 // Panels matching manifest contributes.views for claude-code, shell, system-info
 registerPanelComponent('logs', LogsPanel);
 registerPanelComponent('terminal', TerminalPanel);
 registerPanelComponent('system', SystemPanel);
 registerPanelComponent('processes', ProcessesPanel);
+registerPanelComponent('tasks', TaskPanel);
 
 /** Prevent tree-shaking — ensures module-level side effects fire. */
 export const __extensionPanelComponentsRegistered = true;

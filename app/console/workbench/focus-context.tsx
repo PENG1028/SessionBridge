@@ -16,6 +16,10 @@ export interface FocusState {
   paneId: string | null;
   paneViewType: string | null;
   whenContext: WhenContext;
+  /** View-scoped dock profile key for panel order/collapse/size persistence.
+   *  Format: `view:<viewType>`, e.g. `view:claude-chat`.
+   *  Future: `instance:<instanceId>` for instance-scoped profiles. */
+  dockProfileKey: string;
 }
 
 export type PaneFocusInfo = {
@@ -68,6 +72,10 @@ export function FocusProvider({
       instanceId: effectiveInstanceId ?? undefined,
     };
 
+    const dockProfileKey = paneFocus?.viewType
+      ? `view:${paneFocus.viewType}`
+      : `view:${activeViewId || 'unknown'}`;
+
     return {
       viewId,
       instanceId: effectiveInstanceId,
@@ -77,6 +85,7 @@ export function FocusProvider({
       paneId: paneFocus?.paneId || null,
       paneViewType: paneFocus?.viewType || null,
       whenContext,
+      dockProfileKey,
     };
   }, [instances, activeInstanceId, activeViewId, sessionKey, paneFocus]);
 

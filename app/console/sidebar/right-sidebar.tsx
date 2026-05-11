@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { getPanels } from '../panels/panel-registry';
-import { DockPanelFrame, loadPanelOrder, savePanelOrder, applyPanelOrder } from './panel-dnd-wrapper';
+import { DockPanelFrame } from './panel-dnd-wrapper';
+import { loadPanelOrder, savePanelOrder, applyPanelOrder } from './dock-profile';
 import { useFocus } from '../workbench/focus-context';
 
 interface RightSidebarProps {
@@ -25,13 +26,13 @@ interface RightSidebarProps {
 }
 
 export function RightSidebar(props: RightSidebarProps) {
-  const { whenContext } = useFocus();
+  const { whenContext, dockProfileKey } = useFocus();
   const registryPanels = useMemo(() => getPanels('right', whenContext), [whenContext]);
   const [savedOrder, setSavedOrder] = useState<string[] | null>(null);
 
   useEffect(() => {
-    setSavedOrder(loadPanelOrder('right'));
-  }, []);
+    setSavedOrder(loadPanelOrder('right', dockProfileKey));
+  }, [dockProfileKey]);
 
   const panelIds = useMemo(() => registryPanels.map(p => p.id), [registryPanels]);
   useEffect(() => {
@@ -57,10 +58,10 @@ export function RightSidebar(props: RightSidebarProps) {
       const next = [...current];
       next.splice(fromIdx, 1);
       next.splice(toIdx, 0, dragId);
-      savePanelOrder('right', next);
+      savePanelOrder('right', dockProfileKey, next);
       return next;
     });
-  }, [registryPanels]);
+  }, [registryPanels, dockProfileKey]);
 
   return (
     <aside className="w-72 border-l border-gray-800 bg-[#0d0d0d] flex flex-col hidden lg:flex shrink-0 overflow-hidden">
@@ -68,7 +69,7 @@ export function RightSidebar(props: RightSidebarProps) {
         {panels.map((p, i) => {
           const PanelComponent = p.component;
           return (
-            <DockPanelFrame key={p.id} panelId={p.id} title={p.title} icon={p.icon && <p.icon className="w-3 h-3" />} actions={p.getActions?.(props)} onReorder={handleReorder}>
+            <DockPanelFrame key={p.id} panelId={p.id} title={p.title} icon={p.icon && <p.icon className="w-3 h-3" />} profileKey={dockProfileKey} actions={p.getActions?.(props)} onReorder={handleReorder}>
               <PanelComponent {...props} />
             </DockPanelFrame>
           );
