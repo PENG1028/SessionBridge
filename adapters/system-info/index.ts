@@ -23,7 +23,7 @@ export class SystemInfoAdapter implements AgentAdapter {
   name = 'system-info';
   displayName = 'System Info';
   icon = 'cpu';
-  viewId = 'system-info';
+  viewId = 'dashboard';
 
   getCapabilities(): AdapterCapabilities {
     return { ...SYSTEM_INFO_CAPABILITIES };

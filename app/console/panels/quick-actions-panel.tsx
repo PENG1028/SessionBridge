@@ -5,22 +5,8 @@ import { useFocus } from '../workbench/focus-context';
 import { getActions } from '../actions/action-registry';
 
 interface QuickActionsPanelProps {
-  onQuickAction?: (cmd: string) => void;
-  onRewind?: () => void;
+  onCommand?: (commandId: string) => void;
 }
-
-// Phase 4E: Map action IDs to the command text sent via onQuickAction.
-// This avoids needing sendInput in scope (WorkbenchProvider wraps only <main>).
-const COMMAND_MAP: Record<string, string | undefined> = {
-  'host.quick.npmTest': 'npm test',
-  'host.quick.gitStatus': 'git status',
-  'terminal.quick.ls': 'ls',
-  'claude.quick.analyze': '分析项目结构并优化代码',
-  'claude.quick.fix': '找出并修复代码中的问题',
-  'claude.quick.explain': '解释当前代码的工作原理',
-  'claude.quick.test': '为代码编写测试',
-  'claude.quick.commit': '生成提交信息',
-};
 
 export function QuickActionsPanel(props: QuickActionsPanelProps) {
   const focus = useFocus();
@@ -30,7 +16,8 @@ export function QuickActionsPanel(props: QuickActionsPanelProps) {
     [focus.whenContext],
   );
 
-  if (!props.onQuickAction) return null;
+  const { onCommand } = props;
+  if (!onCommand) return null;
   if (actions.length === 0) return null;
 
   // Group actions visually
@@ -50,14 +37,7 @@ export function QuickActionsPanel(props: QuickActionsPanelProps) {
   }, [actions]);
 
   const handleClick = (a: typeof actions[number]) => {
-    if (a.id === 'claude.rewind') {
-      props.onRewind?.();
-      return;
-    }
-    const cmd = COMMAND_MAP[a.id];
-    if (cmd) {
-      props.onQuickAction?.(cmd);
-    }
+    onCommand(a.id);
   };
 
   return (

@@ -23,7 +23,7 @@ interface ConsoleOverlaysProps {
   // Command palette
   showCommandPalette: boolean;
   extCommands: { id: string; title: string; category?: string; when?: string }[];
-  sendCommand: (cmd: string, args?: any) => void;
+  onCommand: (cmd: string, args?: any) => void;
   onCloseCommandPalette: () => void;
 
   // File viewer
@@ -100,7 +100,7 @@ export function ConsoleOverlays(props: ConsoleOverlaysProps) {
       {props.showCommandPalette && (
         <CommandPalette
           commands={props.extCommands}
-          onCommand={(cmdId) => props.sendCommand(cmdId)}
+          onCommand={(cmdId) => props.onCommand(cmdId)}
           onClose={props.onCloseCommandPalette}
         />
       )}

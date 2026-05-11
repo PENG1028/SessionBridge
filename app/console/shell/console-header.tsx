@@ -4,9 +4,11 @@ import { Cpu, Folder, Search, ChevronDown, Settings, LayoutDashboard, Terminal }
 import { useFocus } from '../workbench/focus-context';
 import { useRuntimePolicy } from '../workbench/runtime-policy-context';
 import { getAdapterMeta, getViewEntry, getAdapterCapabilities, type ChromePolicy } from '../main/view-registry';
-import { getActions, runAction } from '../actions/action-registry';
+import { getActions } from '../actions/action-registry';
+import { runWorkbenchCommand } from '../actions/workbench-command-dispatch';
 import type { ActionRunContext, WorkbenchAction } from '../actions/action-types';
 import type { LucideIcon } from 'lucide-react';
+import { getHeaderChromeItems } from '../chrome/chrome-registry';
 
 // ── Icon name → Lucide component map ──────────────────────────
 const ICON_MAP: Record<string, LucideIcon> = {
@@ -87,6 +89,7 @@ export function ConsoleHeader({
 
   let runtimeBadge: string | null = null;
   let headerRightActions: WorkbenchAction[] = [];
+  let headerChromeItems: any[] = [];
   let actionCtx: ActionRunContext | null = null;
   try {
     const focus = useFocus();
@@ -106,6 +109,8 @@ export function ConsoleHeader({
 
     // Phase 4E: Resolve header.right actions from registry
     headerRightActions = getActions('header.right', focus.whenContext as Record<string, unknown>);
+    // Phase 4J: Resolve header chrome contributions
+    headerChromeItems = getHeaderChromeItems(focus.whenContext);
     actionCtx = {
       view: focus.viewId,
       activeAdapterId: adapterId || '',
@@ -225,6 +230,21 @@ export function ConsoleHeader({
               </button>
             );
           })}
+
+          {/* Phase 4J: Header chrome contributions (from manifests) */}
+          {!isMinimal && headerChromeItems.map(item => (
+            <button key={item.id}
+              onClick={() => {
+                if (item.command && actionCtx) {
+                  runWorkbenchCommand({ command: item.command }, actionCtx);
+                }
+              }}
+              className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#1a1a1a] border border-gray-700 hover:border-purple-500 text-gray-400 hover:text-gray-200 text-[10px] transition-colors"
+              title={item.title || item.text}
+            >
+              {item.text || item.title}
+            </button>
+          ))}
 
           <button
             onClick={onToggleDirSwitcher}

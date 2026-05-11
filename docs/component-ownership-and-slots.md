@@ -836,3 +836,25 @@ Do not:
 - Change server-side extension manifest schema beyond the `menu`/`order` field additions.
 - Modify `context-menu.tsx` rendering shell.
 - Add business features or new menu items beyond the cleanup scope.
+
+### Phase 4L: Unified Command Dispatch
+
+Scope:
+
+- Create `runWorkbenchCommand()` as the single entry point for all action surfaces: context menu, command palette, header chrome, status bar chrome, context controls, quick actions, keybindings.
+- Dispatch chain: action registry → command registry → sendCommand fallback, with dev-mode warnings for unknown commands.
+- Replace all surface-specific dispatch implementations with calls to `runWorkbenchCommand()`.
+- Document the dispatch contract in `docs/api/action-api.md`.
+
+Key design:
+
+- **Action is capability, Surface is display location.** The same action (e.g., `shell.clear`) can appear in the context menu, command palette, header, and as a context control — all dispatch through `runWorkbenchCommand()`.
+- **No surface may implement its own action-registry → fallback logic.** If a surface needs a command, it calls `runWorkbenchCommand({ command })`.
+
+Do not:
+
+- Add new actions or commands beyond what already exists.
+- Refactor the action registry or command registry internals.
+- Add new UI surfaces or components.
+- Change the server-side manifest schema.
+- Touch keybinding dispatch (future work).

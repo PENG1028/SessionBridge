@@ -14,13 +14,14 @@ import {
   evaluateWhen,
   type WhenContext,
 } from '../../../lib/evaluate-when';
-import { getAction, getAllActions } from '../actions/action-registry';
+import { getAllActions } from '../actions/action-registry';
 import type { ActionRunContext } from '../actions/action-types';
 import type {
   ContextMenuRequest,
   ContextMenuItemSpec,
   ResolvedContextMenuItem,
 } from './context-menu-types';
+import { runWorkbenchCommand } from '../actions/workbench-command-dispatch';
 
 // ─── Internal state ──────────────────────────────────────────
 
@@ -272,27 +273,9 @@ function dispatchCommand(
   actionRunCtx?: ActionRunContext,
   target?: ContextMenuRequest['target'],
 ): void {
-  // 1. Action registry first
-  const action = getAction(command);
-  if (action && actionRunCtx) {
-    const mergedCtx = {
-      ...actionRunCtx,
-      ...(target ? { target } : {}),
-      ...(args ? { args } : {}),
-    };
-    action.run(mergedCtx as any);
+  if (!actionRunCtx) {
+    console.warn(`[context-menu] No ActionRunContext for command "${command}"`);
     return;
   }
-
-  // 2. Fallback sendCommand
-  if (actionRunCtx && 'sendCommand' in actionRunCtx) {
-    const payload = {
-      ...(args || {}),
-      ...(target ? { target } : {}),
-    };
-    (actionRunCtx as any).sendCommand(command, payload);
-    return;
-  }
-
-  console.warn(`[context-menu] No handler for command "${command}" and no sendCommand available`);
+  runWorkbenchCommand({ command, args, target: target as Record<string, unknown> | undefined }, actionRunCtx);
 }

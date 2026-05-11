@@ -37,7 +37,8 @@ import type { ContextMenuRequest } from './console/menus/context-menu-types';
 import { registerBuiltinCommands } from './console/commands/register-builtin-commands';
 import { registerCommand, getCommand } from './console/commands/command-registry';
 import { __coreActionsRegistered } from './console/actions/register-core-actions';
-import { runAction, getAction, getActions } from './console/actions/action-registry';
+import { getAction, getActions } from './console/actions/action-registry';
+import { runWorkbenchCommand } from './console/actions/workbench-command-dispatch';
 import type { ActionRunContext } from './console/actions/action-types';
 // Register core actions into action registry (module-level side effect)
 void __coreActionsRegistered;
@@ -628,15 +629,10 @@ function PageContent() {
     createInstance,
   );
 
-  // Handle command palette selection — check action registry first, fallback to sendCommand
+  // Handle command palette selection — unified dispatch through runWorkbenchCommand
   const handlePaletteSelect = useCallback((cmdId: string) => {
-    const action = getAction(cmdId);
-    if (action) {
-      action.run(actionRunContext);
-    } else {
-      sendCommand(cmdId);
-    }
-  }, [actionRunContext, sendCommand]);
+    runWorkbenchCommand({ command: cmdId }, actionRunContext);
+  }, [actionRunContext]);
 
   const handleLoadSession = useCallback(async (sessionId: string, project: string, display?: string) => {
     setSearchLoading(true);
@@ -1091,7 +1087,7 @@ function PageContent() {
         handleLoadSession={handleLoadSession}
         showCommandPalette={showCommandPalette}
         extCommands={paletteCommands}
-        sendCommand={handlePaletteSelect}
+        onCommand={handlePaletteSelect}
         onCloseCommandPalette={() => setShowCommandPalette(false)}
         viewingFile={viewingFile}
         onCloseFileViewer={() => setViewingFile(null)}
@@ -1145,8 +1141,7 @@ function PageContent() {
           onActivateInstance={activateInstance}
           onCreateInstance={createInstance}
           onKillInstance={killInstance}
-          onQuickAction={handleQuickAction}
-          onRewind={() => { sendCommand('rewind'); addLog('[System] Rewinding last change...'); }}
+          onCommand={(cmdId) => runWorkbenchCommand({ command: cmdId }, actionRunContext)}
           projectCwd={projectInfo?.cwd || '.'}
         />
         </SidebarSlot>

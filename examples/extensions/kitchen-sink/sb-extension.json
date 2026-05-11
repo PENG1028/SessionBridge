@@ -74,6 +74,7 @@
     "menus": [
       {
         "id": "ks.menu.hello",
+        "menu": "workbench/context",
         "title": "Say Hello",
         "command": "ks.hello",
         "group": "navigation",
@@ -81,11 +82,34 @@
       },
       {
         "id": "ks.menu.reset",
+        "menu": "view/context",
         "title": "Reset Kitchen Sink",
         "command": "ks.reset",
         "group": "edit"
       }
     ],
+    "chrome": {
+      "contextControls": [
+        {
+          "id": "ks.hint.greet",
+          "kind": "hint",
+          "label": "Greet",
+          "keys": "⌘G",
+          "placement": "bottom-right",
+          "priority": 40,
+          "command": "ks.hello"
+        },
+        {
+          "id": "ks.button.reset",
+          "kind": "button",
+          "label": "Reset",
+          "placement": "bottom-right",
+          "priority": 20,
+          "command": "ks.reset",
+          "when": "isRunning"
+        }
+      ]
+    },
     "notifications": [
       {
         "id": "ks.greeting",

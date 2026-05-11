@@ -12,8 +12,8 @@
   },
   "capabilities": {
     "terminal": false,
-    "fileContext": true,
-    "structuredEvents": false,
+    "fileContext": false,
+    "structuredEvents": true,
     "approvals": false,
     "modes": false,
     "timeline": false,
@@ -35,6 +35,11 @@
       "properties": {
         "refreshInterval": { "type": "integer", "default": 10, "description": "Auto-refresh interval (seconds)" }
       }
+    },
+    "chrome": {
+      "statusBar": [
+        { "id": "system.status.label", "text": "Dashboard", "side": "left", "order": 10, "when": "view == \"dashboard\"" }
+      ]
     }
   }
 }

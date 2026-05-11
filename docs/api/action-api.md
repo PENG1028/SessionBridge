@@ -1,12 +1,64 @@
 # Action API
 
-> 2026-05-11 status: this document describes the current partial action systems. The target direction is **Action Surface Registry**: one action contract feeding command palette, context menus, quick actions, header items, status bar items, keybindings, and mobile action sheets. Existing hardcoded surfaces should migrate into host-registered or extension-contributed actions before adding more plugin UI.
+> 2026-05-11 status: Phase 4L unified command dispatch (`runWorkbenchCommand`) is the single entry point for all action surfaces. All surfaces (context menu, command palette, header, status bar, contextControls, quick actions, keybindings) must dispatch through this helper instead of implementing their own "action registry → fallback" logic.
 
 Three action/capability systems:
 
-1. **Panel Action Event Bus** — lightweight cross-component signaling for sidebar panels
-2. **View Registry** — view registration, adapter-to-view mapping, capability declaractions
-3. **Context Menu** — ad-hoc right-click menu contract
+## Unified Command Dispatch (Phase 4L)
+
+Location: `app/console/actions/workbench-command-dispatch.ts`
+
+A single entry point (`runWorkbenchCommand`) that all action surfaces must use instead of implementing their own dispatch logic.
+
+```typescript
+export interface WorkbenchCommandRequest {
+  command: string;
+  args?: Record<string, unknown>;
+  target?: Record<string, unknown>;
+}
+
+export function runWorkbenchCommand(
+  request: WorkbenchCommandRequest,
+  ctx: ActionRunContext,
+): void;
+```
+
+### Dispatch Chain
+
+When `runWorkbenchCommand` is called, it resolves the command through this chain:
+
+| Step | Source | Resolution | Example |
+|------|--------|-----------|---------|
+| 1 | **Action registry** | `getAction(command)?.run({...ctx, args, target})` | `host.refresh`, `host.clearHistory` |
+| 2 | **Command registry** | `getCommand(command)?.handler(args)` | Built-in commands from `register-builtin-commands.ts` |
+| 3 | **Adapter sendCommand** | `ctx.sendCommand(command, payload)` fallback | Adapter/runtime commands like `shell.clear`, `shell.kill` |
+| 4 | Unknown | `console.warn` in dev mode | Missing handler diagnostic |
+
+### Surface Integration
+
+All action surfaces dispatch through `runWorkbenchCommand`:
+
+| Surface | File | Dispatch mechanism |
+|---------|------|--------------------|
+| Context menu | `app/console/menus/context-menu-registry.ts` | `dispatchCommand()` → `runWorkbenchCommand()` |
+| Command palette | `app/page.tsx` | `handlePaletteSelect()` → `runWorkbenchCommand()` |
+| Header chrome | `app/console/shell/console-header.tsx` | Chrome item `onClick` → `runWorkbenchCommand()` |
+| Status bar chrome | `app/console/shell/status-bar.tsx` | Chrome item `onClick` → `runWorkbenchCommand()` |
+| Key hint overlay / context controls | `app/console/chrome/key-hint-overlay.tsx` | `onCommand` prop → `handlePaletteSelect()` → `runWorkbenchCommand()` |
+| Quick actions | `app/console/panels/quick-actions-panel.tsx` | `onCommand` prop → page `runWorkbenchCommand()` |
+
+### Legacy / TODO
+
+| Surface | Issue | Status |
+|---------|-------|--------|
+| Mobile sidebar quick actions | `app/console/sidebar/mobile-sidebar.tsx` — hardcoded buttons ("npm test", "git status") call `onQuickAction()` directly, bypassing `runWorkbenchCommand`. These should be refactored to use `QuickActionsPanel` or an equivalent dynamic action surface. | TODO |
+
+### Rules
+
+1. **No surface may implement its own dispatch fallback.** All surfaces must go through `runWorkbenchCommand`. This ensures consistent resolution ordering (action registry → command registry → sendCommand).
+2. **Surfaces pass `target` for context.** The `target` field carries surface-specific context (e.g., clicked instance ID, selected file path) that handlers can use.
+3. **Unknown commands produce a dev warning.** In development mode, unrecognized commands log a warning so missing handlers can be diagnosed.
+4. **Action registry is checked first.** Built-in and host-registered actions take priority over adapter/runtime commands with the same ID.
 
 ## Panel Action Event Bus
 

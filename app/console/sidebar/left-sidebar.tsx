@@ -17,8 +17,7 @@ interface LeftSidebarProps {
   onActivateInstance: (id: string) => void;
   onCreateInstance: (dir: string, model?: string, adapterId?: string) => void;
   onKillInstance: (id: string) => void;
-  onQuickAction: (cmd: string) => void;
-  onRewind: () => void;
+  onCommand: (commandId: string) => void;
   projectCwd: string;
 }
 

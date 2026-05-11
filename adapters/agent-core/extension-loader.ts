@@ -201,6 +201,18 @@ export function validateManifest(manifest: Record<string, unknown>, dir: string)
             if (!menu.command || typeof menu.command !== 'string') {
               errors.push(`contributes.menus[${i}] (${menu.id || '?'}): command is required`);
             }
+            if (menu.title !== undefined && typeof menu.title !== 'string') {
+              errors.push(`contributes.menus[${i}] (${menu.id || '?'}): title must be a string`);
+            }
+            if (menu.menu !== undefined && typeof menu.menu !== 'string') {
+              errors.push(`contributes.menus[${i}] (${menu.id || '?'}): menu must be a string`);
+            }
+            if (menu.order !== undefined && typeof menu.order !== 'number') {
+              errors.push(`contributes.menus[${i}] (${menu.id || '?'}): order must be a number`);
+            }
+            if (menu.when !== undefined && typeof menu.when !== 'string') {
+              errors.push(`contributes.menus[${i}] (${menu.id || '?'}): when must be a string`);
+            }
           }
         }
       }
@@ -228,6 +240,97 @@ export function validateManifest(manifest: Record<string, unknown>, dir: string)
                   if (panel.order !== undefined && typeof panel.order !== 'number') {
                     errors.push(`contributes.views.${side}[${i}] (${panel.id || '?'}): order must be a number`);
                   }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // chrome
+      const chrome = contributes.chrome as Record<string, unknown> | undefined;
+      if (chrome !== undefined) {
+        if (typeof chrome !== 'object' || chrome === null) {
+          errors.push('contributes.chrome must be an object');
+        } else {
+          const validateChromeArray = (arr: unknown, name: string, requiredFields: string[]) => {
+            if (arr === undefined) return;
+            if (!Array.isArray(arr)) {
+              errors.push(`contributes.chrome.${name} must be an array`);
+              return;
+            }
+            for (let i = 0; i < arr.length; i++) {
+              const item = arr[i] as Record<string, unknown>;
+              if (!item.id || typeof item.id !== 'string') {
+                errors.push(`contributes.chrome.${name}[${i}]: id is required`);
+              }
+              for (const field of requiredFields) {
+                if (!item[field] || typeof item[field] !== 'string') {
+                  errors.push(`contributes.chrome.${name}[${i}] (${item.id || '?'}): ${field} is required`);
+                }
+              }
+              if (item.order !== undefined && typeof item.order !== 'number') {
+                errors.push(`contributes.chrome.${name}[${i}] (${item.id || '?'}): order must be a number`);
+              }
+              if (item.side !== undefined && item.side !== 'left' && item.side !== 'right') {
+                errors.push(`contributes.chrome.${name}[${i}] (${item.id || '?'}): side must be "left" or "right"`);
+              }
+              if (item.mobile !== undefined && !['show', 'collapse', 'hide'].includes(item.mobile as string)) {
+                errors.push(`contributes.chrome.${name}[${i}] (${item.id || '?'}): mobile must be "show", "collapse", or "hide"`);
+              }
+              if (item.priority !== undefined && !['low', 'normal', 'high'].includes(item.priority as string)) {
+                errors.push(`contributes.chrome.${name}[${i}] (${item.id || '?'}): priority must be "low", "normal", or "high"`);
+              }
+            }
+          };
+          validateChromeArray(chrome.header, 'header', ['title']);
+          validateChromeArray(chrome.statusBar, 'statusBar', ['text']);
+          validateChromeArray(chrome.keyHints, 'keyHints', ['label', 'keys']);
+
+          // contextControls validation (Phase 4J-b)
+          const cc = chrome.contextControls as Record<string, unknown>[] | undefined;
+          if (cc !== undefined) {
+            if (!Array.isArray(cc)) {
+              errors.push('contributes.chrome.contextControls must be an array');
+            } else {
+              const VALID_KINDS = new Set(['hint','button','toggle','menu','progress','approval','jump']);
+              const VALID_PLACEMENTS = new Set(['bottom-left','bottom-right','header-right','status-left','status-right','auto']);
+              const VALID_MOBILE = new Set(['show','collapse','hide']);
+              const VALID_VARIANTS = new Set(['default','primary','danger','warning','success']);
+              for (let i = 0; i < cc.length; i++) {
+                const item = cc[i];
+                if (!item.id || typeof item.id !== 'string') {
+                  errors.push(`contributes.chrome.contextControls[${i}]: id is required`);
+                }
+                if (!item.kind || !VALID_KINDS.has(item.kind as string)) {
+                  errors.push(`contributes.chrome.contextControls[${i}] (${(item.id as string) || '?'}): kind must be one of ${[...VALID_KINDS].join('|')}`);
+                }
+                if (!item.label || typeof item.label !== 'string') {
+                  errors.push(`contributes.chrome.contextControls[${i}] (${(item.id as string) || '?'}): label is required`);
+                }
+                if (item.placement !== undefined && !VALID_PLACEMENTS.has(item.placement as string)) {
+                  errors.push(`contributes.chrome.contextControls[${i}] (${(item.id as string) || '?'}): placement must be one of ${[...VALID_PLACEMENTS].join('|')}`);
+                }
+                if (item.order !== undefined && typeof item.order !== 'number') {
+                  errors.push(`contributes.chrome.contextControls[${i}] (${(item.id as string) || '?'}): order must be a number`);
+                }
+                if (item.priority !== undefined && typeof item.priority !== 'number') {
+                  errors.push(`contributes.chrome.contextControls[${i}] (${(item.id as string) || '?'}): priority must be a number`);
+                }
+                if (item.ttlMs !== undefined && typeof item.ttlMs !== 'number') {
+                  errors.push(`contributes.chrome.contextControls[${i}] (${(item.id as string) || '?'}): ttlMs must be a number`);
+                }
+                if (item.mobile !== undefined && !VALID_MOBILE.has(item.mobile as string)) {
+                  errors.push(`contributes.chrome.contextControls[${i}] (${(item.id as string) || '?'}): mobile must be one of ${[...VALID_MOBILE].join('|')}`);
+                }
+                if (item.variant !== undefined && !VALID_VARIANTS.has(item.variant as string)) {
+                  errors.push(`contributes.chrome.contextControls[${i}] (${(item.id as string) || '?'}): variant must be one of ${[...VALID_VARIANTS].join('|')}`);
+                }
+                if (item.collapsible !== undefined && typeof item.collapsible !== 'boolean') {
+                  errors.push(`contributes.chrome.contextControls[${i}] (${(item.id as string) || '?'}): collapsible must be a boolean`);
+                }
+                if (item.defaultCollapsed !== undefined && typeof item.defaultCollapsed !== 'boolean') {
+                  errors.push(`contributes.chrome.contextControls[${i}] (${(item.id as string) || '?'}): defaultCollapsed must be a boolean`);
                 }
               }
             }

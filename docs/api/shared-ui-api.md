@@ -140,8 +140,8 @@ For extension panels declared in server manifests (no React component in registr
 function registerPanelComponent(id: string, component: ComponentType<any>): void;
 function getPanelComponentOverride(id: string): ComponentType<any> | undefined;
 function syncExtensionPanels(
-  leftViews?: { id: string; title: string; icon: string; defaultVisible: boolean; when?: string }[],
-  rightViews?: { id: string; title: string; icon: string; defaultVisible: boolean; when?: string }[],
+  leftViews?: { id: string; title: string; icon: string; defaultVisible: boolean; when?: string; order?: number }[],
+  rightViews?: { id: string; title: string; icon: string; defaultVisible: boolean; when?: string; order?: number }[],
 ): void;
 ```
 
@@ -170,9 +170,197 @@ Extension panels are declared in adapter manifests (`sb-extension.json` `contrib
 |----|------|-------|------|--------------------|----------------|
 | `logs` | right | 100 | `view == "claude-chat"` | `LogsPanel` | claude-code |
 | `terminal` | right | 100 | `view == "claude-chat"` | `TerminalPanel` | claude-code |
-| `tasks` | right | 100 | `view == "claude-chat"` | `TaskPanel` | claude-code |
+| `tasks` | right | 10 | `view == "claude-chat"` | `TaskPanel` | claude-code |
 | `processes` | right | 100 | `view == "terminal"` | `ProcessesPanel` | shell |
 | `system` | right | 100 | `view == "dashboard"` | `SystemPanel` | system-info |
+
+## Workbench Chrome Contributions
+
+Status: **Implemented in Phase 4J**. Chrome items are host-rendered declarative contributions from extension manifests. No React injection supported.
+
+Workbench Chrome Contributions are host-rendered lightweight items for the global UI frame. They are different from Dock Panels:
+
+| Surface | Host component | Contribution key | Content |
+|---|---|---|---|
+| Header | `ConsoleHeader` | `contributes.chrome.header` | Small text buttons, rendered in header right area |
+| Status bar | `StatusBar` | `contributes.chrome.statusBar` | Compact text items, left/right sides |
+| Key hints | `KeyHintOverlay` | `contributes.chrome.keyHints` | **Legacy** — auto-converted to contextControls (kind: hint, placement: bottom-right) |
+| Context controls | `KeyHintOverlay` | `contributes.chrome.contextControls` | Adaptive controls in bottom-right overlay: hints as kbd+label, others as capsules. Max 6, `hidden md:flex` |
+
+Target contribution types:
+
+```typescript
+interface HeaderChromeContribution {
+  id: string;
+  title?: string;
+  text?: string;
+  icon?: string;
+  side?: 'left' | 'right';
+  group?: string;
+  order?: number;
+  when?: string;
+  command?: string;
+  priority?: 'low' | 'normal' | 'high';
+  mobile?: 'show' | 'collapse' | 'hide';
+}
+
+interface StatusBarChromeContribution {
+  id: string;
+  text: string;
+  title?: string;
+  icon?: string;
+  side?: 'left' | 'right';
+  group?: string;
+  order?: number;
+  when?: string;
+  command?: string;
+  priority?: 'low' | 'normal' | 'high';
+  mobile?: 'show' | 'collapse' | 'hide';
+}
+
+interface KeyHintChromeContribution {
+  id: string;
+  label: string;
+  keys: string;
+  order?: number;
+  when?: string;
+  command?: string;
+  group?: string;
+  priority?: 'low' | 'normal' | 'high';
+  mobile?: 'show' | 'collapse' | 'hide';
+}
+
+// ─── Context Controls (Phase 4J-b — primary model) ─────────
+
+type ContextControlKind =
+  | 'hint' | 'button' | 'toggle' | 'menu' | 'progress' | 'approval' | 'jump';
+
+type ContextControlPlacement =
+  | 'bottom-left' | 'bottom-right' | 'header-right' | 'status-left' | 'status-right' | 'auto';
+
+interface ContextControlContribution {
+  id: string;
+  kind: ContextControlKind;
+  label: string;
+  icon?: string;
+  keys?: string;
+  placement?: ContextControlPlacement;
+  command?: string;
+  when?: string;
+  order?: number;
+  priority?: number;         // Higher = more likely to show, default 50
+  group?: string;
+  ttlMs?: number;
+  collapsible?: boolean;
+  defaultCollapsed?: boolean;
+  mobile?: 'show' | 'collapse' | 'hide';
+  variant?: 'default' | 'primary' | 'danger' | 'warning' | 'success';
+  reason?: string;
+}
+
+interface ChromeContributions {
+  header?: HeaderChromeContribution[];
+  statusBar?: StatusBarChromeContribution[];
+  /** @deprecated Use contextControls with kind: "hint", placement: "bottom-right" instead. */
+  keyHints?: KeyHintChromeContribution[];
+  contextControls?: ContextControlContribution[];
+}
+```
+
+Host rendering rules:
+
+| Rule | Implementation |
+|---|---|
+| Filtering | Items filtered by `when` using pane-focus `WhenContext` in `getHeaderChromeItems()` / `getStatusBarChromeItems()` / `getContextControls()`. |
+| Sorting | header/statusBar sort by `side` (left first), then `group`, then `order ?? 100`. Context controls sort by `placement` → `priority` (desc) → `order`. |
+| Conflicts | Host/core not applicable yet — all chrome items come from aggregated manifest data. |
+| Icons | Icon field captured but not resolved to Lucide icons in Phase 4J. Only `text`/`title` rendered. |
+| Commands | Click routes through action registry first (host actions like `host.commandPalette.open`), falling back to `sendCommand` (adapter/runtime commands like `shell.clear`, `shell.kill`). Unknown commands produce dev console warning. |
+| Missing `when` | Allowed — item is always visible across all focus contexts. |
+| Mobile | Context controls and key hints hidden on mobile (`hidden md:flex`). Header and statusBar items unchanged. |
+
+#### Phase 4J-b Placement Scope
+
+`contextControls` supports multiple `placement` values, but Phase 4J-b only renders the **bottom-right** surface:
+
+| Placement | Rendered in Phase 4J-b | Notes |
+|-----------|------------------------|-------|
+| `bottom-right` | Yes | Primary placement for the `KeyHintOverlay` |
+| `auto` | Yes, as bottom-right | Host fallback — shown at bottom-right; comment noted |
+| _(undefined) + kind `hint`_ | Yes, as bottom-right | Legacy keyHint converted to contextControls |
+| `header-right` | **No** | Future — use `chrome.header` for header items instead |
+| `status-left` | **No** | Future — use `chrome.statusBar` for status items instead |
+| `status-right` | **No** | Future — use `chrome.statusBar` for status items instead |
+| `bottom-left` | **No** | Future — not yet implemented |
+
+Example manifest:
+
+```json
+{
+  "contributes": {
+    "chrome": {
+      "header": [
+        {
+          "id": "terminal.clear",
+          "title": "Clear",
+          "icon": "eraser",
+          "side": "right",
+          "order": 20,
+          "when": "view == \"terminal\"",
+          "command": "terminal.clear"
+        }
+      ],
+      "statusBar": [
+        {
+          "id": "terminal.connection",
+          "text": "Terminal",
+          "side": "left",
+          "order": 10,
+          "when": "view == \"terminal\""
+        }
+      ],
+      "contextControls": [
+        {
+          "id": "terminal.stop",
+          "kind": "hint",
+          "label": "Stop",
+          "keys": "Esc",
+          "placement": "bottom-right",
+          "priority": 90,
+          "when": "view == \"terminal\" && isRunning",
+          "command": "terminal.stop"
+        }
+      ]
+    }
+  }
+}
+```
+
+Implementation plan:
+
+1. Extend manifest types with `contributes.chrome`.
+2. Validate chrome contribution arrays in the extension loader.
+3. Aggregate contributions in extension points.
+4. Add a client `chrome-registry.ts`.
+5. Render header items from `ConsoleHeader`.
+6. Render status items from `StatusBar`.
+7. Add `KeyHintOverlay`.
+8. Migrate simple hardcoded shortcut hints.
+9. Add mobile fallback policy.
+10. Add diagnostics for ID conflicts, unknown icons, unknown commands, and global plugin-owned items.
+
+#### Phase 4J-b: Context Controls
+
+11. Add `ContextControlContribution` type (kind: hint/button/toggle/menu/progress/approval/jump, placement: bottom-left/bottom-right/header-right/status-left/status-right/auto).
+12. Extend `ChromeContributions` with `contextControls`; mark `keyHints` as `@deprecated`.
+13. Add manifest validation for contextControls fields (kind, placement, order, priority, ttlMs, mobile, variant, collapsible).
+14. Update extension-points aggregation to collect contextControls and convert legacy keyHints.
+15. Update chrome-registry with `getContextControls()`, `getContextControlHints()`; sorting by placement → priority (desc) → order.
+16. Upgrade `KeyHintOverlay` to render all kinds (hints as kbd+label, others as capsules with variant).
+17. Migrate shell and claude-code manifests to use `contextControls` instead of `keyHints`.
+18. `getKeyHintItems()` becomes a wrapper around `getContextControls().filter(kind === 'hint')`.
+
+Done: All items are implemented. `keyHints` is legacy compat; `contextControls` is the primary model.
 
 ## Notification System
 

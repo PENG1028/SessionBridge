@@ -538,6 +538,7 @@ export interface ExtensionManifest {
     notifications?: NotificationContribution[];
     configuration?: Record<string, unknown>;
     languages?: LanguageContribution[];
+    chrome?: ChromeContributions;
     spawn?: {
       command: string;
       args: string[];
@@ -582,6 +583,121 @@ export interface MenuContribution {
   group?: string;
   /** Whether the item is disabled. */
   disabled?: boolean;
+  /**
+   * Menu target context.
+   * "workbench/context" (default) — right-click on main workbench area
+   * "tab/context" — right-click on pane/workbench tabs
+   * "instance/context" — right-click on instance tabs/list items
+   * "editor/context" — right-click on editor area
+   * "terminal/context" — right-click on terminal area
+   * If omitted, treated as "workbench/context" for backward compatibility.
+   */
+  menu?: string;
+  /** Display order within the menu (lower = earlier). Default 100. */
+  order?: number;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Chrome Contributions — header, status bar, key hints
+// ═══════════════════════════════════════════════════════════════════
+
+export interface HeaderChromeContribution {
+  id: string;
+  title?: string;
+  text?: string;
+  icon?: string;
+  side?: 'left' | 'right';
+  group?: string;
+  order?: number;
+  when?: string;
+  command?: string;
+  priority?: 'low' | 'normal' | 'high';
+  mobile?: 'show' | 'collapse' | 'hide';
+}
+
+export interface StatusBarChromeContribution {
+  id: string;
+  text: string;
+  title?: string;
+  icon?: string;
+  side?: 'left' | 'right';
+  group?: string;
+  order?: number;
+  when?: string;
+  command?: string;
+  priority?: 'low' | 'normal' | 'high';
+  mobile?: 'show' | 'collapse' | 'hide';
+}
+
+export interface KeyHintChromeContribution {
+  id: string;
+  label: string;
+  keys: string;
+  order?: number;
+  when?: string;
+  command?: string;
+  group?: string;
+  priority?: 'low' | 'normal' | 'high';
+  mobile?: 'show' | 'collapse' | 'hide';
+}
+
+// ─── Context Control Contributions (Phase 4J-b) ───────────────
+// Upgraded model replacing keyHints. Supports multiple interaction kinds:
+// hint, button, toggle, menu, progress, approval, jump.
+// keyHints is preserved as a legacy alias (kind: "hint", placement: "bottom-right").
+
+export type ContextControlKind =
+  | 'hint'
+  | 'button'
+  | 'toggle'
+  | 'menu'
+  | 'progress'
+  | 'approval'
+  | 'jump';
+
+export type ContextControlPlacement =
+  | 'bottom-left'
+  | 'bottom-right'
+  | 'header-right'
+  | 'status-left'
+  | 'status-right'
+  | 'auto';
+
+export interface ContextControlContribution {
+  id: string;
+  kind: ContextControlKind;
+  label: string;
+  icon?: string;
+  keys?: string;
+  placement?: ContextControlPlacement;
+  /**
+   * Command ID to execute when activated.
+   * Resolved via action registry first (host actions like host.commandPalette.open),
+   * falling back to sendCommand (adapter/runtime commands like shell.clear, shell.kill).
+   */
+  command?: string;
+  when?: string;
+  order?: number;
+  /** Higher priority = more likely to be shown when space is limited. Default 50. */
+  priority?: number;
+  group?: string;
+  /** Time-to-live in ms. Controls auto-hide behavior. 0 or undefined = persistent. */
+  ttlMs?: number;
+  collapsible?: boolean;
+  defaultCollapsed?: boolean;
+  mobile?: 'show' | 'collapse' | 'hide';
+  /** Semantic variant for host styling. No arbitrary colors. */
+  variant?: 'default' | 'primary' | 'danger' | 'warning' | 'success';
+  /** Debug / diagnostic info — why this control is shown. */
+  reason?: string;
+}
+
+export interface ChromeContributions {
+  header?: HeaderChromeContribution[];
+  statusBar?: StatusBarChromeContribution[];
+  /** @deprecated Use contextControls with kind: "hint", placement: "bottom-right" instead. */
+  keyHints?: KeyHintChromeContribution[];
+  contextControls?: ContextControlContribution[];
 }
 
 export interface LanguageContribution {

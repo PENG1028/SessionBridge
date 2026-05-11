@@ -12,7 +12,9 @@
 import type {
   ExtensionManifest, SidePanelContribution, CommandContribution,
   MenuContribution, WhenContext, NotificationContribution,
-  AdapterCapabilities,
+  AdapterCapabilities, ChromeContributions,
+  HeaderChromeContribution, StatusBarChromeContribution, KeyHintChromeContribution,
+  ContextControlContribution,
 } from '../types';
 import { adapterRegistry } from '../registry';
 import { panelRegistry } from './panel-registry';
@@ -297,20 +299,24 @@ export class ExtensionPointsRegistry {
   // ─── Menu Contributions ────────────────────────────────────
 
   /**
-   * Get menu contributions, optionally filtered by group and when condition.
+   * Get menu contributions, optionally filtered by menu target, group, and when condition.
+   * Menus without an explicit `menu` field default to "workbench/context".
    */
-  getMenus(group?: string, ctx?: WhenContext): MenuContribution[] {
+  getMenus(menuTarget?: string, group?: string, ctx?: WhenContext): MenuContribution[] {
     const result: MenuContribution[] = [];
     for (const manifest of this.manifests.values()) {
       const menus = manifest.contributes?.menus;
       if (!menus) continue;
       for (const menu of menus) {
+        const target = menu.menu || 'workbench/context';
+        if (menuTarget !== undefined && target !== menuTarget) continue;
         if (group !== undefined && menu.group !== group) continue;
         if (ctx === undefined || evaluateWhen(menu.when, ctx)) {
           result.push(menu);
         }
       }
     }
+    result.sort((a, b) => (a.order ?? 100) - (b.order ?? 100));
     return result;
   }
 
@@ -379,6 +385,49 @@ export class ExtensionPointsRegistry {
     return result;
   }
 
+  // ─── Chrome Contributions ──────────────────────────────────
+
+  /**
+   * Get all chrome contributions (header, statusBar, keyHints) from all manifests.
+   * Returns unfiltered data — the frontend applies when filtering per focus context.
+   */
+  getChromeContributions(): ChromeContributions {
+    const header: HeaderChromeContribution[] = [];
+    const statusBar: StatusBarChromeContribution[] = [];
+    const keyHints: KeyHintChromeContribution[] = [];
+    const contextControls: ContextControlContribution[] = [];
+
+    for (const manifest of this.manifests.values()) {
+      const chrome = manifest.contributes?.chrome;
+      if (!chrome) continue;
+      if (chrome.header) header.push(...chrome.header);
+      if (chrome.statusBar) statusBar.push(...chrome.statusBar);
+      if (chrome.keyHints) keyHints.push(...chrome.keyHints);
+      if (chrome.contextControls) contextControls.push(...chrome.contextControls);
+    }
+
+    // Convert legacy keyHints to contextControls, dedup by ID
+    const ccIds = new Set(contextControls.map(c => c.id));
+    for (const kh of keyHints) {
+      if (!ccIds.has(kh.id)) {
+        contextControls.push({
+          id: kh.id,
+          kind: 'hint',
+          label: kh.label,
+          keys: kh.keys,
+          placement: 'bottom-right',
+          command: kh.command,
+          when: kh.when,
+          order: kh.order,
+          group: kh.group,
+          mobile: kh.mobile,
+        });
+      }
+    }
+
+    return { header, statusBar, keyHints, contextControls };
+  }
+
   // ─── Serialization ─────────────────────────────────────────
 
   /**
@@ -398,6 +447,7 @@ export class ExtensionPointsRegistry {
       languages: this.getLanguages(),
       notifications: this.getNotificationScenarios(),
       adapterCapabilities: this.getCapabilities(),
+      chrome: this.getChromeContributions(),
     };
   }
 }

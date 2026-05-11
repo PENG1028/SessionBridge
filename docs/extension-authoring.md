@@ -107,6 +107,8 @@ Known capability keys: `terminal`, `fileContext`, `structuredEvents`, `approvals
 
 Register side panels in the left or right sidebar.
 
+> **Panel rendering limitation:** External plugins cannot ship React components. Manifest-declared panels only render if the host has registered a component for that panel ID via `registerPanelComponent()`. Panels without a host-provided component are silently skipped with a development-mode console warning. See [Current Limitations](#current-limitations).
+
 ```json
 {
   "contributes": {
@@ -178,7 +180,7 @@ Each menu:
 - `order` — sort order within group (lower = higher priority, default 100)
 - `when` — visibility condition
 
-Command dispatch: action registry first (`getAction(command)?.run(ctx)`), fallback `sendCommand(command)` for adapter/runtime commands.
+Command dispatch: all surfaces use `runWorkbenchCommand()` which resolves through action registry → command registry → `sendCommand` fallback. See [Unified Command Dispatch](api/action-api.md#unified-command-dispatch-phase-4l).
 
 ##### Three-Layer Model (Phase 4K)
 
@@ -513,9 +515,7 @@ Status values:
 - **Main stage views**: To add a main-stage view (vs. sidebar panel), it must
   be registered via the built-in `web-views.ts` pattern in `adapters/`.
 - **Workbench chrome contributions**: `contributes.chrome` header, statusBar, and contextControls are fully implemented. Legacy `keyHints` are supported through automatic conversion to `contextControls`. Chrome items are host-rendered and cannot provide arbitrary React components.
-- **Session/History provider**: The session and history APIs in the relay
-  server are still hardcoded for the claude-code JSONL format. A
-  `SessionProvider` interface will be extracted in a future phase.
+- **Session/History provider**: `SessionProvider` interface is defined in `adapters/types.ts` and implemented by claude-code (`adapters/claude-code/session-provider.ts`). The relay server delegates `/api/sessions/*` routes to the active adapter's provider when available.
 - **Install/Uninstall CLI**: No `bridge install` or `bridge uninstall`
   command yet — extensions must be placed manually or loaded via
   `--extensions` / `BRIDGE_EXTENSIONS_PATH`.
