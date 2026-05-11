@@ -9,6 +9,10 @@
 
 | Chinese | English | Meaning |
 |---|---|---|
+| 工作台外壳贡献 | Workbench Chrome Contribution | Lightweight host-rendered items contributed into header, status bar, and key hint surfaces. |
+| 顶栏插槽 | Header Slot | Public host placement area in `ConsoleHeader`. |
+| 状态栏插槽 | Status Bar Slot | Public host placement area in `StatusBar`. |
+| 快捷键提示浮层 | Key Hint Overlay | Contextual shortcut hint surface, normally bottom-right on desktop. |
 | 停靠系统 | Dock System | Host-owned stable layout system for persistent tool areas. |
 | 停靠区 | Dock Area | Stable regions: `left`, `right`, `bottom`, `floating`. First-class areas should stay constrained; do not add arbitrary areas without a product reason. |
 | 停靠面板 | Dock Panel | A tool panel inside a dock area, such as Files, Instances, Tasks, Logs, System, or Terminal Log. |
@@ -44,6 +48,17 @@ Rules:
 | 主视图外壳策略 | View Chrome Policy | Chrome Policy | Per-view metadata deciding whether host header/status bar/shortcuts/command palette are available. |
 | 放置能力 | Placement Capability | Placement | Where a view/panel may live: main, left, right, bottom, floating, or popout. |
 
+Additional Phase 4J chrome terms:
+
+| Chinese name | English name | Short name | Meaning |
+|---|---|---|---|
+| 工作台外壳贡献 | Workbench Chrome Contribution | Chrome Contribution | Manifest/API item rendered by host chrome, not by plugin-owned React. |
+| 外壳动作 | Chrome Action | Chrome Action | Header/status/key-hint item that may invoke a command. |
+| 焦点条件 | Focus When Context | When Context | Active pane/tab/view/instance data used by `when` expressions. |
+| 交互条件 | Interaction Context | Interaction Context | Additional UI state such as selection, hovered surface, or active input mode. Future extension of `whenContext`. |
+| 宿主统一渲染 | Host-rendered UI | Host-rendered | Host controls visual density, placement, responsive behavior, and fallback rendering. |
+| 插件声明 | Manifest Contribution | Manifest | Plugin-owned declarative metadata consumed by host registries. |
+
 ## 2. Ownership Layers
 
 ### 2.1 System Kernel
@@ -76,6 +91,88 @@ Host Chrome is owned by the host. Plugins should not import and mutate chrome co
 | 断线提示 | Disconnect Banner | `app/page.tsx` | Host-owned | Remains host-owned |
 
 Rule: a plugin may add a button/status/menu item to Host Chrome through a public slot, but it may not inject UI into another plugin's internal view.
+
+### 2.2.1 Workbench Chrome Contributions (Phase 4J target)
+
+Workbench Chrome Contributions are lightweight, host-rendered items contributed by manifests or host/core registries. They are not Dock Panels, not main Views, and not plugin-owned arbitrary React components.
+
+Target surfaces:
+
+| Surface | Chinese | Purpose | Renderer owner |
+|---|---|---|---|
+| `header` | 顶栏 | Lightweight buttons, text items, badges, and command launchers near the top chrome | Host |
+| `statusBar` | 状态栏 | Small persistent state text/badges and optional command launchers near the bottom chrome | Host |
+| `keyHints` | 快捷键提示浮层 | Contextual shortcut hints, normally bottom-right on desktop | Host |
+| `contextControls` | 自适应上下文控制项 | Unified model covering hints, buttons, toggles, menus, progress, approval, and jump (Phase 4J-b) | Host |
+
+Boundary rules:
+
+1. Plugins declare structure only: `id`, `title`, `text`, `label`, `icon`, `keys`, `command`, `side`, `group`, `order`, `when`, `priority`, `mobile`, `kind`, and `placement`.
+2. Plugins do not directly inject React into `ConsoleHeader`, `StatusBar`, or the key hint overlay in Phase 4J.
+3. Host owns icon mapping, visual style, layout density, truncation, responsive fallback, conflict handling, and disabled states.
+4. Complex UI should be opened through a command into a modal, popover, panel, or future custom renderer. It should not be embedded directly in chrome items.
+5. `when` should be explicit whenever possible. Missing `when` means global visibility, but implementations should warn in development for plugin-owned global chrome items.
+6. Header/status/key-hint/context-control contributions must follow pane focus via `whenContext`; they must not fall back to global `activeInstanceId`.
+7. Host/core items win on `id` conflict. Plugin items with conflicting IDs should be skipped or warned.
+8. Unknown icons use host fallback icons. Unknown commands should warn and render disabled or no-op, depending on the surface.
+9. Mobile may hide or collapse chrome items even when desktop would show them.
+
+Phase 4J-b upgraded the model: `contextControls` is now the primary contribution type, replacing `keyHints`. Legacy `keyHints` are converted to `contextControls` with `kind: "hint"` and `placement: "bottom-right"`. The `KeyHintOverlay` component uses `getBottomRightContextControls()` as its data source and only renders bottom-right eligible controls (`placement: "bottom-right"`, `placement: "auto"`, or unset + `kind: "hint"`). Hints render as kbd+label, other kinds render as capsules.
+
+Supported `kind` values: `hint`, `button`, `toggle`, `menu`, `progress`, `approval`, `jump`.
+
+Supported `placement` values: `bottom-left`, `bottom-right`, `header-right`, `status-left`, `status-right`, `auto`.
+
+Current manifest shape:
+
+```json
+{
+  "contributes": {
+    "chrome": {
+      "header": [
+        {
+          "id": "terminal.clear",
+          "title": "Clear",
+          "icon": "eraser",
+          "side": "right",
+          "order": 20,
+          "when": "view == \"terminal\"",
+          "command": "terminal.clear"
+        }
+      ],
+      "statusBar": [
+        {
+          "id": "terminal.connection",
+          "text": "Terminal",
+          "side": "left",
+          "order": 10,
+          "when": "view == \"terminal\""
+        }
+      ],
+      "contextControls": [
+        {
+          "id": "terminal.stop",
+          "kind": "hint",
+          "label": "Stop",
+          "keys": "Esc",
+          "placement": "bottom-right",
+          "priority": 90,
+          "when": "view == \"terminal\" && isRunning",
+          "command": "terminal.stop"
+        }
+      ]
+    }
+  }
+}
+```
+
+Status:
+
+- Dock panels already use `contributes.views` and `when`-based filtering.
+- Header, status bar, context controls all have manifest contribution implementations.
+- Legacy `keyHints` compatibility preserved through automatic conversion to `contextControls`.
+- Existing settings, dashboard, connection status, disconnect banner, and project switcher remain host/core-owned.
+- Existing shortcut hint UI migrated to `contextControls` behind the `kind: "hint"` model.
 
 ### 2.3 Workbench Surface
 
@@ -319,7 +416,7 @@ Policy:
 | Current object | 中文名 | Current state | Desired ownership | Phase 4D action |
 |---|---|---|---|---|
 | `ConsoleHeader` | 顶部栏 | Global hard-rendered | Host Chrome + chrome policy + future slots | Make header density/visibility meta-driven |
-| Runtime badge `ASK/THINK` | 运行策略徽标 | Header infers globally | Claude/status contribution or full-header-only host item | Hide outside full chrome |
+| Runtime policy/mode badges | 运行策略徽标 | Header infers globally | Status/header contribution or full-header-only host item | Hide outside full chrome |
 | `StatusBar` | 底部状态栏 | Global, partly meta-controlled | Host Chrome + status bar slots | Keep controlled by `ViewMeta.chrome.statusBar` |
 | `CommandPalette` | 命令面板 | Global overlay | Host shell + command contributions | Disable by `ViewMeta.chrome.commandPalette` |
 | `useKeyboardShortcuts` | 全局快捷键 | Global key capture | Host keybinding service + contributions | Disable by `ViewMeta.chrome.globalShortcuts` |
@@ -387,32 +484,109 @@ Only visible when focus is on a terminal view (`view == "terminal"`):
 5. **Dynamic React panel loading** remains future work — external plugins cannot currently ship their own panel components.
 6. **Core panels always win** — `syncExtensionPanels()` skips IDs already registered by core, preventing manifest declarations from overwriting built-in panels.
 
+### 4.6 Chrome Contributions (Phase 4J)
+
+Chrome contributions (`contributes.chrome`) let manifests declare lightweight items in the host chrome: header buttons, status bar text, context controls (hints, buttons, toggles, menus, progress, approval, jump), and legacy key hints. Unlike panels, chrome items are declarative only — plugins provide text/icon/command metadata, and the host renders them with uniform styling.
+
+| Chrome area | Host rendering | Plugin supplies | When filtering |
+|---|---|---|---|
+| `header` | `ConsoleHeader` right area | `text`, `icon`, `title`, `command` | Yes |
+| `statusBar` | `StatusBar` left/right | `text`, `icon`, `command` | Yes |
+| `keyHints` | `KeyHintOverlay` bottom-right | `keys`, `label`, `command` | Yes |
+| `contextControls` | `KeyHintOverlay` bottom-right | `kind`, `label`, `keys`, `icon`, `command`, `placement`, `priority` | Yes |
+
+Rules:
+
+1. Plugins **cannot inject React components** into chrome areas. Only host-rendered declarative items.
+2. Each item has an `id`, optional `when`, optional `command` for click action.
+3. Items are sorted by `side` (left before right), then `group`, then `order`. Context controls sort by `placement` → `priority` (desc) → `order`.
+4. Unknown `command` IDs produce a dev console warning but do not block loading.
+5. Context controls are limited to 6 items in the overlay, hidden on mobile (`hidden md:flex`).
+6. ASK/THINK-related chrome items are out of scope for Phase 4J.
+7. `contextControls` is the primary model (Phase 4J-b). Legacy `keyHints` are automatically converted to `contextControls` with `kind: "hint"`, `placement: "bottom-right"`.
+
+### 4.7 Status Summary
+
+| Feature | Status | Since | Notes |
+|---|---|---|---|
+| Dock Panel `when` filtering | Done | 4I | Per view/focus |
+| Dock Profile persistence | Done | 4I | Order/collapse per view |
+| Extension panel component override | Done | 4I | Manifest + core component |
+| Chrome header contributions | Implemented | 4J | Host-rendered, no React injection |
+| Chrome statusBar contributions | Implemented | 4J | Host-rendered, left/right sides |
+| Chrome keyHints | Legacy compat | 4J | Auto-converted to contextControls (kind: hint) |
+| Chrome contextControls | Implemented | 4J-b | Unified model: hint, button, toggle, menu, progress, approval, jump |
+| Dynamic React chrome items | Not implemented | — | Future |
+| Mobile chrome collapse strategy | Partial | 4J | Context controls hidden; header/statusBar unchanged |
+
 ## 5. Context Menu Ownership
 
-The context menu is currently only half componentized:
+The context menu uses a **Host-owned three-layer model** (Phase 4K). The host owns rendering, positioning, clamping, keyboard navigation, mobile fallback, and command dispatch. Plugins and components own local intent.
 
-| Layer | 中文名 | Current code | Current state | Target state |
-|---|---|---|---|---|
-| Context menu shell | 右键菜单外壳 | `app/console/shell/context-menu.tsx` | Componentized | Keep as host-owned rendering shell |
-| Overlay placement | 覆盖层渲染 | `app/console/overlays/console-overlays.tsx` | Centralized | Keep as host-owned overlay placement |
-| Menu contribution schema | 菜单贡献声明 | `MenuContribution`, `contributes.menus` | Exists, but lacks target menu ID | Add `menu` field such as `workbench/context`, `tab/context`, `instance/context` |
-| Server aggregation | 菜单贡献聚合 | `extension-points.ts#getMenus()` | Exists | Filter by menu target + `when` |
-| Workbench menu builder | 工作台菜单生成器 | `app/console/hooks/use-context-menu.ts` | Still hardcoded | Replace hardcoded branches with registry/contribution collection |
-| Tab context menu | 标签页右键菜单 | `app/page.tsx#handleContextTab` | Inline in page | Move to same context menu registry with `tab/context` |
-| Instance tab menu | 实例标签右键菜单 | `InstanceTabBar` | Reserved/empty | Future `instance/context` |
+### 5.1 Three Sources
 
-Current hardcoded debt in `use-context-menu.ts`:
+| Source | When to use | How it registers |
+|---|---|---|
+| **Manifest contributes.menus** | Stable surfaces only: `workbench/context`, `terminal/context`, `chat/context`, `tab/context`, `instance/context`, `file/context`, `panel/context` | Declared in `sb-extension.json`, synced via `syncContextMenus()` |
+| **Action registry with `contextMenu` surface** | Host-owned actions that appear on multiple surfaces | `registerAction()` with `surfaces: ['contextMenu']` |
+| **Component localItems** | Dynamic runtime data: row right-click, tree node, chart point, message block | Passed as `localItems` in `ContextMenuRequest` at call time |
 
-| Hardcoded item/branch | 中文名 | Why it is debt | Target owner |
-|---|---|---|---|
-| `isTerminalView` inferred from `structuredEvents` | 终端视图判断 | View identity is inferred indirectly from capabilities | Use `when` context such as `view == terminal` or `activeAdapterId == shell` |
-| `a.id !== 'shell' || isTerminalView` | shell adapter 过滤 | Core hook knows shell-specific behavior | Host/new-instance contribution or adapter capability policy |
-| `Clear Terminal` | 清空终端 | Terminal-specific action is hardcoded globally | Shell plugin menu contribution |
-| `Clear History` | 清空历史 | Chat/workspace action is hardcoded globally | Claude/workspace menu contribution |
-| `Toggle Terminal` | 切换终端 | Workbench action is hardcoded in menu hook | Host workbench menu contribution |
-| `Copy All` | 复制全部 | Chat transcript action is hardcoded globally | Claude/workspace menu contribution |
+Sources are merged in priority order (localItems > manifest > action registry), deduplicated by `id`, filtered by `when`-condition, and sorted by `group` → `order` → `title`.
 
-Target menu contribution shape:
+### 5.2 Chain Resolution
+
+When a component calls `openContextMenu(request)`, it provides a `chain` — an ordered list of menu targets from most specific to most generic:
+
+```
+["message/context", "chat/context", "view/context", "workbench/context"]
+```
+
+The registry walks the chain and collects manifest menus matching each target. This allows a chat message to pick up message-specific menus, chat-level menus, view-global menus, and workbench-global menus in the correct order.
+
+### 5.3 Nested Menus
+
+`ContextMenuItemSpec` supports `children` for submenus. The `ContextMenu` renderer recursively renders submenus on hover, positioned to the right with viewport clamping. Items with children do not execute a command on click.
+
+### 5.4 Command Dispatch
+
+Clicking a menu item follows this chain:
+
+1. If item has `children` → open submenu, do not execute command.
+2. If `command` is set → look up `getAction(command)`, run with merged `{ ...actionRunCtx, target, args }`.
+3. Fallback → `sendCommand(command, { ...args, target })`.
+4. Unknown command → `console.warn`.
+5. Disabled items do not execute.
+
+### 5.5 Current State
+
+| Layer | State | Code |
+|---|---|---|
+| Types (`ContextMenuTarget`, `ContextMenuRequest`, `ContextMenuItemSpec`) | Done | `app/console/menus/context-menu-types.ts` |
+| Frontend registry (3-source merge, chain, dispatch) | Done | `app/console/menus/context-menu-registry.ts` |
+| Renderer with nested submenu support | Done | `app/console/shell/context-menu.tsx` |
+| Host hook (`openContextMenu`, `handleWorkbenchContextMenu`) | Done | `app/console/hooks/use-context-menu.ts` |
+| Manifest contributes.menus with menu targets | Done | Server `extension-points.ts` + manifests |
+| Host context menu actions | Done | `register-core-actions.tsx` |
+| Tab context menu | Legacy inline | `page.tsx#handleContextTab` — uses `openContextMenu` with `localItems` |
+| Instance list context menu | TODO | Future `instance/context` |
+| File tree / message / block context menus | TODO | Future `file/context`, `message/context` |
+
+### 5.6 Recommended Menu Targets
+
+| Target | Chain usage | Purpose |
+|---|---|---|
+| `workbench/context` | `['workbench/context']` | Right-click on main workbench area |
+| `view/context` | `['view/context', 'workbench/context']` | Right-click on any view surface |
+| `terminal/context` | `['terminal/context', 'view/context', 'workbench/context']` | Right-click on terminal area |
+| `chat/context` | `['chat/context', 'view/context', 'workbench/context']` | Right-click on chat area |
+| `tab/context` | `['tab/context', 'view/context', 'workbench/context']` | Right-click on pane tabs |
+| `instance/context` | `['instance/context', 'workbench/context']` | Right-click on instance list items |
+| `file/context` | `['file/context', 'view/context', 'workbench/context']` | Right-click on file tree entries |
+| `panel/context` | `['panel/context', 'workbench/context']` | Right-click on panel headers |
+| `message/context` | `['message/context', 'chat/context', 'view/context', 'workbench/context']` | Right-click on chat messages |
+| `selection/context` | `['selection/context', 'view/context', 'workbench/context']` | Right-click on selected content |
+
+### 5.7 Manifest Menu Shape
 
 ```json
 {
@@ -420,34 +594,29 @@ Target menu contribution shape:
     "menus": [
       {
         "id": "shell.menu.clear",
-        "menu": "workbench/context",
-        "title": "Clear Terminal",
+        "menu": "terminal/context",
+        "title": "Clear",
         "command": "shell.clear",
         "group": "edit",
-        "when": "activeAdapterId == shell"
+        "order": 10,
+        "when": "view == \"terminal\""
       }
     ]
   }
 }
 ```
 
-Recommended menu target names:
+- `menu` defaults to `"workbench/context"` when omitted (backward compatible).
+- Only suitable for stable surfaces. For dynamic runtime data, use component `localItems` via `openContextMenu()`.
 
-| Menu target | 中文名 | Purpose |
-|---|---|---|
-| `workbench/context` | 工作台右键菜单 | Right-click on the main workbench area |
-| `tab/context` | 标签页右键菜单 | Right-click on pane/workbench tabs |
-| `instance/context` | 实例右键菜单 | Right-click on instance tabs/list items |
-| `panel/context` | 面板右键菜单 | Right-click on sidebar/bottom panels |
-| `file/context` | 文件右键菜单 | Right-click on file tree entries |
+### 5.8 Design Rules
 
-Phase 4E should introduce a front-end `context-menu-registry.ts`:
-
-- Host registers built-in menu items through the same API plugins use.
-- Extension manifest menus are synced into the same registry.
-- Menu builders request items by `menu` target and `WhenContext`.
-- `ContextMenu` remains a dumb rendering shell.
-- `useContextMenu` becomes a thin adapter from browser events to registry lookup.
+1. **Host owns menu shell.** No plugin may render its own context menu overlay.
+2. **Plugins own local intent.** Components call `openContextMenu()` with a `ContextMenuRequest`.
+3. **Manifest menus only for stable surfaces.** Do not put row-level or node-level menus in manifest.
+4. **Shared UI components may expose a `getContextMenu` resolver prop.** Future: FileTree, List, DataTable.
+5. **Command dispatch must be unified.** Always action registry first, `sendCommand` fallback.
+6. **Nested menus must not crash.** Renderer handles arbitrary depth; mobile drill-down is future work.
 
 ## 6. Placement and Drag Rules
 
@@ -575,7 +744,7 @@ Scope:
 - Introduce a single action contract for command palette, context menu, keybindings, quick actions, header items, and status bar items.
 - Keep Settings, connection, project switcher, and disconnect banner host-owned; do not pretend they are plugins.
 - Convert hardcoded quick actions/context menu/keyboard shortcuts into host-registered actions first.
-- Add menu target names such as `workbench/context`, `tab/context`, `instance/context`, `panel/context`, and `file/context`.
+- Add menu target names such as `workbench/context`, `tab/context`, `instance/context`, `panel/context`, and `file/context`. (Completed in Phase 4K)
 - Add Dock Profile keys for panel order/collapse/size by Focus Scope. Start with view-scoped profiles; instance-scoped profiles can come later.
 - Keep dock areas constrained to `left`, `right`, `bottom`, and `floating`.
 
@@ -600,3 +769,70 @@ Do not:
 - Rewrite protocol implementation while documenting it.
 - Invent unsupported marketplace behavior as if it already exists.
 - Treat design sketches as stable API without a status label.
+
+### Phase 4J: Workbench Chrome Contributions
+
+Scope:
+
+- Add manifest/types support for `contributes.chrome.header`, `contributes.chrome.statusBar`, and `contributes.chrome.keyHints`.
+- Validate chrome contribution arrays in the extension loader.
+- Aggregate chrome contributions in extension points and expose them through the existing extension-points data flow.
+- Add a client-side chrome registry that filters by pane-focus `whenContext`.
+- Integrate lightweight host-rendered header items into `ConsoleHeader`.
+- Integrate lightweight host-rendered status items into `StatusBar`.
+- Add a `KeyHintOverlay` for contextual shortcut hints (initially `keyHints`, later upgraded to `contextControls`).
+- Migrate simple existing shortcut hints into `contextControls` (Phase 4J-b primary model; `keyHints` is legacy).
+- Keep settings, connection, project switcher, dashboard toggle, and disconnect banner host-owned unless a later phase deliberately migrates them.
+- Define mobile fallback: key hints hidden or collapsed by default; header/status items may collapse or hide based on `mobile`.
+
+#### Phase 4J-b: Adaptive Context Controls
+
+Scope:
+
+- Upgrade `keyHints` to a unified `contextControls` model supporting `kind: hint | button | toggle | menu | progress | approval | jump`.
+- Add `ContextControlContribution` type and extend `ChromeContributions` with `contextControls`.
+- Validate `contextControls` in extension loader (kind, placement, field type checks).
+- Aggregate `contextControls` in extension-points, convert legacy `keyHints` with dedup.
+- Update `chrome-registry.ts` with `getContextControls()` and `getContextControlHints()`.
+- Upgrade `KeyHintOverlay` to use `getBottomRightContextControls()`, rendering only bottom-right eligible controls (hints as kbd+label, others as capsules).
+- Migrate shell and claude-code manifests from `keyHints` to `contextControls`.
+- Document `contextControls` as the primary model; `keyHints` is legacy compat.
+
+Do not:
+
+- Implement ASK/THINK behavior.
+- Implement runtime provider / recommendation algorithm.
+- Implement dynamic folding/collapse UI.
+- Implement custom React renderer for chrome items.
+- Implement free color/theme system.
+- Implement full mobile strategy.
+
+Do not:
+
+- Implement dynamic React renderers for chrome items.
+- Allow plugins to inject arbitrary React into header/status/key-hint surfaces.
+- Build plugin installation, marketplace, or multi-node plugin distribution.
+- Rewrite the terminal or Claude main views.
+- Move complex dropdowns into chrome items. Use commands to open modals, popovers, or panels instead.
+
+### Phase 4K: Context Menu + Action Ownership Cleanup
+
+Scope:
+
+- Extend `MenuContribution` type with `menu` (menu target) and `order` fields.
+- Validate `menu` and `order` in extension loader menus validation.
+- Add menu target filtering to `extension-points.ts#getMenus(menuTarget?, group?, ctx?)`.
+- Create frontend `context-menu-registry.ts`: syncs manifest menus, queries by menu target + when, merges action registry items with 'contextMenu' surface, dispatches via action registry → sendCommand fallback.
+- Register host-owned context menu actions (`host.killInstance`, `host.clearHistory`, `host.toggleTerminal`, `host.copyAll`) with 'contextMenu' surface in `register-core-actions.tsx`.
+- Rewrite `use-context-menu.ts` to accept `menuTarget`, `whenCtx`, `actionRunCtx` — no hardcoded plugin IDs or adapter-specific logic.
+- Wire `syncContextMenus()` into page.tsx extension sync useEffect.
+- Update shell and claude-code manifests with `menu: "workbench/context"` on menu contributions.
+- Document resolved debt and updated ownership model.
+
+Do not:
+
+- Migrate `handleContextTab` inline items (tab context menu) to registry — deferred until tab context menu design is finalized.
+- Add new UI components or overlays.
+- Change server-side extension manifest schema beyond the `menu`/`order` field additions.
+- Modify `context-menu.tsx` rendering shell.
+- Add business features or new menu items beyond the cleanup scope.

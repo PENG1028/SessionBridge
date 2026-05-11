@@ -40,9 +40,26 @@
       { "id": "claude.status", "title": "Session Status", "category": "Session", "icon": "info" }
     ],
     "menus": [
-      { "id": "claude.menu.rewind", "title": "Rewind Last Change", "command": "rewind", "group": "navigation", "when": "activeAdapterId == claude-code" },
-      { "id": "claude.menu.compact", "title": "Compact Session", "command": "claude.compact", "group": "edit", "when": "activeAdapterId == claude-code && isRunning" }
+      { "id": "claude.menu.rewind", "menu": "chat/context", "title": "Rewind Last Change", "command": "rewind", "group": "navigation", "when": "view == \"claude-chat\"" },
+      { "id": "claude.menu.compact", "menu": "chat/context", "title": "Compact Session", "command": "claude.compact", "group": "edit", "when": "view == \"claude-chat\" && isRunning" }
     ],
+    "chrome": {
+      "statusBar": [
+        { "id": "claude.status.mode", "text": "Claude", "side": "left", "order": 10, "when": "view == \"claude-chat\"" }
+      ],
+      "contextControls": [
+        {
+          "id": "claude.hint.commands",
+          "kind": "hint",
+          "label": "Commands",
+          "keys": "⌘⇧P",
+          "placement": "bottom-right",
+          "priority": 50,
+          "when": "view == \"claude-chat\"",
+          "command": "host.commandPalette.open"
+        }
+      ]
+    },
     "configuration": {
       "type": "object",
       "properties": {

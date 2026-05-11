@@ -157,3 +157,150 @@ interface ContextMenuProps {
 ```
 
 Positioning clamps to window bounds. Closes on `mousedown` outside, scroll, or resize.
+
+## Context Menu Provider Model (Phase 4K)
+
+Location: `app/console/menus/context-menu-types.ts`, `app/console/menus/context-menu-registry.ts`, `app/console/hooks/use-context-menu.ts`
+
+The context menu uses a **three-source model** where the Host owns rendering, positioning, and command dispatch.
+
+### Types
+
+```typescript
+// What was clicked
+interface ContextMenuTarget {
+  kind: string;       // "workbench" | "view" | "terminal" | "chat" | "tab" | "instance" | ...
+  id?: string;
+  view?: string;
+  adapterId?: string;
+  instanceId?: string;
+  tabId?: string;
+  panelId?: string;
+  path?: string;
+  isDirectory?: boolean;
+  messageId?: string;
+  blockId?: string;
+  rowId?: string;
+  nodeId?: string;
+  data?: Record<string, unknown>;
+}
+
+// Full request to open a menu
+interface ContextMenuRequest {
+  event: React.MouseEvent | MouseEvent;
+  menu?: string;
+  chain?: string[];         // Most specific to most generic
+  target: ContextMenuTarget;
+  whenContext?: Record<string, unknown>;
+  localItems?: ContextMenuItemSpec[];
+  localOnly?: boolean;
+}
+
+// Spec for a single item (supports nesting)
+interface ContextMenuItemSpec {
+  id: string;
+  title: string;
+  icon?: string;
+  shortcut?: string;
+  command?: string;
+  args?: Record<string, unknown>;
+  when?: string;
+  disabled?: boolean;
+  disabledReason?: string;
+  danger?: boolean;
+  checked?: boolean;
+  separator?: boolean;
+  group?: string;
+  order?: number;
+  children?: ContextMenuItemSpec[];
+}
+```
+
+### Registry API
+
+```typescript
+// Sync manifest menus (called in page.tsx useEffect)
+function syncContextMenus(data: unknown): void;
+
+// Legacy query by single target (kept for backward compat)
+function getContextMenuItems(
+  menuTarget: string,
+  whenCtx: WhenContext,
+  actionRunCtx?: ActionRunContext,
+): ResolvedContextMenuItem[];
+
+// Build items from ContextMenuRequest (3-source merge)
+function buildMenuItems(
+  request: ContextMenuRequest,
+  actionRunCtx?: ActionRunContext,
+): ResolvedContextMenuItem[];
+
+// Clear all entries
+function clearContextMenus(): void;
+```
+
+### Three Sources (priority order)
+
+| Source | How | Priority |
+|---|---|---|
+| Component `localItems` | Passed at call time in `ContextMenuRequest` | Highest |
+| Manifest `contributes.menus` | Synced via `syncContextMenus()`, matched by `chain` entries | Medium |
+| Action registry with `surfaces: ['contextMenu']` | Registered via `registerAction()` | Lowest |
+
+Items are deduplicated by `id` (earlier source wins), filtered by `when`-condition, and sorted by `group` (`navigation` → `edit` → `debug` → `view`) → `order` → `title`.
+
+### Chain Resolution
+
+The `chain` field allows a menu to collect items from multiple levels of specificity:
+
+```
+["message/context", "chat/context", "view/context", "workbench/context"]
+```
+
+The registry walks from most specific to most generic, collecting manifest menus that match each entry.
+
+### Command Dispatch
+
+When a menu item is clicked:
+
+1. If `children` exists → open submenu, do not execute.
+2. If `command` is set → `getAction(command)?.run({...actionRunCtx, target, args})`.
+3. Fallback → `sendCommand(command, { ...args, target })`.
+4. Unknown command → `console.warn`.
+5. Disabled items do not execute.
+
+### Nested Submenus
+
+`ContextMenuItemSpec.children` enables nested menus. The renderer (`app/console/shell/context-menu.tsx`) recursively renders submenus on hover, positioned to the right with viewport clamping. Items with children do not fire an action.
+
+### Host Hook
+
+```typescript
+function useContextMenu(
+  actionRunCtx: ActionRunContext,
+  whenCtx: WhenContext,
+  getAllAdapterTypes: () => { id: string; meta: { label: string } }[],
+  projectCwd: string,
+  createInstance: (dir: string, label?: string, adapterId?: string) => unknown,
+): {
+  ctxMenu: { x: number; y: number; items: ContextMenuItem[] } | null;
+  setCtxMenu: (menu: ...) => void;
+  openContextMenu: (request: ContextMenuRequest) => void;
+  handleWorkbenchContextMenu: (e: React.MouseEvent) => void;
+  closeContextMenu: () => void;
+};
+```
+
+### Menu Targets
+
+| Target | Chain | Purpose |
+|---|---|---|
+| `workbench/context` (default) | `['workbench/context']` | Main workbench area |
+| `view/context` | `['view/context', 'workbench/context']` | Any view surface |
+| `terminal/context` | `['terminal/context', 'view/context', 'workbench/context']` | Terminal area |
+| `chat/context` | `['chat/context', 'view/context', 'workbench/context']` | Chat area |
+| `tab/context` | `['tab/context', 'view/context', 'workbench/context']` | Pane tabs |
+| `instance/context` | `['instance/context', 'workbench/context']` | Instance list items |
+| `file/context` | `['file/context', 'view/context', 'workbench/context']` | File tree entries |
+| `panel/context` | `['panel/context', 'workbench/context']` | Panel headers |
+| `message/context` | `['message/context', 'chat/context', 'view/context', 'workbench/context']` | Chat messages |

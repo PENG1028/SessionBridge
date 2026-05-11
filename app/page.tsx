@@ -19,6 +19,8 @@ import { __coreViewsRegistered } from './console/main/register-core-views';
 import { syncExtensionPanels } from './console/panels/panel-registry';
 import { __corePanelsRegistered } from './console/panels/register-core-panels';
 import { __extensionPanelComponentsRegistered } from './console/panels/register-panel-components';
+import { syncChromeContributions } from './console/chrome/chrome-registry';
+import { syncContextMenus } from './console/menus/context-menu-registry';
 import { evaluateWhen } from '../lib/evaluate-when';
 import { getDefaultAdapterId } from '../adapters/registry';
 void __corePanelsRegistered;
@@ -31,6 +33,7 @@ import { useHistoryLoader } from './console/hooks/use-history-loader';
 import { useCommandHandlers } from './console/hooks/use-command-handlers';
 import { useKeyboardShortcuts } from './console/hooks/use-keyboard-shortcuts';
 import { useContextMenu } from './console/hooks/use-context-menu';
+import type { ContextMenuRequest } from './console/menus/context-menu-types';
 import { registerBuiltinCommands } from './console/commands/register-builtin-commands';
 import { registerCommand, getCommand } from './console/commands/command-registry';
 import { __coreActionsRegistered } from './console/actions/register-core-actions';
@@ -40,6 +43,7 @@ import type { ActionRunContext } from './console/actions/action-types';
 void __coreActionsRegistered;
 import type { ContextMenuItem } from './console/shell/context-menu';
 import { ConsoleOverlays } from './console/overlays/console-overlays';
+import { KeyHintOverlay } from './console/chrome/key-hint-overlay';
 import { LayoutProvider, useLayout, SidebarSlot, MainSlot, FocusProvider, RuntimePolicyProvider, useFocus, useRuntimePolicy, WorkbenchProvider } from './console/workbench';
 import { WorkbenchLayout } from './console/stage/workbench-layout';
 import { workbenchReducer, createInitialState, findPane as findPaneInTree, type ViewType, type PaneTab } from './console/stage/workbench-state';
@@ -340,6 +344,12 @@ function PageContent() {
       const views = extensionPointsData.views as Record<string, any>;
       syncExtensionPanels(views['sidebar-left'], views['sidebar-right']);
     }
+    if (extensionPointsData?.chrome) {
+      syncChromeContributions(extensionPointsData.chrome);
+    }
+    if (extensionPointsData?.menus) {
+      syncContextMenus(extensionPointsData.menus);
+    }
   }, [extensionPointsData]);
 
   // ── Workbench pane/tab layout state ──────
@@ -526,10 +536,6 @@ function PageContent() {
 
   useKeyboardShortcuts(messages, handleClearSession, handleToggleCommandPalette, handleToggleLeftSidebar, handleRestart, chromePolicy.globalShortcuts);
 
-  const { ctxMenu, setCtxMenu, handleCtx } = useContextMenu(
-    focusAdapterId, focusInstanceId, projectInfo, messages, createInstance, killInstance, sendCommand, extensionPointsData, focusViewId, focusIsRunning, workbenchState, workbenchDispatch, getAllAdapterTypes, getAdapterCapabilities, evaluateWhen
-  );
-
   const handleQuickCompact = useCallback(() => {
     sendInput('/compact', activeSessionId || undefined);
     addLog('[System] Sending /compact command');
@@ -612,6 +618,15 @@ function PageContent() {
     toggleRightSidebar: () => dispatch({ type: 'TOGGLE_SIDEBAR', position: 'right' }),
     notify: (n) => notify({ id: n.title, type: n.type as any, title: n.title, message: n.message }),
   }), [focusViewId, focusAdapterId, focusIsRunning, focusInstanceId, projectInfo, messages, workbenchState, workbenchDispatch, sendCommand, sendInput, activeSessionId, createInstance, killInstance, openSearchPanel, dispatch, notify]);
+
+  // ── Context menu — uses actionRunContext, must be after its definition ──
+  const { ctxMenu, setCtxMenu, openContextMenu, handleWorkbenchContextMenu, closeContextMenu } = useContextMenu(
+    actionRunContext,
+    focusWhenContext,
+    getAllAdapterTypes,
+    projectInfo?.cwd || '.',
+    createInstance,
+  );
 
   // Handle command palette selection — check action registry first, fallback to sendCommand
   const handlePaletteSelect = useCallback((cmdId: string) => {
@@ -788,22 +803,32 @@ function PageContent() {
     : 'Error';
 
   // ── Handle context menu on tab right-click ──
+  // Phase 4K: Uses openContextMenu with tab/context chain.
+  // Remaining debt: local items (Copy Name, Copy Tab ID, Type, Instance)
+  // are inlined here rather than in the registry, because they reference
+  // the tab object at call time. A future "tab/context" manifest or action
+  // registry structure could replace these.
   const handleContextTab = useCallback((tab: PaneTab, e: React.MouseEvent) => {
-    e.preventDefault();
-    const items: ContextMenuItem[] = [
-      { label: 'Copy Name', action: () => navigator.clipboard.writeText(tab.title).catch(() => {}) },
-      { label: 'Copy Tab ID', action: () => navigator.clipboard.writeText(tab.id).catch(() => {}) },
-      { label: '', divider: true, action: () => {} },
-      { label: `Type: ${tab.viewType}`, action: () => {} },
+    const localItems = [
+      { id: 'tab.copyName', title: 'Copy Name', command: 'clipboard.copy', args: { text: tab.title }, group: 'edit', order: 10 },
+      { id: 'tab.copyId', title: 'Copy Tab ID', command: 'clipboard.copy', args: { text: tab.id }, group: 'edit', order: 20 },
+      { id: 'tab.sep1', title: '', separator: true, group: 'view', order: 5 },
+      { id: 'tab.type', title: `Type: ${tab.viewType}`, group: 'view', order: 10 },
     ];
     if (tab.instanceId) {
-      items.push(
-        { label: '', divider: true, action: () => {} },
-        { label: `Instance: ${tab.instanceId.slice(0, 12)}...`, action: () => {} },
+      localItems.push(
+        { id: 'tab.sep2', title: '', separator: true, group: 'view', order: 15 },
+        { id: 'tab.instance', title: `Instance: ${tab.instanceId.slice(0, 12)}...`, group: 'view', order: 20 },
       );
     }
-    setCtxMenu({ x: e.clientX, y: e.clientY, items });
-  }, [setCtxMenu]);
+    openContextMenu({
+      event: e,
+      target: { kind: 'tab', id: tab.id, tabId: tab.id, view: tab.viewType, instanceId: tab.instanceId },
+      chain: ['tab/context', 'view/context', 'workbench/context'],
+      menu: 'tab/context',
+      localItems,
+    });
+  }, [openContextMenu]);
 
   // ── Handle tab reorder via drag/drop ──
   const handleReorderTabs = useCallback((paneId: string, tabId: string, targetId: string) => {
@@ -1000,7 +1025,7 @@ function PageContent() {
   return (
     <FocusProvider instances={instances} activeInstanceId={activeInstanceId} activeViewId={state.activeViewId} sessionKey={sessionKey} paneFocus={paneFocus}>
       <RuntimePolicyProvider>
-    <div className="flex flex-col h-screen bg-[#0a0a0a] text-gray-300 font-mono text-sm overflow-hidden selection:bg-purple-900 selection:text-white relative" onContextMenu={handleCtx}>
+    <div className="flex flex-col h-screen bg-[#0a0a0a] text-gray-300 font-mono text-sm overflow-hidden selection:bg-purple-900 selection:text-white relative" onContextMenu={handleWorkbenchContextMenu}>
       <ConsoleHeader
         chromePolicy={chromePolicy}
         onMobileOpen={() => setMobileOpen(true)}
@@ -1079,13 +1104,15 @@ function PageContent() {
         onForkSnapshot={handleForkSnapshot}
         onForkWithPrompt={handleForkWithPrompt}
         ctxMenu={ctxMenu}
-        onCloseContextMenu={() => setCtxMenu(null)}
+        onCloseContextMenu={closeContextMenu}
         settingsOpen={settingsOpen}
         onCloseSettings={() => setSettingsOpen(false)}
         wsUrl={wsUrl}
         token={token}
         onConnect={(url, tok) => { setWsUrl(url); setToken(tok); }}
       />
+
+      <KeyHintOverlay whenContext={focusWhenContext} onCommand={handlePaletteSelect} />
 
       <div className="flex flex-1 overflow-hidden">
         <SidebarSlot open={state.leftSidebarOpen}>

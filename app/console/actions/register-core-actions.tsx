@@ -48,7 +48,10 @@ function def(
   };
 }
 
-// ── Host actions ───────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════
+// Host-owned actions — settings, dashboard, search, palette, sidebar
+// These are core workbench actions, not owned by any adapter/plugin.
+// ══════════════════════════════════════════════════════════════
   registerAction(def('host.settings.open', 'Settings',
     ['commandPalette', 'header.right'],
     (ctx) => ctx.openSettings(),
@@ -93,6 +96,48 @@ function def(
     { order: 60, category: 'Host' },
   ));
 
+  // ── Host context menu actions (Phase 4K) ─────────────────────
+  // These are host-owned menu items dispatched from the context menu.
+  // Command resolution: action registry first, fallback sendCommand.
+  registerAction(def('host.killInstance', 'Kill Instance',
+    ['contextMenu', 'keybinding'],
+    (ctx) => { if (ctx.instanceId) ctx.killInstance(ctx.instanceId); },
+    { when: 'isRunning', shortcut: '⌘W', keybinding: 'Ctrl+W', order: 10, category: 'Host', danger: true, group: 'navigation' },
+  ));
+
+  registerAction(def('host.clearHistory', 'Clear History',
+    ['contextMenu'],
+    (ctx) => ctx.sendCommand('clear'),
+    { when: 'view == "claude-chat"', order: 10, category: 'Host', group: 'edit' },
+  ));
+
+  registerAction(def('host.toggleTerminal', 'Toggle Terminal',
+    ['contextMenu'],
+    (ctx) => {
+      const state = ctx.workbenchState as any;
+      if (state?.bottom) {
+        ctx.workbenchDispatch({ type: 'CLOSE_BOTTOM_PANE' });
+      } else {
+        ctx.workbenchDispatch({ type: 'ADD_BOTTOM_PANE' });
+      }
+    },
+    { shortcut: '⌘`', keybinding: 'Ctrl+`', order: 20, category: 'Host', group: 'view' },
+  ));
+
+  registerAction(def('host.copyAll', 'Copy All',
+    ['contextMenu'],
+    (ctx) => {
+      const text = [...ctx.messages].map((m: any) => `[${m.role}] ${m.content}`).join('\n');
+      navigator.clipboard.writeText(text).catch(() => {});
+    },
+    { when: 'view == "claude-chat"', shortcut: '⌘⇧C', keybinding: 'Ctrl+Shift+C', order: 30, category: 'Host', group: 'edit' },
+  ));
+
+  // ══════════════════════════════════════════════════════════════
+  // Claude/adapter compatibility actions — owned by claude-code adapter
+  // These are registered as host actions for backwards compatibility
+  // until the adapter can declare them via manifest contributes.menus.
+  // ══════════════════════════════════════════════════════════════
   // ── Claude actions ─────────────────────────────────────────
   registerAction(def('claude.clearHistory', 'Clear History',
     ['commandPalette', 'keybinding', 'contextMenu'],
@@ -154,6 +199,9 @@ function def(
     },
   ));
 
+  // ══════════════════════════════════════════════════════════════
+  // Shell/terminal compatibility actions — owned by shell adapter
+  // ══════════════════════════════════════════════════════════════
   // ── Terminal actions ───────────────────────────────────────
   registerAction(def('terminal.new', 'New Terminal',
     ['commandPalette', 'contextMenu'],

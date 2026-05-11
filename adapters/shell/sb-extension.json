@@ -31,8 +31,35 @@
       { "id": "shell.kill", "title": "Kill Process", "category": "Terminal", "icon": "stop-circle", "when": "isRunning" }
     ],
     "menus": [
-      { "id": "shell.menu.clear", "title": "Clear", "command": "shell.clear", "group": "edit", "when": "activeAdapterId == shell" }
+      { "id": "shell.menu.clear", "menu": "terminal/context", "title": "Clear", "command": "shell.clear", "group": "edit", "when": "view == \"terminal\"" }
     ],
+    "chrome": {
+      "statusBar": [
+        { "id": "shell.status.mode", "text": "TERMINAL", "side": "left", "order": 10, "when": "view == \"terminal\"" }
+      ],
+      "contextControls": [
+        {
+          "id": "shell.hint.stop",
+          "kind": "hint",
+          "label": "Stop",
+          "keys": "Esc",
+          "placement": "bottom-right",
+          "priority": 90,
+          "when": "view == \"terminal\" && isRunning",
+          "command": "shell.kill"
+        },
+        {
+          "id": "shell.hint.clear",
+          "kind": "hint",
+          "label": "Clear",
+          "keys": "⌘L",
+          "placement": "bottom-right",
+          "priority": 50,
+          "when": "view == \"terminal\"",
+          "command": "shell.clear"
+        }
+      ]
+    },
     "spawn": {
       "command": "bash",
       "args": ["--login"]
