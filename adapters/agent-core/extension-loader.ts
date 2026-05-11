@@ -225,6 +225,9 @@ export function validateManifest(manifest: Record<string, unknown>, dir: string)
                   if (!panel.title || typeof panel.title !== 'string') {
                     errors.push(`contributes.views.${side}[${i}] (${panel.id || '?'}): title is required`);
                   }
+                  if (panel.order !== undefined && typeof panel.order !== 'number') {
+                    errors.push(`contributes.views.${side}[${i}] (${panel.id || '?'}): order must be a number`);
+                  }
                 }
               }
             }
