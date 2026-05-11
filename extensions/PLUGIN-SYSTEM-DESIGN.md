@@ -806,6 +806,6 @@ That document defines the Chinese/English names, ownership layers, slot boundari
 and the Phase 4D/4E split for Host Chrome pluginization.
 # Current Status Note
 
-> 2026-05-11: this file is an older design sketch. For current naming and layout policy, use `docs/component-ownership-and-slots.md` as the source of truth. The current model is **Dock System / Dock Area / Dock Panel / Transient Surface / Focus Scope / Dock Profile**. Dock areas are stable host areas; switching focus should not automatically destroy or hide the whole dock area. Focus changes affect which dock panels/actions are visible and which dock profile is restored.
+> 2026-05-11: this file is an older design sketch. For current naming and layout policy, use `../docs/component-ownership-and-slots.md` as the source of truth. The current model is **Dock System / Dock Area / Dock Panel / Transient Surface / Focus Scope / Dock Profile**. Dock areas are stable host areas; switching focus should not automatically destroy or hide the whole dock area. Focus changes affect which dock panels/actions are visible and which dock profile is restored.
 >
 > Obsolete examples in this file include: "no sidebars -> fullscreen", "auto-hide sidebars on view switch", "System Status has no sidebars", and "sidebar slot" as the primary public concept. Translate those to the current model as: dock areas remain host-owned and stable; the relevant dock panels are filtered by `when`; per-focus layout is restored from Dock Profile.

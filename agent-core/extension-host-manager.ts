@@ -12,7 +12,7 @@
 
 import { fork, type ChildProcess } from 'child_process';
 import { resolve } from 'path';
-import type { InstanceHandle, StartInstanceInput, RuntimeInfo, ExtensionDiagnostic } from '../types';
+import type { InstanceHandle, StartInstanceInput, RuntimeInfo, ExtensionDiagnostic } from '../extensions/types';
 
 // ─── Types ──────────────────────────────────────────────────────
 

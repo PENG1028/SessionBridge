@@ -63,7 +63,7 @@ browser WS --shell.spawn--> relay-server
 
 ### 是否走 adapter
 
-**是** — 通过 `resolveAdapterByCapability('terminal', true)` 查找 terminal-capable adapter，然后调用 `adapter.start()`。ShellAdapter（`adapters/shell/index.ts`）是最常用的实现。
+**是** — 通过 `resolveAdapterByCapability('terminal', true)` 查找 terminal-capable adapter，然后调用 `adapter.start()`。ShellAdapter（`extensions/shell/index.ts`）是最常用的实现。
 
 ### 是否能被插件复用
 
@@ -80,7 +80,7 @@ browser WS --shell.spawn--> relay-server
 
 ### 入口
 
-- `adapters/agent-core/node-runtime.ts:333` — `spawnShell()`
+- `agent-core/node-runtime.ts:333` — `spawnShell()`
 - 触发条件：agent 注册成功后的 `'registered'` 事件（line 231）
 
 ### 流程
@@ -130,7 +130,7 @@ agent 注册成功
 
 ### 入口
 
-- `adapters/agent-core/dashboard-server.ts:269` — `POST /api/shell/run`
+- `agent-core/dashboard-server.ts:269` — `POST /api/shell/run`
 - 辅助端点：`/api/shell/stream`（SSE）、`/api/shell/input`（stdin）、`/api/shell/kill`
 
 ### 流程
@@ -257,7 +257,7 @@ bridge run "<command>"
 
 #### B. 中期（需设计，下一阶段候选）
 
-4. **统一 Shell 抽象层** — 在 `adapters/` 层新增 `ShellService` 接口：
+4. **统一 Shell 抽象层** — 在 `extensions/` 层新增 `ShellService` 接口：
    - 统一 `spawn(cmd, cwd) → ShellHandle`
    - 统一 `onOutput / onExit / write / kill`
    - 统一权限检查点
@@ -288,15 +288,15 @@ bridge run "<command>"
 |---|---|---|
 | `src/relay-server.ts` | WS 协议 + shell.spawn/input | Path 1 |
 | `src/instance-manager.ts` | 实例生命周期跟踪 | Path 1 |
-| `adapters/shell/index.ts` | ShellAdapter 实现 | Path 1 |
-| `adapters/claude-code/index.ts` | Claude Code adapter（结构化事件） | Path 1（其他 adapter） |
-| `adapters/agent-core/node-runtime.ts` | Agent 节点编排 + spawnShell | Path 2 |
-| `adapters/agent-core/dashboard-server.ts` | Dashboard HTTP API + /api/shell/run | Path 3 |
-| `adapters/agent-core/relay-connection.ts` | Agent→Relay WS 连接 | Path 2, Path 3 |
-| `adapters/agent-core/capability-host.ts` | 权限检查封装（agent 侧） | Path 2（旁路） |
+| `extensions/shell/index.ts` | ShellAdapter 实现 | Path 1 |
+| `extensions/claude-code/index.ts` | Claude Code adapter（结构化事件） | Path 1（其他 adapter） |
+| `agent-core/node-runtime.ts` | Agent 节点编排 + spawnShell | Path 2 |
+| `agent-core/dashboard-server.ts` | Dashboard HTTP API + /api/shell/run | Path 3 |
+| `agent-core/relay-connection.ts` | Agent→Relay WS 连接 | Path 2, Path 3 |
+| `agent-core/capability-host.ts` | 权限检查封装（agent 侧） | Path 2（旁路） |
 | `src/run-command.ts` | bridge run CLI | Path 4 |
-| `adapters/types.ts` | 核心类型：AgentAdapter, StartInstanceInput, InstanceHandle | 所有路径 |
-| `adapters/agent-core/permissions.ts` | PermissionModel | Path 1（relay-server） |
+| `extensions/types.ts` | 核心类型：AgentAdapter, StartInstanceInput, InstanceHandle | 所有路径 |
+| `agent-core/permissions.ts` | PermissionModel | Path 1（relay-server） |
 
 ---
 

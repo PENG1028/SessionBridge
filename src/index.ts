@@ -206,7 +206,7 @@ async function main() {
       return undefined;
     }
 
-    const { configDir } = await import("../adapters/agent-core/config");
+    const { configDir } = await import("../agent-core/config");
     const configPath = process.env.BRIDGE_CONFIG || join(configDir(), 'agent.json');
 
     let existing: Record<string, unknown> = {};
@@ -285,7 +285,7 @@ async function main() {
   }
 
   // ─── Node mode (default) ───────────────────────────────────────
-  const { NodeRuntime } = await import("../adapters/agent-core/node-runtime");
+  const { NodeRuntime } = await import("../agent-core/node-runtime");
   const { hostname } = await import("os");
 
   const roleStr = arg('role', 'auto');

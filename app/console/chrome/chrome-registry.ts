@@ -6,7 +6,7 @@ import type {
   KeyHintChromeContribution,
   ContextControlContribution,
   ContextControlPlacement,
-} from '../../../adapters/types';
+} from '../../../extensions/types';
 import { evaluateWhen, type WhenContext } from '../../../lib/evaluate-when';
 
 // ─── State ───────────────────────────────────────────────────

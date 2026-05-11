@@ -5,7 +5,7 @@
 // System scenarios are always present. Adapter scenarios are
 // contributed by each adapter's optional getNotificationScenarios().
 
-import type { NotificationScenario } from '../types';
+import type { NotificationScenario } from '../extensions/types';
 
 // ─── System-default scenarios ───────────────────────────────
 

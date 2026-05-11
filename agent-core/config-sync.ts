@@ -6,7 +6,7 @@
 // AgentConfigReceiver: validates and applies config pushes from
 // the relay, rejecting unknown or restart-required keys.
 
-import type { RelayEventBus } from '../types';
+import type { RelayEventBus } from '../extensions/types';
 import type { NodeConfig } from './config';
 import type { RelayConnection } from './relay-connection';
 

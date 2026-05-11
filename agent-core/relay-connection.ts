@@ -5,11 +5,11 @@
 
 import WebSocket from 'ws';
 import { EventEmitter } from 'events';
-import { envelope, parseMsg } from '../protocol';
-import { VERSION } from '../version';
-import { CryptoStream } from '../../src/crypto-stream';
-import { tryDecrypt } from '../../src/crypto-layer';
-import { loadOrCreateIdentity } from '../../src/identity-manager';
+import { envelope, parseMsg } from '../extensions/protocol';
+import { VERSION } from '../extensions/version';
+import { CryptoStream } from '../src/crypto-stream';
+import { tryDecrypt } from '../src/crypto-layer';
+import { loadOrCreateIdentity } from '../src/identity-manager';
 import type { NodeConfig } from './config';
 
 export interface RelayConnectionEvents {

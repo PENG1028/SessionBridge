@@ -17,16 +17,16 @@ import { RelayConnection } from './relay-connection';
 import { AgentConfigReceiver } from './config-sync';
 import { startDashboard, setDashboardState, setDashboardRelay, setExtensionHost, addDashboardLog, writeToShellByRelayId, restartDashboard } from './dashboard-server';
 import { getSystemState } from './introspection';
-import { detectNetworkCapability } from '../system-info';
-import { envelope } from '../protocol';
-import { detectNetwork } from '../../src/network-detect';
-import type { AgentCapabilityHost, NotificationScenario, RuntimeInfo } from '../types';
+import { detectNetworkCapability } from '../extensions/system-info';
+import { envelope } from '../extensions/protocol';
+import { detectNetwork } from '../src/network-detect';
+import type { AgentCapabilityHost, NotificationScenario, RuntimeInfo } from '../extensions/types';
 import { spawn, type ChildProcess } from 'child_process';
 import { watch, type FSWatcher } from 'fs';
 import { resolve } from 'path';
 import { ExtensionHostManager } from './extension-host-manager';
 import { extensionPoints } from './extension-points';
-import { adapterRegistry } from '../registry';
+import { adapterRegistry } from '../extensions/registry';
 
 export class NodeRuntime {
   readonly config: NodeConfig;
@@ -38,7 +38,7 @@ export class NodeRuntime {
 
   private startTime = Date.now();
   private shellProc: ChildProcess | null = null;
-  private relayServer: import('../../src/relay-server').NodeRelayServer | null = null;
+  private relayServer: import('../src/relay-server').NodeRelayServer | null = null;
   /** Extension host manager (only active in dev mode). */
   readonly hostManager: ExtensionHostManager | null = null;
   private fileWatchers: FSWatcher[] = [];
@@ -84,7 +84,7 @@ export class NodeRuntime {
 
     // 2. Start relay server if this node can be a relay
     if (this.resolvedRole === 'relay') {
-      const { NodeRelayServer, setNodeId } = await import('../../src/relay-server');
+      const { NodeRelayServer, setNodeId } = await import('../src/relay-server');
       this.relayServer = new NodeRelayServer(this.config.relayPort, this.config.relayToken);
       const actualPort = await this.relayServer.start();
       // Inject persistent node identity into EventBus (for event routing / mesh / audit)
@@ -102,7 +102,7 @@ export class NodeRuntime {
 
     // 4a. Register extension configuration contributions into the config registry
     try {
-      const { configRegistry } = await import('../../src/configuration/registry');
+      const { configRegistry } = await import('../src/configuration/registry');
       const contribs = extensionPoints.getConfigurationContributions();
       for (const contrib of contribs) {
         configRegistry.registerExtension(contrib.extensionId, contrib.title, contrib.properties as any);

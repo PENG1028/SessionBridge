@@ -11,18 +11,18 @@ import os from "os";
 import { checkRateLimit } from "./rate-limiter";
 import { CheckpointManager } from "./checkpoint-manager";
 import { InstanceManager } from "./instance-manager";
-import { envelope, parseMsg } from "../adapters/protocol";
-import { adapterRegistry, getDefaultAdapterId, getTerminalAdapterId, resolveAdapter, resolveAdapterByCapability } from "../adapters/registry";
-import { extensionPoints, evaluateWhen } from "../adapters/agent-core/extension-points";
-import type { WhenContext, StreamParserDeps } from "../adapters/types";
-import { RelayEventBus } from "../adapters/agent-core/event-bus";
+import { envelope, parseMsg } from "../extensions/protocol";
+import { adapterRegistry, getDefaultAdapterId, getTerminalAdapterId, resolveAdapter, resolveAdapterByCapability } from "../extensions/registry";
+import { extensionPoints, evaluateWhen } from "../agent-core/extension-points";
+import type { WhenContext, StreamParserDeps } from "../extensions/types";
+import { RelayEventBus } from "../agent-core/event-bus";
 import { AuditLogger } from "./audit-log";
 import { appConfig } from "./config";
 import { ensureCert } from "./cert";
 import { SessionPersistence } from "./session-persistence";
 import { registerApiRoutes } from "./api-routes";
-import { RelayConfigManager } from "../adapters/agent-core/config-sync";
-import { PermissionModel } from "../adapters/agent-core/permissions";
+import { RelayConfigManager } from "../agent-core/config-sync";
+import { PermissionModel } from "../agent-core/permissions";
 import { CryptoStream } from "./crypto-stream";
 import { tryDecrypt } from "./crypto-layer";
 import { loadOrCreateIdentity } from "./identity-manager";
@@ -44,7 +44,7 @@ function sessionProvider() {
 const START_TIME = Date.now();
 
 import { VERSION as SERVER_VERSION } from "../version";
-import { mismatchSeverity } from "../adapters/semver";
+import { mismatchSeverity } from "../extensions/semver";
 
 // ─── Config ──────────────────────────────────────────────────────
 const PORT = appConfig.get("port");
@@ -111,7 +111,7 @@ function inst(): import("./instance-manager").InstanceData {
 /** Check an HTTP request against the permission model. Returns true if allowed. */
 function checkHttpPermission(
   res: import("http").ServerResponse,
-  category: import("../adapters/types").PermissionCategory,
+  category: import("../extensions/types").PermissionCategory,
   context?: Record<string, unknown>,
 ): boolean {
   const result = permissions.check(category, context);
@@ -1946,7 +1946,7 @@ export function startRelayServer(port?: number): Promise<{ close: () => void; po
   // ── Register adapters via extension loader ──────────────
   (async () => {
     try {
-      const { scanAndActivate } = await import("../adapters/agent-core/extension-loader");
+      const { scanAndActivate } = await import("../agent-core/extension-loader");
       const result = await scanAndActivate({ log: (msg: string) => console.log(`[ext] ${msg}`) });
       console.log(`  ✓ Extensions activated: ${result.activated.map(a => a.manifest.id).join(', ')}`);
       if (result.diagnostics.some(d => d.status === 'failed' || d.status === 'invalid')) {
@@ -2038,7 +2038,7 @@ export class NodeRelayServer {
     }
     // Register adapters via extension loader
     (async () => {
-      const { scanAndActivate } = await import("../adapters/agent-core/extension-loader");
+      const { scanAndActivate } = await import("../agent-core/extension-loader");
       const result = await scanAndActivate({ log: (msg: string) => console.log(`[ext] ${msg}`) });
       console.log(`  ✓ Extensions activated: ${result.activated.map(a => a.manifest.id).join(', ')}`);
       if (result.diagnostics.some(d => d.status === 'failed' || d.status === 'invalid')) {

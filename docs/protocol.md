@@ -2,7 +2,7 @@
 
 所有消息均为 JSON 格式，通过 WebSocket 传输。本文档涵盖 v1 协议的所有消息类型。
 
-协议定义在 [`adapters/protocol.ts`](../adapters/protocol.ts)，服务端实现在 [`src/relay-server.ts`](../src/relay-server.ts)，客户端实现在 [`lib/ws-client.ts`](../lib/ws-client.ts)，Agent 端实现在 [`adapters/agent-core/relay-connection.ts`](../adapters/agent-core/relay-connection.ts)。
+协议定义在 [`extensions/protocol.ts`](../extensions/protocol.ts)，服务端实现在 [`src/relay-server.ts`](../src/relay-server.ts)，客户端实现在 [`lib/ws-client.ts`](../lib/ws-client.ts)，Agent 端实现在 [`agent-core/relay-connection.ts`](../agent-core/relay-connection.ts)。
 
 ---
 

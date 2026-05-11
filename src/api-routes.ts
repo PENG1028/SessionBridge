@@ -12,10 +12,10 @@ import os from "os";
 
 import type { InstanceManager, InstanceData } from "./instance-manager";
 import type { ConfigManager } from "./config";
-import type { RelayConfigManager } from "../adapters/agent-core/config-sync";
-import { envelope } from "../adapters/protocol";
-import { adapterRegistry, getDefaultAdapterId } from "../adapters/registry";
-import type { PermissionCategory } from "../adapters/types";
+import type { RelayConfigManager } from "../agent-core/config-sync";
+import { envelope } from "../extensions/protocol";
+import { adapterRegistry, getDefaultAdapterId } from "../extensions/registry";
+import type { PermissionCategory } from "../extensions/types";
 
 // ─── Types ─────────────────────────────────────────────────────
 

@@ -22,7 +22,7 @@ import { __extensionPanelComponentsRegistered } from './console/panels/register-
 import { syncChromeContributions } from './console/chrome/chrome-registry';
 import { syncContextMenus } from './console/menus/context-menu-registry';
 import { evaluateWhen } from '../lib/evaluate-when';
-import { getDefaultAdapterId } from '../adapters/registry';
+import { getDefaultAdapterId } from '../extensions/registry';
 void __corePanelsRegistered;
 void __extensionPanelComponentsRegistered;
 void __coreViewsRegistered;

@@ -10,7 +10,7 @@
 //   import { evaluateWhen } from './extension-points';
 //   const visible = extensionPanels.filter(p => evaluateWhen(p.when, ctx));
 
-import type { ExtensionManifest, SidePanelContribution, WhenContext } from '../types';
+import type { ExtensionManifest, SidePanelContribution, WhenContext } from '../extensions/types';
 import { evaluateWhen } from './extension-points';
 
 interface PanelEntry {

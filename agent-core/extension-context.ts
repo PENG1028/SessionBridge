@@ -3,7 +3,7 @@
 // Provided to extension.activate() so extensions can manage their
 // own lifecycle without leaking state on deactivation.
 
-import type { AgentCapabilityHost, Disposable, ExtensionMode, ExtensionContext, StateStore, ExtensionLogger } from '../types';
+import type { AgentCapabilityHost, Disposable, ExtensionMode, ExtensionContext, StateStore, ExtensionLogger } from '../extensions/types';
 
 // ─── State Store ─────────────────────────────────────────────────
 class MemStateStore implements StateStore {

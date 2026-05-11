@@ -10,7 +10,7 @@ import type {
   AgentCapabilityHost, FileSystemCapability, FileEntry,
   ProcessCapability, TerminalCapability, NotificationCapability,
   SpawnOptions, TerminalOptions, TerminalHandle, ProcessInfo,
-} from '../types';
+} from '../extensions/types';
 import type { PermissionModel } from './permissions';
 import type { NotificationModel } from './notifications';
 import type { RelayConnection } from './relay-connection';

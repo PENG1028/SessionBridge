@@ -8,8 +8,8 @@
 //   Host → Parent:  { type, ... }
 
 import { scanAndActivate, type ActivatedExtension, type LoaderResult } from './extension-loader';
-import type { ExtensionDiagnostic } from '../types';
-import { adapterRegistry } from '../registry';
+import type { ExtensionDiagnostic } from '../extensions/types';
+import { adapterRegistry } from '../extensions/registry';
 
 // ─── State ───────────────────────────────────────────────────────
 

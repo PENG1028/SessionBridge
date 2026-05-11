@@ -5,7 +5,7 @@
 
 > 2026-05-11 clarification: the authoritative model is now **Dock System + Action Surface + Transient Surface + Focus Scope + Dock Profile**. Older wording that treats sidebars as view-owned slots, says sidebars should auto-hide on view changes, or treats `activeInstanceId` as UI focus is obsolete.
 
-> Future capability guardrail: before adding broad plugin/runtime capabilities (CLI, task providers, deployment providers, service/webhook runtime, monitoring, InfraCore/platform control), check [`extension-capability-benchmarks.md`](extension-capability-benchmarks.md). That document is a north-star case library, not a current implementation commitment.
+> Future capability guardrail: before adding broad plugin/runtime capabilities (CLI, task providers, deployment providers, service/webhook runtime, monitoring, InfraCore/platform control), check [`EXTENSION-CAPABILITY-BENCHMARKS.md`](../extensions/EXTENSION-CAPABILITY-BENCHMARKS.md). That document is a north-star case library, not a current implementation commitment.
 
 ## 0. Current Decision Summary
 
@@ -70,12 +70,12 @@ System Kernel is the part plugins must not patch or fork. Plugins interact with 
 | 中文名 | English name | Current code | Plugin can use directly | Plugin can move/display | Plugin can modify internals | Extension path |
 |---|---|---|---:|---:|---:|---|
 | 实例管理器 | Instance Manager | `src/instance-manager.ts` | No | No | No | Host API/capability only |
-| 权限模型 | Permission Model | `adapters/agent-core/permissions.ts` | No | No | No | Capability checks |
-| 插件加载器 | Extension Loader | `adapters/agent-core/extension-loader.ts` | No | No | No | Manifest + activation |
-| 插件宿主 | Extension Host | `adapters/agent-core/extension-host*.ts` | No | No | No | Extension protocol |
-| 会话提供者接口 | Session Provider Interface | `adapters/types.ts` | Implement only | No | No | Adapter implements `getSessionProvider()` |
+| 权限模型 | Permission Model | `agent-core/permissions.ts` | No | No | No | Capability checks |
+| 插件加载器 | Extension Loader | `agent-core/extension-loader.ts` | No | No | No | Manifest + activation |
+| 插件宿主 | Extension Host | `agent-core/extension-host*.ts` | No | No | No | Extension protocol |
+| 会话提供者接口 | Session Provider Interface | `extensions/types.ts` | Implement only | No | No | Adapter implements `getSessionProvider()` |
 | 工作台状态机 | Workbench State | `app/console/stage/workbench-state.ts` | No | Indirect | No | Open/move view requests |
-| 传输协议 | Transport Protocol | `src/relay-server.ts`, `adapters/agent-core/relay-connection.ts` | No | No | No | Protocol messages only |
+| 传输协议 | Transport Protocol | `src/relay-server.ts`, `agent-core/relay-connection.ts` | No | No | No | Protocol messages only |
 
 Rule: if breaking this layer breaks plugin loading, permissions, routing, or layout identity, it is Kernel.
 
@@ -286,8 +286,8 @@ Plugin-Owned UI is controlled by the plugin that registers it.
 
 | 中文名 | English name | Current example | Owner | Other plugins can inject into it |
 |---|---|---|---|---:|
-| 终端主视图 | Terminal View | `adapters/shell/web-views.ts` + `TerminalView` | Shell plugin/adapter | No |
-| Claude 聊天视图 | Claude Chat View | `adapters/claude-code/web-views.ts` + `ClaudeChatView` | Claude Code plugin/adapter | No |
+| 终端主视图 | Terminal View | `extensions/shell/web-views.ts` + `TerminalView` | Shell plugin/adapter | No |
+| Claude 聊天视图 | Claude Chat View | `extensions/claude-code/web-views.ts` + `ClaudeChatView` | Claude Code plugin/adapter | No |
 | 任务面板 | Tasks Panel | `TaskPanel` registered by Claude web-views | Claude Code plugin/adapter | No |
 | 插件面板 | Extension Panel | Manifest `contributes.views` panel entries | Owning plugin | No |
 | 插件设置页 | Plugin Settings Section | Future settings contribution | Owning plugin | No |
@@ -690,8 +690,8 @@ When a user clicks "Create New Terminal/Runtime" in an empty view:
 | File | Change |
 |---|---|
 | `app/console/main/view-registry.ts` | Added `openMode` to `ViewMeta` |
-| `adapters/shell/web-views.ts` | `openMode: 'instance-bound'` |
-| `adapters/claude-code/web-views.ts` | `openMode: 'instance-bound'` |
+| `extensions/shell/web-views.ts` | `openMode: 'instance-bound'` |
+| `extensions/claude-code/web-views.ts` | `openMode: 'instance-bound'` |
 | `app/console/main/terminal-view.tsx` | Empty state when no `instanceId` |
 | `app/console/main/claude-chat-view.tsx` | Empty state when no `instanceId` |
 | `app/shell-terminal.tsx` | Sends `shell.spawn` only with valid `instanceId` (no change needed — already conditional) |
@@ -871,7 +871,7 @@ Scope:
 - Expose 5 REST API endpoints under `/api/configuration/` for schema queries, value reads, inspect, patch, and delete.
 - Add a dynamic "Extensions" section to SettingsPanel that renders extension-contributed settings from schema, with search bar, scope toggle (User/Workspace), modified-only filter, dirty state tracking, Save All button, per-field reset, inline validation errors, loading/error/empty states.
 - Update extension manifests (`sb-extension.json`) to use namespaced keys and declare `scope`.
-- Document the namespace rule, scope field, and supported types in `docs/extension-authoring.md`.
+- Document the namespace rule, scope field, and supported types in `extensions/EXTENSION-AUTHORING.md`.
 
 Key design:
 

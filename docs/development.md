@@ -47,7 +47,7 @@ src/
 ├── browser.ts            # 跨平台打开浏览器
 └── i18n.ts               # 多语言
 
-adapters/
+extensions/
 ├── types.ts              # 核心类型定义（AgentAdapter, OutputBlock 等）
 ├── ARCHITECTURE.md       # Adapter 体系架构蓝图
 ├── registry.ts           # Adapter 注册中心

@@ -4,7 +4,7 @@
 
 import { execSync } from 'child_process';
 import { cpus, totalmem, freemem, loadavg, hostname, platform, arch, uptime, homedir, networkInterfaces } from 'os';
-import type { ProcessInfo } from '../types';
+import type { ProcessInfo } from '../extensions/types';
 
 export interface SystemState {
   platform: string;
@@ -40,7 +40,7 @@ export interface AgentIntrospection {
   system: SystemState;
   adapters: { id: string; available: boolean }[];
   permissions: Record<string, boolean>;
-  notifications?: { scenarios: import('../types').NotificationScenario[]; settings: Record<string, boolean> };
+  notifications?: { scenarios: import('../extensions/types').NotificationScenario[]; settings: Record<string, boolean> };
 }
 
 /** Cross-platform process listing. */

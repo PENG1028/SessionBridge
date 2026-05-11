@@ -124,7 +124,7 @@ npx tsc --noEmit     # 类型检查
 
 ```
 src/                 # 后端（relay 服务器、实例管理、审计日志）
-adapters/            # 插件体系（类型定义、Shell、Claude Code、System Info）
+extensions/            # 插件体系（类型定义、Shell、Claude Code、System Info）
 app/                 # 前端（Next.js App Router）
 lib/                 # 客户端工具库（WebSocket、IndexedDB）
 docs/                # 详细文档
@@ -141,7 +141,7 @@ docs/                # 详细文档
 | [docs/protocol.md](docs/protocol.md) | WebSocket 通信协议参考 |
 | [docs/development.md](docs/development.md) | 开发指南、部署、环境变量 |
 | [docs/plugin-system-design.md](docs/plugin-system-design.md) | 插件系统专项设计 |
-| [adapters/ARCHITECTURE.md](adapters/ARCHITECTURE.md) | Adapter 插件体系设计蓝图 |
+| [extensions/ARCHITECTURE.md](extensions/ARCHITECTURE.md) | Adapter 插件体系设计蓝图 |
 
 ---
 

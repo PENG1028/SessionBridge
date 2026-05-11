@@ -11,11 +11,11 @@ import type { PermissionModel } from './permissions';
 import type { NotificationModel } from './notifications';
 import type { RelayConnection } from './relay-connection';
 import { dashboardHtml } from './dashboard-page';
-import { VERSION } from '../version';
+import { VERSION } from '../extensions/version';
 import { getSystemState, listProcesses, listProcessesSorted, type AgentIntrospection } from './introspection';
 import type { HostInfo } from './extension-host-manager';
 import { extensionPoints } from './extension-points';
-import { detectNetwork } from '../../src/network-detect';
+import { detectNetwork } from '../src/network-detect';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',

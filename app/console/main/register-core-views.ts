@@ -9,7 +9,7 @@ import { AgentMonitorView } from './agent-monitor-view';
 // ── Adapter view registrations ─────────────────────────────
 // The adapters directory owns its registrations. Core imports a single
 // aggregation point — not individual adapter modules.
-import { ensureAdapterViewsLoaded } from '../../../adapters/client-index';
+import { ensureAdapterViewsLoaded } from '../../../extensions/client-index';
 ensureAdapterViewsLoaded();
 
 /** Prevent tree-shaking of module-level side effects. */

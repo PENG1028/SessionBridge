@@ -107,7 +107,7 @@ Dashboard 默认绑定 `127.0.0.1`（仅本机访问）。当前实现提供 `/a
 
 ### NodeRuntime — 统一编排器
 
-`NodeRuntime`（`adapters/agent-core/node-runtime.ts`）是整个系统的核心编排器，取代了旧版 relay/agent 分离架构。无论是 relay 服务器还是 leaf agent，都通过同一个 `NodeRuntime` 启动。
+`NodeRuntime`（`agent-core/node-runtime.ts`）是整个系统的核心编排器，取代了旧版 relay/agent 分离架构。无论是 relay 服务器还是 leaf agent，都通过同一个 `NodeRuntime` 启动。
 
 ```
 NodeRuntime
@@ -171,7 +171,7 @@ bridge（CLI 入口：src/index.ts）
 
 ### NodeConfig — 统一配置
 
-`NodeConfig`（`adapters/agent-core/config.ts`）是整个节点的统一配置对象，从三个来源合并（优先级递减）：
+`NodeConfig`（`agent-core/config.ts`）是整个节点的统一配置对象，从三个来源合并（优先级递减）：
 1. CLI 参数（`bridge --upstream ws://host:8080 --role leaf`）
 2. `BRIDGE_CONFIG` 环境变量指向的 JSON 文件
 3. 默认值
@@ -366,7 +366,7 @@ pending ──▶ running ──▶ succeeded
 
 ### RelayEventBus
 
-`adapters/agent-core/event-bus.ts` — 跨组件类型化事件总线。
+`agent-core/event-bus.ts` — 跨组件类型化事件总线。
 
 ```typescript
 // 支持的事件类型
@@ -381,7 +381,7 @@ pending ──▶ running ──▶ succeeded
 
 ### RelayConnection
 
-`adapters/agent-core/relay-connection.ts` — 从 leaf 节点到 relay 的 WebSocket 连接。
+`agent-core/relay-connection.ts` — 从 leaf 节点到 relay 的 WebSocket 连接。
 
 - **hello 握手**：携带 role、version、features、token
 - **agent.register**：向 relay 注册自己
@@ -391,7 +391,7 @@ pending ──▶ running ──▶ succeeded
 
 ### Config Sync
 
-`adapters/agent-core/config-sync.ts` — relay 到 agent 的配置推送。
+`agent-core/config-sync.ts` — relay 到 agent 的配置推送。
 
 ```
 RelayConfigManager (relay 端)
@@ -411,7 +411,7 @@ AgentConfigReceiver (agent 端)
 
 ### Permissions
 
-`adapters/agent-core/permissions.ts` — 权限管控。
+`agent-core/permissions.ts` — 权限管控。
 
 ```typescript
 type PermissionCategory = 'fileRead' | 'fileWrite' | 'network'
@@ -424,7 +424,7 @@ type PermissionCategory = 'fileRead' | 'fileWrite' | 'network'
 
 ### Notifications
 
-`adapters/agent-core/notifications.ts` — 结构化通知模型。
+`agent-core/notifications.ts` — 结构化通知模型。
 
 - 系统默认场景：`agent.connected`、`agent.disconnected`、`update.available`
 - Adapter 可贡献自定义场景
@@ -522,7 +522,7 @@ shell.lock_status → 锁状态广播（locked/unlocked + 持有者）
 
 ## 八、Dashboard 本地管理页面
 
-每个节点启动时在 `localhost:9843` 启动一个 Dashboard 服务器（`adapters/agent-core/dashboard-server.ts`），提供 HTTP API：
+每个节点启动时在 `localhost:9843` 启动一个 Dashboard 服务器（`agent-core/dashboard-server.ts`），提供 HTTP API：
 
 | 路径 | 说明 |
 |------|------|
@@ -555,13 +555,13 @@ sessionBridge/
 │   ├── checkpoint-manager.ts      # 文件级 checkpoint
 │   ├── rate-limiter.ts            # API 频率限制
 │   ├── agent.ts                   # (旧) Agent 客户端 — 被 NodeRuntime 替代
-│   ├── protocol.ts                # (旧) 协议定义 — 已迁移到 adapters/protocol.ts
+│   ├── protocol.ts                # (旧) 协议定义 — 已迁移到 extensions/protocol.ts
 │   ├── ansi.ts                    # ANSI 转义解析
 │   ├── browser.ts                 # 跨平台浏览器打开
 │   ├── i18n.ts                    # 多语言
 │   └── run-command.ts             # bridge run 命令模式
 │
-├── adapters/
+├── extensions/
 │   ├── types.ts                   # 核心类型定义 (Adapter/OutputBlock/SystemToast)
 │   ├── ARCHITECTURE.md            # Adapter 架构蓝图
 │   ├── registry.ts                # AdapterRegistry 单例
@@ -786,9 +786,9 @@ SessionBridge 默认不使用 TLS/HTTPS 证书。所有 WebSocket 通信通过�
 | 操作状态机 (pending→running→succeeded/failed/cancelled) | InstanceManager | 已完成 |
 | 背压控制 (256KB/64KB) | node-runtime.ts | 已完成 |
 | Adapter 插件体系 | AdapterRegistry + types.ts | 已完成 |
-| Shell Adapter | adapters/shell/ | 已完成 |
-| Claude Code Adapter | adapters/claude-code/ | 已完成 |
-| System Info Adapter | adapters/system-info/ | 已完成 |
+| Shell Adapter | extensions/shell/ | 已完成 |
+| Claude Code Adapter | extensions/claude-code/ | 已完成 |
+| System Info Adapter | extensions/system-info/ | 已完成 |
 | AgentCapabilityHost + 权限门控 | capability-host.ts | 已完成 |
 | 跨组件 EventBus (带 nodeId 注入) | event-bus.ts | 已完成 |
 | 审计日志 (JSONL 按日轮转) | AuditLogger | 已完成 |

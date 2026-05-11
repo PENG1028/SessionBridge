@@ -15,8 +15,8 @@ import type {
   AdapterCapabilities, ChromeContributions,
   HeaderChromeContribution, StatusBarChromeContribution, KeyHintChromeContribution,
   ContextControlContribution,
-} from '../types';
-import { adapterRegistry } from '../registry';
+} from '../extensions/types';
+import { adapterRegistry } from '../extensions/registry';
 import { panelRegistry } from './panel-registry';
 
 // ═══════════════════════════════════════════════════════════════

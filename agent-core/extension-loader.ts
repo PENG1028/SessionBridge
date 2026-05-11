@@ -13,13 +13,13 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { join, resolve, dirname, basename, relative, isAbsolute } from 'path';
 import { homedir } from 'os';
 import { pathToFileURL } from 'url';
-import { adapterRegistry } from '../registry';
+import { adapterRegistry } from '../extensions/registry';
 import { ExtensionContextImpl } from './extension-context';
 import { extensionPoints } from './extension-points';
 import type {
   AgentAdapter, ExtensionManifest, ExtensionMode, ExtensionStatus, ExtensionDiagnostic,
   AgentCapabilityHost,
-} from '../types';
+} from '../extensions/types';
 
 export interface LoaderOptions {
   /** Extension directories to scan (auto-includes defaults). */
@@ -55,15 +55,15 @@ function getScanPaths(options: LoaderOptions): string[] {
     } catch { return false; }
   }
 
-  // 1. Built-in adapters directory (project adapters/)
-  // Handles tsx dev mode (__dirname = adapters/agent-core/) and
-  // compiled dist mode (__dirname = dist/adapters/agent-core/)
+  // 1. Built-in adapters directory (project extensions/)
+  // Handles tsx dev mode (__dirname = extensions/agent-core/) and
+  // compiled dist mode (__dirname = dist/extensions/agent-core/)
   const projectAdapters = resolve(__dirname, '..');
   if (existsSync(projectAdapters) && hasManifestSubdir(projectAdapters)) {
     paths.push(projectAdapters);
   }
 
-  // 1b. Fallback for compiled dist/: look for source adapters/ at project root
+  // 1b. Fallback for compiled dist/: look for source extensions/ at project root
   const srcAdapters = resolve(__dirname, '..', '..', '..', 'adapters');
   if (srcAdapters !== projectAdapters && existsSync(srcAdapters) && hasManifestSubdir(srcAdapters)) {
     paths.push(srcAdapters);
@@ -549,9 +549,9 @@ async function importModule(manifest: ExtensionManifest, extDir: string): Promis
   try {
     return await import(importPath);
   } catch (err1) {
-    // Fallback #1: if extDir is source adapters/, try dist/adapters/ equivalent
-    // (handles running compiled code from dist/ while manifests are in source adapters/)
-    const extParent = dirname(extDir);     // e.g. /project/adapters/
+    // Fallback #1: if extDir is source extensions/, try dist/extensions/ equivalent
+    // (handles running compiled code from dist/ while manifests are in source extensions/)
+    const extParent = dirname(extDir);     // e.g. /project/extensions/
     const extName = basename(extDir);       // e.g. claude-code
     const distExtDir = resolve(extParent, '..', 'dist', 'adapters', extName);
     if (existsSync(distExtDir)) {

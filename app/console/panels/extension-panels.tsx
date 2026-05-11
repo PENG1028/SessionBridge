@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { getDefaultAdapterId } from '../../../adapters/registry';
+import { getDefaultAdapterId } from '../../../extensions/registry';
 
 // ── Logs Panel ──────────────────────────────────────────────
 

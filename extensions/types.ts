@@ -502,7 +502,7 @@ export interface ExtensionContext {
  * Multiple kinds can be combined (e.g. adapter + visual + configuration-only).
  *
  * Future-facing: design decisions should not make unsupported kinds impossible.
- * See docs/extension-capability-benchmarks.md for detailed case studies.
+ * See adapters/EXTENSION-CAPABILITY-BENCHMARKS.md for detailed case studies.
  */
 export type ExtensionKind =
   | 'adapter'

@@ -3,7 +3,7 @@
 // here. Default policy: allow all (backward compat with current
 // agent which has no restrictions).
 
-import type { PermissionCategory, PermissionState } from '../types';
+import type { PermissionCategory, PermissionState } from '../extensions/types';
 
 export interface PermissionConfig {
   grants: Partial<Record<PermissionCategory, boolean>>;

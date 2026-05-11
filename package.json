@@ -6,7 +6,7 @@
   "files": [
     "dist/",
     ".next/",
-    "adapters/",
+    "extensions/",
     "lib/",
     "src/",
     "app/",
