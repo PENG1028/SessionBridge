@@ -55,16 +55,16 @@ function getScanPaths(options: LoaderOptions): string[] {
     } catch { return false; }
   }
 
-  // 1. Built-in adapters directory (project extensions/)
-  // Handles tsx dev mode (__dirname = extensions/agent-core/) and
-  // compiled dist mode (__dirname = dist/extensions/agent-core/)
-  const projectAdapters = resolve(__dirname, '..');
+  // 1. Built-in extensions directory (project extensions/)
+  // Handles tsx dev mode (__dirname = agent-core/) and
+  // compiled dist mode (__dirname = dist/agent-core/)
+  const projectAdapters = resolve(__dirname, '..', 'extensions');
   if (existsSync(projectAdapters) && hasManifestSubdir(projectAdapters)) {
     paths.push(projectAdapters);
   }
 
   // 1b. Fallback for compiled dist/: look for source extensions/ at project root
-  const srcAdapters = resolve(__dirname, '..', '..', '..', 'adapters');
+  const srcAdapters = resolve(__dirname, '..', '..', '..', 'extensions');
   if (srcAdapters !== projectAdapters && existsSync(srcAdapters) && hasManifestSubdir(srcAdapters)) {
     paths.push(srcAdapters);
   }
@@ -553,7 +553,7 @@ async function importModule(manifest: ExtensionManifest, extDir: string): Promis
     // (handles running compiled code from dist/ while manifests are in source extensions/)
     const extParent = dirname(extDir);     // e.g. /project/extensions/
     const extName = basename(extDir);       // e.g. claude-code
-    const distExtDir = resolve(extParent, '..', 'dist', 'adapters', extName);
+    const distExtDir = resolve(extParent, '..', 'dist', 'extensions', extName);
     if (existsSync(distExtDir)) {
       const distMainPath = resolve(distExtDir, manifest.main);
       try {
