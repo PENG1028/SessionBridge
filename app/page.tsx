@@ -33,6 +33,11 @@ import { useKeyboardShortcuts } from './console/hooks/use-keyboard-shortcuts';
 import { useContextMenu } from './console/hooks/use-context-menu';
 import { registerBuiltinCommands } from './console/commands/register-builtin-commands';
 import { registerCommand, getCommand } from './console/commands/command-registry';
+import { __coreActionsRegistered } from './console/actions/register-core-actions';
+import { runAction, getAction, getActions } from './console/actions/action-registry';
+import type { ActionRunContext } from './console/actions/action-types';
+// Register core actions into action registry (module-level side effect)
+void __coreActionsRegistered;
 import type { ContextMenuItem } from './console/shell/context-menu';
 import { ConsoleOverlays } from './console/overlays/console-overlays';
 import { LayoutProvider, useLayout, SidebarSlot, MainSlot, FocusProvider, RuntimePolicyProvider, useFocus, useRuntimePolicy, WorkbenchProvider } from './console/workbench';
@@ -416,6 +421,16 @@ function PageContent() {
     });
   }, [extensionPointsData, focusWhenContext]);
 
+  // Phase 4E: Merge extension commands with action registry commands for command palette.
+  const paletteCommands = useMemo(() => {
+    const registryActions: Array<{ id: string; title: string; category?: string }>
+      = getActions('commandPalette', focusWhenContext as Record<string, unknown>);
+    return [
+      ...extCommands.map(c => ({ id: c.id, title: c.title, category: c.category || 'Extension' })),
+      ...registryActions.map(a => ({ id: a.id, title: a.title, category: a.category || 'Core' })),
+    ];
+  }, [extCommands, focusWhenContext]);
+
   // ── Command registry setup (Phase 4E) ──────────────────
   // Built-in commands + extension commands are registered into the
   // command registry once per session. This runs once on mount.
@@ -593,6 +608,38 @@ function PageContent() {
     searchInputRef, searchPanelRef,
     handleSearchInput, openSearchPanel,
   } = useSessionSearch();
+
+  // ── Action Run Context (Phase 4E) ─────────────────────────
+  const actionRunContext = useMemo<ActionRunContext>(() => ({
+    view: focusViewId,
+    activeAdapterId: focusAdapterId,
+    isRunning: focusIsRunning,
+    instanceId: focusInstanceId,
+    projectCwd: projectInfo?.cwd || '.',
+    messages,
+    workbenchState,
+    workbenchDispatch,
+    sendCommand,
+    sendInput: (text: string) => sendInput(text, activeSessionId || undefined),
+    createInstance,
+    killInstance,
+    openSettings: () => setSettingsOpen(true),
+    openSearch: openSearchPanel,
+    openCommandPalette: () => setShowCommandPalette(v => !v),
+    toggleLeftSidebar: () => dispatch({ type: 'TOGGLE_SIDEBAR', position: 'left' }),
+    toggleRightSidebar: () => dispatch({ type: 'TOGGLE_SIDEBAR', position: 'right' }),
+    notify: (n) => notify({ id: n.title, type: n.type as any, title: n.title, message: n.message }),
+  }), [focusViewId, focusAdapterId, focusIsRunning, focusInstanceId, projectInfo, messages, workbenchState, workbenchDispatch, sendCommand, sendInput, activeSessionId, createInstance, killInstance, openSearchPanel, dispatch, notify]);
+
+  // Handle command palette selection — check action registry first, fallback to sendCommand
+  const handlePaletteSelect = useCallback((cmdId: string) => {
+    const action = getAction(cmdId);
+    if (action) {
+      action.run(actionRunContext);
+    } else {
+      sendCommand(cmdId);
+    }
+  }, [actionRunContext, sendCommand]);
 
   const handleLoadSession = useCallback(async (sessionId: string, project: string, display?: string) => {
     setSearchLoading(true);
@@ -929,6 +976,8 @@ function PageContent() {
     setShowCommands,
     handleCommandClick,
     cmdPanelRef: cmdPanelRef as React.RefObject<HTMLDivElement | null>,
+    sendCommand,
+    sendInput,
     handleInterrupt,
     setForkTarget,
     setForkPrompt,
@@ -958,6 +1007,7 @@ function PageContent() {
     showFileSuggest, fileSuggestions, handleFileSuggestionClick,
     showCommands, setShowCommands, handleCommandClick,
     handleInterrupt,
+    sendCommand, sendInput,
     setForkTarget, setForkPrompt,
     createInstance, handleBindCurrentTabInstance, activateInstance, activeInstanceId,
     projectInfo?.cwd,
@@ -1033,8 +1083,8 @@ function PageContent() {
         addLog={addLog}
         handleLoadSession={handleLoadSession}
         showCommandPalette={showCommandPalette}
-        extCommands={extCommands}
-        sendCommand={sendCommand}
+        extCommands={paletteCommands}
+        sendCommand={handlePaletteSelect}
         onCloseCommandPalette={() => setShowCommandPalette(false)}
         viewingFile={viewingFile}
         onCloseFileViewer={() => setViewingFile(null)}

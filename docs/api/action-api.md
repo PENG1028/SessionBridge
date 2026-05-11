@@ -1,5 +1,7 @@
 # Action API
 
+> 2026-05-11 status: this document describes the current partial action systems. The target direction is **Action Surface Registry**: one action contract feeding command palette, context menus, quick actions, header items, status bar items, keybindings, and mobile action sheets. Existing hardcoded surfaces should migrate into host-registered or extension-contributed actions before adding more plugin UI.
+
 Three action/capability systems:
 
 1. **Panel Action Event Bus** — lightweight cross-component signaling for sidebar panels

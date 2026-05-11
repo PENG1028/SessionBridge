@@ -2,6 +2,20 @@
 
 Shared UI components and their contracts.
 
+## Dock System Status
+
+Current implementation supports `left` and `right` dock areas through `LeftSidebar` / `RightSidebar` and `PanelRegistration.side`. The product model is broader:
+
+| Concept | Current status | Target |
+|---|---|---|
+| Dock areas | `left`, `right` implemented | `left`, `right`, `bottom`, `floating` |
+| Panel order | Persisted per side globally | Persist per Focus Scope / Dock Profile |
+| Collapse state | Persisted globally by panel id | Persist per Focus Scope / Dock Profile |
+| Panel size | Not first-class | Persist per Focus Scope / Dock Profile |
+| Mobile mapping | Partially via mobile sidebar | Host maps dock areas to drawer/sheet/fullscreen |
+
+Dock areas are stable host layout regions. Focus changes should filter dock panels and restore a profile; they should not destroy the whole dock area.
+
 ## DockPanelFrame
 
 Location: `app/console/sidebar/panel-dnd-wrapper.tsx`
@@ -23,7 +37,7 @@ interface DockPanelFrameProps {
 
 | Feature | Implementation |
 |---------|---------------|
-| **Collapse** | Chevron button toggles collapse, persisted to localStorage key `sessionbridge-collapsed-panels` as JSON string array |
+| **Collapse** | Chevron button toggles collapse, currently persisted to localStorage key `sessionbridge-collapsed-panels` as JSON string array. Target: scope by Dock Profile. |
 | **Drag & Drop** | Absolute-positioned drag handle on the left edge, visible on group hover. Drop indicator is an absolute `2px` purple line overlay |
 | **Actions** | Rendered in header right side, always visible regardless of collapse state |
 | **Children** | Always mounted in the React tree; hidden via `className="hidden"` when collapsed. Rationale: panels with internal timers/polling (e.g. InstanceList) continue to work |
@@ -172,7 +186,7 @@ function useFocus(): FocusState;
 function useWhenContext(): WhenContext;
 ```
 
-Resolution order for `instanceId`: `paneFocus.instanceId` > `activeInstanceId` (global).
+Resolution order for `instanceId`: `paneFocus.instanceId` only. `activeInstanceId` is a sidebar/management selection and must not be used as a fallback for UI focus.
 
 ## WorkbenchContext
 

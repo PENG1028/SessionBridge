@@ -4,6 +4,17 @@ import { Cpu, Folder, Search, ChevronDown, Settings, LayoutDashboard, Terminal }
 import { useFocus } from '../workbench/focus-context';
 import { useRuntimePolicy } from '../workbench/runtime-policy-context';
 import { getAdapterMeta, getViewEntry, getAdapterCapabilities, type ChromePolicy } from '../main/view-registry';
+import { getActions, runAction } from '../actions/action-registry';
+import type { ActionRunContext, WorkbenchAction } from '../actions/action-types';
+import type { LucideIcon } from 'lucide-react';
+
+// ── Icon name → Lucide component map ──────────────────────────
+const ICON_MAP: Record<string, LucideIcon> = {
+  search: Search,
+  'layout-dashboard': LayoutDashboard,
+  settings: Settings,
+  terminal: Terminal,
+};
 
 export interface ConsoleHeaderProps {
   onMobileOpen: () => void;
@@ -75,8 +86,11 @@ export function ConsoleHeader({
   const isMinimal = policy.header === 'minimal';
 
   let runtimeBadge: string | null = null;
+  let headerRightActions: WorkbenchAction[] = [];
+  let actionCtx: ActionRunContext | null = null;
   try {
-    const { paneViewType, adapterId } = useFocus();
+    const focus = useFocus();
+    const { paneViewType, adapterId } = focus;
     const { activePolicy } = useRuntimePolicy();
     const caps = getAdapterCapabilities(adapterId ?? '');
     if (caps?.modes === true) {
@@ -89,6 +103,29 @@ export function ConsoleHeader({
         : activePolicy.effortLevel === 'medium' ? 'ON' : 'MAX';
       runtimeBadge = `${label} [${modeBadge}] T:${effortBadge}`;
     }
+
+    // Phase 4E: Resolve header.right actions from registry
+    headerRightActions = getActions('header.right', focus.whenContext as Record<string, unknown>);
+    actionCtx = {
+      view: focus.viewId,
+      activeAdapterId: adapterId || '',
+      isRunning: focus.isRunning,
+      instanceId: focus.instanceId,
+      projectCwd: '',
+      messages: [],
+      workbenchState: null as unknown,
+      workbenchDispatch: () => {},
+      sendCommand: () => {},
+      sendInput: () => {},
+      createInstance: async () => undefined,
+      killInstance: () => {},
+      openSettings: () => onOpenSettings?.(),
+      openSearch: () => openSearchPanel(),
+      openCommandPalette: () => onToggleCommandPalette?.(),
+      toggleLeftSidebar: () => {},
+      toggleRightSidebar: () => {},
+      notify: () => {},
+    };
   } catch {}
 
   return (
@@ -175,53 +212,19 @@ export function ConsoleHeader({
 
         {/* Project info */}
         <div className="flex items-center gap-2 relative">
-          {/* Search sessions button — full only */}
-          {!isMinimal && (
-            <button
-              onClick={openSearchPanel}
-              className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#1a1a1a] border border-gray-700 hover:border-purple-500 text-gray-400 hover:text-gray-200 text-[10px] transition-colors"
-              title="Search past sessions"
-            >
-              <Search className="w-3 h-3" />
-            </button>
-          )}
-
-          {/* Dashboard button — full only */}
-          {!isMinimal && onToggleDashboard && (
-            <button
-              onClick={onToggleDashboard}
-              className={`flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] transition-colors ${
-                showDashboard
-                  ? 'bg-purple-900/30 border-purple-600 text-purple-300'
-                  : 'bg-[#1a1a1a] border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-500'
-              }`}
-              title="Dashboard"
-            >
-              <LayoutDashboard className="w-3 h-3" />
-            </button>
-          )}
-
-          {/* Settings button — full only */}
-          {!isMinimal && onOpenSettings && (
-            <button
-              onClick={onOpenSettings}
-              className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#1a1a1a] border border-gray-700 hover:border-gray-500 text-gray-400 hover:text-gray-200 text-[10px] transition-colors"
-              title="Settings"
-            >
-              <Settings className="w-3 h-3" />
-            </button>
-          )}
-
-          {/* Command palette button — full only when enabled */}
-          {!isMinimal && policy.commandPalette && onToggleCommandPalette && (
-            <button
-              onClick={onToggleCommandPalette}
-              className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#1a1a1a] border border-gray-700 hover:border-purple-500 text-gray-400 hover:text-gray-200 text-[10px] transition-colors"
-              title="Commands (Ctrl+Shift+P)"
-            >
-              <Terminal className="w-3 h-3" />
-            </button>
-          )}
+          {/* Phase 4E: Header right actions from registry (search, dashboard, settings, cmd palette) */}
+          {!isMinimal && headerRightActions.map(a => {
+            const IconComp = a.icon ? ICON_MAP[a.icon] : null;
+            return (
+              <button key={a.id}
+                onClick={() => { if (actionCtx) a.run(actionCtx); }}
+                className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#1a1a1a] border border-gray-700 hover:border-purple-500 text-gray-400 hover:text-gray-200 text-[10px] transition-colors"
+                title={a.shortcut ? `${a.title} (${a.shortcut})` : a.title}
+              >
+                {IconComp && <IconComp className="w-3 h-3" />}
+              </button>
+            );
+          })}
 
           <button
             onClick={onToggleDirSwitcher}

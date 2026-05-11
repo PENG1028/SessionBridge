@@ -91,6 +91,8 @@ export interface WorkbenchContextValue {
   cmdPanelRef: RefObject<HTMLDivElement | null>;
 
   // Actions
+  sendCommand: (cmd: string, args?: Record<string, string>, sessionId?: string) => void;
+  sendInput: (text: string, sessionId?: string) => void;
   handleInterrupt: () => void;
   setForkTarget: (v: number | null) => void;
   setForkPrompt: (v: string) => void;

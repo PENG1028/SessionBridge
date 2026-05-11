@@ -1,7 +1,32 @@
 # Component Ownership and Slots
 
-> Last updated: 2026-05-09
+> Last updated: 2026-05-11
 > Purpose: define which UI/runtime pieces belong to the system host, which belong to plugins, and which extension points should be used before changing code.
+
+> 2026-05-11 clarification: the authoritative model is now **Dock System + Action Surface + Transient Surface + Focus Scope + Dock Profile**. Older wording that treats sidebars as view-owned slots, says sidebars should auto-hide on view changes, or treats `activeInstanceId` as UI focus is obsolete.
+
+## 0. Current Decision Summary
+
+| Chinese | English | Meaning |
+|---|---|---|
+| 停靠系统 | Dock System | Host-owned stable layout system for persistent tool areas. |
+| 停靠区 | Dock Area | Stable regions: `left`, `right`, `bottom`, `floating`. First-class areas should stay constrained; do not add arbitrary areas without a product reason. |
+| 停靠面板 | Dock Panel | A tool panel inside a dock area, such as Files, Instances, Tasks, Logs, System, or Terminal Log. |
+| 面板框架 | Panel Frame | Host-owned wrapper around a panel: title, icon, collapse, drag handle, resize handle, and actions. |
+| 面板内容 | Panel Body | Core/plugin-owned content rendered inside the frame. |
+| 临时表面 | Transient Surface | UI that normally closes on focus changes: modal, popover, context menu, command palette, picker, tooltip. |
+| 焦点作用域 | Focus Scope | Current active tab/view/instance context. It drives `when` conditions. |
+| 停靠配置档 | Dock Profile | Per-focus or per-view memory for panel order, collapse, visibility, and size. |
+| 动作表面 | Action Surface | Places where actions render: header, status bar, command palette, context menu, quick actions, keybindings. |
+
+Rules:
+
+1. Dock areas do **not** close just because focus changes.
+2. Dock panels may appear/disappear according to `when` and focus context.
+3. Dock profile should remember panel order/collapse/size per focus scope, initially view-scoped.
+4. Transient surfaces close on focus change by default unless explicitly marked persistent.
+5. Plugins may suggest layout through declarations; users customize; host enforces final placement.
+6. On mobile, dock areas are mapped by the host: `left -> drawer`, `right -> sheet`, `bottom -> sheet`, `floating -> fullscreen` unless a contribution opts out or requests a supported override.
 
 ## 1. Naming
 
@@ -65,7 +90,26 @@ Workbench Surface owns placement, drag/drop, split panes, floating windows, and 
 | 浮动窗口 | Floating Window | Planned | No | Future | Yes |
 | 标签/拆分布局 | Tabs and Split Layout | `workbench-state.ts` | No | No | Yes |
 
-Rule: plugins declare allowed placements; users and host layout decide the actual placement.
+Rule: plugins declare preferred and allowed placements; users and host layout decide the actual placement. Plugins must not directly mutate global layout or force a dock area to exist.
+
+Current dock-area policy:
+
+| Dock Area | Chinese | Desktop behavior | Mobile fallback | Notes |
+|---|---|---|---|---|
+| `left` | 左停靠区 | Fixed/overlay navigation and project panels | Drawer | Files, instances, navigation-like panels |
+| `right` | 右停靠区 | Fixed/overlay context and inspector panels | Bottom sheet | Tasks, properties, context, logs |
+| `bottom` | 底部停靠区 | Resizable bottom dock | Bottom sheet | Output, terminal, timeline, problems |
+| `floating` | 浮动停靠区 | Host-managed floating panel/window | Fullscreen modal/sheet | Inspector, preview, monitor |
+
+Freedom boundary:
+
+```text
+Plugin suggests preferredArea/defaultSize/allowedAreas.
+User customizes order/collapse/size and eventually area.
+Host enforces supported areas, responsive fallback, permissions, and focus rules.
+```
+
+Do not implement arbitrary plugin-controlled sidebars, plugin-owned dock systems, or view-owned global layout transitions. If a plugin needs temporary UI, it should use a Transient Surface rather than creating its own dock.
 
 Suggested future manifest shape:
 
@@ -212,6 +256,14 @@ Default ownership rules:
 3. `ViewTab` state is per-client unless a future sync API explicitly marks it shared.
 4. `activeInstanceId` must not be treated as a single global UI focus in multi-client scenarios. Prefer pane/tab-bound `instanceId` and client-local focus.
 5. A phone opening the same relay must not unexpectedly rearrange the desktop layout.
+
+Dock/mobile ownership rules:
+
+1. Dock Profile is per-client by default.
+2. Desktop may show fixed dock areas; tablet/mobile should map dock areas to host-controlled drawers/sheets/fullscreen presentations.
+3. Plugins may declare `mobile.placement = auto | drawer | sheet | fullscreen | hidden`, but host may override unsafe choices.
+4. A plugin declaring mobile support does not get permission to bypass host layout. It only means its Panel Body can render acceptably inside the host's chosen mobile container.
+5. Transient surfaces close on focus change by default on all devices.
 
 ### 2.7 Plugin Responsive Contract
 
@@ -463,16 +515,23 @@ Do not:
 - Migrate all core panels.
 - Rewrite Workbench drag/drop.
 
-### Phase 4E: Host Slot Contributions
+### Phase 4E: Action Surface Registry and Dock Profile
 
-Future scope:
+Scope:
 
-- `contributes.header`
-- `contributes.statusBar`
-- `contributes.contextMenu`
-- `contributes.keybindings`
-- Built-in system plugins for Files, Instances, Dashboard, Settings.
-- Stable shared component export surface.
+- Introduce a single action contract for command palette, context menu, keybindings, quick actions, header items, and status bar items.
+- Keep Settings, connection, project switcher, and disconnect banner host-owned; do not pretend they are plugins.
+- Convert hardcoded quick actions/context menu/keyboard shortcuts into host-registered actions first.
+- Add menu target names such as `workbench/context`, `tab/context`, `instance/context`, `panel/context`, and `file/context`.
+- Add Dock Profile keys for panel order/collapse/size by Focus Scope. Start with view-scoped profiles; instance-scoped profiles can come later.
+- Keep dock areas constrained to `left`, `right`, `bottom`, and `floating`.
+
+Do not:
+
+- Build plugin installation, marketplace, or multi-node plugin distribution.
+- Add arbitrary plugin-controlled dock areas.
+- Implement dynamic React web-view loading in this phase.
+- Force all core UI to become plugins. Host/Core actions are allowed when they are truly host-owned.
 
 ### Phase 4H: API Contract Documentation
 

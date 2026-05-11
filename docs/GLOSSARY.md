@@ -72,3 +72,18 @@ For the full ownership and slot policy, see
 | 布局配置档 | Layout Profile | Layout Profile | Per-device layout behavior, e.g. desktop split panes vs mobile sheets |
 | 在线状态 | Presence | Presence | Which clients are connected and what each client is focused on |
 | 响应式契约 | Responsive Contract | Responsive Contract | Plugin declaration of desktop/tablet/mobile support and fallback behavior |
+# Current Layout Vocabulary
+
+> 2026-05-11 note: the current authoritative layout vocabulary is: Dock System, Dock Area, Dock Panel, Panel Frame, Panel Body, Transient Surface, Focus Scope, Dock Profile, and Action Surface. A tab's UI focus comes from `PaneTab.instanceId`; `activeInstanceId` is only a management selection and must not be described as the active UI focus.
+
+| Chinese | English | Definition |
+|---|---|---|
+| 停靠系统 | Dock System | Host-owned stable layout system for persistent tool areas. |
+| 停靠区 | Dock Area | Stable regions such as `left`, `right`, `bottom`, `floating`. |
+| 停靠面板 | Dock Panel | One tool panel inside a dock area. |
+| 面板框架 | Panel Frame | Host wrapper for title/icon/collapse/drag/actions/resize. |
+| 面板内容 | Panel Body | Core/plugin content rendered inside the frame. |
+| 临时表面 | Transient Surface | Modal, popover, context menu, command palette, picker, tooltip. Closes on focus change by default. |
+| 焦点作用域 | Focus Scope | Current active tab/view/instance context used by `when` conditions. |
+| 停靠配置档 | Dock Profile | Per-focus memory for panel order/collapse/size/visibility. |
+| 动作表面 | Action Surface | Header/status/context menu/command palette/quick actions/keybinding surfaces. |
