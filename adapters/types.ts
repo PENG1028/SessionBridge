@@ -252,7 +252,13 @@ export interface AgentAdapter {
   /** View component identifier for client-side routing */
   readonly viewId: string;
 
-  /** Get optional side panels for this adapter */
+  /**
+   * Get optional side panels for this adapter.
+   * @deprecated Use panel-registry.ts + manifests (contributes.views) instead.
+   *   All implementations now return [] or stubs. The interface remains for
+   *   backward compatibility but is no longer consumed by the frontend.
+   *   Remove in Phase 5.
+   */
   getSidePanels(): SidePanelDef[];
 
   /** Resolve the spawn command + args for this adapter (bridging step — used by relay-server until start() is fully integrated) */
@@ -301,7 +307,11 @@ export interface AdapterViewProps {
 // ═══════════════════════════════════════════════════════════════════
 // SidePanelDef — a registered side panel for an adapter
 // ═══════════════════════════════════════════════════════════════════
+// @deprecated Use panel-registry.ts + manifests (contributes.views) instead.
+//   Kept for backward compatibility with adapter implementations.
+//   Remove in Phase 5.
 
+/** @deprecated Use panel-registry.ts + manifests (contributes.views) */
 export interface SidePanelDef {
   id: string;
   title: string;
@@ -314,6 +324,7 @@ export interface SidePanelDef {
   order?: number;
 }
 
+/** @deprecated Use panel-registry.ts + manifests (contributes.views) */
 export interface SidePanelProps {
   instanceId: string;
   blocks: OutputBlock[];

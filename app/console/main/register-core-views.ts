@@ -19,7 +19,7 @@ export const __coreViewsRegistered = true;
 
 registerView('dashboard', {
   component: DashboardView,
-  meta: { title: 'Dashboard', icon: Activity, showInSelector: true, category: 'workspace', sidebarRequirements: { left: 'hidden', right: 'hidden' } },
+  meta: { title: 'Dashboard', icon: Activity, showInSelector: true, category: 'workspace', sidebarRequirements: { left: 'auto', right: 'auto' } },
 });
 
 registerView('logs', {

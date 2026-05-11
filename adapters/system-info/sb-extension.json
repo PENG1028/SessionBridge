@@ -3,7 +3,7 @@
   "displayName": "System Info",
   "version": "0.6.0",
   "icon": "monitor",
-  "viewId": "terminal",
+  "viewId": "dashboard",
   "engines": { "sessionbridge": "^0.6.0" },
   "main": "./index.js",
   "activationEvents": ["onStartupFinished"],

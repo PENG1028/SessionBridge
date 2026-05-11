@@ -42,7 +42,7 @@ import type { ContextMenuItem } from './console/shell/context-menu';
 import { ConsoleOverlays } from './console/overlays/console-overlays';
 import { LayoutProvider, useLayout, SidebarSlot, MainSlot, FocusProvider, RuntimePolicyProvider, useFocus, useRuntimePolicy, WorkbenchProvider } from './console/workbench';
 import { WorkbenchLayout } from './console/stage/workbench-layout';
-import { workbenchReducer, createInitialState, ensureInstanceTab, findPane as findPaneInTree, type ViewType, type PaneTab } from './console/stage/workbench-state';
+import { workbenchReducer, createInitialState, findPane as findPaneInTree, type ViewType, type PaneTab } from './console/stage/workbench-state';
 
 // ==========================================
 // Types
@@ -350,24 +350,6 @@ function PageContent() {
   // Phase 4I: Instance changes (sidebar click) no longer auto-create tabs.
   // Tab is the subject — instance is a tab's binding. Only shell tabs are
   // restored on reconnect via the instances[] effect below.
-
-  // When instances arrive from server (after refresh/reconnect), restore
-  // terminal tabs for existing shell instances that survived via clientToken.
-  // ensureInstanceTab is idempotent — skips if a tab for the instance exists.
-  useEffect(() => {
-    if (instances.length > 0) {
-      setWorkbenchState(prev => {
-        let state = prev;
-        for (const inst of instances) {
-          if (inst.adapterId === 'shell') {
-            const viewType = getAdapterViewId('shell') || 'terminal';
-            state = ensureInstanceTab(state, inst.id, inst.label || inst.id.slice(0, 12), viewType);
-          }
-        }
-        return state;
-      });
-    }
-  }, [instances]);
 
   // When an instance is killed/removed, clear any tabs bound to it.
   const prevInstanceIds = useRef<string[]>([]);
