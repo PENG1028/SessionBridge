@@ -5,7 +5,7 @@ SessionBridge 的扩展系统。每个 adapter 是一个自包含的插件，有
 ## 目录结构
 
 ```
-adapters/
+extensions/
   README.md                              ← 本文件：扩展系统概述
   EXTENSION-AUTHORING.md                 ← 插件开发指南
   EXTENSION-CAPABILITY-BENCHMARKS.md     ← 未来能力规划（北向案例库）

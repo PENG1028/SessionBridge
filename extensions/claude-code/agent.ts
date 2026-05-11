@@ -4,7 +4,7 @@
 // for most use cases; use this standalone script only when you need a
 // minimal agent without the full node runtime.
 //
-// Usage: node dist/adapters/claude-code/agent.js --relay ws://vps:8080 --dir /home/user/project
+// Usage: node dist/extensions/claude-code/agent.js --relay ws://vps:8080 --dir /home/user/project
 
 import { spawn } from "child_process";
 import { resolve } from "path";
@@ -232,7 +232,7 @@ if (require.main === module) {
   SessionBridge Remote Agent
 
   Usage:
-    node dist/adapters/claude-code/agent.js --relay <url> --dir <path> [options]
+    node dist/extensions/claude-code/agent.js --relay <url> --dir <path> [options]
 
   Options:
     --relay <url>       Relay server WebSocket URL (required)
