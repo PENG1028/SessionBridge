@@ -110,8 +110,8 @@ export function getPanels(side: 'left' | 'right', ctx?: WhenContext): PanelRegis
  * panel types. Panels without a registered component are skipped.
  */
 export function syncExtensionPanels(
-  leftViews?: { id: string; title: string; icon: string; defaultVisible: boolean; when?: string }[],
-  rightViews?: { id: string; title: string; icon: string; defaultVisible: boolean; when?: string }[],
+  leftViews?: { id: string; title: string; icon: string; defaultVisible: boolean; when?: string; order?: number }[],
+  rightViews?: { id: string; title: string; icon: string; defaultVisible: boolean; when?: string; order?: number }[],
 ): void {
   // Remove all panels from the previous sync — stale entries must not linger.
   for (const id of extensionPanelIds) {
@@ -122,7 +122,12 @@ export function syncExtensionPanels(
   const addViews = (views: typeof leftViews, side: 'left' | 'right') => {
     if (!views) return;
     for (const v of views) {
-      if (registry.has(v.id)) continue; // core panel — never overwrite
+      if (registry.has(v.id)) {
+        if (process.env.NODE_ENV !== 'production') {
+          console.warn(`[panel-registry] Extension panel "${v.id}" (${side}) conflicts with an already-registered panel — skipping.`);
+        }
+        continue; // core panel — never overwrite
+      }
       const comp = getPanelComponentOverride(v.id);
       if (!comp) {
         const warnKey = `${side}:${v.id}`;
@@ -136,7 +141,7 @@ export function syncExtensionPanels(
         id: v.id,
         side,
         title: v.title,
-        order: 100,
+        order: v.order ?? 100,
         when: v.when,
         // TODO: map manifest icon names to lucide icons for extension panels.
         component: comp,

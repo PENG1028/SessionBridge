@@ -24,10 +24,9 @@
   "contributes": {
     "views": {
       "sidebar-right": [
-        { "id": "tasks", "title": "Tasks", "icon": "list-checks", "defaultVisible": true, "when": "view == \"claude-chat\"" },
-        { "id": "files", "title": "Files", "icon": "folder-tree", "defaultVisible": true },
-        { "id": "logs", "title": "Logs", "icon": "scroll-text", "defaultVisible": false, "when": "view == \"claude-chat\"" },
-        { "id": "terminal", "title": "Terminal", "icon": "terminal", "defaultVisible": false, "when": "view == \"claude-chat\"" }
+        { "id": "tasks", "title": "Tasks", "icon": "list-checks", "order": 10, "defaultVisible": true, "when": "view == \"claude-chat\"" },
+        { "id": "logs", "title": "Logs", "icon": "scroll-text", "order": 100, "defaultVisible": false, "when": "view == \"claude-chat\"" },
+        { "id": "terminal", "title": "Terminal", "icon": "terminal", "order": 100, "defaultVisible": false, "when": "view == \"claude-chat\"" }
       ]
     },
     "notifications": [
