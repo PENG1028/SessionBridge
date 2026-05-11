@@ -31,6 +31,8 @@ import { useHistoryLoader } from './console/hooks/use-history-loader';
 import { useCommandHandlers } from './console/hooks/use-command-handlers';
 import { useKeyboardShortcuts } from './console/hooks/use-keyboard-shortcuts';
 import { useContextMenu } from './console/hooks/use-context-menu';
+import { registerBuiltinCommands } from './console/commands/register-builtin-commands';
+import { registerCommand, getCommand } from './console/commands/command-registry';
 import type { ContextMenuItem } from './console/shell/context-menu';
 import { ConsoleOverlays } from './console/overlays/console-overlays';
 import { LayoutProvider, useLayout, SidebarSlot, MainSlot, FocusProvider, RuntimePolicyProvider, useFocus, useRuntimePolicy, WorkbenchProvider } from './console/workbench';
@@ -413,6 +415,36 @@ function PageContent() {
       return evaluateWhen(cmd.when, focusWhenContext);
     });
   }, [extensionPointsData, focusWhenContext]);
+
+  // ── Command registry setup (Phase 4E) ──────────────────
+  // Built-in commands + extension commands are registered into the
+  // command registry once per session. This runs once on mount.
+  const commandsInitializedRef = useRef(false);
+  useEffect(() => {
+    if (commandsInitializedRef.current) return;
+    commandsInitializedRef.current = true;
+
+    registerBuiltinCommands({
+      sendCommand,
+      sendInput: (text: string) => sendInput(text, activeSessionId || undefined),
+      killInstance,
+      reload: () => window.location.reload(),
+    });
+
+    // Sync extension manifest commands into the registry.
+    // Each dispatches sendCommand with its ID as the command name.
+    const allExtCmds = (extensionPointsData?.commands as any[]) || [];
+    for (const cmd of allExtCmds) {
+      const id = cmd.id as string;
+      if (getCommand(id)) continue; // built-in takes precedence
+      registerCommand({
+        id,
+        title: cmd.title || id,
+        category: cmd.category,
+        handler: () => sendCommand(id),
+      });
+    }
+  }, [sendCommand, sendInput, killInstance, activeSessionId, extensionPointsData]);
 
   // Close command palette when the active view disables it
   useEffect(() => {
