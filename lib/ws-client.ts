@@ -149,6 +149,10 @@ export class WSClient {
       }
 
       switch (msg.type) {
+        case "ping":
+          void this.sendEnv("pong");
+          break;
+
         case "welcome":
           // Complete crypto handshake if server supports it
           if (this._crypto && msg.staticKey && msg.ephemeralKey) {

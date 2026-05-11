@@ -69,7 +69,9 @@ export default function ShellTerminal({ wsUrl, instanceId, token }: ShellTermina
         const body = (parsed.v === 1 && parsed.body) ? parsed.body : parsed;
         const type = parsed.type || '';
 
-        if (type === 'shell.output') {
+        if (type === 'ping') {
+          ws.send(env('pong'));
+        } else if (type === 'shell.output') {
           term.write(body.data || body.data);
         } else if (type === 'shell_output') {
           // Legacy format
