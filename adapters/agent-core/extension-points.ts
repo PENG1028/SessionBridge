@@ -323,8 +323,9 @@ export class ExtensionPointsRegistry {
   // ─── Configuration Contributions ───────────────────────────
 
   /**
-   * Get configuration schemas from all extensions.
-   * Returns an array of { extensionId, title, schema } objects.
+   * Get configuration schemas from all extensions (legacy format).
+   * Returns raw container objects: { type: "object", properties: {...} }.
+   * Kept for backward compatibility — prefer getConfigurationContributions().
    */
   getConfigSchemas(): { extensionId: string; title: string; schema: Record<string, unknown> }[] {
     const result: { extensionId: string; title: string; schema: Record<string, unknown> }[] = [];
@@ -332,6 +333,28 @@ export class ExtensionPointsRegistry {
       const config = manifest.contributes?.configuration;
       if (config) {
         result.push({ extensionId: id, title: manifest.displayName, schema: config });
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Get parsed configuration contributions from all extensions.
+   * Returns an array of ConfigurationContribution with flat property schemas.
+   */
+  getConfigurationContributions(): { extensionId: string; title: string; properties: Record<string, unknown> }[] {
+    const result: { extensionId: string; title: string; properties: Record<string, unknown> }[] = [];
+    for (const [id, manifest] of this.manifests) {
+      const config = manifest.contributes?.configuration;
+      if (config && typeof config === 'object' && 'properties' in config) {
+        const props = (config as Record<string, unknown>).properties as Record<string, unknown> | undefined;
+        if (props && typeof props === 'object') {
+          result.push({
+            extensionId: id,
+            title: manifest.displayName,
+            properties: { ...props },
+          });
+        }
       }
     }
     return result;

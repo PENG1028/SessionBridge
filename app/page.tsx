@@ -1281,7 +1281,7 @@ function PageContent() {
         activeInstanceId={activeInstanceId}
         onActivate={activateInstance}
         onKill={killInstance}
-        onQuickAction={handleQuickAction}
+        onCommand={handlePaletteSelect}
       />
     </div>
       </RuntimePolicyProvider>

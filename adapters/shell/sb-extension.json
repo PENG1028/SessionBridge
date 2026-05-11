@@ -2,6 +2,7 @@
   "id": "shell",
   "displayName": "Shell Terminal",
   "version": "0.6.0",
+  "extensionKind": ["adapter", "visual", "configuration-only"],
   "icon": "terminal",
   "viewId": "terminal",
   "engines": { "sessionbridge": "^0.6.0" },
@@ -59,6 +60,17 @@
           "command": "shell.clear"
         }
       ]
+    },
+    "configuration": {
+      "type": "object",
+      "properties": {
+        "shell.defaultShell": {
+          "type": "string",
+          "default": "bash",
+          "description": "Default shell command (bash, zsh, fish, powershell, etc.)",
+          "scope": "workspace"
+        }
+      }
     },
     "spawn": {
       "command": "bash",

@@ -43,7 +43,26 @@ interface NetworkInfo {
   warnings: string[];
 }
 
-type Tab = 'connections' | 'server' | 'notifications' | 'external';
+type Tab = 'connections' | 'server' | 'notifications' | 'external' | 'extensions';
+
+interface ConfigPropertySchema {
+  type: string;
+  default?: unknown;
+  description?: string;
+  enum?: unknown[];
+  minimum?: number;
+  maximum?: number;
+  scope?: string;
+  requiresRestart?: boolean;
+  deprecated?: boolean | string;
+  secret?: boolean;
+}
+
+interface ConfigContribution {
+  extensionId: string;
+  title: string;
+  properties: Record<string, ConfigPropertySchema>;
+}
 
 export function SettingsPanel({
   open,
@@ -74,6 +93,19 @@ export function SettingsPanel({
   const [externalEnabled, setExternalEnabled] = useState(false);
   const [externalToggling, setExternalToggling] = useState(false);
 
+  // ── Extensions config state (Phase 4M) ──
+  const [extConfigs, setExtConfigs] = useState<ConfigContribution[]>([]);
+  const [extValues, setExtValues] = useState<Record<string, unknown>>({});
+  const [extScope, setExtScope] = useState<'user' | 'workspace'>('user');
+  const [dirtyMap, setDirtyMap] = useState<Map<string, unknown>>(new Map());
+  const [searchQuery, setSearchQuery] = useState('');
+  const [modifiedOnly, setModifiedOnly] = useState(false);
+  const [extCollapsed, setExtCollapsed] = useState<Record<string, boolean>>({});
+  const [savingExt, setSavingExt] = useState(false);
+  const [extLoading, setExtLoading] = useState(false);
+  const [extError, setExtError] = useState('');
+  const [validationErrors, setValidationErrors] = useState<Record<string, string[]>>({});
+
   // Load config from backend on mount
   useEffect(() => {
     if (!open) return;
@@ -93,6 +125,32 @@ export function SettingsPanel({
       })
       .finally(() => setLoading(false));
   }, [open]);
+
+  // Fetch extension config schema and values
+  const fetchExtConfigs = useCallback(async () => {
+    setExtLoading(true);
+    setExtError('');
+    try {
+      const [schemaRes, valuesRes] = await Promise.all([
+        fetch('/api/configuration/schema'),
+        fetch(`/api/configuration/values?scope=${extScope}`),
+      ]);
+      if (!schemaRes.ok) { setExtError(`Schema fetch failed: ${schemaRes.status}`); return; }
+      if (!valuesRes.ok) { setExtError(`Values fetch failed: ${valuesRes.status}`); return; }
+      const schemaData = await schemaRes.json();
+      const valuesData = await valuesRes.json();
+      setExtConfigs(schemaData.contributions || []);
+      setExtValues(valuesData.values || {});
+    } catch (err) {
+      setExtError((err as Error).message);
+    }
+    setExtLoading(false);
+  }, [extScope]);
+
+  useEffect(() => {
+    if (!open) return;
+    fetchExtConfigs();
+  }, [open, fetchExtConfigs]);
 
   // Save local server config
   const handleSaveServerConfig = useCallback(async () => {
@@ -209,6 +267,267 @@ export function SettingsPanel({
     setExternalToggling(false);
   }, [handleCheckNetwork]);
 
+  // ── Extensions config handlers ──
+
+  // Set a dirty value (pending save)
+  const handleExtValueChange = useCallback((key: string, value: unknown) => {
+    setDirtyMap((prev) => {
+      const next = new Map(prev);
+      next.set(key, value);
+      return next;
+    });
+    // Clear previous validation error for this key
+    setValidationErrors((prev) => {
+      if (!prev[key]) return prev;
+      const { [key]: _, ...rest } = prev;
+      return rest;
+    });
+  }, []);
+
+  // Reset a single config key to default
+  const handleExtReset = useCallback(async (key: string) => {
+    try {
+      const res = await fetch(`/api/configuration/values?scope=${extScope}&key=${encodeURIComponent(key)}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        setValidationErrors((prev) => ({ ...prev, [key]: [err.error || 'Reset failed'] }));
+        return;
+      }
+      const result = await res.json();
+      // Update local values
+      setExtValues((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      // Remove from dirty map
+      setDirtyMap((prev) => {
+        const next = new Map(prev);
+        next.delete(key);
+        return next;
+      });
+    } catch (err) {
+      setValidationErrors((prev) => ({ ...prev, [key]: [(err as Error).message] }));
+    }
+  }, [extScope]);
+
+  // Save all dirty values
+  const handleExtSaveAll = useCallback(async () => {
+    if (dirtyMap.size === 0) return;
+    setSavingExt(true);
+    const errors: Record<string, string[]> = {};
+    for (const [key, value] of dirtyMap.entries()) {
+      try {
+        const res = await fetch('/api/configuration/values', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ scope: extScope, key, value }),
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          errors[key] = [err.error || 'Save failed'].concat(err.details || []);
+        } else {
+          // Update local values cache
+          setExtValues((prev) => ({ ...prev, [key]: value }));
+        }
+      } catch (err) {
+        errors[key] = [(err as Error).message];
+      }
+    }
+    setValidationErrors(errors);
+    // Remove successfully saved keys from dirty map
+    const savedKeys = [...dirtyMap.keys()].filter((k) => !errors[k]);
+    if (savedKeys.length > 0) {
+      setDirtyMap((prev) => {
+        const next = new Map(prev);
+        for (const k of savedKeys) next.delete(k);
+        return next;
+      });
+    }
+    setSavingExt(false);
+  }, [dirtyMap, extScope]);
+
+  // Toggle extension group collapse
+  const toggleExtCollapse = useCallback((id: string) => {
+    setExtCollapsed((prev) => ({ ...prev, [id]: !prev[id] }));
+  }, []);
+
+  // ── Field renderer ──
+  const renderConfigField = (key: string, schema: ConfigPropertySchema): React.ReactNode => {
+    const isDirty = dirtyMap.has(key);
+    const currentValue = isDirty ? dirtyMap.get(key) : (extValues[key] ?? schema.default);
+    const errs = validationErrors[key] || [];
+    const displayKey = key.includes('.') ? key.slice(key.indexOf('.') + 1) : key;
+
+    // Deprecated: show as read-only
+    if (schema.deprecated) {
+      return (
+        <div key={key} className="opacity-40">
+          <div className="flex items-center justify-between">
+            <span className="text-gray-500 line-through">{displayKey}</span>
+            <span className="text-[8px] text-yellow-600">deprecated</span>
+          </div>
+          <div className="text-[9px] text-gray-700 italic">Removed in future version</div>
+        </div>
+      );
+    }
+
+    const fieldId = `cfg-${key}`;
+    let input: React.ReactNode;
+
+    switch (schema.type) {
+      case 'boolean':
+        input = (
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={!!currentValue}
+              onChange={(e) => handleExtValueChange(key, e.target.checked)}
+              className="accent-purple-500"
+            />
+            <span className="text-gray-300">{schema.description || displayKey}</span>
+          </label>
+        );
+        break;
+
+      case 'integer':
+      case 'number': {
+        const numVal = typeof currentValue === 'number' ? currentValue : (schema.default as number ?? 0);
+        input = (
+          <div>
+            {schema.description && <div className="text-[9px] text-gray-500 mb-1">{schema.description}</div>}
+            <div className="flex items-center gap-2">
+              <input
+                id={fieldId}
+                type="number"
+                value={numVal}
+                min={schema.minimum}
+                max={schema.maximum}
+                onChange={(e) => handleExtValueChange(key, schema.type === 'integer' ? parseInt(e.target.value, 10) : parseFloat(e.target.value))}
+                className="w-24 bg-[#0d0d0d] border border-gray-700 rounded px-2 py-1 text-[11px] text-gray-200 outline-none focus:border-purple-500"
+              />
+              {schema.minimum !== undefined && <span className="text-[8px] text-gray-700">min: {schema.minimum}</span>}
+              {schema.maximum !== undefined && <span className="text-[8px] text-gray-700">max: {schema.maximum}</span>}
+            </div>
+          </div>
+        );
+        break;
+      }
+
+      case 'string': {
+        const strVal = typeof currentValue === 'string' ? currentValue : (schema.default as string ?? '');
+        if (schema.enum && schema.enum.length > 0) {
+          input = (
+            <div>
+              {schema.description && <div className="text-[9px] text-gray-500 mb-1">{schema.description}</div>}
+              <select
+                id={fieldId}
+                value={strVal}
+                onChange={(e) => handleExtValueChange(key, e.target.value)}
+                className="w-full bg-[#0d0d0d] border border-gray-700 rounded px-2 py-1 text-[11px] text-gray-200 outline-none focus:border-purple-500"
+              >
+                {schema.enum.map((opt) => (
+                  <option key={String(opt)} value={String(opt)}>{String(opt)}</option>
+                ))}
+              </select>
+            </div>
+          );
+        } else if (schema.secret) {
+          input = (
+            <div>
+              {schema.description && <div className="text-[9px] text-gray-500 mb-1">{schema.description}</div>}
+              <input
+                id={fieldId}
+                type="password"
+                value={strVal}
+                onChange={(e) => handleExtValueChange(key, e.target.value)}
+                className="w-full bg-[#0d0d0d] border border-gray-700 rounded px-2 py-1 text-[11px] text-gray-200 outline-none focus:border-purple-500 font-mono"
+                placeholder="Enter value..."
+              />
+            </div>
+          );
+        } else {
+          input = (
+            <div>
+              {schema.description && <div className="text-[9px] text-gray-500 mb-1">{schema.description}</div>}
+              <input
+                id={fieldId}
+                type="text"
+                value={strVal}
+                onChange={(e) => handleExtValueChange(key, e.target.value)}
+                className="w-full bg-[#0d0d0d] border border-gray-700 rounded px-2 py-1 text-[11px] text-gray-200 outline-none focus:border-purple-500"
+                placeholder="Enter value..."
+              />
+            </div>
+          );
+        }
+        break;
+      }
+
+      case 'array':
+      case 'object':
+        input = (
+          <div>
+            {schema.description && <div className="text-[9px] text-gray-500 mb-1">{schema.description}</div>}
+            <div className="bg-[#0d0d0d] border border-gray-800 rounded px-2 py-1 text-[9px] text-gray-600 font-mono max-h-20 overflow-y-auto">
+              {currentValue !== undefined ? JSON.stringify(currentValue) : 'not set'}
+            </div>
+            <div className="text-[8px] text-gray-700 mt-0.5">Editing {schema.type} values not supported in this panel</div>
+          </div>
+        );
+        break;
+
+      default:
+        input = (
+          <div className="text-[9px] text-gray-700 italic">
+            Unsupported type: {schema.type}
+          </div>
+        );
+    }
+
+    return (
+      <div key={key} className={`py-1.5 ${isDirty ? 'bg-purple-900/10 -mx-2 px-2 rounded' : ''}`}>
+        {schema.type !== 'boolean' && (
+          <div className="flex items-center justify-between mb-0.5">
+            <label htmlFor={fieldId} className="text-[10px] text-gray-400">{displayKey}</label>
+            {isDirty && <span className="text-[8px] text-purple-400">modified</span>}
+          </div>
+        )}
+        {schema.type === 'boolean' ? input : <div className="flex items-start gap-2">{input}</div>}
+        {errs.length > 0 && (
+          <div className="text-[9px] text-red-400 mt-0.5">{errs[0]}</div>
+        )}
+        {schema.requiresRestart && (
+          <div className="text-[8px] text-yellow-600 mt-0.5">Requires restart</div>
+        )}
+        {!schema.type.startsWith('array') && !schema.type.startsWith('object') && schema.type !== 'boolean' && !schema.description && (
+          <div className="flex gap-2 mt-1">
+            <button
+              onClick={() => handleExtReset(key)}
+              className="text-[8px] text-gray-600 hover:text-gray-400 transition-colors"
+              title="Reset to default"
+            >
+              reset
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ── Check if a key matches search query ──
+  const matchesSearch = useCallback((key: string, schema: ConfigPropertySchema, query: string): boolean => {
+    if (!query) return true;
+    const q = query.toLowerCase();
+    return (
+      key.toLowerCase().includes(q) ||
+      (schema.description || '').toLowerCase().includes(q) ||
+      String(schema.default || '').toLowerCase().includes(q)
+    );
+  }, []);
+
   if (!open) return null;
 
   return (
@@ -238,6 +557,7 @@ export function SettingsPanel({
             { id: 'server' as Tab, label: 'Server' },
             { id: 'external' as Tab, label: 'External' },
             { id: 'notifications' as Tab, label: 'Notifications' },
+            { id: 'extensions' as Tab, label: `Extensions${dirtyMap.size > 0 ? ` (${dirtyMap.size})` : ''}` },
           ]).map((t) => (
             <button
               key={t.id}
@@ -512,8 +832,151 @@ export function SettingsPanel({
                 </div>
               )}
             </>
+          ) : tab === 'extensions' ? (
+            /* ── Extensions Config tab (Phase 4M) ── */
+            <>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-[10px] font-bold text-gray-500 tracking-wider">
+                  EXTENSION SETTINGS
+                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[8px] text-gray-600">{extScope === 'user' ? 'User' : 'Workspace'}</span>
+                  <button
+                    onClick={() => setExtScope((s) => s === 'user' ? 'workspace' : 'user')}
+                    className={`relative w-8 h-4 rounded-full transition-colors ${
+                      extScope === 'workspace' ? 'bg-purple-600' : 'bg-gray-700'
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-transform ${
+                        extScope === 'workspace' ? 'translate-x-4' : 'translate-x-0.5'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+
+              {/* Error state */}
+              {extError && (
+                <div className="flex items-center gap-2 px-3 py-2 bg-red-900/20 border border-red-800/30 rounded mb-3">
+                  <span className="text-[10px] text-red-400 flex-1">{extError}</span>
+                  <button onClick={fetchExtConfigs} className="text-[9px] text-purple-400 hover:text-purple-300">
+                    retry
+                  </button>
+                </div>
+              )}
+
+              {/* Loading state */}
+              {extLoading && (
+                <div className="flex items-center gap-2 text-gray-600 py-4 justify-center">
+                  <span className="w-3 h-3 border-2 border-gray-600 border-t-gray-300 rounded-full animate-spin" />
+                  <span className="text-[10px]">Loading extension configs...</span>
+                </div>
+              )}
+
+              {!extLoading && !extError && (
+                <>
+                  {/* Search bar */}
+                  <div className="relative mb-2">
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="Search settings..."
+                      className="w-full bg-[#0d0d0d] border border-gray-700 rounded px-2 py-1.5 pl-6 text-[11px] text-gray-200 outline-none focus:border-purple-500 placeholder-gray-700"
+                    />
+                    <svg className="absolute left-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                  </div>
+
+                  {/* Filter controls */}
+                  <div className="flex items-center gap-3 mb-3">
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={modifiedOnly}
+                        onChange={(e) => setModifiedOnly(e.target.checked)}
+                        className="accent-purple-500 w-2.5 h-2.5"
+                      />
+                      <span className="text-[9px] text-gray-600">Modified only</span>
+                    </label>
+                    {dirtyMap.size > 0 && (
+                      <button
+                        onClick={handleExtSaveAll}
+                        disabled={savingExt}
+                        className="ml-auto px-2 py-0.5 bg-purple-700 hover:bg-purple-600 disabled:opacity-50 text-white text-[9px] rounded border border-purple-600 transition-colors flex items-center gap-1"
+                      >
+                        {savingExt ? (
+                          <><span className="w-2.5 h-2.5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Saving...</>
+                        ) : (
+                          `Save All (${dirtyMap.size})`
+                        )}
+                      </button>
+                    )}
+                  </div>
+
+                  {/* No extensions empty state */}
+                  {extConfigs.length === 0 && !extLoading ? (
+                    <div className="text-gray-700 text-[10px] italic py-4 text-center">
+                      No extensions contribute configuration settings.
+                    </div>
+                  ) : (
+                    /* Extension groups */
+                    <div className="space-y-2">
+                      {extConfigs
+                        .filter((ext) => {
+                          // Filter by modified-only
+                          if (modifiedOnly) {
+                            return Object.keys(ext.properties).some((k) => dirtyMap.has(k));
+                          }
+                          return true;
+                        })
+                        .map((ext) => {
+                          const extKeys = Object.entries(ext.properties);
+                          const filteredKeys = extKeys.filter(([k, s]) => matchesSearch(k, s, searchQuery));
+                          const modifiedCount = extKeys.filter(([k]) => dirtyMap.has(k)).length;
+
+                          if (filteredKeys.length === 0) return null;
+
+                          const collapsed = extCollapsed[ext.extensionId] ?? true;
+
+                          return (
+                            <div key={ext.extensionId} className="border border-gray-800 rounded overflow-hidden">
+                              {/* Group header — collapsible */}
+                              <button
+                                onClick={() => toggleExtCollapse(ext.extensionId)}
+                                className="w-full flex items-center gap-2 px-3 py-2 bg-[#0d0d0d] hover:bg-[#111] transition-colors text-left"
+                              >
+                                <svg
+                                  className={`w-2.5 h-2.5 text-gray-600 transition-transform ${collapsed ? '' : 'rotate-90'}`}
+                                  fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                                >
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                </svg>
+                                <span className="text-[11px] font-bold text-gray-300">{ext.title}</span>
+                                {modifiedCount > 0 && (
+                                  <span className="ml-auto text-[8px] text-purple-400 bg-purple-900/20 px-1.5 py-0.5 rounded">
+                                    {modifiedCount} modified
+                                  </span>
+                                )}
+                              </button>
+
+                              {/* Group content */}
+                              {collapsed && (
+                                <div className="px-3 py-2 space-y-1.5 border-t border-gray-800">
+                                  {filteredKeys.map(([key, schema]) => renderConfigField(key, schema))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                    </div>
+                  )}
+                </>
+              )}
+            </>
           ) : (
-            /* ── Notifications tab ── */
             <>
               <div className="text-[10px] font-bold text-gray-500 tracking-wider mb-3">
                 NOTIFICATIONS

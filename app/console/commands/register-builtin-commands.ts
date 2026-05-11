@@ -39,6 +39,20 @@ export function registerBuiltinCommands(h: BuiltinHandlers): void {
   });
 
   registerCommand({
+    id: 'host.npmTest',
+    title: 'npm test',
+    category: 'Host',
+    handler: () => h.sendInput('npm test'),
+  });
+
+  registerCommand({
+    id: 'host.gitStatus',
+    title: 'git status',
+    category: 'Host',
+    handler: () => h.sendInput('git status'),
+  });
+
+  registerCommand({
     id: 'system.refresh',
     title: 'Reload Page',
     category: 'System',

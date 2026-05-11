@@ -1,5 +1,7 @@
 # Extension Authoring Guide
 
+> For future-facing capability cases such as CLI plugins, service/webhook plugins, task providers, deployment providers, monitoring providers, and InfraCore/platform control plugins, see [`extension-capability-benchmarks.md`](extension-capability-benchmarks.md). Those cases are design guardrails, not a promise that every API exists today.
+
 SessionBridge supports a VS Code-style extension system. Extensions can contribute
 commands, menus, views, notifications, configuration schemas, language definitions,
 and optionally provide an `AgentAdapter` for runtime capabilities.
@@ -373,38 +375,90 @@ Rules:
 
 JSON Schema for extension settings. Use `"type": "object"` with `properties`.
 
+**Namespace rule:** All property keys MUST start with `${extensionId}.`. For example, if your extension ID is `my-ext`, all config keys must start with `my-ext.`. This prevents key collisions between extensions. Keys that violate this rule are rejected with an error during loading.
+
+**Scope field:** Each property can declare an optional `scope` that determines which storage layer the user edits by default:
+- `"user"` (default) — stored in `~/.sessionbridge/settings.json`, applies across all workspaces
+- `"workspace"` — stored in `<workspace>/.sessionbridge/settings.json`, applies only to the current project directory
+
+The SettingsPanel provides a User/Workspace toggle to switch between scopes, and the effective value is resolved as **workspace → user → default**.
+
+**Supported types and UI rendering:**
+
+| Type | UI Control | Notes |
+|---|---|---|
+| `string` | Text input | Enum → select; `secret: true` → password input |
+| `boolean` | Checkbox | Renders inline with description |
+| `integer` | Number input | Min/max enforced when specified |
+| `number` | Number input | Min/max enforced when specified |
+| `array` | Read-only JSON | Editing not supported in panel |
+| `object` | Read-only JSON | Editing not supported in panel |
+
+**Additional schema fields:**
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `default` | any | — | Default value when not set by user |
+| `description` | string | — | Help text shown below the field label |
+| `enum` | array | — | Allowed values (renders as select for strings) |
+| `minimum` | number | — | Minimum value (integer/number only) |
+| `maximum` | number | — | Maximum value (integer/number only) |
+| `scope` | string | `"user"` | `"user"` or `"workspace"` |
+| `requiresRestart` | boolean | false | Changes require a server restart to take effect |
+| `deprecated` | boolean or string | false | Marks property as deprecated; string value provides migration hint |
+| `secret` | boolean | false | Masks input in the UI (password field) |
+| `experimental` | boolean | false | Marks property as experimental |
+
 ```json
 {
   "contributes": {
     "configuration": {
       "type": "object",
       "properties": {
-        "my.greeting": {
+        "my-ext.greeting": {
           "type": "string",
           "default": "Hello",
-          "description": "Greeting text"
+          "description": "Greeting text",
+          "scope": "user"
         },
-        "my.enabled": {
+        "my-ext.enabled": {
           "type": "boolean",
           "default": true,
           "description": "Enable feature"
         },
-        "my.logLevel": {
+        "my-ext.logLevel": {
           "type": "string",
           "default": "info",
           "enum": ["debug", "info", "warn", "error"],
           "description": "Log level"
         },
-        "my.interval": {
+        "my-ext.interval": {
           "type": "integer",
           "default": 30,
-          "description": "Poll interval (seconds)"
+          "minimum": 1,
+          "description": "Poll interval (seconds)",
+          "scope": "workspace"
+        },
+        "my-ext.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API authentication key",
+          "secret": true
         }
       }
     }
   }
 }
 ```
+
+**Validation rules (enforced at load time):**
+
+- `type` must be one of: `string`, `boolean`, `integer`, `number`, `array`, `object`
+- `default` type must match `type`
+- `enum` values must match the property type
+- `scope` must be `"user"` or `"workspace"`
+- `minimum`/`maximum` only valid for `integer` and `number` types
+- `requiresRestart`, `secret`, `experimental`, `deprecated` must be boolean when present
 
 #### `contributes.languages`
 

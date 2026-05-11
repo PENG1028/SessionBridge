@@ -16,13 +16,13 @@ interface MobileSidebarProps {
   activeInstanceId: string | null;
   onActivate: (id: string) => void;
   onKill: (id: string) => void;
-  onQuickAction: (cmd: string) => void;
+  onCommand: (cmdId: string) => void;
 }
 
 export function MobileSidebar({
   open, onClose,
   fileTree, expandedDirs, onToggleDir, onOpenFile, onSendFile,
-  instances, activeInstanceId, onActivate, onKill, onQuickAction,
+  instances, activeInstanceId, onActivate, onKill, onCommand,
 }: MobileSidebarProps) {
   if (!open) return null;
 
@@ -68,9 +68,9 @@ export function MobileSidebar({
         <div className="p-2 border-t border-gray-800 bg-[#151515] mt-auto">
           <div className="text-[10px] text-gray-500 mb-1.5 font-bold tracking-wider">ACTIONS</div>
           <div className="flex flex-wrap gap-1">
-            <button onClick={() => onQuickAction('npm test')}
+            <button onClick={() => onCommand('host.npmTest')}
               className="px-1.5 py-1 bg-gray-800 hover:bg-gray-700 hover:text-white text-[9px] rounded border border-gray-700">npm test</button>
-            <button onClick={() => onQuickAction('git status')}
+            <button onClick={() => onCommand('host.gitStatus')}
               className="px-1.5 py-1 bg-gray-800 hover:bg-gray-700 hover:text-white text-[9px] rounded border border-gray-700">git status</button>
           </div>
         </div>

@@ -15,6 +15,7 @@ const ALL_GRANTED: Record<PermissionCategory, boolean> = {
   network: true,
   processManagement: true,
   shellAccess: true,
+  configurationWrite: true,
 };
 
 export class PermissionModel implements PermissionState {

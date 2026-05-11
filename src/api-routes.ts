@@ -42,6 +42,12 @@ export interface ApiContext {
   configManager?: ConfigManager;
   /** Relay config manager for pushing live config changes to agents */
   relayConfig?: RelayConfigManager;
+  /** Phase 4M: Configuration registry for schema queries */
+  configRegistry?: import('./configuration/registry').ConfigurationRegistry;
+  /** Phase 4M: Configuration store for layered settings */
+  configStore?: import('./configuration/store').ConfigurationStore;
+  /** Phase 4M: Secret store for encrypted/separate secret storage */
+  secretStore?: import('./configuration/secret-store').SecretStore;
 }
 
 // ─── Helpers ───────────────────────────────────────────────────
@@ -529,6 +535,160 @@ export function registerApiRoutes(
       json(res, 200, { success: true });
       return true;
     }
+  }
+
+  // ──────────────── Configuration API (Phase 4M) ─────────────────
+  // These routes require configRegistry and configStore in the context.
+
+  // GET /api/configuration/schema — all contributions + properties
+  if (method === "GET" && pathname === "/api/configuration/schema") {
+    if (!ctx.configRegistry) { json(res, 501, { error: "Configuration registry not available" }); return true; }
+    json(res, 200, {
+      contributions: ctx.configRegistry.getAllContributions(),
+      properties: ctx.configRegistry.getAllProperties(),
+    });
+    return true;
+  }
+
+  // GET /api/configuration/values?scope=user|workspace — raw values at scope
+  if (method === "GET" && pathname === "/api/configuration/values") {
+    if (!ctx.configStore) { json(res, 501, { error: "Configuration store not available" }); return true; }
+    const scope = (url.searchParams.get("scope") || "user") as 'user' | 'workspace';
+    if (scope !== 'user' && scope !== 'workspace') {
+      json(res, 400, { error: "scope must be 'user' or 'workspace'" });
+      return true;
+    }
+    const raw = ctx.configStore.getAllRaw(scope);
+    // Mask secret values using the registry schema
+    if (ctx.configRegistry) {
+      for (const key of Object.keys(raw)) {
+        const schema = ctx.configRegistry.getSchema(key);
+        if (schema?.secret) {
+          raw[key] = '[REDACTED]';
+        }
+      }
+    }
+    json(res, 200, { scope, values: raw });
+    return true;
+  }
+
+  // GET /api/configuration/inspect?key=... — layered inspect result
+  if (method === "GET" && pathname === "/api/configuration/inspect") {
+    if (!ctx.configRegistry || !ctx.configStore) { json(res, 501, { error: "Configuration system not available" }); return true; }
+    const key = url.searchParams.get("key");
+    if (!key) { json(res, 400, { error: "Missing 'key' query parameter" }); return true; }
+    const schema = ctx.configRegistry.getSchema(key);
+    if (!schema) { json(res, 404, { error: `Unknown configuration key: ${key}` }); return true; }
+    const inspect = ctx.configStore.inspect(key, schema);
+    // Mask secret values in the response
+    if (schema.secret && inspect.effectiveValue !== undefined) {
+      inspect.effectiveValue = '[REDACTED]';
+    }
+    json(res, 200, { ...inspect });
+    return true;
+  }
+
+  // PATCH /api/configuration/values — update a configuration value
+  if (method === "PATCH" && pathname === "/api/configuration/values") {
+    if (!ctx.configStore || !ctx.configRegistry) { json(res, 501, { error: "Configuration system not available" }); return true; }
+    if (ctx.checkPermission && !ctx.checkPermission(res, 'configurationWrite', { action: 'set' })) return true;
+    readBody(req).then((raw) => {
+      try {
+        const body = JSON.parse(raw);
+        const { scope, key, value } = body as { scope?: string; key?: string; value: unknown };
+        if (!scope || !key) { json(res, 400, { error: "Missing 'scope' or 'key'" }); return; }
+        if (scope !== 'user' && scope !== 'workspace') { json(res, 400, { error: "scope must be 'user' or 'workspace'" }); return; }
+        const schema = ctx.configRegistry!.getSchema(key);
+        if (!schema) { json(res, 400, { error: `Unknown configuration key: ${key}` }); return; }
+        // Secret keys route to SecretStore instead of ConfigStore
+        if (schema.secret) {
+          if (!ctx.secretStore) { json(res, 501, { error: "Secret store not available" }); return; }
+          ctx.secretStore.set(key, String(value));
+          ctx.auditLog?.log('configuration.write', 'api', { scope, key }); // value NOT logged
+          json(res, 200, { success: true, key, secret: true, configured: true });
+          return;
+        }
+        const errors = ctx.configStore!.validateValue(schema, value);
+        if (errors.length > 0) { json(res, 400, { error: `Validation failed for "${key}"`, details: errors }); return; }
+        ctx.configStore!.set(scope as 'user' | 'workspace', key, value);
+        ctx.auditLog?.log('configuration.write', 'api', { scope, key, value });
+        const result = ctx.configStore!.inspect(key, schema);
+        json(res, 200, { success: true, ...result });
+      } catch (err) {
+        json(res, 400, { error: `Invalid request: ${(err as Error).message}` });
+      }
+    }).catch(() => json(res, 400, { error: "Failed to read request body" }));
+    return true;
+  }
+
+  // DELETE /api/configuration/values?scope=...&key=... — reset a value
+  if (method === "DELETE" && pathname === "/api/configuration/values") {
+    if (!ctx.configStore || !ctx.configRegistry) { json(res, 501, { error: "Configuration system not available" }); return true; }
+    if (ctx.checkPermission && !ctx.checkPermission(res, 'configurationWrite', { action: 'remove' })) return true;
+    const scope = url.searchParams.get("scope") as 'user' | 'workspace' | null;
+    const key = url.searchParams.get("key");
+    if (!scope || !key) { json(res, 400, { error: "Missing 'scope' or 'key' query parameter" }); return true; }
+    if (scope !== 'user' && scope !== 'workspace') { json(res, 400, { error: "scope must be 'user' or 'workspace'" }); return true; }
+    const schema = ctx.configRegistry.getSchema(key);
+    if (!schema) { json(res, 404, { error: `Unknown configuration key: ${key}` }); return true; }
+    // Secret keys route to SecretStore instead of ConfigStore
+    if (schema.secret) {
+      if (!ctx.secretStore) { json(res, 501, { error: "Secret store not available" }); return true; }
+      ctx.secretStore.delete(key);
+      ctx.auditLog?.log('configuration.remove', 'api', { scope, key });
+      json(res, 200, { success: true, key, secret: true, configured: false });
+      return true;
+    }
+    ctx.configStore.remove(scope, key);
+    ctx.auditLog?.log('configuration.remove', 'api', { scope, key });
+    const result = ctx.configStore.inspect(key, schema);
+    json(res, 200, { success: true, ...result });
+    return true;
+  }
+
+  // ──────────────── Secret Store API (Phase 4M) ─────────────────
+  // Secrets are NEVER returned in responses — only existence checks.
+
+  // GET /api/secrets?key=... — check if a secret exists
+  if (method === "GET" && pathname === "/api/secrets") {
+    if (!ctx.secretStore) { json(res, 501, { error: "Secret store not available" }); return true; }
+    const key = url.searchParams.get("key");
+    if (!key) { json(res, 400, { error: "Missing 'key' query parameter" }); return true; }
+    json(res, 200, { key, exists: ctx.secretStore.has(key), configured: ctx.secretStore.has(key) });
+    return true;
+  }
+
+  // PUT /api/secrets — set a secret value
+  if (method === "PUT" && pathname === "/api/secrets") {
+    if (!ctx.secretStore) { json(res, 501, { error: "Secret store not available" }); return true; }
+    if (ctx.checkPermission && !ctx.checkPermission(res, 'configurationWrite', { action: 'secret_set' })) return true;
+    readBody(req).then((raw) => {
+      try {
+        const body = JSON.parse(raw);
+        const { key, value } = body as { key?: string; value?: string };
+        if (!key || typeof key !== 'string') { json(res, 400, { error: "Missing or invalid 'key'" }); return; }
+        if (value === undefined || value === null) { json(res, 400, { error: "Missing 'value'" }); return; }
+        ctx.secretStore!.set(key, String(value));
+        // Deliberately NOT logging the value in audit
+        ctx.auditLog?.log('secrets.set', 'api', { key });
+        json(res, 200, { success: true, key, configured: true });
+      } catch (err) {
+        json(res, 400, { error: `Invalid request: ${(err as Error).message}` });
+      }
+    }).catch(() => json(res, 400, { error: "Failed to read request body" }));
+    return true;
+  }
+
+  // DELETE /api/secrets?key=... — remove a secret
+  if (method === "DELETE" && pathname === "/api/secrets") {
+    if (!ctx.secretStore) { json(res, 501, { error: "Secret store not available" }); return true; }
+    if (ctx.checkPermission && !ctx.checkPermission(res, 'configurationWrite', { action: 'secret_remove' })) return true;
+    const key = url.searchParams.get("key");
+    if (!key) { json(res, 400, { error: "Missing 'key' query parameter" }); return true; }
+    ctx.secretStore.delete(key);
+    ctx.auditLog?.log('secrets.delete', 'api', { key });
+    json(res, 200, { success: true, key, configured: false });
+    return true;
   }
 
   // No route matched — let the existing handler process the request.

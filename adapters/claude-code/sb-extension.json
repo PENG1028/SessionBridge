@@ -2,6 +2,7 @@
   "id": "claude-code",
   "displayName": "Claude Code",
   "version": "0.6.0",
+  "extensionKind": ["adapter", "visual", "configuration-only"],
   "icon": "sparkles",
   "viewId": "claude-chat",
   "engines": { "sessionbridge": "^0.6.0" },
@@ -63,8 +64,21 @@
     "configuration": {
       "type": "object",
       "properties": {
-        "maxThinkingTokens": { "type": "integer", "default": 32000, "description": "Maximum thinking tokens for Claude" },
-        "defaultPermissionMode": { "type": "string", "default": "default", "enum": ["default", "acceptEdits", "plan"], "description": "Default permission mode" }
+        "claude-code.maxThinkingTokens": {
+          "type": "integer",
+          "default": 32000,
+          "description": "Maximum thinking tokens for Claude",
+          "scope": "workspace",
+          "requiresRestart": true,
+          "minimum": 0
+        },
+        "claude-code.defaultPermissionMode": {
+          "type": "string",
+          "default": "default",
+          "enum": ["default", "acceptEdits", "plan"],
+          "description": "Default permission mode",
+          "scope": "workspace"
+        }
       }
     },
     "spawn": {

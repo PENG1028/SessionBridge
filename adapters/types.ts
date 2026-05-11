@@ -137,7 +137,8 @@ export type PermissionCategory =
   | 'fileRead' | 'fileWrite'
   | 'network'
   | 'processManagement'
-  | 'shellAccess';
+  | 'shellAccess'
+  | 'configurationWrite';
 
 export interface PermissionState {
   grants: Record<PermissionCategory, boolean>;
@@ -496,6 +497,24 @@ export interface ExtensionContext {
   readonly log: ExtensionLogger;
 }
 
+/**
+ * Extension kind — what the extension *does*, not just where it renders UI.
+ * Multiple kinds can be combined (e.g. adapter + visual + configuration-only).
+ *
+ * Future-facing: design decisions should not make unsupported kinds impossible.
+ * See docs/extension-capability-benchmarks.md for detailed case studies.
+ */
+export type ExtensionKind =
+  | 'adapter'
+  | 'visual'
+  | 'cli'
+  | 'task-provider'
+  | 'deployment-provider'
+  | 'service'
+  | 'integration'
+  | 'monitor-provider'
+  | 'configuration-only';
+
 // ═══════════════════════════════════════════════════════════════════
 // Extension Manifest (sb-extension.json)
 // ═══════════════════════════════════════════════════════════════════
@@ -507,6 +526,8 @@ export interface ExtensionManifest {
   displayName: string;
   /** SemVer version. */
   version: string;
+  /** Extension kind classification — what this extension *does*. */
+  extensionKind?: ExtensionKind[];
   /** Icon identifier for the UI. */
   icon?: string;
   /** View component identifier for client-side routing. */

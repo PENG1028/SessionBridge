@@ -27,6 +27,9 @@ import { CryptoStream } from "./crypto-stream";
 import { tryDecrypt } from "./crypto-layer";
 import { loadOrCreateIdentity } from "./identity-manager";
 import { detectNetwork } from "./network-detect";
+import { configRegistry } from "./configuration/registry";
+import { configStore } from "./configuration/store";
+import { secretStore } from "./configuration/secret-store";
 
 // ─── Session provider helper — first adapter that provides SessionProvider ──
 function sessionProvider() {
@@ -659,7 +662,7 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
   }
 
   // Delegate to structured API routes first
-  if (registerApiRoutes(req, res, { instanceManager, broadcast, auditLog, checkPermission: checkHttpPermission, configManager: appConfig, relayConfig: relayConfigManager })) return;
+  if (registerApiRoutes(req, res, { instanceManager, broadcast, auditLog, checkPermission: checkHttpPermission, configManager: appConfig, relayConfig: relayConfigManager, configRegistry, configStore, secretStore })) return;
 
   const url = new URL(req.url!, `http://${req.headers.host}`);
   const path = url.pathname;
@@ -1931,6 +1934,11 @@ process.on("SIGINT", () => shutdown("SIGINT"));
 export function startRelayServer(port?: number): Promise<{ close: () => void; port: number }> {
   ensureServer();
   const p = port ?? PORT;
+
+  // ── Initialize configuration system ────────────────────
+  configStore.load();
+  secretStore.load();
+  configStore.setWorkspaceDir(process.cwd());
 
   // ── Adapter environment validation ──────────────────────
   // (delegated to extension loader below — adapters self-report availability)

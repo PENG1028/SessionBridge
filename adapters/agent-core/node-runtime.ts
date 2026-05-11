@@ -25,6 +25,7 @@ import { spawn, type ChildProcess } from 'child_process';
 import { watch, type FSWatcher } from 'fs';
 import { resolve } from 'path';
 import { ExtensionHostManager } from './extension-host-manager';
+import { extensionPoints } from './extension-points';
 import { adapterRegistry } from '../registry';
 
 export class NodeRuntime {
@@ -98,6 +99,18 @@ export class NodeRuntime {
     // 4. Scan and load extensions dynamically
     const { scanAndActivate } = await import('./extension-loader');
     await scanAndActivate({ log: (msg: string) => addDashboardLog(msg) });
+
+    // 4a. Register extension configuration contributions into the config registry
+    try {
+      const { configRegistry } = await import('../../src/configuration/registry');
+      const contribs = extensionPoints.getConfigurationContributions();
+      for (const contrib of contribs) {
+        configRegistry.registerExtension(contrib.extensionId, contrib.title, contrib.properties as any);
+        addDashboardLog(`[config] Registered ${Object.keys(contrib.properties).length} key(s) from "${contrib.extensionId}"`);
+      }
+    } catch (err) {
+      addDashboardLog(`[config] Failed to register extensions: ${(err as Error).message}`);
+    }
 
     // 4b. Start extension host manager (dev mode)
     if (this.hostManager) {

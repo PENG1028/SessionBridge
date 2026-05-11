@@ -5,6 +5,8 @@
 
 > 2026-05-11 clarification: the authoritative model is now **Dock System + Action Surface + Transient Surface + Focus Scope + Dock Profile**. Older wording that treats sidebars as view-owned slots, says sidebars should auto-hide on view changes, or treats `activeInstanceId` as UI focus is obsolete.
 
+> Future capability guardrail: before adding broad plugin/runtime capabilities (CLI, task providers, deployment providers, service/webhook runtime, monitoring, InfraCore/platform control), check [`extension-capability-benchmarks.md`](extension-capability-benchmarks.md). That document is a north-star case library, not a current implementation commitment.
+
 ## 0. Current Decision Summary
 
 | Chinese | English | Meaning |
@@ -858,3 +860,31 @@ Do not:
 - Add new UI surfaces or components.
 - Change the server-side manifest schema.
 - Touch keybinding dispatch (future work).
+
+### Phase 4M: Configuration System
+
+Scope:
+
+- Build a VS Code-style layered configuration system with three scopes: `default` (read-only), `user` (`~/.sessionbridge/settings.json`), and `workspace` (`<workspace>/.sessionbridge/settings.json`).
+- Create a `ConfigurationRegistry` singleton that aggregates schemas from host and extensions, enforcing the namespace rule that extension keys must start with `${extensionId}.`.
+- Create a `ConfigurationStore` singleton with atomic file writes (tmp + rename), value validation (type, enum, min/max), and layered resolution (workspace ?? user ?? default).
+- Expose 5 REST API endpoints under `/api/configuration/` for schema queries, value reads, inspect, patch, and delete.
+- Add a dynamic "Extensions" section to SettingsPanel that renders extension-contributed settings from schema, with search bar, scope toggle (User/Workspace), modified-only filter, dirty state tracking, Save All button, per-field reset, inline validation errors, loading/error/empty states.
+- Update extension manifests (`sb-extension.json`) to use namespaced keys and declare `scope`.
+- Document the namespace rule, scope field, and supported types in `docs/extension-authoring.md`.
+
+Key design:
+
+- **Host configs stay host-owned.** The existing `/api/config` endpoints and hardcoded SettingsPanel tabs (connections/server/external/notifications) remain unchanged. Only extension-contributed settings use the new dynamic UI.
+- **Singleton pattern:** `configRegistry` and `configStore` are module-level singletons (like `appConfig` in `src/config.ts`), not passed through the dependency graph.
+- **Validation at two layers:** extension-loader validates schema shape at load time; configStore validates values at write time.
+- **Reserved scopes:** `node`, `device`, `instance`, `session` are reserved for future use and not implemented.
+
+Do not:
+
+- Replace the existing host config endpoints (`/api/config`, `/api/config/connections`).
+- Implement multi-user config or per-machine config in this phase.
+- Add real-time sync or config push for extension settings (that belongs to the existing relayConfig system).
+- Implement settings diff/merge, settings JSON editor, or settings export/import.
+- Add an undo stack for config changes.
+- Build a config migration system for breaking changes.

@@ -358,8 +358,65 @@ export function validateManifest(manifest: Record<string, unknown>, dir: string)
 
       // configuration
       const config = contributes.configuration as Record<string, unknown> | undefined;
-      if (config !== undefined && (typeof config !== 'object' || config === null)) {
-        errors.push('contributes.configuration must be an object');
+      if (config !== undefined) {
+        if (typeof config !== 'object' || config === null) {
+          errors.push('contributes.configuration must be an object');
+        } else if (config.type !== 'object') {
+          errors.push('contributes.configuration.type must be "object"');
+        } else {
+          const props = (config as Record<string, unknown>).properties as Record<string, unknown> | undefined;
+          if (typeof props !== 'object' || props === null) {
+            errors.push('contributes.configuration.properties is required and must be an object');
+          } else {
+            const VALID_TYPES = ['string', 'boolean', 'integer', 'number', 'array', 'object'];
+            const VALID_SCOPES = ['default', 'user', 'workspace'];
+            for (const [key, prop] of Object.entries(props)) {
+              const p = prop as Record<string, unknown> || {};
+              // type check
+              if (!p.type || typeof p.type !== 'string' || !VALID_TYPES.includes(p.type)) {
+                errors.push(`contributes.configuration.properties["${key}"]: type must be one of ${VALID_TYPES.join(', ')}`);
+              }
+              // default type match
+              if (p.default !== undefined && p.type) {
+                const t = p.type as string;
+                const defOk =
+                  (t === 'string' && typeof p.default === 'string') ||
+                  (t === 'boolean' && typeof p.default === 'boolean') ||
+                  (t === 'integer' && Number.isInteger(p.default)) ||
+                  (t === 'number' && typeof p.default === 'number') ||
+                  (t === 'array' && Array.isArray(p.default)) ||
+                  (t === 'object' && typeof p.default === 'object' && p.default !== null && !Array.isArray(p.default));
+                if (!defOk) {
+                  errors.push(`contributes.configuration.properties["${key}"]: default value type does not match property type "${t}"`);
+                }
+              }
+              // enum must be array
+              if (p.enum !== undefined && !Array.isArray(p.enum)) {
+                errors.push(`contributes.configuration.properties["${key}"]: enum must be an array`);
+              }
+              // scope validation
+              if (p.scope !== undefined && (typeof p.scope !== 'string' || !VALID_SCOPES.includes(p.scope))) {
+                errors.push(`contributes.configuration.properties["${key}"]: scope must be one of ${VALID_SCOPES.join(', ')}`);
+              }
+              // min/max only for numeric types
+              if (p.type && (p.minimum !== undefined || p.maximum !== undefined)) {
+                if (p.type !== 'integer' && p.type !== 'number') {
+                  errors.push(`contributes.configuration.properties["${key}"]: minimum/maximum are only valid for integer/number types`);
+                }
+              }
+              // boolean fields
+              for (const field of ['requiresRestart', 'secret', 'experimental']) {
+                if (p[field] !== undefined && typeof p[field] !== 'boolean') {
+                  errors.push(`contributes.configuration.properties["${key}"]: ${field} must be a boolean`);
+                }
+              }
+              // deprecated
+              if (p.deprecated !== undefined && typeof p.deprecated !== 'boolean' && typeof p.deprecated !== 'string') {
+                errors.push(`contributes.configuration.properties["${key}"]: deprecated must be a boolean or string`);
+              }
+            }
+          }
+        }
       }
 
       // languages
