@@ -8,7 +8,7 @@
 # 生产模式（一步到位）
 npm start
 # → node bin/bridge.js
-# → Dashboard: http://127.0.0.1:9843
+# → 管理页面: http://127.0.0.1:8080
 # → Relay: ws://127.0.0.1:8080
 ```
 
@@ -16,14 +16,14 @@ npm start
 # 开发模式（后端热重载）
 npm run dev
 # → tsx watch src/index.ts
-# → Dashboard: http://127.0.0.1:9843
+# → 管理页面: http://127.0.0.1:8080
 # → Relay: ws://127.0.0.1:8080
 ```
 
 ```bash
 # 前端开发（需要热重载时单独起 next）
 npm run dev:web          # Next.js :3000
-npm run dev              # NodeRuntime: relay :8080 + dashboard :9843
+npm run dev              # NodeRuntime: relay :8080 (admin routes integrated)
 # 浏览器打开 http://localhost:3000（前端）
 # 前端 JS 连 ws://localhost:8080（API/WS）
 ```

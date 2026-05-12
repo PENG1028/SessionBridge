@@ -46,10 +46,10 @@ docs/             — 设计文档和决策记录
 ```
 extensions/ → src/ 的反向依赖（不应增加新实例）:
   agent-core/node-runtime.ts      → src/network-detect
-  agent-core/dashboard-server.ts  → src/network-detect
   agent-core/relay-connection.ts  → src/crypto-stream
   agent-core/relay-connection.ts  → src/crypto-layer
   agent-core/relay-connection.ts  → src/identity-manager
+  agent-core/node-runtime.ts      → src/relay-server (dynamic import)
 ```
 
 这些都是工具/加密类依赖，不算架构违规，但新增类似 import 时需要论证合理性。
@@ -75,12 +75,12 @@ extension 的功能声明优先放在 `sb-extension.json` 而非硬编码在 `sr
 
 ## 本地开发启动方式
 
-项目有两个服务端：
+项目只有一个服务端端口：
 
 | 服务 | 端口 | 命令 | 用途 |
 |------|------|------|------|
-| Relay Server | 8080 | `npm run dev` | WebSocket 中继 + API (/api/*)，**没有前端页面** |
-| Next.js Dev | 3000 | `npm run dev:web` | 前端 UI 开发服务器 |
+| Relay Server | 8080 | `npm run dev` | **唯一对外入口**：WebSocket + REST API + 静态文件 + 管理后台（认证、状态 API、临时 shell）。**开发时** `out/` 不存在所以没有前端页面；生产构建后 serve `out/` 静态文件。管理路由直接在 relay 内处理，不再需要独立 dashboard 端口 |
+| Next.js Dev | 3000 | `npm run dev:web` | 前端 UI 开发服务器。**仅开发时使用**，生产环境不启动 |
 
 **开发时**：浏览器访问 `http://localhost:3000`，API 请求通过 rewrites 代理到 `localhost:8080`。
 **生产构建**：`npm run build` 生成静态文件到 `out/`，由 relay server 直接 serve。

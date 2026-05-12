@@ -10,8 +10,7 @@ services:
     ports:
       # Web UI + WebSocket relay
       - "8080:8080"
-      # Dashboard (management panel, local-only recommended)
-      - "9843:9843"
+      # Dashboard is now served through the relay port (8080)
     volumes:
       # Persist config changes made via Settings UI
       - sb-config:/root/.sessionbridge

@@ -45,7 +45,6 @@ COPY --from=build /app/adapters ./adapters
 COPY --from=build /app/lib ./lib
 
 EXPOSE 8080
-EXPOSE 9843
 
 ENV NODE_ENV=production
 

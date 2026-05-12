@@ -7,8 +7,8 @@
 | 中文 | English | 代码映射 | 定义 |
 |------|---------|----------|------|
 | 节点 | **Node** | `NodeRuntime` (`agent-core/node-runtime.ts`) | 一台运行 SessionBridge 的设备（PC/手机/服务器）。所有 Node 运行相同的核心代码，每个 Node 提供仅供本地使用的 Dashboard 面板 |
-| 面板 | **Dashboard** | `dashboard-server.ts` + Next.js UI | 每个 Node 在 `127.0.0.1:9843` 提供的统一 Web UI。默认仅供本地使用；当前实现包含本机网络检测与 `dashboardBind` 切换接口，远程节点的一键对外访问仍在收口中。面板显示 relay 已知实例，可直接操控已连接远程 Node 上的进程 |
-| 中继 | **Relay** | `NodeRelayServer` (`src/relay-server.ts`) | 一种 Node 角色，提供 WebSocket 中继服务。Node 之间通过 Relay 通信，但 Relay 本身对上层透明 |
+| 面板 | **Dashboard** | `admin-routes.ts` + Next.js UI | 每个 Node 在 `127.0.0.1:8080` 提供的管理 Web UI（admin 路由整合在 relay server 中）。默认仅供本机使用。面板显示本节点已知的实例列表，可直接操控已连接远程 Node 上的进程 |
+| 中继 | **Relay** | `NodeRelayServer` (`src/relay-server.ts`) | **Node 内部的一个组件角色**，提供 WebSocket + HTTP 服务（端口 8080）。Relay 不是独立概念——它是 Node 在允许外来连接时启动的服务。Node 之间通过 Relay 通信 |
 | 显示区 | **Stage** | `app/page.tsx` `<main>` 区域 | 浏览器主视口中央的固定区域。容纳多个 Scene 以 Tab 形式组织。支持全屏/行列/网格布局 |
 | 场景 | **Scene** | `activeInstanceId` → `adapterToViewId` → View Component | Stage 内的一个 Tab。绑定到一个 Instance，可拖拽分屏、切换布局模式 |
 | 面板 | **Panel** | `LeftSidebar` / `RightSidebar` / 底部抽屉 / 悬浮窗 | 外围配置区域。位置由插件声明：左/右/底部/悬浮/长按菜单 |

@@ -15,10 +15,10 @@ SessionBridge 是一个 **多端远程控制台 (Remote Agent Console)** — 一
 
 ### 设计原则
 
-- **双端口职责清晰**：Relay 默认使用 `8080` 提供 HTTP/API/WebSocket 中继，Dashboard 默认使用 `9843` 提供本地管理面板。
+- **单端口**：节点唯一对外暴露的是 Relay 端口 `8080`，提供 HTTP/API/WebSocket/静态文件/管理路由一站式服务。原独立 Dashboard 端口 (9843) 已合并至此。
 - **节点即平台**：PC、手机、服务器都围绕同一套 `NodeRuntime` 组织，只通过角色和外壳形态区分。
 - **实例即执行上下文**：每个 Instance 绑定独立工作目录、进程状态和输出缓冲；UI 只是在不同 View 中呈现这些上下文。
-- **Adapter 插件体系**：Core 不绑定特定 AI 或终端后端，通过 Adapter 暴露能力、View 和 Panel。
+- **Extension 插件体系**：Core 不绑定特定 AI 或终端后端，通过 Adapter 暴露能力、View 和 Panel。
 
 ---
 
@@ -72,11 +72,11 @@ NodeRuntime.resolveRole()
 
 **Dashboard（本地面板）访问方式**：
 
-| 设备 | 怎么用 | 可对外暴露？ |
-|------|--------|------------|
-| PC | EXE/浏览器打开本地面板 (127.0.0.1:9843) | 本机 API 已实现，前端体验仍在收口 |
-| 手机 | APK 内置 WebView 加载自己的面板 | 开发中 |
-| 服务器 | 无 GUI，默认不查看 | 远程协议已存在，端到端体验仍在收口 |
+| 方式 | 说明 |
+|------|------|
+| 本机直接访问 | `http://127.0.0.1:9843` — 有独立认证系统，首次访问引导设置密钥 |
+| 通过 relay 代理 | `http://<node-ip>:8080/api/*` → relay 转发未知 `/api/*` 到 `localhost:9843` |
+| 对外暴露 | 通过 dashboard 的 `/api/node/external` 切换 `dashboardBind`，但目前只对 relay 认证开放 |
 
 Dashboard 默认绑定 `127.0.0.1`（仅本机访问）。当前实现提供 `/api/node/external` 本机接口，可执行网络环境检测并切换 `dashboardBind` 后重启 Dashboard。远程节点通过 `node.external.*` 协议转发的后端通道已存在，但前端入口与端到端体验仍在收口中。
 
@@ -124,9 +124,9 @@ NodeRuntime
 │       └─ SessionPersistence
 │
 ├─ [所有角色]
-│   ├─ Dashboard            ← 本地管理页面 (127.0.0.1:9843)
-│   │                          仅当前设备用户使用。PC 用 EXE 打开，
-│   │                          手机 APK 用 WebView 加载，服务器无 GUI 默认不看
+│   ├─ Admin Routes         ← 管理路由 (集成在 relay :8080)
+│   │                          默认仅本机访问。可通过 relay 代理 (:8080/api/*)
+│   │                          间接对外暴露部分能力
 │   ├─ RelayConnection      ← 连接上游 relay
 │   ├─ AdapterRegistry      ← 插件注册中心
 │   │   ├─ shellAdapter
@@ -162,7 +162,7 @@ bridge（CLI 入口：src/index.ts）
          │      ├─ WebSocket 服务器
          │      ├─ 注册 REST API 路由
          │      └─ 恢复持久化会话
-         ├─ 6. 启动 Dashboard（本地管理页面 :9843）
+         ├─ 6. 注册 Admin 管理路由（集成在 relay :8080）
          ├─ 7. 注册适配器 (shell / claude-code / system-info)
          ├─ 8. 检测可用适配器
          ├─ 9. 连接 Relay（上游或回环）
@@ -520,23 +520,36 @@ shell.lock_status → 锁状态广播（locked/unlocked + 持有者）
 
 ---
 
-## 八、Dashboard 本地管理页面
+## 八、Admin 管理路由（原 Dashboard）
 
-每个节点启动时在 `localhost:9843` 启动一个 Dashboard 服务器（`agent-core/dashboard-server.ts`），提供 HTTP API：
+管理路由直接集成在 Relay Server（8080 端口）内，由 `src/admin-routes.ts` 处理。原独立 Dashboard 服务器（`agent-core/dashboard-server.ts`，端口 9843）已在端口合并中移除，所有功能移至 relay server。
 
-| 路径 | 说明 |
-|------|------|
-| `/` | HTML 管理页面 |
-| `/api/status` | 节点状态（版本、标签、系统信息） |
-| `/api/system` | 系统信息 |
-| `/api/processes` | 进程列表（支持排序） |
-| `/api/permissions` | 权限查看/修改 |
-| `/api/notifications` | 通知设置查看/修改 |
-| `/api/shell/run` | 执行 shell 命令（SSE 流式返回） |
-| `/api/shell/stream` | SSE 实时输出流 |
-| `/api/shell/input` | 向运行中的 shell 发送输入 |
-| `/api/shell/kill` | 终止 shell 进程 |
-| `/api/logs` | 最近 50 条日志 |
+### 提供的能力
+
+| 类别 | 路径 | 说明 |
+|------|------|------|
+| 页面 | `/` | HTML 管理面板（在 `out/` 未构建时使用内嵌页面；否则 serve `out/` 下的 Next.js 前端） |
+| 认证 | `/api/auth/*` | 密钥登录 / 设置 / 登出 / 会话管理 |
+| 状态 | `/api/status` | 节点状态（版本、标签、系统信息） |
+| 系统 | `/api/system` | 系统信息 |
+| 进程 | `/api/processes` | 进程列表（支持排序） |
+| 权限 | `/api/permissions` | 权限查看/修改 |
+| 通知 | `/api/notifications` | 通知设置查看/修改 |
+| Shell | `/api/shell/run` | 执行 shell 命令（SSE 流式返回） |
+| Shell | `/api/shell/stream` | SSE 实时输出流 |
+| Shell | `/api/shell/input` | 向运行中的 shell 发送输入 |
+| Shell | `/api/shell/kill` | 终止 shell 进程 |
+| 扩展 | `/api/extensions` | 扩展管理（dev 模式） |
+| 网络 | `/api/node/external` | 对外访问开关（检测环境、切换 bind 地址） |
+| 连接 | `/api/connect` | 上游 relay 连接管理 |
+| 日志 | `/api/logs` | 最近 50 条日志 |
+| QR | `/qr` | 二维码连接页（手机扫码用） |
+
+这些路由与 relay 已有的 API 路由（`api-routes.ts`）使用相同的 `(req, res, ctx) => boolean` 模式，在 relay 的 HTTP 请求处理管线中按顺序执行。
+
+### 历史背景
+
+v0.4 - v0.6 期间，Dashboard 作为独立 HTTP 服务运行在 9843 端口，relay server 将未处理的 `/api/*` 请求代理到 dashboard。2026-05 完成端口合并，移除独立 dashboard 服务和代理逻辑，所有管理路由直接注册在 relay server 中。
 
 ---
 

@@ -29,7 +29,7 @@ npm install
 
 # 2. 构建前端 + 启动服务
 npm start
-# → Dashboard 默认打开 http://127.0.0.1:9843
+# → 浏览器打开 http://127.0.0.1:8080
 # → Relay 默认监听 ws://127.0.0.1:8080
 ```
 
@@ -46,7 +46,7 @@ npm start
 
 | 场景 | 说明 |
 |------|------|
-| **本地调试** | `npm start` → 浏览器打开 `127.0.0.1:9843`，操作终端 + Claude |
+| **本地调试** | `npm start` → 浏览器打开 `127.0.0.1:8080`，管理页面 + 操作终端 |
 | **VPS 远程操控** | PC 和手机都作为 Node 连到 VPS Relay，从任意 Node 的 Dashboard 操作全网实例 |
 | **多机运维** | 多台服务器分别运行 Node，通过 Relay 互通，在任意一台的 Dashboard 统一管理 |
 | **手机操控** | Flutter APK 作为手机 Node，WebView 加载 Dashboard + 后台通知服务 |
@@ -79,7 +79,7 @@ Node A (PC)                          Node B (VPS/Relay)                Node C (�
 **核心概念：**
 
 - **Node** — 一台运行 SessionBridge 的设备（PC / 手机 / 服务器）。每个 Node 运行相同的 `NodeRuntime`。
-- **本地面板** — 每个 Node 启动时在本地 `127.0.0.1:9843` 提供的统一 Web UI。默认仅当前设备用户使用。当前实现已包含本机网络检测与 `dashboardBind` 切换接口；远程节点的一键对外访问仍在收口中。
+- **本地面板** — 每个 Node 启动时通过 `http://127.0.0.1:8080` 访问的统一 Web UI（管理路由整合在 relay server 中）。默认仅限本机使用。当前实现已包含网络环境检测与外部访问切换接口。
 - **Instance** — 一个运行中的进程（Shell 终端 / Claude Code 等）。本地面板显示**全网所有节点**的 Instance，可以直接操控远程节点上的进程——不需要打开远程节点的面板。
 - **Relay** — 一种 Node 角色，提供 WebSocket 中继服务。Node 之间通过 Relay 通信，但 Relay 本身对上层透明——你不需要关心哪个 Node 是 Relay。
 - **Adapter** — 插件式后端，当前内置 Shell、Claude Code、System Info 三种。
