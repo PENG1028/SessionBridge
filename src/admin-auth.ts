@@ -1,5 +1,5 @@
-// ─── Dashboard Auth ─────────────────────────────────────────────
-// Session-based authentication for the dashboard HTTP server.
+// ─── Admin Auth ─────────────────────────────────────────────
+// Session-based authentication for admin API routes.
 // Uses HMAC-signed cookies with a configurable TTL (default 14 days).
 // Sessions are persisted to disk so they survive restarts.
 
@@ -7,11 +7,11 @@ import { createHmac, randomBytes } from 'crypto';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import type { IncomingMessage } from 'http';
-import { configDir } from './config';
+import { configDir } from '../agent-core/config';
 
 // ── Types ──────────────────────────────────────────────────────
 
-export interface DashboardSession {
+export interface AdminSession {
   id: string;
   createdAt: number;
   expiresAt: number;
@@ -20,12 +20,12 @@ export interface DashboardSession {
 
 interface SessionsFile {
   version: 1;
-  sessions: DashboardSession[];
+  sessions: AdminSession[];
 }
 
 // ── Store ──────────────────────────────────────────────────────
 
-const sessions = new Map<string, DashboardSession>();
+const sessions = new Map<string, AdminSession>();
 
 function sessionsPath(): string {
   return join(configDir(), 'dashboard-sessions.json');
@@ -77,7 +77,7 @@ let token: string | null = null;
 let sessionTtl: number = 1209600; // 14 days default
 let authEnabled: boolean = true;
 
-/** Initialize auth with the dashboard token, auth toggle, and session TTL. */
+/** Initialize auth with the admin token, auth toggle, and session TTL. */
 export function initAuth(t: string, enabled?: boolean, ttl?: number): void {
   token = t;
   if (enabled !== undefined) authEnabled = enabled;
@@ -100,12 +100,12 @@ export function generateToken(): string {
   return randomBytes(32).toString('hex');
 }
 
-/** Get the current dashboard token. */
+/** Get the current admin token. */
 export function getToken(): string | null {
   return token;
 }
 
-/** Whether a dashboard token has been set. */
+/** Whether an admin token has been set. */
 export function isTokenSet(): boolean {
   return !!token;
 }
@@ -117,7 +117,7 @@ export function createSession(userAgent?: string): { sessionId: string; cookie: 
   const sessionId = randomBytes(32).toString('hex');
   const now = Date.now();
   const expiresAt = now + sessionTtl * 1000;
-  const session: DashboardSession = {
+  const session: AdminSession = {
     id: sessionId,
     createdAt: now,
     expiresAt,
@@ -133,7 +133,7 @@ export function createSession(userAgent?: string): { sessionId: string; cookie: 
   return { sessionId, cookie, expiresAt };
 }
 
-export function validateSession(sessionId: string, signature: string): DashboardSession | null {
+export function validateSession(sessionId: string, signature: string): AdminSession | null {
   if (!token) return null;
   if (!verify(sessionId, signature, token)) return null;
   const session = sessions.get(sessionId);
@@ -152,7 +152,7 @@ export function revokeSession(sessionId: string): boolean {
   return removed;
 }
 
-export function listSessions(): DashboardSession[] {
+export function listSessions(): AdminSession[] {
   // Clean expired
   const now = Date.now();
   let cleaned = false;
@@ -196,7 +196,7 @@ export function parseBearerToken(req: IncomingMessage): string | null {
 
 export interface AuthResult {
   authenticated: boolean;
-  session?: DashboardSession;
+  session?: AdminSession;
 }
 
 export function checkAuth(req: IncomingMessage): AuthResult {
@@ -221,70 +221,73 @@ export function loginPageHtml(error?: string): string {
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SessionBridge — 登录</title>
 <style>
   * { box-sizing:border-box; margin:0; padding:0; }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    background: #0d1117; color: #c9d1d9;
+    font-family: "Menlo", "Cascadia Code", "JetBrains Mono", "Fira Code", monospace;
+    background: #0d0d0d; color: #c9d1d9;
     display: flex; align-items: center; justify-content: center;
     min-height: 100vh; padding: 24px;
   }
-  .card {
-    background: #161b22; border: 1px solid #30363d;
-    border-radius: 12px; padding: 32px; max-width: 380px; width: 100%;
-    text-align: center;
+  .wrap {
+    max-width: 360px; width: 100%;
   }
-  h1 { font-size: 1.25rem; margin-bottom: 4px; color: #58a6ff; }
-  .sub { font-size: 0.8rem; color: #8b949e; margin-bottom: 24px; }
-  .field { margin-bottom: 16px; text-align: left; }
-  .field label { display: block; font-size: 0.8rem; color: #8b949e; margin-bottom: 4px; }
+  h1 {
+    font-size: 1rem; font-weight: 500; color: #a78bfa;
+    letter-spacing: .05em; margin-bottom: 4px;
+    text-transform: uppercase;
+  }
+  h1::before { content: "> "; color: #22d3ee; }
+  .sub {
+    font-size: 0.75rem; color: #6b7280;
+    margin-bottom: 28px; padding-left: 1.2em;
+  }
+  .field { margin-bottom: 14px; }
   .field input {
-    width: 100%; padding: 10px 12px; border-radius: 6px;
-    border: 1px solid #30363d; background: #0d1117; color: #c9d1d9;
-    font-size: 0.95rem; font-family: Menlo, Monaco, monospace;
+    width: 100%; padding: 10px 12px;
+    background: #111; color: #e6edf3;
+    border: 1px solid #222; border-radius: 0;
+    font-size: 0.85rem; font-family: inherit;
     outline: none; transition: border-color .15s;
   }
-  .field input:focus { border-color: #58a6ff; }
+  .field input:focus { border-color: #a78bfa; }
+  .field input::placeholder { color: #333; }
   .btn {
-    width: 100%; padding: 10px; border-radius: 6px; border: none;
-    background: #238636; color: #fff; font-size: 0.95rem; font-weight: 500;
-    cursor: pointer; transition: background .15s;
+    width: 100%; padding: 10px;
+    background: transparent; color: #22d3ee;
+    border: 1px solid #22d3ee; border-radius: 0;
+    font-size: 0.8rem; font-family: inherit; cursor: pointer;
+    text-transform: uppercase; letter-spacing: .05em;
+    transition: all .15s;
   }
-  .btn:hover { background: #2ea043; }
-  .btn:active { background: #196c2e; }
+  .btn:hover { background: #22d3ee; color: #0d0d0d; }
   .error {
-    background: rgba(248,81,73,.1); border: 1px solid rgba(248,81,73,.3);
-    color: #f85149; padding: 8px 12px; border-radius: 6px;
-    font-size: 0.8rem; margin-bottom: 16px;
+    color: #f87171; font-size: 0.75rem;
+    margin-bottom: 14px; padding: 8px 10px;
+    border: 1px solid rgba(248,113,113,.2);
+    background: rgba(248,113,113,.05);
   }
   .hint {
-    margin-top: 16px; font-size: 0.75rem; color: #8b949e;
-    line-height: 1.5;
+    margin-top: 16px; font-size: 0.65rem; color: #444;
+    line-height: 1.6;
   }
-  .hint code {
-    background: #21262d; padding: 1px 5px; border-radius: 3px;
-    font-family: Menlo, Monaco, monospace; font-size: 0.8em;
-  }
+  .hint::before { content: "# "; color: #22d3ee; }
 </style>
 </head>
 <body>
-<div class="card">
+<div class="wrap">
   <h1>SessionBridge</h1>
   <p class="sub">输入访问密钥以继续</p>
   ${error ? `<div class="error">${escapeHtml(error)}</div>` : ''}
   <form method="post" action="/api/auth/login">
     <div class="field">
-      <label for="token">访问密钥</label>
-      <input id="token" name="token" type="password" autocomplete="off" placeholder="输入 dashboard token…" autofocus>
+      <input id="token" name="token" type="password" autocomplete="off" placeholder="访问密钥" autofocus>
     </div>
     <button class="btn" type="submit">登录</button>
   </form>
-  <p class="hint">
-    密钥在节点首次启动时自动生成，可在日志或配置文件<br>
-    <code>~/.sessionbridge/session-bridge/agent.json</code> 中查看
-  </p>
+  <p class="hint">密钥在节点首次启动时自动生成，可在配置文件中查看</p>
 </div>
 </body>
 </html>`;
@@ -297,69 +300,76 @@ export function setupPageHtml(error?: string): string {
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SessionBridge — 设置访问密钥</title>
 <style>
   * { box-sizing:border-box; margin:0; padding:0; }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    background: #0d1117; color: #c9d1d9;
+    font-family: "Menlo", "Cascadia Code", "JetBrains Mono", "Fira Code", monospace;
+    background: #0d0d0d; color: #c9d1d9;
     display: flex; align-items: center; justify-content: center;
     min-height: 100vh; padding: 24px;
   }
-  .card {
-    background: #161b22; border: 1px solid #30363d;
-    border-radius: 12px; padding: 32px; max-width: 380px; width: 100%;
-    text-align: center;
+  .wrap {
+    max-width: 360px; width: 100%;
   }
-  h1 { font-size: 1.25rem; margin-bottom: 4px; color: #58a6ff; }
-  .sub { font-size: 0.8rem; color: #8b949e; margin-bottom: 24px; }
-  .field { margin-bottom: 14px; text-align: left; }
-  .field label { display: block; font-size: 0.8rem; color: #8b949e; margin-bottom: 4px; }
+  h1 {
+    font-size: 1rem; font-weight: 500; color: #a78bfa;
+    letter-spacing: .05em; margin-bottom: 4px;
+    text-transform: uppercase;
+  }
+  h1::before { content: "> "; color: #22d3ee; }
+  .sub {
+    font-size: 0.75rem; color: #6b7280;
+    margin-bottom: 28px; padding-left: 1.2em;
+  }
+  .field { margin-bottom: 14px; }
   .field input {
-    width: 100%; padding: 10px 12px; border-radius: 6px;
-    border: 1px solid #30363d; background: #0d1117; color: #c9d1d9;
-    font-size: 0.95rem; outline: none; transition: border-color .15s;
+    width: 100%; padding: 10px 12px;
+    background: #111; color: #e6edf3;
+    border: 1px solid #222; border-radius: 0;
+    font-size: 0.85rem; font-family: inherit;
+    outline: none; transition: border-color .15s;
   }
-  .field input:focus { border-color: #58a6ff; }
+  .field input:focus { border-color: #a78bfa; }
+  .field input::placeholder { color: #333; }
   .btn {
-    width: 100%; padding: 10px; border-radius: 6px; border: none;
-    background: #238636; color: #fff; font-size: 0.95rem; font-weight: 500;
-    cursor: pointer; transition: background .15s;
+    width: 100%; padding: 10px;
+    background: transparent; color: #22d3ee;
+    border: 1px solid #22d3ee; border-radius: 0;
+    font-size: 0.8rem; font-family: inherit; cursor: pointer;
+    text-transform: uppercase; letter-spacing: .05em;
+    transition: all .15s;
   }
-  .btn:hover { background: #2ea043; }
-  .btn:active { background: #196c2e; }
+  .btn:hover { background: #22d3ee; color: #0d0d0d; }
   .error {
-    background: rgba(248,81,73,.1); border: 1px solid rgba(248,81,73,.3);
-    color: #f85149; padding: 8px 12px; border-radius: 6px;
-    font-size: 0.8rem; margin-bottom: 16px; text-align: left;
+    color: #f87171; font-size: 0.75rem;
+    margin-bottom: 14px; padding: 8px 10px;
+    border: 1px solid rgba(248,113,113,.2);
+    background: rgba(248,113,113,.05);
   }
   .hint {
-    margin-top: 16px; font-size: 0.75rem; color: #8b949e;
-    line-height: 1.5;
+    margin-top: 16px; font-size: 0.65rem; color: #444;
+    line-height: 1.6;
   }
+  .hint::before { content: "# "; color: #22d3ee; }
 </style>
 </head>
 <body>
-<div class="card">
+<div class="wrap">
   <h1>SessionBridge</h1>
   <p class="sub">首次使用，请设置访问密钥</p>
   ${error ? `<div class="error">${escapeHtml(error)}</div>` : ''}
   <form method="post" action="/api/auth/setup">
     <div class="field">
-      <label for="password">访问密钥</label>
-      <input id="password" name="password" type="password" autocomplete="new-password" placeholder="至少 8 个字符…" autofocus>
+      <input id="password" name="password" type="password" autocomplete="new-password" placeholder="访问密钥（至少 8 位）" autofocus>
     </div>
     <div class="field">
-      <label for="confirm">确认密钥</label>
       <input id="confirm" name="confirm" type="password" autocomplete="new-password" placeholder="再次输入以确认">
     </div>
     <button class="btn" type="submit">设置密钥</button>
   </form>
-  <p class="hint">
-    设置后将使用此密钥登录仪表盘。<br>
-    请妥善保管，密钥会存储在配置文件中。
-  </p>
+  <p class="hint">设置后将使用此密钥从远程设备登录。本机访问不需要密钥。</p>
 </div>
 </body>
 </html>`;

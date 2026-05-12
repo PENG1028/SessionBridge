@@ -15,7 +15,6 @@ import { NotificationModel } from './notifications';
 import { createCapabilityHost } from './capability-host';
 import { RelayConnection } from './relay-connection';
 import { AgentConfigReceiver } from './config-sync';
-import { startDashboard, setDashboardState, setDashboardRelay, setExtensionHost, addDashboardLog, writeToShellByRelayId, restartDashboard } from './dashboard-server';
 import { getSystemState } from './introspection';
 import { detectNetworkCapability } from '../extensions/system-info';
 import { envelope } from '../extensions/protocol';
@@ -44,6 +43,12 @@ export class NodeRuntime {
   readonly hostManager: ExtensionHostManager | null = null;
   private fileWatchers: FSWatcher[] = [];
   resolvedRole: 'relay' | 'leaf' = 'leaf';
+  /** Internal log buffer. */
+  private logBuffer: string[] = [];
+  /** Reference to relay's admin log function (set after dynamic import). */
+  private appendRelayLog: ((msg: string) => void) | null = null;
+  /** Reference to relay's writeToShellByRelayId (set after dynamic import). */
+  private _writeToShellByRelayId: ((relayId: string, data: string) => boolean) | null = null;
 
   constructor(configOverrides: Partial<NodeConfig> & { relayUrl?: string } = {}) {
     this.config = resolveConfig(configOverrides);
@@ -57,7 +62,7 @@ export class NodeRuntime {
     // Config receiver for push updates from relay
     this.configReceiver = new AgentConfigReceiver(
       this.config,
-      (key, value) => { addDashboardLog(`[config] Applied: ${key}=${JSON.stringify(value)}`); },
+      (key, value) => { this.addLog(`[config] Applied: ${key}=${JSON.stringify(value)}`); },
       this.relay as any,
     );
 
@@ -66,7 +71,7 @@ export class NodeRuntime {
       this.hostManager = new ExtensionHostManager({
         enabled: true,
         mode: 'development',
-        logger: (msg) => addDashboardLog(msg),
+        logger: (msg) => this.addLog(msg),
         autoRespawn: true,
         maxRespawns: 3,
         respawnDelay: 2000,
@@ -74,40 +79,50 @@ export class NodeRuntime {
     }
   }
 
+  /** Append a timestamped log to the local buffer (and console). */
+  private addLog(msg: string): void {
+    const line = `[${new Date().toISOString()}] ${msg}`;
+    this.logBuffer.push(line);
+    if (this.logBuffer.length > 500) this.logBuffer.shift();
+    console.log(msg);
+    // Also forward to relay's admin log buffer if available
+    this.appendRelayLog?.(line);
+  }
+
   async start(): Promise<void> {
-    addDashboardLog('[node] Starting...');
-    addDashboardLog(`[node] Platform: ${getSystemState().platform} ${getSystemState().arch}`);
-    addDashboardLog(`[node] Node: ${getSystemState().nodeVersion}`);
+    this.addLog('[node] Starting...');
+    this.addLog(`[node] Platform: ${getSystemState().platform} ${getSystemState().arch}`);
+    this.addLog(`[node] Node: ${getSystemState().nodeVersion}`);
 
     // 1. Resolve role
     this.resolvedRole = await this.resolveRole();
-    addDashboardLog(`[node] Role: ${this.resolvedRole}`);
+    this.addLog(`[node] Role: ${this.resolvedRole}`);
 
     // 2. Start relay server if this node can be a relay
     if (this.resolvedRole === 'relay') {
-      const { NodeRelayServer, setNodeId } = await import('../src/relay-server');
+      const { NodeRelayServer, setNodeId, appendAdminLog, writeToShellByRelayId } = await import('../src/relay-server');
+      this.appendRelayLog = appendAdminLog;
+      this._writeToShellByRelayId = writeToShellByRelayId;
       this.relayServer = new NodeRelayServer(this.config.relayPort, this.config.relayToken);
       const actualPort = await this.relayServer.start();
       // Inject persistent node identity into EventBus (for event routing / mesh / audit)
       if (this.config.nodeId) setNodeId(this.config.nodeId);
-      addDashboardLog(`[node] Relay server on port ${actualPort}, nodeId: ${this.config.nodeId ? this.config.nodeId.slice(0, 8) + '…' : 'none'}`);
+      this.addLog(`[node] Relay server on port ${actualPort}, nodeId: ${this.config.nodeId ? this.config.nodeId.slice(0, 8) + '…' : 'none'}`);
     }
 
-    // 3. Always start dashboard
-    await startDashboard(this.config, this.permissions);
-    setDashboardRelay(this.relay);
+    // 3. (Dashboard server removed — all admin routes now handled by relay)
 
     // 4. Scan and load extensions dynamically
     const { scanAndActivate } = await import('./extension-loader');
-    await scanAndActivate({ log: (msg: string) => addDashboardLog(msg) });
+    await scanAndActivate({ log: (msg: string) => this.addLog(msg) });
 
     // 4a. Register host configuration schema into the config registry
     try {
       const { registerHostConfig } = await import('../src/configuration/host-config');
       registerHostConfig();
-      addDashboardLog('[config] Host configuration registered');
+      this.addLog('[config] Host configuration registered');
     } catch (err) {
-      addDashboardLog(`[config] Failed to register host config: ${(err as Error).message}`);
+      this.addLog(`[config] Failed to register host config: ${(err as Error).message}`);
     }
 
     // 4b. Register extension configuration contributions into the config registry
@@ -116,22 +131,21 @@ export class NodeRuntime {
       const contribs = extensionPoints.getConfigurationContributions();
       for (const contrib of contribs) {
         configRegistry.registerExtension(contrib.extensionId, contrib.title, contrib.properties as any);
-        addDashboardLog(`[config] Registered ${Object.keys(contrib.properties).length} key(s) from "${contrib.extensionId}"`);
+        this.addLog(`[config] Registered ${Object.keys(contrib.properties).length} key(s) from "${contrib.extensionId}"`);
       }
     } catch (err) {
-      addDashboardLog(`[config] Failed to register extensions: ${(err as Error).message}`);
+      this.addLog(`[config] Failed to register extensions: ${(err as Error).message}`);
     }
 
     // 4b. Start extension host manager (dev mode)
     if (this.hostManager) {
-      addDashboardLog('[node] Dev mode: starting extension host...');
+      this.addLog('[node] Dev mode: starting extension host...');
       await this.hostManager.start();
       const activated = await this.hostManager.activate({
         extraPaths: this.config.extensionPaths,
         mode: 'development',
       });
-      addDashboardLog(`[node] Extension host activated ${activated.length} extension(s)`);
-      setExtensionHost(this.hostManager);
+      this.addLog(`[node] Extension host activated ${activated.length} extension(s)`);
       this.startFileWatcher();
     }
     this.cachedAdapters = await this.detectAdapters();
@@ -139,41 +153,32 @@ export class NodeRuntime {
     const savedSettings = this.notifications.settings;
     this.notifications = new NotificationModel(adapterScenarios, savedSettings);
     this.capabilityHost = createCapabilityHost(this.permissions, this.notifications, this.relay, this.config.ntfyTopic);
-    setDashboardState({
-      config: this.config,
-      permissions: this.permissions,
-      notifications: this.notifications,
-      relayConnected: false,
-      instanceId: null,
-      adapters: this.cachedAdapters,
-      startTime: this.startTime,
-    });
 
     // 5. Connect to relay (upstream or loopback)
     if (this.resolvedRole === 'relay' && !this.config.upstreamRelay) {
-      addDashboardLog(`[node] Using loopback relay (ws://127.0.0.1:${this.config.relayPort})`);
+      this.addLog(`[node] Using loopback relay (ws://127.0.0.1:${this.config.relayPort})`);
     } else if (this.config.upstreamRelay) {
-      addDashboardLog(`[node] Upstream relay: ${this.config.upstreamRelay}`);
+      this.addLog(`[node] Upstream relay: ${this.config.upstreamRelay}`);
     }
     this.setupRelayHandlers();
     this.relay.connect();
-    addDashboardLog('[node] Relay connection initiated');
+    this.addLog('[node] Relay connection initiated');
   }
 
   async shutdown(): Promise<void> {
-    addDashboardLog('[node] Shutting down...');
+    this.addLog('[node] Shutting down...');
     this.killShell();
     this.killFileWatchers();
     if (this.hostManager) {
       await this.hostManager.shutdown();
-      addDashboardLog('[node] Extension host shut down');
+      this.addLog('[node] Extension host shut down');
     }
     await this.relay.shutdown();
     if (this.relayServer) {
       await this.relayServer.stop();
-      addDashboardLog('[node] Relay server stopped');
+      this.addLog('[node] Relay server stopped');
     }
-    addDashboardLog('[node] Shutdown complete');
+    this.addLog('[node] Shutdown complete');
   }
 
   // ─── File Watcher (dev mode hot-reload) ─────────────────────
@@ -202,9 +207,9 @@ export class NodeRuntime {
           this.debouncedReload();
         });
         this.fileWatchers.push(watcher);
-        addDashboardLog(`[watcher] Watching ${dir}`);
+        this.addLog(`[watcher] Watching ${dir}`);
       } catch (err) {
-        addDashboardLog(`[watcher] Cannot watch ${dir}: ${(err as Error).message}`);
+        this.addLog(`[watcher] Cannot watch ${dir}: ${(err as Error).message}`);
       }
     }
   }
@@ -215,10 +220,10 @@ export class NodeRuntime {
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         timer = null;
-        addDashboardLog('[watcher] File change detected — reloading extensions...');
+        this.addLog('[watcher] File change detected — reloading extensions...');
         this.hostManager?.reload({ extraPaths: this.config.extensionPaths, mode: 'development' })
-          .then(() => addDashboardLog('[watcher] Extensions reloaded'))
-          .catch((err) => addDashboardLog(`[watcher] Reload failed: ${err.message}`));
+          .then(() => this.addLog('[watcher] Extensions reloaded'))
+          .catch((err) => this.addLog(`[watcher] Reload failed: ${err.message}`));
       }, 500);
     };
   })();
@@ -240,12 +245,7 @@ export class NodeRuntime {
 
   private setupRelayHandlers(): void {
     this.relay.on('registered', (instanceId) => {
-      addDashboardLog(`[node] Registered as instance: ${instanceId}`);
-      setDashboardState({
-        ...this.getDashboardState(),
-        relayConnected: true,
-        instanceId,
-      });
+      this.addLog(`[node] Registered as instance: ${instanceId}`);
       this.capabilityHost.notifications.notify(
         'agent.connected',
         'Agent connected',
@@ -255,7 +255,7 @@ export class NodeRuntime {
     });
 
     this.relay.on('stdin', (relayInstanceId, data) => {
-      if (!writeToShellByRelayId(relayInstanceId, data)) {
+      if (!this._writeToShellByRelayId?.(relayInstanceId, data)) {
         if (this.shellProc?.stdin?.writable) {
           this.shellProc.stdin.write(data);
         }
@@ -263,11 +263,6 @@ export class NodeRuntime {
     });
 
     this.relay.on('close', () => {
-      setDashboardState({
-        ...this.getDashboardState(),
-        relayConnected: false,
-        instanceId: null,
-      });
       this.capabilityHost.notifications.notify(
         'agent.disconnected',
         'Agent disconnected',
@@ -277,51 +272,47 @@ export class NodeRuntime {
     });
 
     this.relay.on('notification', (type, title, detail) => {
-      addDashboardLog(`[node] Relay notification [${type}]: ${title} — ${detail}`);
+      this.addLog(`[node] Relay notification [${type}]: ${title} — ${detail}`);
     });
 
     this.relay.on('error', (code, message) => {
-      addDashboardLog(`[node] Relay error [${code}]: ${message}`);
+      this.addLog(`[node] Relay error [${code}]: ${message}`);
     });
 
     // Config push handler: receive config from relay, validate & apply, send ack
     this.relay.on('configPush', (entries: { key: string; value: unknown }[], requestId: string) => {
-      addDashboardLog(`[config] Received push from relay: ${entries.length} key(s)`);
+      this.addLog(`[config] Received push from relay: ${entries.length} key(s)`);
       const push = { entries, requestId };
       const result = this.configReceiver.apply(push);
       this.configReceiver.sendAck(this.relay as any, requestId, result);
       if (result.applied.length > 0) {
-        addDashboardLog(`[config] Applied: ${result.applied.join(', ')}`);
+        this.addLog(`[config] Applied: ${result.applied.join(', ')}`);
         // Re-create capability host with updated config
         this.capabilityHost = createCapabilityHost(this.permissions, this.notifications, this.relay, this.config.ntfyTopic);
       }
       if (result.rejected.length > 0) {
-        addDashboardLog(`[config] Rejected: ${result.rejected.map(r => `${r.key} (${r.reason})`).join(', ')}`);
+        this.addLog(`[config] Rejected: ${result.rejected.map(r => `${r.key} (${r.reason})`).join(', ')}`);
       }
     });
 
     // External access: network inspect → run detection → send result back
     this.relay.on('nodeExternalInspect', (requestId: string) => {
       const hasToken = !!this.config.relayToken;
-      const result = detectNetwork(this.config.dashboardPort, hasToken);
+      const result = detectNetwork(this.config.relayPort, hasToken);
       (this.relay as any).sendRaw(JSON.stringify(envelope('node.external.inspected', { requestId, result })));
     });
 
     // External access: toggle dashboard bind on/off
     this.relay.on('nodeExternalSet', async (requestId: string, enable: boolean) => {
       const bind = enable ? '0.0.0.0' : '127.0.0.1';
-      addDashboardLog(`[external] Toggling external access: dashboardBind → ${bind}`);
+      this.addLog(`[external] Toggling external access: dashboardBind → ${bind}`);
       this.config.dashboardBind = bind;
-      try {
-        await restartDashboard();
-        addDashboardLog(`[external] Dashboard restarted on ${bind}:${this.config.dashboardPort}`);
-      } catch (err: any) {
-        addDashboardLog(`[external] Restart failed: ${err.message}`);
-      }
+      // Relay server already listens on all interfaces; no separate dashboard to restart
+      this.addLog(`[external] External access ${enable ? 'enabled' : 'disabled'} (bind=${bind})`);
       (this.relay as any).sendRaw(JSON.stringify(envelope('node.external.status', {
         requestId,
         enabled: enable,
-        url: enable ? `http://${bind}:${this.config.dashboardPort}` : '',
+        url: enable ? `http://${bind}:${this.config.relayPort}` : '',
       })));
     });
   }
@@ -341,7 +332,7 @@ export class NodeRuntime {
       if (oldPid && isFinite(oldPid)) {
         try {
           process.kill(oldPid, 0); // Check if alive
-          addDashboardLog(`[node] Killing orphan shell (pid ${oldPid})`);
+          this.addLog(`[node] Killing orphan shell (pid ${oldPid})`);
           process.kill(oldPid, 'SIGKILL');
         } catch {
           // Process doesn't exist — stale PID file
@@ -356,7 +347,7 @@ export class NodeRuntime {
   private spawnShell(): void {
     const permCheck = this.permissions.check('shellAccess');
     if (!permCheck.allowed) {
-      addDashboardLog(`[node] Shell spawn blocked: ${permCheck.reason}`);
+      this.addLog(`[node] Shell spawn blocked: ${permCheck.reason}`);
       return;
     }
     if (this.shellProc) this.killShell();
@@ -369,7 +360,7 @@ export class NodeRuntime {
       cwd: this.config.workingDirectory,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-    addDashboardLog(`[node] Shell spawned: ${cmd} (pid ${this.shellProc.pid})`);
+    this.addLog(`[node] Shell spawned: ${cmd} (pid ${this.shellProc.pid})`);
 
     // Persist PID for orphan cleanup on next startup
     try {
@@ -404,7 +395,7 @@ export class NodeRuntime {
       this.relay.sendStderr(chunk.toString());
     });
     this.shellProc.on('close', (code) => {
-      addDashboardLog(`[node] Shell exited: ${code}`);
+      this.addLog(`[node] Shell exited: ${code}`);
       this.shellProc = null;
       if (backpressureTimer) { clearInterval(backpressureTimer); backpressureTimer = null; }
       try { require('fs').unlinkSync(this.shellPidFile); } catch { /* ignore */ }
@@ -441,17 +432,6 @@ export class NodeRuntime {
     return scenarios;
   }
 
-  private getDashboardState() {
-    return {
-      config: this.config,
-      permissions: this.permissions,
-      notifications: this.notifications,
-      relayConnected: this.relay.instanceId !== null,
-      instanceId: this.relay.instanceId,
-      adapters: this.cachedAdapters,
-      startTime: this.startTime,
-    };
-  }
 }
 
 // Backward compat re-export

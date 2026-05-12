@@ -52,12 +52,12 @@ function classifyIP(addr: string): "loopback" | "lan" | "public" {
 /**
  * Detect the network environment of the current node.
  *
- * @param dashboardPort - The port the dashboard is listening on (default 9843)
- * @param hasToken     - Whether relayToken is configured
- * @param certDir      - Path to TLS cert directory (default ~/.sessionbridge)
+ * @param port     - The port to check external access for (default 8080)
+ * @param hasToken - Whether relayToken is configured
+ * @param certDir  - Path to TLS cert directory (default ~/.sessionbridge)
  */
 export function detectNetwork(
-  dashboardPort: number = 9843,
+  port: number = 8080,
   hasToken: boolean = false,
   certDir?: string,
 ): NetworkDetectResult {

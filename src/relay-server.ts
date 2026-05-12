@@ -1,4 +1,4 @@
-import { createServer as createHttpServer, request as httpRequest, IncomingMessage, ServerResponse } from "http";
+import { createServer as createHttpServer, IncomingMessage, ServerResponse } from "http";
 import { createServer as createHttpsServer } from "https";
 import { readFileSync, readdirSync, statSync, existsSync, writeFileSync, unlinkSync, mkdirSync } from "fs";
 import { join, extname, basename, resolve, isAbsolute, relative, dirname } from "path";
@@ -21,6 +21,7 @@ import { appConfig } from "./config";
 import { ensureCert } from "./cert";
 import { SessionPersistence } from "./session-persistence";
 import { registerApiRoutes, type AliasStore } from "./api-routes";
+import { registerAdminRoutes, type AdminRouteContext, type ShellRunInstance } from "./admin-routes";
 import { RelayConfigManager } from "../agent-core/config-sync";
 import { PermissionModel } from "../agent-core/permissions";
 import { CryptoStream } from "./crypto-stream";
@@ -78,6 +79,36 @@ const pendingExternalRequests = new Map<string, WebSocket>();
 const PENDING_TIMEOUT_MS = 30_000;
 const sessionPersistence = new SessionPersistence(process.cwd(), eventBus);
 const permissions = new PermissionModel();
+
+// ─── Admin routes state (merged from old dashboard server) ────
+const adminLogs: string[] = [];
+const adminShellInstances = new Map<string, ShellRunInstance>();
+const adminRelayToShellId = new Map<string, string>();
+
+function addAdminLog(msg: string): void {
+  adminLogs.push(`[${new Date().toISOString()}] ${msg}`);
+  if (adminLogs.length > 200) adminLogs.shift();
+}
+
+/** Write stdin data to an ad-hoc shell instance, looked up by relay instance ID. */
+export function writeToShellByRelayId(relayInstanceId: string, data: string): boolean {
+  const shellId = adminRelayToShellId.get(relayInstanceId);
+  if (!shellId) return false;
+  const entry = adminShellInstances.get(shellId);
+  if (!entry || !entry.proc.stdin?.writable) return false;
+  entry.proc.stdin.write(data);
+  return true;
+}
+
+/** Get the admin logs (for node-runtime to pass to AdminRouteContext). */
+export function getAdminLogs(): string[] {
+  return adminLogs;
+}
+
+/** Append to admin logs from outside. */
+export function appendAdminLog(msg: string): void {
+  addAdminLog(msg);
+}
 const relayConfigManager = new RelayConfigManager(eventBus);
 
 // ─── Notification Bus ────────────────────────────────────────────
@@ -250,6 +281,110 @@ function send(ws: WebSocket, msg: unknown) {
 
 function broadcast(msg: unknown) {
   for (const ws of clients) send(ws, msg);
+}
+
+// ─── Peer Discovery ──────────────────────────────────────────
+// Tracks connected browsers/agents and broadcasts peer list changes.
+
+function classifyPeerIP(ip: string): 'loopback' | 'lan' | 'wan' {
+  if (ip === '127.0.0.1' || ip === '::1' || ip === 'localhost') return 'loopback';
+  if (ip.startsWith('10.') || ip.startsWith('192.168.')) return 'lan';
+  if (ip.startsWith('172.')) {
+    const second = parseInt(ip.split('.')[1], 10);
+    if (second >= 16 && second <= 31) return 'lan';
+  }
+  return 'wan';
+}
+
+function getPeerInfo(ws: WebSocket): Record<string, unknown> | null {
+  const label = (ws as any)._agentLabel || (ws as any)._browserLabel;
+  if (!label) return null; // not fully identified yet
+  const rawIP = (ws as any)._socket?.remoteAddress || '127.0.0.1';
+  const ip = rawIP.replace(/^::ffff:/, '');
+  const networkType = classifyPeerIP(ip);
+  const isAgent = !!(ws as any)._isAgent;
+  return {
+    id: (ws as any)._agentInstanceId || (ws as any)._browserId || `peer_${Date.now()}`,
+    name: label,
+    ip,
+    type: isAgent ? 'agent' : 'browser',
+    role: isAgent ? ((ws as any)._agentRole || 'leaf') : 'view',
+    networkType,
+    hasPublicAccess: networkType === 'wan',
+    connectedAt: (ws as any)._connectedAt || Date.now(),
+  };
+}
+
+function collectPeers(): { peers: Record<string, unknown>[]; links: { source: string; target: string; type: string }[] } {
+  const peers: Record<string, unknown>[] = [];
+  for (const ws of clients) {
+    const info = getPeerInfo(ws);
+    if (info) peers.push(info);
+  }
+  // Also collect agents (agents are removed from clients set but have _isAgent)
+  for (const inst of instanceManager.list()) {
+    if (inst.agentConnection && !clients.has(inst.agentConnection)) {
+      const ws2 = inst.agentConnection;
+      const rawIP = (ws2 as any)._socket?.remoteAddress || '127.0.0.1';
+      const ip = rawIP.replace(/^::ffff:/, '');
+      const networkType = classifyPeerIP(ip);
+      const viaRelayId: string | undefined = (ws2 as any)._viaRelayId;
+      peers.push({
+        id: inst.id,
+        name: inst.label,
+        ip,
+        type: 'agent',
+        role: (ws2 as any)._agentRole || 'leaf',
+        networkType,
+        hasPublicAccess: networkType === 'wan',
+        connectedAt: inst.createdAt,
+        connectedToRelayId: viaRelayId || null,
+      });
+    }
+  }
+
+  // Build topology links from peer list
+  const links: { source: string; target: string; type: string }[] = [];
+  const relayPeers = peers.filter(p => p.type === 'agent' && (p.role === 'relay' || p.hasPublicAccess));
+  const leafPeers = peers.filter(p => p.type === 'agent' && p.role !== 'relay' && !p.hasPublicAccess);
+
+  for (const leaf of leafPeers) {
+    const explicitRelayId = leaf.connectedToRelayId as string | undefined;
+    if (explicitRelayId && peers.some(p => p.id === explicitRelayId)) {
+      links.push({ source: explicitRelayId, target: leaf.id as string, type: 'agent' });
+    } else if (relayPeers.length === 1) {
+      // Single relay — all leaves are behind it
+      links.push({ source: relayPeers[0].id as string, target: leaf.id as string, type: 'agent' });
+    } else {
+      // Unknown topology — leaf connects to local node directly
+      links.push({ source: '__local__', target: leaf.id as string, type: 'agent' });
+    }
+  }
+  // Link browsers to their nearest relay or local
+  const browserPeers = peers.filter(p => p.type === 'browser');
+  for (const bp of browserPeers) {
+    if (relayPeers.length > 0) {
+      links.push({ source: relayPeers[0].id as string, target: bp.id as string, type: 'view' });
+    } else {
+      links.push({ source: '__local__', target: bp.id as string, type: 'view' });
+    }
+  }
+  // If relays exist, link them to local
+  for (const rp of relayPeers) {
+    links.push({ source: '__local__', target: rp.id as string, type: 'relay' });
+  }
+
+  return { peers, links };
+}
+
+function broadcastPeers(): void {
+  const { peers, links } = collectPeers();
+  broadcast(envelope("peer.list", { peers, links }));
+}
+
+function sendPeers(ws: WebSocket): void {
+  const { peers, links } = collectPeers();
+  send(ws, envelope("peer.list", { peers, links }));
 }
 
 function sendBlock(block: Record<string, unknown>) {
@@ -686,7 +821,7 @@ function bufferOutputFor(i: import("./instance-manager").InstanceData, data: str
 const OUT_DIR = join(process.cwd(), "out");
 let ROOT_DIR = inst().dir;
 
-const serverRequestHandler = (req: import("http").IncomingMessage, res: import("http").ServerResponse) => {
+const serverRequestHandler = async (req: import("http").IncomingMessage, res: import("http").ServerResponse) => {
   // CORS headers: allow any origin so the Next.js dev server (port 3000)
   // can call the relay API (port 8080) during development.
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -700,6 +835,25 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
 
   // Delegate to structured API routes first
   if (registerApiRoutes(req, res, { instanceManager, broadcast, auditLog, checkPermission: checkHttpPermission, configManager: appConfig, relayConfig: relayConfigManager, configRegistry, configStore, secretStore, workDir: process.cwd(), aliases: aliasStore })) return;
+
+  // Delegate to admin routes (migrated from dashboard server)
+  if (await registerAdminRoutes(req, res, {
+    nodeLabel: os.hostname(),
+    nodeStartTime: START_TIME,
+    adapters: [],
+    permissions,
+    relayConnection: null,
+    relayPort: PORT,
+    upstreamRelay: undefined,
+    relayToken: relayToken || undefined,
+    role: 'relay',
+    shellInstances: adminShellInstances,
+    relayToShellId: adminRelayToShellId,
+    extensionHost: null,
+    logs: adminLogs,
+    addLog: addAdminLog,
+    persistConfig: () => {},
+  })) return;
 
   const url = new URL(req.url!, `http://${req.headers.host}`);
   const path = url.pathname.replace(/\/$/, '') || '/';
@@ -721,13 +875,6 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
     const dirParam = url.searchParams.get("dir") || ".";
     const showAll = url.searchParams.get("showAll") === "1";
     const targetDir = isAbsolute(dirParam) ? dirParam : resolve(ROOT_DIR, dirParam);
-    const root = ROOT_DIR;
-
-    if (!targetDir.startsWith(ROOT_DIR)) {
-      res.writeHead(403, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Outside workspace" }));
-      return;
-    }
     if (!existsSync(targetDir)) {
       res.writeHead(404, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Directory not found" }));
@@ -751,7 +898,9 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
       const entries = readdirSync(targetDir, { withFileTypes: true });
       let items = entries.map(e => {
         const full = join(targetDir, e.name);
-        const rel = relative(root, full).replace(/\\/g, "/");
+        const rel = full.startsWith(ROOT_DIR)
+          ? relative(ROOT_DIR, full).replace(/\\/g, "/")
+          : full.replace(/\\/g, "/");
         return {
           name: e.name,
           path: rel,
@@ -774,7 +923,7 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
       });
 
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ items, cwd: ROOT_DIR, showAll }));
+      res.end(JSON.stringify({ items, cwd: targetDir.replace(/\\/g, "/"), showAll }));
     } catch (err) {
       res.writeHead(500, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: String(err) }));
@@ -1234,39 +1383,7 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
     return;
   }
 
-  // ── Dashboard API proxy ──────────────────────────────────
-  // DashboardView calls /api/status, /api/processes etc. —
-  // these are served by the agent-core dashboard server (port 9843),
-  // not the relay server. Proxy unknown /api/* there.
-  if (path.startsWith("/api/")) {
-    // Break proxy loops — if this request was already forwarded by
-    // either server, don't forward again.
-    const incomingFwd = req.headers["x-forwarded-by"];
-    if (incomingFwd === "relay" || incomingFwd === "dashboard") {
-      res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Not found" }));
-      return;
-    }
-    const dashPort = parseInt(process.env.BRIDGE_DASHBOARD_PORT || "9843", 10);
-    const proxyHeaders = { ...req.headers } as Record<string, string | string[] | undefined>;
-    proxyHeaders["x-forwarded-by"] = "relay";
-    delete proxyHeaders["host"];
-    const proxyReq = httpRequest(
-      { hostname: "127.0.0.1", port: dashPort, path: req.url!, method: req.method || "GET", headers: proxyHeaders },
-      (proxyRes: IncomingMessage) => {
-        res.writeHead(proxyRes.statusCode || 200, proxyRes.headers);
-        proxyRes.pipe(res);
-      },
-    );
-    req.pipe(proxyReq);
-    proxyReq.on("error", () => {
-      res.writeHead(503, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Dashboard server unavailable" }));
-    });
-    return;
-  }
-
-  // ── Static files ─────────────────────────────────────────
+  // ── Static files (dashboard proxy removed — all routes handled directly) ── (dashboard proxy removed — all routes handled directly) ──
   const cleanPath = path.replace(/^\//, '');
   const filePath = cleanPath || 'index.html';
   const diskPath = join(OUT_DIR, filePath);
@@ -1439,6 +1556,15 @@ function setupWssHandlers(): void {
       }
       send(ws, envelope("welcome", welcomeBody));
 
+      // Tag peer info and broadcast to all connected clients
+      if (role === "browser") {
+        (ws as any)._browserLabel = msg.label || `Browser-${Date.now().toString(36).slice(-4)}`;
+        (ws as any)._browserId = msg.clientToken || `browser_${Date.now()}`;
+        (ws as any)._connectedAt = Date.now();
+        sendPeers(ws);          // send peer list to the new connection
+        broadcastPeers();       // notify others about the new peer
+      }
+
       // Complete crypto handshake if client provided ephemeral key
       if (cryptoSession && msg.ephemeralKey) {
         cryptoSession.handshake(
@@ -1503,10 +1629,13 @@ function setupWssHandlers(): void {
       (ws as any)._isAgent = true;
       (ws as any)._agentInstanceId = remoteInst.id;
       (ws as any)._agentLabel = label;
+      (ws as any)._agentRole = msg.role || 'leaf';
+      (ws as any)._viaRelayId = msg.viaRelayId || undefined;
       clients.delete(ws);
       send(ws, envelope("agent.registered", { instanceId: remoteInst.id, sessionId: remoteInst.id }));
       const entry = instanceManager.toJSON().find(i => i.id === remoteInst.id);
       broadcast(envelope("instance.added", { instance: entry }));
+      broadcastPeers(); // notify browsers about agent peer
       notifyBus({ scenarioId: 'agent.connected', severity: 'success', title: `Agent connected: ${label}` });
       auditLog.log('agent.registered', label, { version: agentVersion }, remoteInst.id);
       instanceManager.startOperation(remoteInst.id, 'spawn', 'agent_register');
@@ -1682,7 +1811,7 @@ function setupWssHandlers(): void {
       } else {
         // Self-service: detect locally and respond directly
         const hasToken = !!relayToken;
-        const result = detectNetwork(9843, hasToken);
+        const result = detectNetwork(PORT, hasToken);
         send(ws, envelope("node.external.inspected", { result }));
       }
       return;
@@ -1715,7 +1844,7 @@ function setupWssHandlers(): void {
         send(ws, envelope("node.external.status", {
           enabled: false,
           url: '',
-          message: 'self-service toggle not yet implemented in dashboard-server',
+          message: 'self-service toggle not yet implemented',
         }));
       }
       return;
@@ -1941,6 +2070,7 @@ function setupWssHandlers(): void {
     authenticatedSockets.delete(ws);
     agentVersionMap.delete(ws);
     cryptoStreams.delete(ws);
+    broadcastPeers(); // notify remaining clients about peer change
     // Release shell write-locks held by this WS
     for (const [instId, owner] of shellLockMap) {
       if (owner === ws) {
@@ -1974,6 +2104,7 @@ function setupWssHandlers(): void {
           inst.status = 'stopped';
           instanceManager.kill(inst.id);
           broadcast(envelope("instance.removed", { instanceId: inst.id }));
+          broadcastPeers(); // agent peer removed
           auditLog.log('agent.auto_unregistered', inst.label, {}, inst.id);
           instanceManager.cancelOperation(inst.id);
           break;

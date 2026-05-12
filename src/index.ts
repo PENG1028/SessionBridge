@@ -22,7 +22,7 @@
  *   --role <relay|leaf>  Force role instead of auto-detect
  *   --dir <path>         Working directory
  *   --label <name>       Node label (default: hostname)
- *   --dashboard-port <n> Dashboard HTTP port (default: 9843)
+ *   --dashboard-port <n> @deprecated Dashboard now uses relay port (8080)
  *   --config <path>      Config file path
  *   --log-file <path>    Write log to file
  *   --pid-file <path>    Write PID file
@@ -67,7 +67,7 @@ async function main() {
     --role <relay|leaf>    Force node role (default: auto-detect)
     --dir <path>           Working directory (default: cwd)
     --label <name>         Node label (default: hostname)
-    --dashboard-port <n>   Dashboard HTTP port (default: 9843)
+    --dashboard-port <n>   @deprecated Dashboard now uses relay port
     --config <path>        Config file path
     --log-file <path>      Write log to file
     --pid-file <path>      Write PID file
