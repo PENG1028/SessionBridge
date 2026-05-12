@@ -235,16 +235,29 @@ export default function Page() {
 }
 
 function PageContent() {
-  // ── Connection state: default to localhost ──
+  // ── Connection state: default to localhost, persist last known URL ──
   const defaultUrl = typeof window !== 'undefined'
     ? `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.hostname}:8080`
     : 'ws://localhost:8080';
   const params = typeof window !== 'undefined' ? new URL(window.location.href).searchParams : new URLSearchParams();
   const urlParam = params.get('url');
   const tokenParam = params.get('token');
-  const [wsUrl, setWsUrl] = useState(urlParam || defaultUrl);
+  const [wsUrl, setWsUrl] = useState(() => {
+    // URL param wins; fall back to localStorage; then default
+    if (urlParam) return urlParam;
+    try {
+      const saved = localStorage.getItem('bridge-ws-url');
+      if (saved) return saved;
+    } catch {}
+    return defaultUrl;
+  });
   const [token, setToken] = useState<string | undefined>(tokenParam || undefined);
   const [customServerUrl, setCustomServerUrl] = useState('');
+
+  // Persist wsUrl to localStorage on change
+  useEffect(() => {
+    try { localStorage.setItem('bridge-ws-url', wsUrl); } catch {}
+  }, [wsUrl]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const { state, dispatch } = useLayout();
 
