@@ -1267,8 +1267,8 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
   }
 
   // ── Static files ─────────────────────────────────────────
-  let filePath = path;
-  if (filePath.endsWith("/")) filePath += "index.html";
+  const cleanPath = path.replace(/^\//, '');
+  const filePath = cleanPath || 'index.html';
   const diskPath = join(OUT_DIR, filePath);
   try {
     const content = readFileSync(diskPath);
