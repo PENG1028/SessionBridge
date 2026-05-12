@@ -41,7 +41,6 @@ export interface ConsoleHeaderProps {
   onSelectSavedSession: (s: { label: string; dir: string }) => void;
   onOpenSettings?: () => void;
   onToggleDashboard?: () => void;
-  showDashboard?: boolean;
   onToggleCommandPalette?: () => void;
   leftSidebarOpen?: boolean;
   rightSidebarOpen?: boolean;
@@ -80,7 +79,6 @@ export function ConsoleHeader({
   onSelectSavedSession,
   onOpenSettings,
   onToggleDashboard,
-  showDashboard,
   onToggleCommandPalette,
   leftSidebarOpen,
   rightSidebarOpen,

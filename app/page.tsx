@@ -1226,7 +1226,6 @@ function PageContent() {
                   tab: { id: tabId, title: 'Dashboard', viewType: 'dashboard' },
                 });
               }}
-        showDashboard={false}
         onToggleCommandPalette={() => setShowCommandPalette(v => !v)}
         leftSidebarOpen={effectiveLeftOpen}
         rightSidebarOpen={effectiveRightOpen}
