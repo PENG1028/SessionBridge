@@ -1,5 +1,4 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
-import { homedir } from "os";
 import { join } from "path";
 
 // ─── Types ────────────────────────────────────────
@@ -57,7 +56,7 @@ export class ConfigManager {
   private _dirty = false;
 
   constructor(configDir?: string) {
-    const dir = configDir || join(homedir(), ".sessionbridge");
+    const dir = configDir || join(process.cwd(), ".sessionbridge");
     this.configPath = join(dir, "config.json");
     this.config = { ...DEFAULT_CONFIG };
     this.load();

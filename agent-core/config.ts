@@ -1,11 +1,10 @@
 // ─── Node Configuration ────────────────────────────────────────
 // Unified config for all node roles (relay + agent + leaf).
 // Loaded from (priority): CLI args, BRIDGE_CONFIG env var,
-// ~/.sessionbridge/agent.json, defaults.
+// .sessionbridge/agent.json (project dir), defaults.
 
 import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
-import { homedir } from 'os';
 import { randomBytes } from 'crypto';
 import type { PermissionConfig } from './permissions';
 
@@ -85,10 +84,7 @@ const DEFAULT_CONFIG: NodeConfig = {
 };
 
 export function configDir(): string {
-  const base = process.platform === 'win32'
-    ? process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local')
-    : join(homedir(), '.sessionbridge');
-  return join(base, 'session-bridge');
+  return join(process.cwd(), '.sessionbridge');
 }
 
 function loadJsonConfig(): Record<string, unknown> {
