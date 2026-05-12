@@ -54,7 +54,10 @@ function splitRoot(rootCwd: string): BreadcrumbSeg[] {
  */
 function pathSegments(path: string, rootCwd: string): BreadcrumbSeg[] {
   const normalized = path.replace(/\\/g, '/');
-  if (normalized === '.' || normalized === '') {
+  const normRoot = rootCwd.replace(/\\/g, '/').replace(/\/$/, '');
+
+  // Root or matches rootCwd (e.g. absolute path from initialPath)
+  if (normalized === '.' || normalized === '' || normalized === normRoot) {
     return splitRoot(rootCwd);
   }
   const relative = normalized.replace(/^\.\/?/, '');
