@@ -59,7 +59,7 @@ function def(
   ));
 
   registerAction(def('host.dashboard.open', 'Dashboard',
-    ['commandPalette'],
+    ['commandPalette', 'header.right'],
     (ctx) => {
       // Add a dashboard tab to the active pane
       const tabId = 'dash_' + Date.now().toString(36);

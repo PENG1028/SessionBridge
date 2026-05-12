@@ -236,8 +236,9 @@ export function startDashboard(config: AgentConfig, permissions: PermissionModel
         (!hasToken && (url.pathname === '/setup' || url.pathname === '/api/auth/setup')) ||
         (hasToken && (url.pathname === '/login' || url.pathname === '/api/auth/login'));
 
-      // ── Auth gate for all other routes ────────────────────────
-      if (!isPublic && isAuthEnabled()) {
+      // Auth gate — trust relay-proxied requests (localhost only)
+      const forwardedBy = req.headers['x-forwarded-by'];
+      if (!isPublic && isAuthEnabled() && forwardedBy !== 'relay') {
         if (!hasToken) {
           // No token set yet — redirect everything to /setup
           if (url.pathname.startsWith('/api/')) {
