@@ -260,6 +260,16 @@ export function ConsoleHeader({
           </button>
         )}
 
+        {/* Dashboard button — uses onToggleDashboard with real dispatch */}
+        {onToggleDashboard && (
+          <button onClick={onToggleDashboard}
+            className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#1a1a1a] border border-gray-700 hover:border-purple-500 text-gray-400 hover:text-gray-200 text-[10px] transition-colors"
+            title="Dashboard"
+          >
+            <LayoutDashboard className="w-3 h-3" />
+          </button>
+        )}
+
         {/* Header chrome: actions (registry) + contributions (manifests) */}
         <div className="flex items-center gap-2">
           {!isMinimal && headerRightActions.map(a => {
