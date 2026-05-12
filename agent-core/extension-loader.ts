@@ -538,28 +538,34 @@ function loadManifest(manifestPath: string, dir: string, diagnostics: ExtensionD
 
 // ─── Dynamic Module Loading ──────────────────────────────────────
 
-/** Load an extension module.
- *
- *  Use import() with a filesystem path (NOT file:// URL).
- *  tsc compiles import() → __importStar(require(path)) in CJS mode,
- *  and require() cannot resolve file:// URLs. A plain filesystem path
- *  works in both tsx (import()) and compiled CJS (require()). */
+/**
+ * Convert a Windows absolute path to a file:// URL for ESM import().
+ * On non-Windows platforms, the path is returned as-is.
+ * tsx (ESM mode) requires file:// URLs for Windows absolute paths.
+ */
+function toFileUrl(path: string): string {
+  if (process.platform === 'win32') {
+    return 'file:///' + path.replace(/\\/g, '/');
+  }
+  return path;
+}
+
+/** Load an extension module via dynamic import(). */
 async function importModule(manifest: ExtensionManifest, extDir: string): Promise<Record<string, unknown>> {
   const mainPath = resolve(extDir, manifest.main);
 
   // Try direct import first (works for compiled .js and .ts via tsx)
   try {
-    return await import(mainPath);
+    return await import(toFileUrl(mainPath));
   } catch (err1) {
     // Fallback #1: if extDir is source extensions/, try dist/extensions/ equivalent
-    // (handles running compiled code from dist/ while manifests are in source extensions/)
-    const extParent = dirname(extDir);     // e.g. /project/extensions/
-    const extName = basename(extDir);       // e.g. claude-code
+    const extParent = dirname(extDir);
+    const extName = basename(extDir);
     const distExtDir = resolve(extParent, '..', 'dist', 'extensions', extName);
     if (existsSync(distExtDir)) {
       const distMainPath = resolve(distExtDir, manifest.main);
       try {
-        return await import(distMainPath);
+        return await import(toFileUrl(distMainPath));
       } catch {}
     }
 
@@ -567,7 +573,7 @@ async function importModule(manifest: ExtensionManifest, extDir: string): Promis
     const tsPath = resolve(extDir, 'index.ts');
     if (tsPath !== mainPath && existsSync(tsPath)) {
       try {
-        return await import(tsPath);
+        return await import(toFileUrl(tsPath));
       } catch (err2) {
         throw new Error(`Cannot load extension "${manifest.id}": ${(err1 as Error).message}; fallback also failed: ${(err2 as Error).message}`);
       }
