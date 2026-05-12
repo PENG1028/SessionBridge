@@ -18,9 +18,18 @@ interface DirectoryPickerProps {
   title?: string;
 }
 
-function isMobile() {
-  if (typeof window === 'undefined') return false;
-  return navigator.maxTouchPoints > 0 || window.innerWidth < 768;
+/** Reactive hook: true when viewport is at most 767px wide. */
+function useIsMobile(): boolean {
+  const [mobile, setMobile] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mq = window.matchMedia('(max-width: 767px)');
+    setMobile(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setMobile(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+  return mobile;
 }
 
 /** Split path into segments for breadcrumb. */
@@ -45,7 +54,7 @@ export function DirectoryPicker({
   const [search, setSearch] = useState('');
   const [rootCwd, setRootCwd] = useState('');
 
-  const mobile = useMemo(() => isMobile(), []);
+  const mobile = useIsMobile();
 
   const fetchDir = useCallback(async (dir: string) => {
     try {
