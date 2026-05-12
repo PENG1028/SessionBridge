@@ -30,11 +30,7 @@ export function MobileSidebar({
   const sheetRef = useRef<HTMLDivElement>(null);
   const [touchStart, setTouchStart] = useState<number | null>(null);
 
-  if (!open) return null;
-
-  const hasFocus = activeView && activeView !== 'empty';
-
-  // Swipe-right-to-close gesture
+  // Hooks must not be conditional — declare before any early return
   const onTouchStart = useCallback((e: React.TouchEvent) => {
     if (e.touches[0].clientX < 40) setTouchStart(e.touches[0].clientX);
   }, []);
@@ -45,6 +41,10 @@ export function MobileSidebar({
     if (dx > 80) onClose();
     setTouchStart(null);
   }, [touchStart, onClose]);
+
+  if (!open) return null;
+
+  const hasFocus = activeView && activeView !== 'empty';
 
   return (
     <div className="md:hidden fixed inset-0 z-50 flex" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
