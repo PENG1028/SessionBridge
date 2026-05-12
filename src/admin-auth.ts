@@ -75,12 +75,13 @@ function verify(sessionId: string, signature: string, secret: string): boolean {
 
 let token: string | null = null;
 let sessionTtl: number = 1209600; // 14 days default
-let authEnabled: boolean = true;
+let authEnabled: boolean = false;
 
 /** Initialize auth with the admin token, auth toggle, and session TTL. */
 export function initAuth(t: string, enabled?: boolean, ttl?: number): void {
   token = t;
   if (enabled !== undefined) authEnabled = enabled;
+  else if (t) authEnabled = true; // auto-enable when token is provided
   if (ttl) sessionTtl = ttl;
   loadSessions();
 }

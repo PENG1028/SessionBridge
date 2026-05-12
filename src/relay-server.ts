@@ -852,7 +852,6 @@ const serverRequestHandler = async (req: import("http").IncomingMessage, res: im
     extensionHost: null,
     logs: adminLogs,
     addLog: addAdminLog,
-    persistConfig: () => {},
   })) return;
 
   const url = new URL(req.url!, `http://${req.headers.host}`);

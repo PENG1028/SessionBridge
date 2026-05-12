@@ -85,8 +85,6 @@ export interface AdminRouteContext {
   logs: string[];
   /** Append a log entry */
   addLog: (msg: string) => void;
-  /** Persist a new admin token to config file */
-  persistConfig: (token: string) => void;
   /** Callback when external access is toggled */
   onToggleExternalAccess?: (enable: boolean) => Promise<void>;
   /** Callback when daemon stop is requested */
@@ -366,7 +364,7 @@ export async function registerAdminRoutes(
           return true;
         }
         changePassword(password);
-        ctx.persistConfig(password);
+        persistToken(password);
         ctx.addLog('[auth] Initial password set — admin secured');
         console.log(`[auth] Admin token set by user. Use this to log in from other devices.`);
         const ua = req.headers['user-agent'] || undefined;
@@ -477,7 +475,7 @@ export async function registerAdminRoutes(
           return true;
         }
         changePassword(newToken);
-        ctx.persistConfig(newToken);
+        persistToken(newToken);
         ctx.addLog('[auth] Password changed — all sessions invalidated');
         json(res, 200, { ok: true, message: '密码已更改，所有会话已失效' });
         return true;

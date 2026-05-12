@@ -104,6 +104,14 @@ export class NodeRuntime {
       this.appendRelayLog = appendAdminLog;
       this._writeToShellByRelayId = writeToShellByRelayId;
       this.relayServer = new NodeRelayServer(this.config.relayPort, this.config.relayToken);
+
+      // Initialize admin auth before relay listens (so remote login sessions work)
+      if (this.config.dashboardToken) {
+        const { initAuth } = await import('../src/admin-auth');
+        initAuth(this.config.dashboardToken, this.config.dashboardAuthEnabled, this.config.dashboardSessionTtl);
+        this.addLog(`[auth] Admin authentication initialized (enabled=${this.config.dashboardAuthEnabled})`);
+      }
+
       const actualPort = await this.relayServer.start();
       // Inject persistent node identity into EventBus (for event routing / mesh / audit)
       if (this.config.nodeId) setNodeId(this.config.nodeId);
