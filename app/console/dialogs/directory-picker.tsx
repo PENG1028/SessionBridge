@@ -32,15 +32,40 @@ function useIsMobile(): boolean {
   return mobile;
 }
 
-/** Split path into segments for breadcrumb. */
-function pathSegments(path: string, rootCwd: string): { label: string; path: string }[] {
-  const parts = path.replace(/\\/g, '/').replace(/^\.\/?/, '').split('/').filter(Boolean);
-  if (parts.length === 0) return [{ label: rootCwd || '~', path: '.' }];
-  const segs = parts.map((_, i) => ({
-    label: parts[i],
+interface BreadcrumbSeg {
+  label: string;
+  path: string;
+  /** Stable key for React to avoid duplicates when root segments share `path: '.'`. */
+  key: string;
+}
+
+/** Split a (possibly absolute) `rootCwd` into display segments for breadcrumb. */
+function splitRoot(rootCwd: string): BreadcrumbSeg[] {
+  const normalized = rootCwd.replace(/\\/g, '/');
+  const parts = normalized.split('/').filter(Boolean);
+  if (parts.length === 0) return [{ label: '~', path: '.', key: 'root' }];
+  return parts.map((label, i) => ({ label, path: '.', key: `root-${i}` }));
+}
+
+/**
+ * Build breadcrumb segments from the selected (relative) path.
+ * When at root (`.`), show the absolute workspace path decomposed.
+ * When in a subdirectory, show root segments + relative child segments.
+ */
+function pathSegments(path: string, rootCwd: string): BreadcrumbSeg[] {
+  const normalized = path.replace(/\\/g, '/');
+  if (normalized === '.' || normalized === '') {
+    return splitRoot(rootCwd);
+  }
+  const relative = normalized.replace(/^\.\/?/, '');
+  const parts = relative.split('/').filter(Boolean);
+  const root = splitRoot(rootCwd);
+  const children = parts.map((label, i) => ({
+    label,
     path: '.' + '/' + parts.slice(0, i + 1).join('/'),
+    key: `child-${i}`,
   }));
-  return [{ label: rootCwd || '~', path: '.' }, ...segs];
+  return [...root, ...children];
 }
 
 export function DirectoryPicker({
@@ -183,7 +208,7 @@ export function DirectoryPicker({
       {/* Breadcrumb navigation */}
       <div className="shrink-0 flex items-center gap-0.5 px-2 pb-1.5 overflow-x-auto scrollbar-none">
         {breadcrumb.map((seg, i) => (
-          <span key={seg.path} className="flex items-center gap-0.5 shrink-0">
+          <span key={seg.key} className="flex items-center gap-0.5 shrink-0">
             {i > 0 && <ChevronRight className="w-2.5 h-2.5 text-gray-700 shrink-0" />}
             <button
               onClick={() => {
