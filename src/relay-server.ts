@@ -1757,17 +1757,9 @@ function setupWssHandlers(): void {
       })();
       if (!i) return;
 
-      // Shell write-lock: only the lock owner can send input
-      const lockOwner = shellLockMap.get(i.id);
-      if (lockOwner && lockOwner !== ws) {
-        send(ws, envelope("shell.lock_status", { instanceId: i.id, locked: true, owner: "another-browser" }));
-        return;
-      }
-      // Auto-acquire lock on first input
-      if (!lockOwner) {
-        shellLockMap.set(i.id, ws);
-        broadcast(envelope("shell.lock_status", { instanceId: i.id, locked: true, owner: "browser" }));
-      }
+      // No shell lock — ptty handles interleaved input naturally.
+      // shell.lock / shell.unlock are still available for clients that want
+      // explicit coordination, but are not enforced on the input path.
 
       if (i.source === 'remote') {
         sendStdin(i, msg.data);
