@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useMemo } from 'react';
 import { FloatingWindow } from '../shared/floating-window';
-import { Search, ChevronRight, Folder, File, Check, ArrowLeft } from 'lucide-react';
+import { Search, ChevronRight, Folder, File, Check, ArrowLeft, ArrowRightFromLine } from 'lucide-react';
 
 interface DirEntry {
   name: string;
@@ -35,40 +35,57 @@ function useIsMobile(): boolean {
 interface BreadcrumbSeg {
   label: string;
   path: string;
-  /** Stable key for React to avoid duplicates when root segments share `path: '.'`. */
   key: string;
 }
 
-/** Split a (possibly absolute) `rootCwd` into display segments for breadcrumb. */
-function splitRoot(rootCwd: string): BreadcrumbSeg[] {
-  const normalized = rootCwd.replace(/\\/g, '/');
-  const parts = normalized.split('/').filter(Boolean);
-  if (parts.length === 0) return [{ label: '~', path: '.', key: 'root' }];
-  return parts.map((label, i) => ({ label, path: '.', key: `root-${i}` }));
+/** Full workspace path for the root breadcrumb segment. */
+function rootLabel(rootCwd: string): string {
+  return rootCwd.replace(/\\/g, '/').replace(/\/$/, '') || '~';
 }
 
 /**
- * Build breadcrumb segments from the selected (relative) path.
- * When at root (`.`), show the absolute workspace path decomposed.
- * When in a subdirectory, show root segments + relative child segments.
+ * Build breadcrumb segments from the selected path.
+ * Root shows the project folder name (click → workspace root).
+ * Child segments show relative path components (click → that level).
  */
-function pathSegments(path: string, rootCwd: string): BreadcrumbSeg[] {
-  const normalized = path.replace(/\\/g, '/');
-  const normRoot = rootCwd.replace(/\\/g, '/').replace(/\/$/, '');
+function pathSegments(path: string, rootLabelStr: string): BreadcrumbSeg[] {
+  const norm = path.replace(/\\/g, '/').replace(/^\.\/?/, '');
 
-  // Root or matches rootCwd (e.g. absolute path from initialPath)
-  if (normalized === '.' || normalized === '' || normalized === normRoot) {
-    return splitRoot(rootCwd);
+  /** Split segments from an absolute Unix/Win path. */
+  function fromAbs(abs: string): BreadcrumbSeg[] {
+    const parts = abs.split('/').filter(Boolean);
+    return parts.map((label, i) => {
+      const full = parts.slice(0, i + 1).join('/');
+      return { label, path: full === rootLabelStr ? '.' : full, key: `seg-${i}` };
+    });
   }
-  const relative = normalized.replace(/^\.\/?/, '');
-  const parts = relative.split('/').filter(Boolean);
-  const root = splitRoot(rootCwd);
-  const children = parts.map((label, i) => ({
+
+  // At project root → show rootCwd as segments
+  if (!norm || norm === '.' || norm === rootLabelStr) {
+    return fromAbs(rootLabelStr);
+  }
+
+  // Above ROOT_DIR (absolute path) → just those segments, no root context
+  if (norm.startsWith('/') || /^[A-Za-z]:/.test(norm)) {
+    return fromAbs(norm);
+  }
+
+  // Relative sub-path → rootCwd + relative segments
+  const rootParts = rootLabelStr.split('/').filter(Boolean);
+  const rootSegs = rootParts.map((label, i) => ({
+    label,
+    path: rootParts.slice(0, i + 1).join('/') === rootLabelStr ? '.' : rootParts.slice(0, i + 1).join('/'),
+    key: `rs-${i}`,
+  }));
+
+  const parts = norm.split('/').filter(Boolean);
+  const relSegs = parts.map((label, i) => ({
     label,
     path: '.' + '/' + parts.slice(0, i + 1).join('/'),
-    key: `child-${i}`,
+    key: `seg-${i}`,
   }));
-  return [...root, ...children];
+
+  return [...rootSegs, ...relSegs];
 }
 
 export function DirectoryPicker({
@@ -115,7 +132,24 @@ export function DirectoryPicker({
     if (!tree[path]?.loaded) fetchDir(path);
   }, [tree, fetchDir]);
 
-  const breadcrumb = useMemo(() => pathSegments(selected, rootCwd), [selected, rootCwd]);
+  /** Navigate to a directory: fetches contents and rebases the tree to show them. */
+  const navigateTo = useCallback((path: string) => {
+    setSelected(path);
+    setExpanded(new Set(['.']));
+    const q = path.replace(/^([A-Za-z]):$/, '$1:/'); // fix bare drive letter
+    fetch(`/api/list?dir=${encodeURIComponent(q)}`)
+      .then(r => r.json())
+      .then(d => {
+        if (d.items) {
+          setRootCwd(d.cwd || '');
+          setTree(prev => ({ ...prev, '.': { items: d.items, loaded: true } }));
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const rootLabelStr = useMemo(() => rootLabel(rootCwd), [rootCwd]);
+  const breadcrumb = useMemo(() => pathSegments(selected, rootLabelStr), [selected, rootLabelStr]);
 
   // Collect all paths matching search across loaded tree
   const searchResults = useMemo(() => {
@@ -177,6 +211,15 @@ export function DirectoryPicker({
           }
           <span className="truncate flex-1 min-w-0">{entry.name}</span>
           {isSel && <Check className="w-2.5 h-2.5 text-purple-400 shrink-0 mr-1" />}
+          {isDir && isSel && (
+            <button
+              onClick={e => { e.stopPropagation(); navigateTo(fp); }}
+              className="p-0.5 hover:bg-purple-700/40 rounded shrink-0 text-gray-500 hover:text-purple-300 transition-colors"
+              title="Navigate into directory"
+            >
+              <ArrowRightFromLine className="w-3 h-3" />
+            </button>
+          )}
         </div>
         {isDir && isExp && children?.loaded && (
           <div style={{ paddingLeft: `${14}px` }}>
@@ -209,23 +252,21 @@ export function DirectoryPicker({
       </div>
 
       {/* Breadcrumb navigation */}
-      <div className="shrink-0 flex items-center gap-0.5 px-2 pb-1.5 overflow-x-auto scrollbar-none">
+      <div className="shrink-0 flex items-center gap-0.5 px-2 pb-1.5 overflow-x-auto scrollbar-none select-text">
         {breadcrumb.map((seg, i) => (
           <span key={seg.key} className="flex items-center gap-0.5 shrink-0">
             {i > 0 && <ChevronRight className="w-2.5 h-2.5 text-gray-700 shrink-0" />}
-            <button
-              onClick={() => {
-                setSelected(seg.path);
-                if (!expanded.has(seg.path)) toggleDir(seg.path);
-              }}
-              className={`text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap transition-colors ${
+            <span
+              onClick={() => navigateTo(seg.path)}
+              title={seg.path === '.' ? rootCwd : seg.path}
+              className={`text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap transition-colors cursor-pointer ${
                 seg.path === selected
                   ? 'bg-purple-800/30 text-purple-300 font-semibold'
                   : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800'
               }`}
             >
               {seg.label}
-            </button>
+            </span>
           </span>
         ))}
       </div>
@@ -237,7 +278,7 @@ export function DirectoryPicker({
         ) : searchResults !== null && searchResults.length === 0 ? (
           <div className="text-gray-700 text-[10px] p-3 italic">No matches</div>
         ) : searchResults !== null ? (
-          /* Flat search results */
+          /* Flat search results — search always searches from project root */
           <div className="space-y-px">
             {searchResults.map(r => (
               <div
@@ -271,7 +312,7 @@ export function DirectoryPicker({
 
       {/* Bottom bar */}
       <div className="shrink-0 flex items-center justify-between px-3 py-2 border-t border-gray-800 bg-gray-900/50">
-        <span className="text-[9px] text-gray-600 font-mono truncate max-w-[60%]">{selected}</span>
+        <span className="text-[9px] text-gray-600 font-mono truncate max-w-[60%]" title={selected}>{selected}</span>
         <button
           onClick={() => { onSelect(selected); onClose(); }}
           className="px-3 py-1 bg-purple-700 hover:bg-purple-600 text-white text-[10px] rounded border border-purple-600 transition-colors"

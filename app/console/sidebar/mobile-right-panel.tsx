@@ -41,8 +41,6 @@ export function MobileRightPanel(props: MobileRightPanelProps) {
   // Swipe-left-to-close gesture
   const [touchStart, setTouchStart] = useState<number | null>(null);
 
-  if (!open) return null;
-
   const onTouchStart = useCallback((e: React.TouchEvent) => {
     const touch = e.touches[0];
     if (touch.clientX > window.innerWidth - 40) setTouchStart(touch.clientX);
@@ -59,6 +57,8 @@ export function MobileRightPanel(props: MobileRightPanelProps) {
     if (dx > 80) onClose();
     setTouchStart(null);
   }, [touchStart, onClose]);
+
+  if (!open) return null;
 
   return (
     <div className="md:hidden fixed inset-0 z-50 flex" onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}>
