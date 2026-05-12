@@ -29,8 +29,9 @@ export interface NodeConfig {
   // Upstream relay (agent client connects to this; if absent and role=relay, uses loopback)
   upstreamRelay?: string;
 
-  // Dashboard (always active)
+  /** @deprecated Dashboard is now integrated into the relay port. Kept for config compat. */
   dashboardPort: number;
+  /** @deprecated Dashboard is now integrated into the relay port. Kept for config compat. */
   dashboardBind: string;
 
   /** Dashboard access token (auto-generated on first start). Used as login password. */

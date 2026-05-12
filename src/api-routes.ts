@@ -776,6 +776,79 @@ export function registerApiRoutes(
     return true;
   }
 
+  // ──────────────── Connections API (project-level) ────────────
+  // Stored in <workDir>/.sessionbridge/connections.json
+
+  const CONNECTIONS_FILE = () => {
+    const dir = join(ctx.workDir || process.cwd(), '.sessionbridge');
+    return { dir, path: join(dir, 'connections.json') };
+  };
+
+  function loadConnections(): Record<string, unknown>[] {
+    try {
+      const { path } = CONNECTIONS_FILE();
+      if (!existsSync(path)) return [];
+      return JSON.parse(readFileSync(path, 'utf-8'));
+    } catch { return []; }
+  }
+
+  function saveConnections(list: Record<string, unknown>[]): void {
+    const { dir, path } = CONNECTIONS_FILE();
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    writeFileSync(path, JSON.stringify(list, null, 2), 'utf-8');
+  }
+
+  // GET /api/connections — list all saved connections
+  if (method === "GET" && pathname === "/api/connections") {
+    let list = loadConnections();
+    // Seed default "local" connection if not present
+    if (!list.some((c: any) => c.id === 'local')) {
+      const localEntry = {
+        id: 'local',
+        name: 'local',
+        url: 'ws://127.0.0.1:8080',
+        networkType: 'loopback',
+        isDefault: true,
+        lastSeen: Date.now(),
+      };
+      list = [localEntry, ...list];
+      saveConnections(list);
+    }
+    json(res, 200, { connections: list });
+    return true;
+  }
+
+  // POST /api/connections — add or update a connection
+  if (method === "POST" && pathname === "/api/connections") {
+    readBody(req).then((raw) => {
+      try {
+        const body = JSON.parse(raw);
+        if (!body.id || !body.url) { json(res, 400, { error: "Missing required fields: id, url" }); return; }
+        const list = loadConnections();
+        const idx = list.findIndex((c: any) => c.id === body.id);
+        const entry = { ...body, lastSeen: Date.now() };
+        if (idx >= 0) list[idx] = entry;
+        else list.push(entry);
+        saveConnections(list);
+        json(res, 200, { success: true, connections: list });
+      } catch (err) {
+        json(res, 400, { error: `Invalid request: ${(err as Error).message}` });
+      }
+    }).catch(() => json(res, 400, { error: "Failed to read request body" }));
+    return true;
+  }
+
+  // DELETE /api/connections/:id — remove a connection
+  {
+    const p = matchPath(pathname, "/api/connections/:id");
+    if (method === "DELETE" && p) {
+      const list = loadConnections().filter((c: any) => c.id !== p!.id);
+      saveConnections(list);
+      json(res, 200, { success: true, connections: list });
+      return true;
+    }
+  }
+
   // No route matched — let the existing handler process the request.
   return false;
 }

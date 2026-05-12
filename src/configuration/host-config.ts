@@ -45,16 +45,16 @@ export function registerHostConfig(): void {
       description: 'Upstream relay WebSocket URL (leaf mode)',
     },
 
-    // Dashboard
+    // Dashboard (deprecated — admin routes are now served through the relay)
     'dashboardPort': {
       type: 'integer', default: 9843, scope: 'workspace',
       minimum: 1, maximum: 65535,
-      description: 'Dashboard HTTP server port',
+      description: '@deprecated Dashboard is now served through relay port',
       ...restart,
     },
     'dashboardBind': {
       type: 'string', default: '127.0.0.1', scope: 'workspace',
-      description: 'Dashboard bind address (0.0.0.0 for external access)',
+      description: '@deprecated Dashboard is now served through relay port',
       ...restart,
     },
     'dashboard.authEnabled': {
