@@ -64,7 +64,7 @@ function getScanPaths(options: LoaderOptions): string[] {
   }
 
   // 1b. Fallback for compiled dist/: look for source extensions/ at project root
-  const srcAdapters = resolve(__dirname, '..', '..', '..', 'extensions');
+  const srcAdapters = resolve(__dirname, '..', '..', 'extensions');
   if (srcAdapters !== projectAdapters && existsSync(srcAdapters) && hasManifestSubdir(srcAdapters)) {
     paths.push(srcAdapters);
   }
