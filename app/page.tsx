@@ -43,12 +43,13 @@ import type { ActionRunContext } from './console/actions/action-types';
 void __coreActionsRegistered;
 import type { ContextMenuItem } from './console/shell/context-menu';
 import { ConsoleOverlays } from './console/overlays/console-overlays';
-import { InstanceBar } from './console/stage/instance-bar';
+import { NodeBar } from './console/stage/node-bar';
+import { NodeNetworkView } from './console/sidebar/node-network-view';
 import { KeyHintOverlay } from './console/chrome/key-hint-overlay';
 import { MobileExtraKeys } from './console/chrome/mobile-extra-keys';
 import { LayoutProvider, useLayout, SidebarSlot, MainSlot, FocusProvider, RuntimePolicyProvider, useFocus, useRuntimePolicy, WorkbenchProvider } from './console/workbench';
 import { WorkbenchLayout } from './console/stage/workbench-layout';
-import { appReducer, createAppInitialState, getActiveWorkbenchState, createInitialState, findPane as findPaneInTree, saveLayoutsToStorage, loadLayoutsFromStorage, restoreInstanceStatesFromStorage, genTabId, genPaneId, type ViewType, type PaneTab, type LayoutNode, type WorkbenchAction, type AppWorkbenchState, type AppWorkbenchAction } from './console/stage/workbench-state';
+import { appReducer, createAppInitialState, getActiveWorkbenchState, createInitialState, findPane as findPaneInTree, saveLayoutsToStorage, loadLayoutsFromStorage, restoreInstanceStatesFromStorage, genTabId, type ViewType, type PaneTab, type LayoutNode, type WorkbenchAction, type AppWorkbenchState, type AppWorkbenchAction } from './console/stage/workbench-state';
 
 // ==========================================
 // Types
@@ -252,7 +253,6 @@ function PageContent() {
     return defaultUrl;
   });
   const [token, setToken] = useState<string | undefined>(tokenParam || undefined);
-  const [customServerUrl, setCustomServerUrl] = useState('');
 
   // Persist wsUrl to localStorage on change
   useEffect(() => {
@@ -346,7 +346,17 @@ function PageContent() {
     notify({ id: n.id, type: severity, title: n.title, message: n.message, duration: n.duration, action: n.action });
   }, [notify]);
 
-  const { connStatus, msgLog, sendInput, sendShellInput, sendCommand, serverBlocks, sessions, activeSessionId, activateSession, spawnSession, isWorkspace, queueStatus, instances, activeInstanceId, activateInstance, createInstance, killInstance, extensionPointsData } = useSession(wsUrl, token ?? undefined, undefined, undefined, undefined, onSystemNotify, dismiss);
+  // ── Peer discovery (other devices connected to this relay) ──
+  const [peers, setPeers] = useState<any[]>([]);
+  const [peerLinks, setPeerLinks] = useState<any[]>([]);
+  const handleSystemMessage = useCallback((msg: any) => {
+    if (msg.type === 'peer.list' && Array.isArray(msg.peers)) {
+      setPeers(msg.peers);
+      if (Array.isArray(msg.links)) setPeerLinks(msg.links);
+    }
+  }, []);
+
+  const { connStatus, msgLog, sendInput, sendShellInput, sendCommand, serverBlocks, sessions, activeSessionId, activateSession, spawnSession, isWorkspace, queueStatus, instances, activeInstanceId, activateInstance, createInstance, killInstance, extensionPointsData } = useSession(wsUrl, token ?? undefined, undefined, undefined, undefined, onSystemNotify, dismiss, handleSystemMessage);
 
   // ── 30s grace before showing disconnect banner ──
   const [showBanner, setShowBanner] = useState(false);
@@ -1006,51 +1016,26 @@ function PageContent() {
     activeWorkbenchDispatch({ type: 'REORDER_TABS', paneId, tabId, targetId });
   }, [activeWorkbenchDispatch]);
 
-  // ── Instance bar handlers (Phase 4N) ──
-  const handleActivateInstanceBar = useCallback((instanceId: string) => {
+  // ── Enter a node (from NodeBar or NodeNetworkView) ──
+  const handleEnterNode = useCallback((nodeId: string) => {
     const currentState = appStateRef.current;
-    if (currentState.activeInstanceId === instanceId) {
-      // Toggle off — switch to global layout
+    if (currentState.activeInstanceId === nodeId) {
+      // Toggle off — back to node view
       setAppState(prev => appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: null }));
     } else {
-      // Switch to this instance — ensure it has a layout
+      // Enter this node — create workbench layout if needed
       setAppState(prev => {
-        if (prev.instanceStates[instanceId]) {
-          return appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId });
+        if (prev.instanceStates[nodeId]) {
+          return appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: nodeId });
         }
-        const newLayout = createInitialState(instanceId);
+        const newLayout = createInitialState(nodeId);
         return appReducer(
-          { ...prev, instanceStates: { ...prev.instanceStates, [instanceId]: newLayout } },
-          { type: 'SET_ACTIVE_INSTANCE', instanceId }
+          { ...prev, instanceStates: { ...prev.instanceStates, [nodeId]: newLayout } },
+          { type: 'SET_ACTIVE_INSTANCE', instanceId: nodeId }
         );
       });
-      // Sync to server so chat views know which instance is active
-      activateInstance(instanceId);
     }
-  }, [activateInstance]);
-
-  const handleCreateInstanceBar = useCallback(async () => {
-    // Show connection manager
-    setAppState(prev => appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: null }));
   }, []);
-
-  const handleKillInstanceBar = useCallback((instanceId: string) => {
-    killInstance(instanceId);
-    setAppState(prev => appReducer(prev, { type: 'REMOVE_INSTANCE_LAYOUT', instanceId }));
-  }, [killInstance]);
-
-  const handleRenameInstanceBar = useCallback(async (instanceId: string, newLabel: string) => {
-    const httpBase = wsUrl.replace(/^ws/, 'http');
-    try {
-      await fetch(`${httpBase}/api/aliases`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ instanceId, alias: newLabel }),
-      });
-    } catch (err) {
-      console.error('Rename failed', err);
-    }
-  }, [wsUrl]);
 
   // ── Closed kept tabs for ≡ menu (Phase 4N) ──
   const closedKeptTabs = useMemo(() => {
@@ -1078,14 +1063,43 @@ function PageContent() {
     }
   }, [activeWorkbenchDispatch]);
 
-  // ── Render ──
-  // Fetch saved connections
-  const [savedRelays, setSavedRelays] = useState<{id:string;name:string;url:string;token?:string}[]>([]);
+  // ── Saved connections (project-level) ──────────────
+  const [connections, setConnections] = useState<any[]>([]);
+  const [newConnUrl, setNewConnUrl] = useState('');
   useEffect(() => {
-    fetch('/api/config').then(r => r.json()).then((cfg: any) => {
-      if (cfg?.connections) setSavedRelays(cfg.connections);
+    fetch('/api/connections').then(r => r.json()).then((data: any) => {
+      if (data?.connections) setConnections(data.connections);
     }).catch(() => {});
   }, []);
+  const handleDeleteConnection = useCallback(async (id: string) => {
+    try {
+      const res = await fetch(`/api/connections/${id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (data?.connections) setConnections(data.connections);
+    } catch {}
+  }, []);
+  const handleAddConnection = useCallback(async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newConnUrl.trim()) return;
+    const id = 'conn_' + Date.now().toString(36);
+    const name = newConnUrl.replace(/^wss?:\/\//, '').split(':')[0] || 'server';
+    // Rough network type classification
+    const urlLower = newConnUrl.toLowerCase();
+    const networkType = urlLower.includes('127.0.0.1') || urlLower.includes('localhost') ? 'loopback'
+      : urlLower.match(/^wss?:\/\/(10\.|192\.168\.)/) ? 'lan'
+      : urlLower.match(/^wss?:\/\/(172\.(1[6-9]|2\d|3[01])\.)/) ? 'lan'
+      : 'wan';
+    try {
+      const res = await fetch('/api/connections', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, name, url: newConnUrl.trim(), networkType }),
+      });
+      const data = await res.json();
+      if (data?.connections) setConnections(data.connections);
+      setNewConnUrl('');
+    } catch {}
+  }, [newConnUrl]);
 
   // ── Handle view request from pane (user picks view in EmptyPane) ──
   // Phase 4F: Opening a view NEVER auto-creates an instance. The tab is a UI
@@ -1257,14 +1271,12 @@ function PageContent() {
         </div>
       )}
 
-      {/* ── Instance bar (Phase 4N) — only workbench-level instances, not tab-level processes ── */}
-      <InstanceBar
-        instances={instances.filter((i: any) => appState.workbenchInstanceIds.includes(i.id) && (i.status === 'running' || i.status === 'starting'))}
-        activeInstanceId={appState.activeInstanceId}
-        onActivate={handleActivateInstanceBar}
-        onCreate={handleCreateInstanceBar}
-        onKill={handleKillInstanceBar}
-        onRename={handleRenameInstanceBar}
+      {/* ── Node bar — shows peers (+ local node) for entering workbenches ── */}
+      <NodeBar
+        peers={peers}
+        wsUrl={wsUrl}
+        activeNodeId={appState.activeInstanceId}
+        onEnterNode={handleEnterNode}
         onOpenConnection={() => setAppState(prev => appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: null }))}
       />
 
@@ -1301,7 +1313,7 @@ function PageContent() {
           instances={instances.filter((i: any) => appState.workbenchInstanceIds.includes(i.id) && (i.status === 'running' || i.status === 'starting'))}
           activeInstanceId={activeInstanceId}
           onActivateInstance={activateInstance}
-          onCreateInstance={(dir, _label, adapterId) => createInstance(dir, undefined, adapterId)}
+          onCreateInstance={(dir, label, adapterId) => createInstance(dir, label, adapterId)}
           onKillInstance={killInstance}
         />
         </SidebarSlot>
@@ -1367,108 +1379,19 @@ function PageContent() {
           />
           </div>) : (
             <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
-              <div className="p-6 space-y-8 max-w-3xl mx-auto w-full">
-                {/* ── Instances ── */}
-                <section>
-                  <h2 className="text-[11px] font-bold text-gray-500 tracking-wider uppercase mb-3">
-                    Instances ({appState.workbenchInstanceIds.length})
-                  </h2>
-                  {appState.workbenchInstanceIds.length === 0 ? (
-                    <div className="text-[10px] text-gray-700 italic px-2">No instances yet. Create one below.</div>
-                  ) : (
-                    <div className="space-y-1">
-                      {instances.filter((i: any) => appState.workbenchInstanceIds.includes(i.id) && (i.status === 'running' || i.status === 'starting')).map((inst: any) => (
-                        <div key={inst.id} className="flex items-center justify-between bg-[#111] border border-gray-800 rounded-lg px-4 py-3">
-                          <div className="flex items-center gap-3">
-                            <span className={`w-1.5 h-1.5 rounded-full ${
-                              inst.status === 'running' ? 'bg-emerald-500' : inst.status === 'starting' ? 'bg-yellow-500' : 'bg-red-500'
-                            }`} />
-                            <span className="text-sm text-gray-200">{inst.label || inst.id.slice(0, 12)}</span>
-                            {inst.source === 'remote' && <span className="text-[8px] bg-cyan-900/25 text-cyan-400 px-1 rounded font-mono">R</span>}
-                          </div>
-                          <button onClick={() => handleActivateInstanceBar(inst.id)}
-                            className="text-[10px] px-3 py-1 bg-purple-700 hover:bg-purple-600 text-white rounded transition-colors">Launch</button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </section>
-
-                {/* ── Servers ── */}
-                <section>
-                  <h2 className="text-[11px] font-bold text-gray-500 tracking-wider uppercase mb-3">Servers</h2>
-                  <div className="space-y-1">
-                    {savedRelays.length === 0 ? (
-                      <div className="text-[10px] text-gray-700 italic px-2">No saved servers.</div>
-                    ) : (
-                      savedRelays.map((r: any) => (
-                        <button key={r.id} onClick={() => { setWsUrl(r.url); setToken(r.token || undefined); }}
-                          className="w-full flex items-center gap-3 px-4 py-3 bg-[#111] border border-gray-800 rounded-lg hover:border-purple-700/50 text-left transition-colors"
-                        >
-                          <div className="w-1.5 h-1.5 rounded-full bg-gray-600" />
-                          <div className="flex-1 min-w-0">
-                            <div className="text-sm text-gray-200 truncate">{r.name}</div>
-                            <div className="text-[10px] text-gray-600 truncate">{r.url}</div>
-                          </div>
-                          {r.url === wsUrl ? (
-                            <span className="text-[9px] text-emerald-500 shrink-0">Connected</span>
-                          ) : (
-                            <span className="text-[10px] text-gray-500 shrink-0">Connect</span>
-                          )}
-                        </button>
-                      ))
-                    )}
-                    {/* Custom URL input */}
-                    <form onSubmit={(e) => { e.preventDefault(); if (customServerUrl.trim()) setWsUrl(customServerUrl.trim()); }}
-                      className="flex gap-1 pt-1"
-                    >
-                      <input type="text" value={customServerUrl} onChange={e => setCustomServerUrl(e.target.value)}
-                        placeholder="wss://server.example.com:8080"
-                        className="flex-1 bg-[#0d0d0d] border border-gray-700 rounded px-2 py-1.5 text-[11px] text-gray-200 outline-none focus:border-purple-500"
-                      />
-                      <button type="submit" className="px-3 py-1.5 bg-purple-700 hover:bg-purple-600 text-white text-[10px] rounded border border-purple-600 shrink-0">
-                        Connect
-                      </button>
-                    </form>
-                  </div>
-                </section>
-
-                {/* ── Create Instance ── */}
-                <section>
-                  <h2 className="text-[11px] font-bold text-gray-500 tracking-wider uppercase mb-3">Create Instance</h2>
-                  <div className="bg-[#111] border border-gray-800 rounded-lg p-4">
-                    <div className="flex gap-2">
-                      <button onClick={async () => {
-                        const adapterId = getDefaultAdapterId();
-                        const result = await createInstance(projectInfo?.cwd || '.', undefined, adapterId);
-                        if (result?.success && result?.instance?.id) {
-                          const id = result.instance.id;
-                          const paneId = genPaneId();
-                          const emptyTabId = genTabId();
-                          const emptyState = {
-                            root: { kind: 'pane' as const, id: paneId, tabs: [{ id: emptyTabId, title: 'Empty', viewType: 'empty' as const }], activeTabId: emptyTabId, zone: 'main' as const },
-                            activePaneId: paneId,
-                            bottom: null,
-                          };
-                          setAppState(prev => {
-                            let next = prev;
-                            next = appReducer(next, { type: 'ADD_WORKBENCH_INSTANCE', instanceId: id });
-                            if (!next.instanceStates[id]) next = appReducer(next, { type: 'RESTORE_INSTANCE_STATE', instanceId: id, state: emptyState });
-                            return appReducer(next, { type: 'SET_ACTIVE_INSTANCE', instanceId: id });
-                          });
-                          activateInstance(id);
-                        }
-                      }} className="px-4 py-2 bg-purple-700 hover:bg-purple-600 text-white rounded text-[11px] font-semibold transition-colors">
-                        New Instance
-                      </button>
-                      <button onClick={() => {
-                        setWsUrl(defaultUrl); setToken(undefined);
-                      }} className="px-4 py-2 border border-gray-700 hover:border-purple-700/50 text-gray-400 hover:text-gray-200 rounded text-[11px] transition-colors">
-                        Connect to Server...
-                      </button>
-                    </div>
-                  </div>
-                </section>
+              <div className="p-6 space-y-6 max-w-3xl mx-auto w-full">
+                <NodeNetworkView
+                  peers={peers}
+                  links={peerLinks}
+                  wsUrl={wsUrl}
+                  connections={connections}
+                  onConnect={(url) => setWsUrl(url)}
+                  onDeleteConnection={handleDeleteConnection}
+                  newConnUrl={newConnUrl}
+                  onNewConnUrlChange={setNewConnUrl}
+                  onAddConnection={handleAddConnection}
+                  onEnterNode={handleEnterNode}
+                />
               </div>
             </div>
           )}

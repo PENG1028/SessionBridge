@@ -53,12 +53,20 @@ export function TerminalView({ instanceId }: TerminalViewProps) {
     if (projectCwd) setCwd(projectCwd);
   }, [projectCwd]);
 
+  /** Resolve a relative path (from picker, e.g. "./src/foo") to absolute using project root. */
+  const resolveRel = useCallback((rel: string): string => {
+    const base = (projectCwd || '.').replace(/\\/g, '/').replace(/\/$/, '');
+    const r = rel.replace(/\\/g, '/').replace(/^\.\/?/, '');
+    return r ? base + '/' + r : base;
+  }, [projectCwd]);
+
   // Send cd command to the terminal shell via a transient WS connection
   const sendCd = useCallback((path: string) => {
-    setCwd(path);
+    const absPath = resolveRel(path);
+    setCwd(absPath);
     if (!instanceId) return;
-    const qPath = path.replace(/\\/g, '/');
-    const cdCmd = `cd "${qPath}"\n`;
+    const qPath = absPath.replace(/\\/g, '/');
+    const cdCmd = `cd "${qPath}"\r`;
 
     const ws = new WebSocket(wsUrl);
     ws.onopen = () => {
@@ -66,10 +74,10 @@ export function TerminalView({ instanceId }: TerminalViewProps) {
       if (token) helloBody.token = token;
       ws.send(env('hello', helloBody));
       ws.send(env('shell.input', { data: cdCmd, instanceId }));
-      setTimeout(() => ws.close(), 200);
+      setTimeout(() => ws.close(), 500);
     };
     ws.onerror = () => {};
-  }, [instanceId, wsUrl, token]);
+  }, [instanceId, wsUrl, token, resolveRel]);
 
   const handleSelectDir = useCallback((path: string) => {
     sendCd(path);
@@ -105,7 +113,7 @@ export function TerminalView({ instanceId }: TerminalViewProps) {
           open={pickerOpen}
           onClose={() => setPickerOpen(false)}
           onSelect={handleSelectDir}
-          initialPath={cwd}
+          initialPath="."
           title="Directory Browser"
         />
       </div>
@@ -134,7 +142,7 @@ export function TerminalView({ instanceId }: TerminalViewProps) {
         open={pickerOpen}
         onClose={() => setPickerOpen(false)}
         onSelect={handleSelectDir}
-        initialPath={cwd}
+        initialPath="."
         title="Terminal Directory"
       />
     </div>

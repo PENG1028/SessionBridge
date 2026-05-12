@@ -119,11 +119,10 @@ function removeNode(root: LayoutNode, paneId: string): LayoutNode | null {
 export function createInitialState(instanceId?: string, defaultVType?: string): WorkbenchState {
   const tabId = genTabId();
   const paneId = genPaneId();
-  const vType = defaultVType || getDefaultViewType();
   const tab: PaneTab = {
     id: tabId,
-    title: instanceId ? instanceId.slice(0, 12) : vType.charAt(0).toUpperCase() + vType.slice(1),
-    viewType: vType as ViewType,
+    title: 'New',
+    viewType: 'empty',
     instanceId: instanceId || undefined,
   };
   return {
@@ -139,7 +138,7 @@ export function createEmptyPane(zone: 'main' | 'bottom' = 'main'): PaneState {
   return {
     kind: 'pane',
     id: paneId,
-    tabs: [{ id: tabId, title: 'Empty', viewType: 'empty' }],
+    tabs: [{ id: tabId, title: 'New', viewType: 'empty' }],
     activeTabId: tabId,
     zone,
   };
@@ -173,11 +172,12 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
     case 'CLOSE_TAB': {
       const pane = findPane(state.root, action.paneId) || state.bottom;
       if (!pane || pane.kind !== 'pane') return state;
+      // Last tab is 'empty' placeholder — cannot close
+      if (pane.tabs.length === 1 && pane.tabs[0].viewType === 'empty') return state;
       if (pane.tabs.length <= 1) {
-        // Last tab — replace with empty tab so user can pick a new view
-        // (don't remove the pane / kill the instance)
+        // Last non-empty tab — replace with empty tab so user can pick a new view
         const emptyTabId = genTabId();
-        const emptyTab: PaneTab = { id: emptyTabId, title: 'Empty', viewType: 'empty' };
+        const emptyTab: PaneTab = { id: emptyTabId, title: 'New', viewType: 'empty' };
         const updatedPane: PaneState = { ...pane, tabs: [emptyTab], activeTabId: emptyTabId };
         if (pane.zone === 'bottom') {
           return { ...state, bottom: updatedPane };
@@ -362,7 +362,7 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
     case 'CLEAR_INSTANCE_TABS': {
       const clearTab = (t: PaneTab) =>
         t.instanceId === action.instanceId
-          ? { ...t, viewType: 'empty' as ViewType, title: 'Empty', instanceId: undefined }
+          ? { ...t, viewType: 'empty' as ViewType, title: 'New', instanceId: undefined }
           : t;
       const clearPane = (p: PaneState) =>
         p ? { ...p, tabs: p.tabs.map(clearTab) } : p;
@@ -431,7 +431,7 @@ export interface AppWorkbenchState {
   activeInstanceId: string | null;
   /** Tabs that have been marked "Keep" (survive refresh, shown in ≡ menu when closed) */
   persistentTabs: PaneTab[];
-  /** Instance IDs that appear in the InstanceBar (not tab-level processes like shell terminals). */
+  /** Node IDs that appear in the NodeBar (not tab-level processes like shell terminals). */
   workbenchInstanceIds: string[];
 }
 

@@ -25,6 +25,7 @@ export function useSession(
   onChunk?: (data: string) => void,
   onSystemNotify?: (notification: { type: string; title: string; message?: string; scenarioId?: string; id?: string; duration?: number }) => void,
   onSystemNotifyDismiss?: (id: string) => void,
+  onSystemMessage?: (msg: any) => void,
 ) {
   const clientRef = useRef<WSClient | null>(null);
   const [connStatus, setConnStatus] = useState<ConnStatus>({ status: 'connecting' });
@@ -201,6 +202,7 @@ export function useSession(
       onSystemNotifyDismiss,
       onSystemMessage: (msg: any) => {
         addMsgLog('system', `${msg.title || msg.type || 'message'}: ${msg.detail || msg.message || ''}`);
+        onSystemMessage?.(msg);
       },
       onExtensionPoints: (eps) => {
         setExtensionPointsData(eps);
