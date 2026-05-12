@@ -100,7 +100,16 @@ export class NodeRuntime {
     const { scanAndActivate } = await import('./extension-loader');
     await scanAndActivate({ log: (msg: string) => addDashboardLog(msg) });
 
-    // 4a. Register extension configuration contributions into the config registry
+    // 4a. Register host configuration schema into the config registry
+    try {
+      const { registerHostConfig } = await import('../src/configuration/host-config');
+      registerHostConfig();
+      addDashboardLog('[config] Host configuration registered');
+    } catch (err) {
+      addDashboardLog(`[config] Failed to register host config: ${(err as Error).message}`);
+    }
+
+    // 4b. Register extension configuration contributions into the config registry
     try {
       const { configRegistry } = await import('../src/configuration/registry');
       const contribs = extensionPoints.getConfigurationContributions();

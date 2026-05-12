@@ -61,6 +61,7 @@ export type WSCallback = {
   onInstanceAdded?: (instance: InstanceInfo) => void;
   onInstanceRemoved?: (instanceId: string) => void;
   onInstanceSwitched?: (instanceId: string) => void;
+  onInstanceUpdated?: (instance: InstanceInfo) => void;
   /** Catch-all for unhandled message types */
   onSystemMessage?: (msg: any) => void;
   /** System notifications routed to toast UI */
@@ -251,6 +252,10 @@ export class WSClient {
           this.cb.onInstanceSwitched?.(msg.instanceId);
           break;
 
+        case "instance.updated":
+          this.cb.onInstanceUpdated?.(msg.instance);
+          break;
+
         // Legacy types (backward compat with old relay)
         case "sessions_list":
           this.cb.onSessionsList?.(msg.sessions);
@@ -376,6 +381,11 @@ export class WSClient {
     if (sessionId) body.sessionId = sessionId;
     if (instanceId) body.instanceId = instanceId;
     await this.sendEnv("instance.input", body);
+  }
+
+  /** Send raw terminal input (escape sequences, ctrl+key, arrows). */
+  async sendShellInput(data: string, instanceId: string) {
+    await this.sendEnv("shell.input", { data, instanceId });
   }
 
   async sendCommand(name: string, args?: Record<string, string>, sessionId?: string, instanceId?: string) {

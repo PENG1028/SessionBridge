@@ -1,4 +1,4 @@
-import { createServer as createHttpServer } from "http";
+import { createServer as createHttpServer, request as httpRequest, IncomingMessage, ServerResponse } from "http";
 import { createServer as createHttpsServer } from "https";
 import { readFileSync, readdirSync, statSync, existsSync, writeFileSync, unlinkSync, mkdirSync } from "fs";
 import { join, extname, basename, resolve, isAbsolute, relative, dirname } from "path";
@@ -20,7 +20,7 @@ import { AuditLogger } from "./audit-log";
 import { appConfig } from "./config";
 import { ensureCert } from "./cert";
 import { SessionPersistence } from "./session-persistence";
-import { registerApiRoutes } from "./api-routes";
+import { registerApiRoutes, type AliasStore } from "./api-routes";
 import { RelayConfigManager } from "../agent-core/config-sync";
 import { PermissionModel } from "../agent-core/permissions";
 import { CryptoStream } from "./crypto-stream";
@@ -98,10 +98,35 @@ function dismissNotify(id: string): void {
 }
 
 const defaultAdapterId = getDefaultAdapterId();
-const defaultInstance = instanceManager.create(process.cwd(), defaultAdapterId);
+const defaultInstance = instanceManager.create(process.cwd(), 'local');
 defaultInstance.status = "running";
 defaultInstance.adapterId = defaultAdapterId;
 instanceManager.setActive(defaultInstance.id);
+
+// ── Alias store (device naming, persisted to .sessionbridge/aliases.json) ──
+const aliasStore: AliasStore = (() => {
+  const filePath = join(process.cwd(), '.sessionbridge', 'aliases.json');
+  let aliases: Record<string, string> = {};
+  try { if (existsSync(filePath)) aliases = JSON.parse(readFileSync(filePath, 'utf-8')); } catch {}
+  const save = () => {
+    try { mkdirSync(dirname(filePath), { recursive: true }); writeFileSync(filePath, JSON.stringify(aliases, null, 2)); } catch {}
+  };
+  return {
+    get(key: string) { return aliases[key]; },
+    set(key: string, alias: string) { aliases[key] = alias; save(); },
+    remove(key: string) { delete aliases[key]; save(); },
+    all() { return { ...aliases }; },
+  };
+})();
+
+/** Apply alias from the alias store to an instance (if one exists). */
+function applyAlias(inst: import("./instance-manager").InstanceData): void {
+  const key = `${inst.source}:${inst.dir}`;
+  const alias = aliasStore.get(key);
+  if (alias) inst.label = alias;
+}
+// Apply alias to the default instance too
+applyAlias(defaultInstance);
 
 /** Get the currently active instance */
 function inst(): import("./instance-manager").InstanceData {
@@ -158,6 +183,8 @@ const agentVersionMap = new Map<WebSocket, string>();
 const shellLockMap = new Map<string, WebSocket>();
 /** Shell output subscribers: instanceId → set of browser WebSockets receiving shell.output */
 const shellSubscribers = new Map<string, Set<WebSocket>>();
+/** Guard: instanceId → in-flight spawn promise, prevents double-spawn from shell.input handler */
+const pendingShellSpawns = new Map<string, Promise<unknown>>();
 
 function subscribeShellOutput(instanceId: string, ws: WebSocket): void {
   if (!shellSubscribers.has(instanceId)) shellSubscribers.set(instanceId, new Set());
@@ -333,37 +360,47 @@ async function spawnShellForWs(ws: WebSocket, instanceId?: string): Promise<impo
     throw new Error(permResult.reason || 'Shell access denied');
   }
 
-  // Resolve terminal-capable adapter BEFORE creating any instance.
-  // shell.spawn semantics always require a raw terminal adapter.
-  const terminalAdapter = resolveAdapterByCapability('terminal', true);
-  if (!terminalAdapter) {
-    send(ws, envelope("error", { code: "NO_TERMINAL_ADAPTER", message: "No terminal-capable adapter available" }));
-    throw new Error('No terminal-capable adapter available for shell.spawn');
-  }
-
   let i: import("./instance-manager").InstanceData;
+  let terminalAdapter: import("../extensions/types").AgentAdapter | undefined;
+
   if (instanceId) {
     const existing = instanceManager.get(instanceId);
     if (existing) {
-      // Validate that the existing instance's adapter is terminal-capable.
-      // Use strict lookup — resolveAdapter() would fallback to the first adapter,
-      // potentially misclassifying an instance with a missing/unknown adapterId.
-      const existingAdapter = existing.adapterId ? adapterRegistry.get(existing.adapterId) : undefined;
-      if (!existingAdapter) {
+      // Use the instance's own adapter — NOT resolveAdapterByCapability('terminal', true).
+      // resolveAdapterByCapability returns the FIRST registered adapter with terminal:true,
+      // which may be claude-code (also terminal-capable) rather than shell. Using the
+      // instance's own adapter guarantees we spawn with the correct adapter type.
+      terminalAdapter = existing.adapterId ? adapterRegistry.get(existing.adapterId) : undefined;
+      if (!terminalAdapter) {
         send(ws, envelope("error", { code: "INVALID_ADAPTER", message: `Instance ${instanceId} has unknown adapter: ${existing.adapterId}` }));
         throw new Error(`Instance ${instanceId} has unknown adapter: ${existing.adapterId}`);
       }
-      if (!existingAdapter.getCapabilities().terminal) {
+      if (!terminalAdapter.getCapabilities().terminal) {
         send(ws, envelope("error", { code: "NOT_TERMINAL", message: "Instance is not terminal-capable — cannot attach shell" }));
         throw new Error(`Instance ${instanceId} is not terminal-capable`);
       }
       i = existing;
     } else {
-      i = instanceManager.create(process.cwd(), terminalAdapter.displayName, "local", terminalAdapter.id);
+      // Instance not found — create new one with shell adapter specifically.
+      terminalAdapter = adapterRegistry.get('shell') || resolveAdapterByCapability('terminal', true);
+      if (!terminalAdapter) {
+        send(ws, envelope("error", { code: "NO_TERMINAL_ADAPTER", message: "No terminal-capable adapter available" }));
+        throw new Error('No terminal-capable adapter available for shell.spawn');
+      }
+      i = instanceManager.create(process.cwd(), "local", "local", terminalAdapter.id);
     }
   } else {
-    i = instanceManager.create(process.cwd(), terminalAdapter.displayName, "local", terminalAdapter.id);
+    // No instanceId — create new instance with shell adapter specifically.
+    terminalAdapter = adapterRegistry.get('shell') || resolveAdapterByCapability('terminal', true);
+    if (!terminalAdapter) {
+      send(ws, envelope("error", { code: "NO_TERMINAL_ADAPTER", message: "No terminal-capable adapter available" }));
+      throw new Error('No terminal-capable adapter available for shell.spawn');
+    }
+    i = instanceManager.create(process.cwd(), "local", "local", terminalAdapter.id);
   }
+
+  // Apply alias from the alias store (if one exists for this instance)
+  applyAlias(i);
 
   // Track ownership
   if (!shellWsMap.has(ws)) shellWsMap.set(ws, new Set());
@@ -662,10 +699,10 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
   }
 
   // Delegate to structured API routes first
-  if (registerApiRoutes(req, res, { instanceManager, broadcast, auditLog, checkPermission: checkHttpPermission, configManager: appConfig, relayConfig: relayConfigManager, configRegistry, configStore, secretStore })) return;
+  if (registerApiRoutes(req, res, { instanceManager, broadcast, auditLog, checkPermission: checkHttpPermission, configManager: appConfig, relayConfig: relayConfigManager, configRegistry, configStore, secretStore, workDir: process.cwd(), aliases: aliasStore })) return;
 
   const url = new URL(req.url!, `http://${req.headers.host}`);
-  const path = url.pathname;
+  const path = url.pathname.replace(/\/$/, '') || '/';
   const clientIp = req.socket.remoteAddress || "unknown";
 
   // API-level rate limiting (skip for static and health)
@@ -677,9 +714,12 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
   }
 
   // ── API: List directory ──────────────────────────────────
+  // Supports `?dir=` and `?showAll=1` — when showAll is set, all files
+  // including dotfiles and common noise directories are shown.
   if (path === "/api/list" && req.method === "GET") {
     if (!checkHttpPermission(res, 'fileRead', { path: url.searchParams.get("dir") || "." })) return;
     const dirParam = url.searchParams.get("dir") || ".";
+    const showAll = url.searchParams.get("showAll") === "1";
     const targetDir = isAbsolute(dirParam) ? dirParam : resolve(ROOT_DIR, dirParam);
     const root = ROOT_DIR;
 
@@ -694,27 +734,47 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
       return;
     }
 
+    // Default ignore list — common noise directories and files,
+    // matching the convention used by VS Code / GitHub's file explorer.
+    const IGNORE_DIRS = new Set([
+      'node_modules', '.git', '.next', 'dist', 'build', 'out',
+      'target', '.cache', '__pycache__', '.venv', 'venv', 'env',
+      'coverage', '.nyc_output', '.parcel-cache', '.svn', '.hg',
+      '.sass-cache', '.eslintcache', '.pytest_cache', 'bower_components',
+      'jspm_packages', '.lsp', '.tmp', 'tmp',
+    ]);
+    const IGNORE_FILES = new Set([
+      '.DS_Store', 'Thumbs.db', 'desktop.ini',
+    ]);
+
     try {
       const entries = readdirSync(targetDir, { withFileTypes: true });
-      const items = entries
-        .filter(e => !e.name.startsWith(".") && !e.name.startsWith("node_modules"))
-        .map(e => {
-          const full = join(targetDir, e.name);
-          const rel = relative(root, full).replace(/\\/g, "/");
-          return {
-            name: e.name,
-            path: rel,
-            type: e.isDirectory() ? "dir" : "file",
-            size: e.isFile() ? statSync(full).size : 0,
-          };
-        })
-        .sort((a, b) => {
-          if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
-          return a.name.localeCompare(b.name);
-        });
+      let items = entries.map(e => {
+        const full = join(targetDir, e.name);
+        const rel = relative(root, full).replace(/\\/g, "/");
+        return {
+          name: e.name,
+          path: rel,
+          type: e.isDirectory() ? "dir" : "file",
+          size: e.isFile() ? statSync(full).size : 0,
+        };
+      });
+
+      if (!showAll) {
+        items = items.filter(e =>
+          !((e.type === 'dir' && IGNORE_DIRS.has(e.name)) ||
+            (e.type === 'file' && IGNORE_FILES.has(e.name)) ||
+            e.name.startsWith('.'))
+        );
+      }
+
+      items.sort((a, b) => {
+        if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
 
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ items, cwd: ROOT_DIR }));
+      res.end(JSON.stringify({ items, cwd: ROOT_DIR, showAll }));
     } catch (err) {
       res.writeHead(500, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: String(err) }));
@@ -1034,10 +1094,11 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
           return;
         }
         const newInst = instanceManager.create(targetDir, basename(targetDir));
+        applyAlias(newInst);
         instanceManager.setActive(newInst.id);
         ROOT_DIR = targetDir;
         spawnInstance(newInst.id);
-        broadcast(envelope("instance.added", { instance: { id: newInst.id, dir: newInst.dir, label: newInst.label, status: newInst.status } }));
+        broadcast(envelope("instance.added", { instance: { id: newInst.id, dir: newInst.dir, label: newInst.label, status: newInst.status, adapterId: newInst.adapterId, source: newInst.source } }));
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ success: true, cwd: targetDir, instanceId: newInst.id }));
       } catch (err) {
@@ -1070,8 +1131,18 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
           return;
         }
         const newInst = instanceManager.create(targetDir, label, undefined, adapterId);
-        spawnInstance(newInst.id);
-        broadcast(envelope("instance.added", { instance: { id: newInst.id, dir: newInst.dir, label: newInst.label, status: newInst.status } }));
+        applyAlias(newInst);
+        // Raw terminal adapters (terminal:true, structuredEvents:false) are
+        // spawned by ShellTerminal via shell.spawn — pre-spawning here causes
+        // a race where two PTYs compete for the same handle, silently dropping
+        // or misrouting user input.
+        const _instAdapter = adapterId ? adapterRegistry.get(adapterId) : undefined;
+        const _instCaps = _instAdapter?.getCapabilities();
+        const _isRawTerminal = _instCaps && _instCaps.terminal && !_instCaps.structuredEvents;
+        if (!_isRawTerminal) {
+          spawnInstance(newInst.id);
+        }
+        broadcast(envelope("instance.added", { instance: { id: newInst.id, dir: newInst.dir, label: newInst.label, status: newInst.status, adapterId: newInst.adapterId, source: newInst.source } }));
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ success: true, instance: { id: newInst.id, dir: newInst.dir, label: newInst.label } }));
       } catch (err) {
@@ -1160,6 +1231,38 @@ const serverRequestHandler = (req: import("http").IncomingMessage, res: import("
       activeInstanceId: instanceManager.activeId,
       instances: instanceManager.toJSON(),
     }));
+    return;
+  }
+
+  // ── Dashboard API proxy ──────────────────────────────────
+  // DashboardView calls /api/status, /api/processes etc. —
+  // these are served by the agent-core dashboard server (port 9843),
+  // not the relay server. Proxy unknown /api/* there.
+  if (path.startsWith("/api/")) {
+    // Break proxy loops — if this request was already forwarded by
+    // either server, don't forward again.
+    const incomingFwd = req.headers["x-forwarded-by"];
+    if (incomingFwd === "relay" || incomingFwd === "dashboard") {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Not found" }));
+      return;
+    }
+    const dashPort = parseInt(process.env.BRIDGE_DASHBOARD_PORT || "9843", 10);
+    const proxyHeaders = { ...req.headers } as Record<string, string | string[] | undefined>;
+    proxyHeaders["x-forwarded-by"] = "relay";
+    delete proxyHeaders["host"];
+    const proxyReq = httpRequest(
+      { hostname: "127.0.0.1", port: dashPort, path: req.url!, method: req.method || "GET", headers: proxyHeaders },
+      (proxyRes: IncomingMessage) => {
+        res.writeHead(proxyRes.statusCode || 200, proxyRes.headers);
+        proxyRes.pipe(res);
+      },
+    );
+    req.pipe(proxyReq);
+    proxyReq.on("error", () => {
+      res.writeHead(503, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Dashboard server unavailable" }));
+    });
     return;
   }
 
@@ -1393,6 +1496,7 @@ function setupWssHandlers(): void {
       // TODO: protocol should carry adapterId/capability — the agent must declare what type it is.
       const agentAdapterId = msg.adapterId || 'unknown';
       const remoteInst = instanceManager.create(dir, label, 'remote', agentAdapterId);
+      applyAlias(remoteInst);
       remoteInst.agentConnection = ws;
       remoteInst.agentVersion = agentVersion;
       remoteInst.status = 'running';
@@ -1520,6 +1624,7 @@ function setupWssHandlers(): void {
       // TODO: protocol should carry adapterId — agent.instance.spawn declares what type.
       const agentAdapterId = msg.adapterId || 'unknown';
       const remoteInst = instanceManager.create(dir, label, 'remote', agentAdapterId);
+      applyAlias(remoteInst);
       remoteInst.agentConnection = ws;
       remoteInst.status = 'running';
       send(ws, envelope("agent.instance.spawned", {
@@ -1668,6 +1773,19 @@ function setupWssHandlers(): void {
         sendStdin(i, msg.data);
       } else if (i.handle) {
         i.handle.send(msg.data).catch(() => {});
+      } else if (i.status !== 'stopped') {
+        // No handle yet (PTY not spawned or race). Self-heal by spawning.
+        // Guard: prevent concurrent spawnShellForWs calls for the same instance.
+        const _buffered = msg.data;
+        if (!pendingShellSpawns.has(i.id)) {
+          pendingShellSpawns.set(
+            i.id,
+            spawnShellForWs(ws, i.id).finally(() => pendingShellSpawns.delete(i.id))
+          );
+        }
+        pendingShellSpawns.get(i.id)!.then(() => {
+          if (i.handle) i.handle.send(_buffered).catch(() => {});
+        }).catch(() => {});
       }
       return;
     }
@@ -1691,7 +1809,17 @@ function setupWssHandlers(): void {
       return;
     }
     if (msg.type === "shell.resize" || msg.type === "shell_resize") {
-      // PTY resize would go here when using node-pty
+      // Resize PTY for the shell instance associated with this WS
+      const cols = typeof msg.cols === 'number' ? Math.max(10, Math.round(msg.cols)) : undefined;
+      const rows = typeof msg.rows === 'number' ? Math.max(2, Math.round(msg.rows)) : undefined;
+      if (cols && rows) {
+        const owned = shellWsMap.get(ws);
+        if (owned && owned.size > 0) {
+          const instId = [...owned][0];
+          const inst = instanceManager.get(instId);
+          if (inst?.handle?.resize) inst.handle.resize(cols, rows);
+        }
+      }
       return;
     }
 
@@ -1828,35 +1956,22 @@ function setupWssHandlers(): void {
         broadcast(envelope("shell.lock_status", { instanceId: instId, locked: false }));
       }
     }
-    // Session persistence: mark session as disconnected, don't kill shells immediately
+    // Session persistence: disconnect doesn't kill shells.
+    // Processes stay alive until explicitly killed (× button on instance bar)
+    // or the server/agent restarts. Close page = keep running, reopen = reconnect.
     const clientToken = wsToClientToken.get(ws);
     wsToClientToken.delete(ws);
     if (clientToken) {
       const session = clientSessionMap.get(clientToken);
       if (session && session.ws === ws) {
         session.disconnectTime = Date.now();
-        // Schedule cleanup after grace period
-        setTimeout(() => {
-          const s = clientSessionMap.get(clientToken);
-          if (s?.disconnectTime && Date.now() - s.disconnectTime >= SESSION_RECONNECT_GRACE_MS) {
-            for (const shellId of s.shellIds) {
-              killInstance(shellId);
-              instanceManager.kill(shellId);
-            }
-            clientSessionMap.delete(clientToken);
-          }
-        }, SESSION_RECONNECT_GRACE_MS);
-        return; // Don't kill shells — keep them for reconnection
+        // No auto-kill — shells persist until explicitly killed.
+        return;
       }
     }
-    // Kill all shell instances owned by this WS (no session token)
+    // Clean up shell ownership tracking without killing processes
     const ownedShells = shellWsMap.get(ws);
     if (ownedShells) {
-      for (const instId of ownedShells) {
-        killInstance(instId);
-        instanceManager.kill(instId);
-        broadcast(envelope("instance.removed", { instanceId: instId }));
-      }
       shellWsMap.delete(ws);
     }
     // Auto-unregister agent connections
@@ -1931,7 +2046,7 @@ process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
 
 // ─── Start ────────────────────────────────────────────────────────
-export function startRelayServer(port?: number): Promise<{ close: () => void; port: number }> {
+export async function startRelayServer(port?: number): Promise<{ close: () => void; port: number }> {
   ensureServer();
   const p = port ?? PORT;
 
@@ -1940,23 +2055,19 @@ export function startRelayServer(port?: number): Promise<{ close: () => void; po
   secretStore.load();
   configStore.setWorkspaceDir(process.cwd());
 
-  // ── Adapter environment validation ──────────────────────
-  // (delegated to extension loader below — adapters self-report availability)
-
   // ── Register adapters via extension loader ──────────────
-  (async () => {
-    try {
-      const { scanAndActivate } = await import("../agent-core/extension-loader");
-      const result = await scanAndActivate({ log: (msg: string) => console.log(`[ext] ${msg}`) });
-      console.log(`  ✓ Extensions activated: ${result.activated.map(a => a.manifest.id).join(', ')}`);
-      if (result.diagnostics.some(d => d.status === 'failed' || d.status === 'invalid')) {
-        const bad = result.diagnostics.filter(d => d.status === 'failed' || d.status === 'invalid');
-        for (const d of bad) console.warn(`  ⚠ Extension "${d.id}": ${d.message}`);
-      }
-    } catch (err) {
-      console.warn(`  ⚠ Adapter loading failed: ${(err as Error).message}`);
+  // Must complete before server starts so the adapter registry is populated.
+  try {
+    const { scanAndActivate } = await import("../agent-core/extension-loader");
+    const result = await scanAndActivate({ log: (msg: string) => console.log(`[ext] ${msg}`) });
+    console.log(`  ✓ Extensions activated: ${result.activated.map(a => a.manifest.id).join(', ')}`);
+    if (result.diagnostics.some(d => d.status === 'failed' || d.status === 'invalid')) {
+      const bad = result.diagnostics.filter(d => d.status === 'failed' || d.status === 'invalid');
+      for (const d of bad) console.warn(`  ⚠ Extension "${d.id}": ${d.message}`);
     }
-  })();
+  } catch (err) {
+    console.warn(`  ⚠ Adapter loading failed: ${(err as Error).message}`);
+  }
 
   // ── Background update check (non-blocking) ────────────
   setTimeout(() => {
@@ -2036,21 +2147,31 @@ export class NodeRelayServer {
     if (this._port !== 0 && (this._port < 1 || this._port > 65535)) {
       this._port = 8080;
     }
-    // Register adapters via extension loader
-    (async () => {
-      const { scanAndActivate } = await import("../agent-core/extension-loader");
-      const result = await scanAndActivate({ log: (msg: string) => console.log(`[ext] ${msg}`) });
-      console.log(`  ✓ Extensions activated: ${result.activated.map(a => a.manifest.id).join(', ')}`);
-      if (result.diagnostics.some(d => d.status === 'failed' || d.status === 'invalid')) {
-        const bad = result.diagnostics.filter(d => d.status === 'failed' || d.status === 'invalid');
-        for (const d of bad) console.warn(`  ⚠ Extension "${d.id}": ${d.message}`);
+    // Register adapters via extension loader — await so the adapter registry
+    // is populated before the server accepts connections. Without this,
+    // shell.spawn (and other adapter-dependent operations) can race and fail.
+    const extResult = await (async () => {
+      try {
+        const { scanAndActivate } = await import("../agent-core/extension-loader");
+        return await scanAndActivate({ log: (msg: string) => console.log(`[ext] ${msg}`) });
+      } catch (err) {
+        console.warn(`  ⚠ Extension loading failed: ${(err as Error).message}`);
+        return null;
       }
     })();
+    if (extResult) {
+      console.log(`  ✓ Extensions activated: ${extResult.activated.map(a => a.manifest.id).join(', ')}`);
+      if (extResult.diagnostics.some(d => d.status === 'failed' || d.status === 'invalid')) {
+        const bad = extResult.diagnostics.filter(d => d.status === 'failed' || d.status === 'invalid');
+        for (const d of bad) console.warn(`  ⚠ Extension "${d.id}": ${d.message}`);
+      }
+    }
     // Restore sessions from previous run
     const snapshot = sessionPersistence.restore();
     if (snapshot) {
       for (const inst of snapshot.instances) {
         const restored = instanceManager.create(inst.dir, inst.label, inst.source, inst.adapterId);
+        applyAlias(restored);
         restored.agentVersion = inst.agentVersion;
         restored.status = 'stopped'; // OS processes died with the relay; user must restart
         console.log(`[relay] Restored session: ${restored.id} (${inst.label})`);

@@ -2,7 +2,7 @@
 // Implements AgentAdapter for raw shell (bash/powershell/cmd).
 // Simple PTY wrapper — no structured events, just terminal I/O.
 
-import { spawn } from 'child_process';
+import { spawn as ptySpawn } from 'node-pty';
 import type {
   AgentAdapter, AdapterCapabilities, AdapterViewProps,
   InstanceHandle, StartInstanceInput, SidePanelDef, RuntimeInfo,
@@ -37,9 +37,16 @@ export class ShellAdapter implements AgentAdapter {
 
   async start(input: StartInstanceInput): Promise<InstanceHandle> {
     const { cmd, args, cwd } = this.resolveSpawnCommand(input.config);
-    const proc = input.host
-      ? input.host.process.spawn(cmd, args, { cwd: cwd || input.directory })
-      : spawn(cmd, args, { cwd: cwd || input.directory, stdio: ['pipe', 'pipe', 'pipe'] });
+
+    // Create a real PTY so interactive CLI programs (claude, vim, nano, etc.)
+    // work correctly — they need isatty() to return true.
+    const ptyProcess = ptySpawn(cmd, args, {
+      name: 'xterm-256color',
+      cols: 80,
+      rows: 24,
+      cwd: cwd || input.directory,
+      env: { ...process.env as Record<string, string> },
+    });
 
     // Idle detection — notify when output goes silent
     const idleSeconds = (typeof input.config?.idleSeconds === 'number' ? input.config.idleSeconds : null) ?? 10;
@@ -50,28 +57,25 @@ export class ShellAdapter implements AgentAdapter {
         input.host?.notifications.notify(
           'shell.task.idle',
           'Shell task idle',
-          `No output for ${idleSeconds}s (PID ${proc.pid})`,
+          `No output for ${idleSeconds}s (PID ${ptyProcess.pid})`,
         );
       }, idleSeconds * 1000);
     };
     if (idleSeconds > 0) resetIdleTimer();
 
-    proc.stdout?.on('data', (chunk: Buffer) => {
-      input.onOutput?.(chunk.toString());
+    ptyProcess.onData((chunk: string) => {
+      input.onOutput?.(chunk);
       if (idleSeconds > 0) resetIdleTimer();
     });
-    proc.stderr?.on('data', (chunk: Buffer) => {
-      input.onOutput?.(chunk.toString());
-      if (idleSeconds > 0) resetIdleTimer();
-    });
-    proc.on('close', (code) => {
+
+    ptyProcess.onExit(({ exitCode }) => {
       if (idleTimer) clearTimeout(idleTimer);
       input.host?.notifications.notify(
         'shell.task.ended',
         'Shell task ended',
-        `Exit code: ${code} (PID ${proc.pid})`,
+        `Exit code: ${exitCode} (PID ${ptyProcess.pid})`,
       );
-      input.onExit?.(code);
+      input.onExit?.(exitCode);
     });
 
     return {
@@ -79,21 +83,24 @@ export class ShellAdapter implements AgentAdapter {
         id: input.workspaceId,
         workspaceId: input.workspaceId,
         adapterId: this.id,
-        label: input.label || 'Shell',
+        label: input.label || 'local',
         status: 'running',
         source: 'local',
         createdAt: Date.now(),
-        runtime: { type: 'child_process', pid: proc.pid },
+        runtime: { type: 'pty', pid: ptyProcess.pid },
       },
       send: async (data: string) => {
-        if (proc.stdin?.writable) proc.stdin.write(data);
+        ptyProcess.write(data);
       },
       sendCommand: async (_cmd: string, _args?: Record<string, unknown>) => {},
       stop: async () => {
-        proc.kill();
+        ptyProcess.kill();
       },
       onBlock: (_handler: (block: import('../types').OutputBlock) => void) => {
         return () => {};
+      },
+      resize: (cols: number, rows: number) => {
+        ptyProcess.resize(cols, rows);
       },
     };
   }

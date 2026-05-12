@@ -6,8 +6,8 @@
 // Uses only Node.js built-in modules — no Express, no framework.
 
 import type { IncomingMessage, ServerResponse } from "http";
-import { existsSync, writeFileSync, mkdirSync } from "fs";
-import { basename, isAbsolute, resolve, join } from "path";
+import { existsSync, writeFileSync, readFileSync, mkdirSync } from "fs";
+import { basename, isAbsolute, resolve, join, dirname } from "path";
 import os from "os";
 
 import type { InstanceManager, InstanceData } from "./instance-manager";
@@ -22,6 +22,14 @@ import type { PermissionCategory } from "../extensions/types";
 /** Optional audit logger interface — matches the concrete AuditLogger in audit-log.ts. */
 export interface AuditLogger {
   log(action: string, actor: string, detail?: Record<string, unknown>, instanceId?: string): void;
+}
+
+/** Simple key-value alias store for device display-name overrides. */
+export interface AliasStore {
+  get(key: string): string | undefined;
+  set(key: string, alias: string): void;
+  remove(key: string): void;
+  all(): Record<string, string>;
 }
 
 /** Context injected by the relay server when registering routes. */
@@ -48,6 +56,10 @@ export interface ApiContext {
   configStore?: import('./configuration/store').ConfigurationStore;
   /** Phase 4M: Secret store for encrypted/separate secret storage */
   secretStore?: import('./configuration/secret-store').SecretStore;
+  /** Server working directory (for alias persistence) */
+  workDir?: string;
+  /** In-memory alias store (backed by JSON file) */
+  aliases?: AliasStore;
 }
 
 // ─── Helpers ───────────────────────────────────────────────────
@@ -134,7 +146,7 @@ export function registerApiRoutes(
   ctx: ApiContext,
 ): boolean {
   const url = new URL(req.url!, `http://${req.headers.host}`);
-  const pathname = url.pathname;
+  const pathname = url.pathname.replace(/\/$/, '') || '/';
   const method = (req.method ?? "GET").toUpperCase();
   const { instanceManager, broadcast } = ctx;
 
@@ -322,10 +334,17 @@ export function registerApiRoutes(
 
         const newInst = instanceManager.create(
           targetDir,
-          label || basename(targetDir),
+          label || "local",
           "local",
           adapterId,
         );
+
+        // Apply alias from the alias store (if one exists for this source:dir)
+        {
+          const identityKey = `${newInst.source}:${newInst.dir}`;
+          const alias = ctx.aliases?.get(identityKey);
+          if (alias) newInst.label = alias;
+        }
 
         // Audit
         ctx.auditLog?.log("instance.created", "api", { dir: newInst.dir, label: newInst.label, adapterId: newInst.adapterId }, newInst.id);
@@ -338,6 +357,8 @@ export function registerApiRoutes(
               dir: newInst.dir,
               label: newInst.label,
               status: newInst.status,
+              adapterId: newInst.adapterId,
+              source: newInst.source,
             },
           }),
         );
@@ -405,6 +426,70 @@ export function registerApiRoutes(
 
       broadcast(envelope("instance.removed", { instanceId }));
 
+      json(res, 200, { success: true });
+      return true;
+    }
+  }
+
+  // ──────────────── GET /api/aliases ──────────────────────────
+  // Return all aliases (device-name overrides).
+  if (method === "GET" && pathname === "/api/aliases") {
+    json(res, 200, { aliases: ctx.aliases?.all() ?? {} });
+    return true;
+  }
+
+  // ──────────────── POST /api/aliases ─────────────────────────
+  // Set/update an alias for a device.  Updates the matching instance's
+  // label in real-time and broadcasts to all clients.
+  if (method === "POST" && pathname === "/api/aliases") {
+    readBody(req).then((raw) => {
+      try {
+        const { instanceId, alias } = JSON.parse(raw) as { instanceId?: string; alias?: string };
+        if (!instanceId || typeof instanceId !== 'string') { json(res, 400, { error: "Missing 'instanceId'" }); return; }
+        if (alias === undefined || alias === null) { json(res, 400, { error: "Missing 'alias'" }); return; }
+
+        const inst = instanceManager.get(instanceId);
+        if (!inst) { json(res, 404, { error: `Instance not found: ${instanceId}` }); return; }
+
+        const aliasStr = String(alias);
+        const oldLabel = inst.label;
+
+        // Persist alias keyed by source:dir (stable across restarts)
+        const identityKey = `${inst.source}:${inst.dir}`;
+        ctx.aliases?.set(identityKey, aliasStr);
+
+        // Update ALL instances with the same source:dir and broadcast
+        for (const other of instanceManager.list()) {
+          if (`${other.source}:${other.dir}` === identityKey) {
+            other.label = aliasStr;
+            broadcast(envelope("instance.updated", {
+              instance: {
+                id: other.id,
+                dir: other.dir,
+                label: other.label,
+                status: other.status,
+                source: other.source,
+                adapterId: other.adapterId,
+              },
+            }));
+          }
+        }
+
+        ctx.auditLog?.log('instance.renamed', 'api', { instanceId, oldLabel, newLabel: aliasStr, identityKey });
+        json(res, 200, { success: true, instance: { id: inst.id, label: inst.label } });
+      } catch (err) {
+        json(res, 400, { error: `Invalid request: ${(err as Error).message}` });
+      }
+    }).catch(() => json(res, 400, { error: "Failed to read request body" }));
+    return true;
+  }
+
+  // ──────────────── DELETE /api/aliases/:identity ─────────────
+  // Remove an alias, restoring the original label.
+  {
+    const p = matchPath(pathname, "/api/aliases/:identity");
+    if (method === "DELETE" && p) {
+      ctx.aliases?.remove(p.identity);
       json(res, 200, { success: true });
       return true;
     }

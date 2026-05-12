@@ -1,6 +1,6 @@
 'use client';
 
-import { Cpu, Folder, Search, ChevronDown, Settings, LayoutDashboard, Terminal } from 'lucide-react';
+import { Cpu, Search, Settings, LayoutDashboard, Terminal } from 'lucide-react';
 import { useFocus } from '../workbench/focus-context';
 import { useRuntimePolicy } from '../workbench/runtime-policy-context';
 import { getAdapterMeta, getViewEntry, getAdapterCapabilities, type ChromePolicy } from '../main/view-registry';
@@ -20,6 +20,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
 
 export interface ConsoleHeaderProps {
   onMobileOpen: () => void;
+  onMobileRightOpen?: () => void;
   statusColor: string;
   statusText: string;
   connStatus: { status: string };
@@ -48,10 +49,17 @@ export interface ConsoleHeaderProps {
   onToggleRightSidebar?: () => void;
   /** Chrome policy from the active view. */
   chromePolicy?: ChromePolicy;
+  /** Connection/server label shown in place of brand name. */
+  connectionLabel?: string;
+  /** Open connection manager to switch/add servers. */
+  onOpenConnectionManager?: () => void;
+  /** Connection is unstable (momentarily lost, within 30s grace window). */
+  connectionUnstable?: boolean;
 }
 
 export function ConsoleHeader({
   onMobileOpen,
+  onMobileRightOpen,
   statusColor,
   statusText,
   connStatus,
@@ -79,6 +87,9 @@ export function ConsoleHeader({
   onToggleLeftSidebar,
   onToggleRightSidebar,
   chromePolicy,
+  connectionLabel,
+  onOpenConnectionManager,
+  connectionUnstable,
 }: ConsoleHeaderProps) {
   const policy = chromePolicy || { header: 'full', statusBar: 'auto', commandPalette: true, globalShortcuts: true };
 
@@ -87,14 +98,14 @@ export function ConsoleHeader({
 
   const isMinimal = policy.header === 'minimal';
 
+  // Hooks must be called unconditionally
+  const focus = useFocus();
+  const { activePolicy } = useRuntimePolicy();
+
+  // Runtime badge — only for adapters with modes capability
   let runtimeBadge: string | null = null;
-  let headerRightActions: WorkbenchAction[] = [];
-  let headerChromeItems: any[] = [];
-  let actionCtx: ActionRunContext | null = null;
   try {
-    const focus = useFocus();
     const { paneViewType, adapterId } = focus;
-    const { activePolicy } = useRuntimePolicy();
     const caps = getAdapterCapabilities(adapterId ?? '');
     if (caps?.modes === true) {
       const label = paneViewType
@@ -106,36 +117,64 @@ export function ConsoleHeader({
         : activePolicy.effortLevel === 'medium' ? 'ON' : 'MAX';
       runtimeBadge = `${label} [${modeBadge}] T:${effortBadge}`;
     }
-
-    // Phase 4E: Resolve header.right actions from registry
-    headerRightActions = getActions('header.right', focus.whenContext as Record<string, unknown>);
-    // Phase 4J: Resolve header chrome contributions
-    headerChromeItems = getHeaderChromeItems(focus.whenContext);
-    actionCtx = {
-      view: focus.viewId,
-      activeAdapterId: adapterId || '',
-      isRunning: focus.isRunning,
-      instanceId: focus.instanceId,
-      projectCwd: '',
-      messages: [],
-      workbenchState: null as unknown,
-      workbenchDispatch: () => {},
-      sendCommand: () => {},
-      sendInput: () => {},
-      createInstance: async () => undefined,
-      killInstance: () => {},
-      openSettings: () => onOpenSettings?.(),
-      openSearch: () => openSearchPanel(),
-      openCommandPalette: () => onToggleCommandPalette?.(),
-      toggleLeftSidebar: () => {},
-      toggleRightSidebar: () => {},
-      notify: () => {},
-    };
   } catch {}
 
+  // Chrome items + action context — always resolved (never inside try-catch)
+  const headerRightActions: WorkbenchAction[] = getActions('header.right', focus.whenContext as Record<string, unknown>);
+  const headerChromeItems: any[] = getHeaderChromeItems(focus.whenContext);
+  const actionCtx: ActionRunContext = {
+    view: focus.viewId,
+    activeAdapterId: focus.adapterId || '',
+    isRunning: focus.isRunning,
+    instanceId: focus.instanceId,
+    projectCwd: '',
+    messages: [],
+    workbenchState: null as unknown,
+    workbenchDispatch: () => {},
+    sendCommand: () => {},
+    sendInput: () => {},
+    createInstance: async () => undefined,
+    killInstance: () => {},
+    openSettings: () => onOpenSettings?.(),
+    openSearch: () => openSearchPanel(),
+    openCommandPalette: () => onToggleCommandPalette?.(),
+    toggleLeftSidebar: () => {},
+    toggleRightSidebar: () => {},
+    notify: () => {},
+  };
+
   return (
-    <header className="h-11 flex items-center justify-between px-4 border-b border-gray-800 bg-[#111] shrink-0">
-      <div className="flex items-center space-x-4">
+    <header className="h-11 px-4 border-b border-gray-800 bg-[#111] shrink-0 relative z-10">
+      {/* ── Mobile layout ── */}
+      <div className="flex md:hidden items-center justify-between h-full">
+        {/* Hamburger for mobile */}
+        <button className="text-gray-400 hover:text-gray-200 p-1 -ml-1"
+          onClick={onMobileOpen}
+          title="Menu"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
+        <button
+          onClick={onOpenConnectionManager}
+          className="text-purple-400 font-bold tracking-widest text-sm hover:text-purple-300 transition-colors"
+          title="Switch connection"
+        >
+          {connectionLabel || 'Remote Console'}
+        </button>
+        <button
+          onClick={onMobileRightOpen}
+          className="text-gray-400 hover:text-gray-200 p-1 -mr-1 text-lg leading-none tracking-wider"
+          title="Panels"
+        >
+          ⋮
+        </button>
+      </div>
+
+      {/* ── Desktop layout ── */}
+      <div className="hidden md:flex items-center justify-between h-full">
+        <div className="flex items-center space-x-4">
         {/* Hamburger for mobile */}
         <button className="md:hidden text-gray-400 hover:text-gray-200 p-1 -ml-1"
           onClick={onMobileOpen}
@@ -159,11 +198,17 @@ export function ConsoleHeader({
           </button>
         )}
         <Cpu className="w-4 h-4 text-purple-500" />
-        <span className="text-purple-400 font-bold tracking-widest text-sm">SESSIONBRIDGE</span>
+        <button
+          onClick={onOpenConnectionManager}
+          className="text-purple-400 font-bold tracking-widest text-sm hover:text-purple-300 transition-colors"
+          title="Switch connection"
+        >
+          {connectionLabel || 'Remote Console'}
+        </button>
         <span className="text-gray-700">|</span>
         <span className="text-xs text-gray-400 flex items-center gap-2">
           <span className={`w-2 h-2 rounded-full ${statusColor} ${connStatus.status === 'connected' ? 'animate-pulse' : ''}`} />
-          {statusText}
+          {statusText}{connectionUnstable ? <span className="text-yellow-500 animate-pulse">...</span> : null}
         </span>
 
         {/* ── Minimal header: show only brand + connection, no chat-specific items ── */}
@@ -215,9 +260,8 @@ export function ConsoleHeader({
           </button>
         )}
 
-        {/* Project info */}
-        <div className="flex items-center gap-2 relative">
-          {/* Phase 4E: Header right actions from registry (search, dashboard, settings, cmd palette) */}
+        {/* Header chrome: actions (registry) + contributions (manifests) */}
+        <div className="flex items-center gap-2">
           {!isMinimal && headerRightActions.map(a => {
             const IconComp = a.icon ? ICON_MAP[a.icon] : null;
             return (
@@ -231,8 +275,9 @@ export function ConsoleHeader({
             );
           })}
 
-          {/* Phase 4J: Header chrome contributions (from manifests) */}
-          {!isMinimal && headerChromeItems.map(item => (
+          {!isMinimal && headerChromeItems.map(item => {
+            const IconComp = item.icon ? ICON_MAP[item.icon] : null;
+            return (
             <button key={item.id}
               onClick={() => {
                 if (item.command && actionCtx) {
@@ -242,65 +287,14 @@ export function ConsoleHeader({
               className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#1a1a1a] border border-gray-700 hover:border-purple-500 text-gray-400 hover:text-gray-200 text-[10px] transition-colors"
               title={item.title || item.text}
             >
+              {IconComp && <IconComp className="w-3 h-3" />}
               {item.text || item.title}
             </button>
-          ))}
-
-          <button
-            onClick={onToggleDirSwitcher}
-            className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-[#1a1a1a] border border-gray-700 hover:border-purple-500 text-gray-400 hover:text-gray-200 text-[10px] transition-colors max-w-[200px]"
-            title={projectInfo ? `${projectInfo.projectName} — ${projectInfo.cwd}` : 'Select project directory'}
-          >
-            <Folder className="w-3 h-3 shrink-0 text-yellow-600" />
-            <span className="truncate">{projectInfo?.projectName || 'No project'}</span>
-            <ChevronDown className="w-2.5 h-2.5 shrink-0" />
-          </button>
-
-          {/* Directory switcher dropdown */}
-          {showDirSwitcher && (
-              <div className="absolute top-full right-0 mt-1 z-50 bg-[#1a1a1a] border border-gray-700 rounded-lg shadow-2xl shadow-black/50 overflow-hidden" style={{ minWidth: '280px' }}>
-                <div className="p-2 border-b border-gray-800 text-[10px] text-gray-500 px-3 py-1.5 font-bold tracking-wider">
-                  SWITCH PROJECT
-                </div>
-                <div className="p-2">
-                  <form onSubmit={(e) => {
-                    e.preventDefault();
-                    if (switchDirLocal.trim()) onSwitchDir(switchDirLocal.trim());
-                  }} className="flex gap-1">
-                    <input type="text" value={switchDirLocal}
-                      onChange={e => onSwitchDirLocalChange(e.target.value)}
-                      placeholder="Directory path..."
-                      className="flex-1 bg-[#0d0d0d] border border-gray-700 rounded px-2 py-1 text-[10px] text-gray-200 outline-none focus:border-purple-500"
-                      autoFocus
-                    />
-                    <button type="submit" disabled={switching}
-                      className="px-2 py-1 bg-purple-700 hover:bg-purple-600 disabled:opacity-50 text-white text-[10px] rounded border border-purple-600">
-                      {switching ? '...' : 'Go'}
-                    </button>
-                  </form>
-                </div>
-                {/* Saved sessions */}
-                {savedSessions.length > 0 && (
-                  <div className="border-t border-gray-800">
-                    <div className="px-3 py-1 text-[9px] text-gray-600 font-bold">HISTORY</div>
-                    {savedSessions.slice(-10).reverse().map(s => (
-                      <button key={s.id}
-                        onClick={() => onSelectSavedSession(s)}
-                        className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-gray-800 text-left transition-colors"
-                      >
-                        <svg className="w-2.5 h-2.5 text-gray-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                        <span className="text-[10px] text-gray-400 truncate">{s.label}</span>
-                        <span className="text-[8px] text-gray-700 ml-auto shrink-0">{s.ts.slice(5, 16)}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+            );
+          })}
         </div>
+      </div>
+      </div>
     </header>
   );
 }

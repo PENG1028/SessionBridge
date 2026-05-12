@@ -1,14 +1,16 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
+import { ContextMenu, type ContextMenuItem } from './console/shell/context-menu';
 
 interface ShellTerminalProps {
   wsUrl: string;
   instanceId?: string;
   token?: string;
+  onOpenDirectoryPicker?: () => void;
 }
 
 /** Envelope helper matching the v1 protocol. */
@@ -19,7 +21,7 @@ function env(type: string, body: Record<string, unknown> = {}) {
 const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_BASE_MS = 1000;
 
-export default function ShellTerminal({ wsUrl, instanceId, token }: ShellTerminalProps) {
+export default function ShellTerminal({ wsUrl, instanceId, token, onOpenDirectoryPicker }: ShellTerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -27,6 +29,7 @@ export default function ShellTerminal({ wsUrl, instanceId, token }: ShellTermina
   const reconnectAttemptRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
 
   /** Connect (or reconnect) the WebSocket for this terminal. */
   function connect(term: Terminal, fitAddon: FitAddon) {
@@ -41,8 +44,12 @@ export default function ShellTerminal({ wsUrl, instanceId, token }: ShellTermina
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
+    // Show connection progress in the terminal itself
+    term.writeln('\x1b[90mConnecting to shell...\x1b[0m');
+
     ws.onopen = () => {
       reconnectAttemptRef.current = 0; // reset on successful connect
+      term.writeln('\x1b[36mWebSocket connected, spawning shell...\x1b[0m');
       term.focus();
       // Hello + spawn shell
       // Use stable clientToken so the relay preserves the shell across page
@@ -80,11 +87,19 @@ export default function ShellTerminal({ wsUrl, instanceId, token }: ShellTermina
           term.writeln(`\r\n\x1b[90m[Shell exited with code ${body.code}]\x1b[0m`);
         } else if (type === 'shell_exit') {
           term.writeln(`\r\n\x1b[90m[Shell exited with code ${body.code}]\x1b[0m`);
+        } else if (type === 'error') {
+          term.writeln(`\r\n\x1b[91m[Error] ${body.message || body.code || 'Unknown error'}\x1b[0m`);
+        } else if (type === 'shell.error') {
+          term.writeln(`\r\n\x1b[91m[Shell Error] ${body.message || 'Shell error'}\x1b[0m`);
+        } else if (type === 'shell.ready' || type === 'shell_ready') {
+          term.writeln('\x1b[32mShell ready — type below\x1b[0m');
         }
       } catch {}
     };
 
-    ws.onerror = () => {};
+    ws.onerror = () => {
+      term.writeln('\x1b[91m[WebSocket error]\x1b[0m');
+    };
 
     ws.onclose = () => {
       if (!mountedRef.current) return;
@@ -102,11 +117,19 @@ export default function ShellTerminal({ wsUrl, instanceId, token }: ShellTermina
     mountedRef.current = true;
     if (!containerRef.current) return;
 
+    // Clear stale xterm DOM from Strict Mode double-mount or previous instances
+    (containerRef.current as HTMLElement).innerHTML = '';
+
     const term = new Terminal({
       cursorBlink: true,
-      cursorStyle: 'block',
-      fontSize: 13,
-      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+      cursorStyle: 'bar',
+      fontSize: 14,
+      fontFamily: '"Cascadia Mono", "JetBrains Mono", monospace',
+      lineHeight: 1.0,
+      letterSpacing: 0,
+      allowTransparency: true,
+      convertEol: true,          // \n → \r\n on Windows
+      scrollback: 5000,
       theme: {
         background: '#0a0a0a',
         foreground: '#e0e0e0',
@@ -131,6 +154,71 @@ export default function ShellTerminal({ wsUrl, instanceId, token }: ShellTermina
       },
     });
 
+    // ── Keyboard shortcuts: copy/paste, prevent browser scroll ──
+    term.attachCustomKeyEventHandler((event) => {
+      if (event.type !== 'keydown') return true;
+      const { key, ctrlKey, shiftKey } = event;
+
+      // Navigation keys: prevent browser scroll, send to terminal
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End'].includes(key)) {
+        event.preventDefault();
+        return true;
+      }
+
+      // Tab: prevent focus loss, send \t to terminal
+      if (key === 'Tab') {
+        event.preventDefault();
+        return true;
+      }
+
+      // Ctrl+C: copy if selection exists, else SIGINT
+      if (ctrlKey && key === 'c') {
+        const sel = term.getSelection();
+        if (sel) {
+          navigator.clipboard.writeText(sel).catch(() => {});
+          event.preventDefault();
+          return false;
+        }
+        return true;
+      }
+
+      // Ctrl+L: clear terminal (send form-feed to shell)
+      if (ctrlKey && key === 'l') {
+        event.preventDefault();
+        const ws = wsRef.current;
+        if (ws?.readyState === WebSocket.OPEN) {
+          ws.send(env('shell.input', { data: '\x0c' }));
+        } else {
+          term.clear();
+        }
+        return false;
+      }
+
+      // Ctrl+Shift+C: always copy
+      if (ctrlKey && shiftKey && key === 'C') {
+        const sel = term.getSelection();
+        if (sel) navigator.clipboard.writeText(sel).catch(() => {});
+        event.preventDefault();
+        return false;
+      }
+
+      // Paste: Ctrl+V / Ctrl+Shift+V / Shift+Insert
+      if ((ctrlKey && key === 'v') || (ctrlKey && shiftKey && key === 'V') || (shiftKey && key === 'Insert')) {
+        event.preventDefault();
+        navigator.clipboard.readText()
+          .then(text => {
+            const ws = wsRef.current;
+            if (ws?.readyState === WebSocket.OPEN) {
+              ws.send(env('shell.input', { data: text }));
+            }
+          })
+          .catch(() => {});
+        return false;
+      }
+
+      return true;
+    });
+
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     term.open(containerRef.current);
@@ -138,6 +226,9 @@ export default function ShellTerminal({ wsUrl, instanceId, token }: ShellTermina
 
     termRef.current = term;
     fitRef.current = fitAddon;
+
+    // Auto-focus on click so typing works immediately
+    term.focus();
 
     // ── Initial WebSocket connection ──
     connect(term, fitAddon);
@@ -180,14 +271,85 @@ export default function ShellTerminal({ wsUrl, instanceId, token }: ShellTermina
     };
   }, [wsUrl, token, instanceId]);
 
+  // Re-focus terminal after React re-renders (prevents focus-steal from parent updates)
+  // Only when WebSocket is open — avoids stealing focus from other tabs/elements
+  useLayoutEffect(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      requestAnimationFrame(() => { termRef.current?.focus(); });
+    }
+  });
+
+  const containerStyle = useMemo(() => ({
+    background: '#0a0a0a' as const,
+    overflow: 'hidden' as const,
+    fontFeatureSettings: 'normal' as const,
+    fontVariantLigatures: 'none' as const,
+  }), []);
+
+  // ── Context menu handler ──────────────────────────────────────
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const term = termRef.current;
+    const ws = wsRef.current;
+    const items: ContextMenuItem[] = [
+      {
+        label: 'Copy',
+        shortcut: '⌘C',
+        action: () => {
+          const sel = term?.getSelection();
+          if (sel) navigator.clipboard.writeText(sel).catch(() => {});
+        },
+      },
+      {
+        label: 'Paste',
+        shortcut: '⌘V',
+        action: () => {
+          navigator.clipboard.readText().then(text => {
+            if (ws?.readyState === WebSocket.OPEN) {
+              ws.send(env('shell.input', { data: text }));
+            }
+          }).catch(() => {});
+        },
+      },
+      { label: '', action: () => {}, divider: true },
+      {
+        label: 'Clear Display',
+        shortcut: '⌘L',
+        action: () => {
+          if (ws?.readyState === WebSocket.OPEN) {
+            ws.send(env('shell.input', { data: '\x0c' }));
+          } else {
+            term?.clear();
+          }
+        },
+      },
+      { label: '', action: () => {}, divider: true },
+      {
+        label: 'Select All',
+        action: () => { term?.selectAll(); },
+      },
+      { label: '', action: () => {}, divider: true },
+      {
+        label: 'Change Directory...',
+        action: () => { onOpenDirectoryPicker?.(); },
+      },
+    ];
+    setCtxMenu({ x: e.clientX, y: e.clientY, items });
+  }, [onOpenDirectoryPicker]);
+
   return (
-    <div
-      ref={containerRef}
-      className="flex-1 w-full min-h-0"
-      style={{
-        background: '#0a0a0a',
-        overflow: 'hidden',
-      }}
-    />
+    <>
+      <div
+        ref={containerRef}
+        className="flex-1 w-full min-h-0"
+        style={containerStyle}
+        onClick={() => { termRef.current?.focus(); }}
+        onContextMenu={handleContextMenu}
+      />
+      {ctxMenu && (
+        <ContextMenu items={ctxMenu.items} x={ctxMenu.x} y={ctxMenu.y} onClose={() => setCtxMenu(null)} />
+      )}
+    </>
   );
 }

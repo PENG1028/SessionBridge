@@ -23,6 +23,9 @@
   },
   "contributes": {
     "views": {
+      "sidebar-left": [
+        { "id": "files", "title": "Files", "icon": "folder", "order": 10, "defaultVisible": true, "when": "view == \"terminal\"" }
+      ],
       "sidebar-right": [
         { "id": "processes", "title": "Processes", "icon": "activity", "defaultVisible": true, "when": "view == \"terminal\"" }
       ]
@@ -32,7 +35,8 @@
       { "id": "shell.kill", "title": "Kill Process", "category": "Terminal", "icon": "stop-circle", "when": "isRunning" }
     ],
     "menus": [
-      { "id": "shell.menu.clear", "menu": "terminal/context", "title": "Clear", "command": "shell.clear", "group": "edit", "when": "view == \"terminal\"" }
+      { "id": "shell.menu.clear", "menu": "terminal/context", "title": "Clear", "command": "shell.clear", "group": "edit", "when": "view == \"terminal\"" },
+      { "id": "shell.menu.kill", "menu": "terminal/context", "title": "Kill Instance", "command": "shell.kill", "group": "navigation", "when": "view == \"terminal\" && isRunning" }
     ],
     "chrome": {
       "statusBar": [

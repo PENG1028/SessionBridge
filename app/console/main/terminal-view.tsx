@@ -1,98 +1,142 @@
 'use client';
 
-import { Terminal } from 'lucide-react';
-import { useState } from 'react';
+import { Terminal, Folder } from 'lucide-react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useWorkbench } from '../workbench/workbench-context';
 import ShellTerminal from '../../shell-terminal';
+import { DirectoryPicker } from '../dialogs/directory-picker';
+import { TitleBar } from '../shared/title-bar';
 
 interface TerminalViewProps {
   instanceId?: string;
 }
 
+/** Envelope helper — same format as ShellTerminal. */
+function env(type: string, body: Record<string, unknown> = {}) {
+  return JSON.stringify({ v: 1, ts: Date.now(), type, body });
+}
+
 export function TerminalView({ instanceId }: TerminalViewProps) {
-  // Phase 4F: instanceId comes from PaneTab.instanceId.
-  // Phase 4I: NO fallback to activeInstanceId. If instanceId is undefined,
-  // the empty state is shown with Attach Existing / Create New Terminal.
-  // This ensures the activeInstanceId (sidebar management selection) does
-  // NOT influence terminal tab behavior.
-  const { wsUrl, token, createInstance, bindCurrentTabInstance, projectCwd, instances, activateInstance } = useWorkbench();
+  const { wsUrl, token, createInstance, bindCurrentTabInstance, projectCwd } = useWorkbench();
   const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const autoCreated = useRef(false);
+  const [cwd, setCwd] = useState(projectCwd || '.');
+  const [pickerOpen, setPickerOpen] = useState(false);
 
-  // Filter existing instances that are terminal-capable (shell adapter)
-  const terminalInstances = (instances || []).filter(
-    (inst: any) => inst.adapterId === 'shell' && inst.id !== instanceId
-  );
+  // Auto-create a new shell instance when no instanceId
+  const cwdRef = useRef(cwd);
+  cwdRef.current = cwd;
+  useEffect(() => {
+    if (instanceId || autoCreated.current) return;
+    autoCreated.current = true;
+    setCreating(true);
+    setError(null);
+    (async () => {
+      try {
+        const result = await createInstance(cwdRef.current, 'Terminal', 'shell');
+        if (result?.instance?.id) {
+          bindCurrentTabInstance(result.instance.id);
+        } else {
+          setError(result?.error || 'Failed to create terminal instance');
+        }
+      } catch (err) {
+        setError(String(err));
+      } finally {
+        setCreating(false);
+      }
+    })();
+  }, [instanceId, createInstance, bindCurrentTabInstance, projectCwd]);
 
-  // Phase 4F: No instanceId → show attach/create empty state, never auto-spawn.
+  // Sync cwd when projectCwd changes
+  useEffect(() => {
+    if (projectCwd) setCwd(projectCwd);
+  }, [projectCwd]);
+
+  // Send cd command to the terminal shell via a transient WS connection
+  const sendCd = useCallback((path: string) => {
+    setCwd(path);
+    if (!instanceId) return;
+    const qPath = path.replace(/\\/g, '/');
+    const cdCmd = `cd "${qPath}"\n`;
+
+    const ws = new WebSocket(wsUrl);
+    ws.onopen = () => {
+      const helloBody: Record<string, unknown> = { role: 'browser', features: ['cd-helper'] };
+      if (token) helloBody.token = token;
+      ws.send(env('hello', helloBody));
+      ws.send(env('shell.input', { data: cdCmd, instanceId }));
+      setTimeout(() => ws.close(), 200);
+    };
+    ws.onerror = () => {};
+  }, [instanceId, wsUrl, token]);
+
+  const handleSelectDir = useCallback((path: string) => {
+    sendCd(path);
+  }, [sendCd]);
+
+  const handleOpenDirectoryPicker = useCallback(() => {
+    setPickerOpen(true);
+  }, []);
+
   if (!instanceId) {
     return (
       <div className="flex-1 flex flex-col min-h-0">
-        <div className="px-3 py-1.5 border-b border-gray-800 text-[10px] text-gray-500 font-bold tracking-wider shrink-0">
-          TERMINAL
-        </div>
-        <div className="flex-1 flex flex-col items-center justify-center bg-[#0a0a0a] min-h-0 gap-4 overflow-y-auto px-4 py-4">
-          <Terminal className="w-10 h-10 text-gray-700 shrink-0" />
-          <div className="text-center space-y-1">
-            <p className="text-xs text-gray-500">No terminal instance attached</p>
-            <p className="text-[10px] text-gray-700">Attach an existing instance or create a new one</p>
-          </div>
-
-          {/* Attach Existing */}
-          {terminalInstances.length > 0 && (
-            <div className="w-full max-w-xs space-y-1.5">
-              <p className="text-[9px] text-gray-600 font-bold tracking-wider text-center">ATTACH EXISTING</p>
-              {terminalInstances.map((inst: any) => (
-                <button
-                  key={inst.id}
-                  onClick={() => bindCurrentTabInstance(inst.id)}
-                  className="w-full flex items-center gap-2 px-3 py-2 bg-[#1a1a1a] hover:bg-[#252525] border border-gray-700 hover:border-gray-600 rounded text-[11px] text-gray-300 transition-colors text-left"
-                >
-                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                    inst.status === 'running' ? 'bg-emerald-500/80'
-                    : inst.status === 'starting' ? 'bg-yellow-500'
-                    : 'bg-gray-600'
-                  }`} />
-                  <span className="truncate flex-1">{inst.label || inst.id.slice(0, 12)}</span>
-                  <span className="text-[9px] text-gray-600 uppercase">{inst.status}</span>
-                </button>
-              ))}
-            </div>
+        <TitleBar title="TERMINAL">
+          <button
+            onClick={() => setPickerOpen(true)}
+            className="flex items-center gap-1.5 px-2 py-0.5 rounded text-gray-300 hover:text-white bg-gray-800/60 hover:bg-gray-700/80 shrink-0 transition-colors border border-gray-700"
+            title="Browse directories"
+          >
+            <Folder className="w-3.5 h-3.5" />
+            <span className="text-[11px] font-mono">{cwd}</span>
+          </button>
+        </TitleBar>
+        <div className="flex-1 flex flex-col items-center justify-center bg-[#0a0a0a] min-h-0 gap-3">
+          <Terminal className="w-8 h-8 text-gray-700 shrink-0" />
+          {error ? (
+            <span className="text-[10px] text-red-400 px-4 text-center">{error}</span>
+          ) : (
+            <span className="text-[10px] text-gray-600">{creating ? 'Creating terminal...' : 'Starting...'}</span>
           )}
-
-          {/* Create New */}
-          <div className="flex flex-col items-center gap-2">
-            <button
-              onClick={async () => {
-                setCreating(true);
-                try {
-                  const result = await createInstance(projectCwd || '.', 'Terminal', 'shell');
-                  if (result?.instance?.id) {
-                    bindCurrentTabInstance(result.instance.id);
-                  }
-                } finally {
-                  setCreating(false);
-                }
-              }}
-              disabled={creating}
-              className="flex items-center gap-2 px-4 py-2 bg-purple-700 hover:bg-purple-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold rounded border border-purple-600 transition-colors"
-            >
-              <Terminal className="w-4 h-4" />
-              {creating ? 'Creating...' : 'Create New Terminal'}
-            </button>
-          </div>
         </div>
+
+        <DirectoryPicker
+          open={pickerOpen}
+          onClose={() => setPickerOpen(false)}
+          onSelect={handleSelectDir}
+          initialPath={cwd}
+          title="Directory Browser"
+        />
       </div>
     );
   }
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
-      <div className="px-3 py-1.5 border-b border-gray-800 text-[10px] text-gray-500 font-bold tracking-wider shrink-0">
-        TERMINAL
-      </div>
+      {/* Header */}
+      <TitleBar title="TERMINAL">
+        <button
+          onClick={() => setPickerOpen(true)}
+          className="flex items-center gap-1.5 px-2 py-0.5 rounded text-gray-300 hover:text-white bg-gray-800/60 hover:bg-gray-700/80 shrink-0 transition-colors border border-gray-700"
+          title="Change directory"
+        >
+          <Folder className="w-3.5 h-3.5" />
+          <span className="text-[11px] font-mono max-w-[160px] truncate">{cwd}</span>
+        </button>
+      </TitleBar>
+
       <div className="flex-1 flex flex-col min-h-0">
-        <ShellTerminal wsUrl={wsUrl} instanceId={instanceId} token={token} />
+        <ShellTerminal wsUrl={wsUrl} instanceId={instanceId} token={token} onOpenDirectoryPicker={handleOpenDirectoryPicker} />
       </div>
+
+      <DirectoryPicker
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onSelect={handleSelectDir}
+        initialPath={cwd}
+        title="Terminal Directory"
+      />
     </div>
   );
 }

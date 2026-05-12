@@ -9,6 +9,7 @@ import {
   Square,
 } from 'lucide-react';
 import { MobileSidebar } from './console/sidebar/mobile-sidebar';
+import { MobileRightPanel } from './console/sidebar/mobile-right-panel';
 import { useSessionSearch } from './console/shell/use-session-search';
 import { LeftSidebar } from './console/sidebar/left-sidebar';
 import { RightSidebar } from './console/sidebar/right-sidebar';
@@ -17,13 +18,11 @@ import { ConsoleHeader } from './console/shell/console-header';
 import { getAdapterViewId, getAdapterCapabilities, syncAdapterViewsFromExtensionData, syncAdapterMetaFromExtensionData, syncAdapterCapabilitiesFromExtensionData, getViewEntry, getAllAdapterTypes, resolveChromePolicy, type ChromePolicy } from './console/main/view-registry';
 import { __coreViewsRegistered } from './console/main/register-core-views';
 import { syncExtensionPanels } from './console/panels/panel-registry';
-import { __corePanelsRegistered } from './console/panels/register-core-panels';
 import { __extensionPanelComponentsRegistered } from './console/panels/register-panel-components';
 import { syncChromeContributions } from './console/chrome/chrome-registry';
 import { syncContextMenus } from './console/menus/context-menu-registry';
 import { evaluateWhen } from '../lib/evaluate-when';
 import { getDefaultAdapterId } from '../extensions/registry';
-void __corePanelsRegistered;
 void __extensionPanelComponentsRegistered;
 void __coreViewsRegistered;
 import { useNotification } from './console/shared/notification-context';
@@ -33,7 +32,7 @@ import { useHistoryLoader } from './console/hooks/use-history-loader';
 import { useCommandHandlers } from './console/hooks/use-command-handlers';
 import { useKeyboardShortcuts } from './console/hooks/use-keyboard-shortcuts';
 import { useContextMenu } from './console/hooks/use-context-menu';
-import type { ContextMenuRequest } from './console/menus/context-menu-types';
+import type { ContextMenuRequest, ContextMenuItemSpec } from './console/menus/context-menu-types';
 import { registerBuiltinCommands } from './console/commands/register-builtin-commands';
 import { registerCommand, getCommand } from './console/commands/command-registry';
 import { __coreActionsRegistered } from './console/actions/register-core-actions';
@@ -44,10 +43,12 @@ import type { ActionRunContext } from './console/actions/action-types';
 void __coreActionsRegistered;
 import type { ContextMenuItem } from './console/shell/context-menu';
 import { ConsoleOverlays } from './console/overlays/console-overlays';
+import { InstanceBar } from './console/stage/instance-bar';
 import { KeyHintOverlay } from './console/chrome/key-hint-overlay';
+import { MobileExtraKeys } from './console/chrome/mobile-extra-keys';
 import { LayoutProvider, useLayout, SidebarSlot, MainSlot, FocusProvider, RuntimePolicyProvider, useFocus, useRuntimePolicy, WorkbenchProvider } from './console/workbench';
 import { WorkbenchLayout } from './console/stage/workbench-layout';
-import { workbenchReducer, createInitialState, findPane as findPaneInTree, type ViewType, type PaneTab } from './console/stage/workbench-state';
+import { appReducer, createAppInitialState, getActiveWorkbenchState, createInitialState, findPane as findPaneInTree, saveLayoutsToStorage, loadLayoutsFromStorage, restoreInstanceStatesFromStorage, genTabId, genPaneId, type ViewType, type PaneTab, type LayoutNode, type WorkbenchAction, type AppWorkbenchState, type AppWorkbenchAction } from './console/stage/workbench-state';
 
 // ==========================================
 // Types
@@ -243,8 +244,8 @@ function PageContent() {
   const tokenParam = params.get('token');
   const [wsUrl, setWsUrl] = useState(urlParam || defaultUrl);
   const [token, setToken] = useState<string | undefined>(tokenParam || undefined);
+  const [customServerUrl, setCustomServerUrl] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [manualConnectOpen, setManualConnectOpen] = useState(false);
   const { state, dispatch } = useLayout();
 
   // ── Core state ──────────────────────────
@@ -262,6 +263,7 @@ function PageContent() {
   const [taskTimer, setTaskTimer] = useState(0);
   const [queueInfo, setQueueInfo] = useState<{isProcessing: boolean; queueDepth: number; queue: any[]}>({isProcessing: false, queueDepth: 0, queue: []});
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [mobileRightOpen, setMobileRightOpen] = useState(false);
   // Timer to refresh task durations and queue every 5s
   useEffect(() => {
     if (activeTasks.size === 0 && !phase) return;
@@ -331,7 +333,25 @@ function PageContent() {
     notify({ id: n.id, type: severity, title: n.title, message: n.message, duration: n.duration, action: n.action });
   }, [notify]);
 
-  const { connStatus, msgLog, sendInput, sendCommand, serverBlocks, sessions, activeSessionId, activateSession, spawnSession, isWorkspace, queueStatus, instances, activeInstanceId, activateInstance, createInstance, killInstance, extensionPointsData } = useSession(wsUrl, token ?? undefined, undefined, undefined, undefined, onSystemNotify, dismiss);
+  const { connStatus, msgLog, sendInput, sendShellInput, sendCommand, serverBlocks, sessions, activeSessionId, activateSession, spawnSession, isWorkspace, queueStatus, instances, activeInstanceId, activateInstance, createInstance, killInstance, extensionPointsData } = useSession(wsUrl, token ?? undefined, undefined, undefined, undefined, onSystemNotify, dismiss);
+
+  // ── 30s grace before showing disconnect banner ──
+  const [showBanner, setShowBanner] = useState(false);
+  const disconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (connStatus.status === 'connected') {
+      if (disconnectTimerRef.current) {
+        clearTimeout(disconnectTimerRef.current);
+        disconnectTimerRef.current = null;
+      }
+      setShowBanner(false);
+    } else if (!disconnectTimerRef.current) {
+      disconnectTimerRef.current = setTimeout(() => setShowBanner(true), 30000);
+    }
+    return () => { if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current); };
+  }, [connStatus.status]);
+  const connectionUnstable = connStatus.status !== 'connected';
+
   // Phase 4I: activeAdapterId/viewId/isActiveRunning/whenContext are derived
   // from paneFocus below — context menu and extension commands follow the
   // current tab's binding, not the global activeInstanceId.
@@ -353,40 +373,68 @@ function PageContent() {
     }
   }, [extensionPointsData]);
 
-  // ── Workbench pane/tab layout state ──────
-  const [workbenchState, setWorkbenchState] = useState(() => createInitialState(activeInstanceId || undefined));
-  const workbenchDispatch = useCallback((action: import('./console/stage/workbench-state').WorkbenchAction) => {
-    setWorkbenchState(prev => workbenchReducer(prev, action));
+  // ── Workbench pane/tab layout state (Phase 4N: per-instance workbench) ──
+  const [appState, setAppState] = useState<AppWorkbenchState>(() => createAppInitialState());
+  const appDispatch = useCallback((action: AppWorkbenchAction) => {
+    setAppState(prev => appReducer(prev, action));
   }, []);
+  const activeWorkbenchDispatch = useCallback((action: WorkbenchAction) => {
+    setAppState(prev => {
+      if (prev.activeInstanceId && prev.instanceStates[prev.activeInstanceId]) {
+        return appReducer(prev, { type: 'INSTANCE_ACTION', instanceId: prev.activeInstanceId, action });
+      }
+      return appReducer(prev, { type: 'GLOBAL_ACTION', action });
+    });
+  }, []);
+  const activeWorkbenchState = useMemo(() => getActiveWorkbenchState(appState), [appState]);
+  const appStateRef = useRef(appState);
+  appStateRef.current = appState;
   // Phase 4I: Instance changes (sidebar click) no longer auto-create tabs.
   // Tab is the subject — instance is a tab's binding. Only shell tabs are
   // restored on reconnect via the instances[] effect below.
 
-  // When an instance is killed/removed, clear any tabs bound to it.
+  // When an instance is killed/removed, clean up its layout
   const prevInstanceIds = useRef<string[]>([]);
   useEffect(() => {
+    // Don't cleanup during disconnection/reconnection (server restart, etc.)
+    // — instances may temporarily be empty but layouts are persisted.
+    if (connStatus.status !== 'connected') return;
     const currentIds = instances.map((i: any) => i.id);
     const removed = prevInstanceIds.current.filter(id => !currentIds.includes(id));
     prevInstanceIds.current = currentIds;
     for (const id of removed) {
-      workbenchDispatch({ type: 'CLEAR_INSTANCE_TABS', instanceId: id });
+      setAppState(prev => appReducer(prev, { type: 'REMOVE_INSTANCE_LAYOUT', instanceId: id }));
     }
-  }, [instances, workbenchDispatch]);
+  }, [instances, connStatus.status]);
 
   // ── Pane focus / Chrome policy ────────────
   const paneFocus = useMemo(() => {
-    if (!workbenchState) return null;
-    const activePane = workbenchState.root.kind === 'pane'
-      ? workbenchState.root
-      : findPaneInTree(workbenchState.root, workbenchState.activePaneId);
+    if (!activeWorkbenchState) return null;
+    const activePane = activeWorkbenchState.root.kind === 'pane'
+      ? activeWorkbenchState.root
+      : findPaneInTree(activeWorkbenchState.root, activeWorkbenchState.activePaneId);
     if (!activePane) return null;
     const activeTab = activePane.tabs.find(t => t.id === activePane.activeTabId) || activePane.tabs[0];
     if (!activeTab) return null;
     return { paneId: activePane.id, viewType: activeTab.viewType, instanceId: activeTab.instanceId };
-  }, [workbenchState]);
+  }, [activeWorkbenchState]);
   const activeViewChrome = paneFocus ? getViewEntry(paneFocus.viewType)?.meta.chrome : undefined;
   const chromePolicy = resolveChromePolicy(activeViewChrome);
   const showStatusBar = chromePolicy.statusBar !== 'hidden';
+  const activeSidebarReqs = paneFocus ? getViewEntry(paneFocus.viewType)?.meta.sidebarRequirements : undefined;
+
+  // Effective sidebar open state: sidebarRequirements drive defaults per view;
+  // manual toggle (sidebarOverride) takes precedence.
+  const effectiveLeftOpen = state.sidebarOverride
+    ? state.leftSidebarOpen
+    : activeSidebarReqs?.left === 'hidden' ? false
+    : activeSidebarReqs?.left === 'shown' ? true
+    : state.leftSidebarOpen;
+  const effectiveRightOpen = state.sidebarOverride
+    ? state.rightSidebarOpen
+    : activeSidebarReqs?.right === 'hidden' ? false
+    : activeSidebarReqs?.right === 'shown' ? true
+    : state.rightSidebarOpen;
 
   // ── Focus-based context (for context menu + extCommands) ───
   // Phase 4I: These follow the pane focus (current tab's binding), NOT the
@@ -452,6 +500,22 @@ function PageContent() {
         handler: () => sendCommand(id),
       });
     }
+
+    // Phase 4N: keep/unkeep tab commands for context menu
+    registerCommand({
+      id: 'tab.keep',
+      title: 'Keep Tab',
+      handler: (args?: any) => {
+        if (args?.tab) appDispatch({ type: 'KEEP_TAB', tab: args.tab });
+      },
+    });
+    registerCommand({
+      id: 'tab.unkeep',
+      title: 'Unkeep Tab',
+      handler: (args?: any) => {
+        if (args?.tabId) appDispatch({ type: 'UNKEEP_TAB', tabId: args.tabId });
+      },
+    });
   }, [sendCommand, sendInput, killInstance, activeSessionId, extensionPointsData]);
 
   // Close command palette when the active view disables it
@@ -479,6 +543,88 @@ function PageContent() {
     }
     prevInstanceIdsRef.current = currentIds;
   }, [instances, notify]);
+
+  // ── Restore saved layouts from localStorage when instances arrive (Phase 4N) ──
+  const instancesRestoredRef = useRef(false);
+  // Reset restore flag on reconnect so persisted layouts re-apply
+  const wasDisconnectedRef = useRef(true);
+  useEffect(() => {
+    if (connStatus.status === 'connected') {
+      if (wasDisconnectedRef.current) {
+        wasDisconnectedRef.current = false;
+        instancesRestoredRef.current = false;
+      }
+    } else {
+      wasDisconnectedRef.current = true;
+    }
+  }, [connStatus.status]);
+  useEffect(() => {
+    if (instances.length === 0 || instancesRestoredRef.current) return;
+    instancesRestoredRef.current = true;
+
+    const saved = loadLayoutsFromStorage();
+    if (saved) {
+      const serverIds = instances.map((i: any) => i.id);
+      const { states, persistentTabs } = restoreInstanceStatesFromStorage(
+        saved.instanceStates, saved.persistentTabs as PaneTab[], serverIds
+      );
+      // Workbench instance IDs = saved ones + any instance that has a layout
+      const mergedIds = new Set([
+        ...(saved.workbenchInstanceIds || []),
+        ...Object.keys(states),
+      ]);
+      const validIds = [...mergedIds].filter(id => serverIds.includes(id));
+      setAppState(prev => {
+        let next = prev;
+        if (persistentTabs.length > 0) {
+          next = { ...next, persistentTabs };
+        }
+        for (const [id, state] of Object.entries(states)) {
+          if (!next.instanceStates[id]) {
+            next = appReducer(next, { type: 'RESTORE_INSTANCE_STATE', instanceId: id, state });
+          }
+        }
+        if (validIds.length > 0) {
+          next = appReducer(next, { type: 'SET_WORKBENCH_INSTANCES', instanceIds: validIds });
+        }
+        return next;
+      });
+    } else {
+      // Fresh start — auto-populate with the first instance from server
+      const firstId = instances[0]?.id;
+      if (firstId) {
+        const initialLayout = createInitialState(firstId);
+        setAppState(prev => appReducer(
+          { ...prev, instanceStates: { ...prev.instanceStates, [firstId]: initialLayout } },
+          { type: 'SET_WORKBENCH_INSTANCES', instanceIds: [firstId] }
+        ));
+      }
+    }
+  }, [instances]);
+
+  // ── Auto-save layouts to localStorage with debounce (Phase 4N) ──
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => {
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(() => {
+      // Don't overwrite localStorage with empty state during reconnect blips
+      if (Object.keys(appState.instanceStates).length === 0 && appState.workbenchInstanceIds.length === 0) return;
+      saveLayoutsToStorage(appState.instanceStates, appState.persistentTabs, appState.workbenchInstanceIds);
+    }, 500);
+    return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
+  }, [appState.instanceStates, appState.persistentTabs, appState.workbenchInstanceIds]);
+
+  // Save on beforeunload
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      const state = appStateRef.current;
+      if (Object.keys(state.instanceStates).length > 0 || state.workbenchInstanceIds.length > 0) {
+        saveLayoutsToStorage(state.instanceStates, state.persistentTabs, state.workbenchInstanceIds);
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, []);
 
   const addLog = useCallback((msg: string) => setLogs(prev => [...prev, msg]), []);
 
@@ -535,7 +681,7 @@ function PageContent() {
   const handleToggleLeftSidebar = useCallback(() => dispatch({ type: 'TOGGLE_SIDEBAR', position: 'left' }), [dispatch]);
   const handleRestart = useCallback(() => sendCommand('clear'), [sendCommand]);
 
-  useKeyboardShortcuts(messages, handleClearSession, handleToggleCommandPalette, handleToggleLeftSidebar, handleRestart, chromePolicy.globalShortcuts);
+  useKeyboardShortcuts(messages, handleClearSession, handleToggleCommandPalette, handleToggleLeftSidebar, handleRestart, chromePolicy.globalShortcuts, state.activeViewId);
 
   const handleQuickCompact = useCallback(() => {
     sendInput('/compact', activeSessionId || undefined);
@@ -606,8 +752,8 @@ function PageContent() {
     instanceId: focusInstanceId,
     projectCwd: projectInfo?.cwd || '.',
     messages,
-    workbenchState,
-    workbenchDispatch,
+    workbenchState: activeWorkbenchState,
+    workbenchDispatch: activeWorkbenchDispatch,
     sendCommand,
     sendInput: (text: string) => sendInput(text, activeSessionId || undefined),
     createInstance,
@@ -618,7 +764,7 @@ function PageContent() {
     toggleLeftSidebar: () => dispatch({ type: 'TOGGLE_SIDEBAR', position: 'left' }),
     toggleRightSidebar: () => dispatch({ type: 'TOGGLE_SIDEBAR', position: 'right' }),
     notify: (n) => notify({ id: n.title, type: n.type as any, title: n.title, message: n.message }),
-  }), [focusViewId, focusAdapterId, focusIsRunning, focusInstanceId, projectInfo, messages, workbenchState, workbenchDispatch, sendCommand, sendInput, activeSessionId, createInstance, killInstance, openSearchPanel, dispatch, notify]);
+  }), [focusViewId, focusAdapterId, focusIsRunning, focusInstanceId, projectInfo, messages, activeWorkbenchState, activeWorkbenchDispatch, sendCommand, sendInput, activeSessionId, createInstance, killInstance, openSearchPanel, dispatch, notify]);
 
   // ── Context menu — uses actionRunContext, must be after its definition ──
   const { ctxMenu, setCtxMenu, openContextMenu, handleWorkbenchContextMenu, closeContextMenu } = useContextMenu(
@@ -783,10 +929,16 @@ function PageContent() {
   // ── Connection status ──────────────────
   const statusColor = connStatus.status === 'connected' ? 'bg-green-500'
     : connStatus.status === 'connecting' ? 'bg-yellow-500'
-    : 'bg-red-500';
+    : showBanner ? 'bg-red-500' : 'bg-yellow-500';
   const statusText = connStatus.status === 'connected' ? 'CONNECTED'
     : connStatus.status === 'connecting' ? 'CONNECTING'
     : 'DISCONNECTED';
+  const connectionLabel = connStatus.status === 'connected'
+    ? 'SessionBridge'
+    : 'Disconnected';
+  const connectionUrl = connStatus.status === 'connected'
+    ? wsUrl.replace(/^wss?:\/\//, '')
+    : null;
 
   // Phase indicator
   const phaseColor = phase === 'idle' ? 'text-gray-500'
@@ -805,9 +957,19 @@ function PageContent() {
   // the tab object at call time. A future "tab/context" manifest or action
   // registry structure could replace these.
   const handleContextTab = useCallback((tab: PaneTab, e: React.MouseEvent) => {
-    const localItems = [
+    const isPersistent = appStateRef.current.persistentTabs.some(t => t.id === tab.id);
+    const localItems: ContextMenuItemSpec[] = [
       { id: 'tab.copyName', title: 'Copy Name', command: 'clipboard.copy', args: { text: tab.title }, group: 'edit', order: 10 },
       { id: 'tab.copyId', title: 'Copy Tab ID', command: 'clipboard.copy', args: { text: tab.id }, group: 'edit', order: 20 },
+      { id: 'tab.keepSep', title: '', separator: true, group: 'actions', order: 5 },
+      {
+        id: isPersistent ? 'tab.unkeep' : 'tab.keep',
+        title: isPersistent ? 'Unkeep Tab' : 'Keep Tab',
+        command: isPersistent ? 'tab.unkeep' : 'tab.keep',
+        args: isPersistent ? { tabId: tab.id } : { tab: { id: tab.id, title: tab.title, viewType: tab.viewType, instanceId: tab.instanceId } },
+        group: 'actions',
+        order: 10,
+      },
       { id: 'tab.sep1', title: '', separator: true, group: 'view', order: 5 },
       { id: 'tab.type', title: `Type: ${tab.viewType}`, group: 'view', order: 10 },
     ];
@@ -828,96 +990,89 @@ function PageContent() {
 
   // ── Handle tab reorder via drag/drop ──
   const handleReorderTabs = useCallback((paneId: string, tabId: string, targetId: string) => {
-    workbenchDispatch({ type: 'REORDER_TABS', paneId, tabId, targetId });
-  }, [workbenchDispatch]);
+    activeWorkbenchDispatch({ type: 'REORDER_TABS', paneId, tabId, targetId });
+  }, [activeWorkbenchDispatch]);
+
+  // ── Instance bar handlers (Phase 4N) ──
+  const handleActivateInstanceBar = useCallback((instanceId: string) => {
+    const currentState = appStateRef.current;
+    if (currentState.activeInstanceId === instanceId) {
+      // Toggle off — switch to global layout
+      setAppState(prev => appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: null }));
+    } else {
+      // Switch to this instance — ensure it has a layout
+      setAppState(prev => {
+        if (prev.instanceStates[instanceId]) {
+          return appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId });
+        }
+        const newLayout = createInitialState(instanceId);
+        return appReducer(
+          { ...prev, instanceStates: { ...prev.instanceStates, [instanceId]: newLayout } },
+          { type: 'SET_ACTIVE_INSTANCE', instanceId }
+        );
+      });
+      // Sync to server so chat views know which instance is active
+      activateInstance(instanceId);
+    }
+  }, [activateInstance]);
+
+  const handleCreateInstanceBar = useCallback(async () => {
+    // Show connection manager
+    setAppState(prev => appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: null }));
+  }, []);
+
+  const handleKillInstanceBar = useCallback((instanceId: string) => {
+    killInstance(instanceId);
+    setAppState(prev => appReducer(prev, { type: 'REMOVE_INSTANCE_LAYOUT', instanceId }));
+  }, [killInstance]);
+
+  const handleRenameInstanceBar = useCallback(async (instanceId: string, newLabel: string) => {
+    const httpBase = wsUrl.replace(/^ws/, 'http');
+    try {
+      await fetch(`${httpBase}/api/aliases`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instanceId, alias: newLabel }),
+      });
+    } catch (err) {
+      console.error('Rename failed', err);
+    }
+  }, [wsUrl]);
+
+  // ── Closed kept tabs for ≡ menu (Phase 4N) ──
+  const closedKeptTabs = useMemo(() => {
+    const openTabIds = new Set<string>();
+    const collect = (node: LayoutNode) => {
+      if (node.kind === 'pane') node.tabs.forEach(t => openTabIds.add(t.id));
+      else node.children.forEach(collect);
+    };
+    collect(activeWorkbenchState.root);
+    if (activeWorkbenchState.bottom) {
+      activeWorkbenchState.bottom.tabs.forEach(t => openTabIds.add(t.id));
+    }
+    return appState.persistentTabs.filter(t => !openTabIds.has(t.id));
+  }, [activeWorkbenchState, appState.persistentTabs]);
+
+  const handleReopenKeptTab = useCallback((tab: PaneTab) => {
+    const active = getActiveWorkbenchState(appStateRef.current);
+    const pane = findPaneInTree(active.root, active.activePaneId);
+    if (pane) {
+      activeWorkbenchDispatch({
+        type: 'ADD_TAB',
+        paneId: pane.id,
+        tab: { ...tab, id: genTabId() },
+      });
+    }
+  }, [activeWorkbenchDispatch]);
 
   // ── Render ──
-  // Fetch saved connections for the connect screen
+  // Fetch saved connections
   const [savedRelays, setSavedRelays] = useState<{id:string;name:string;url:string;token?:string}[]>([]);
   useEffect(() => {
-    if (!manualConnectOpen) return;
     fetch('/api/config').then(r => r.json()).then((cfg: any) => {
       if (cfg?.connections) setSavedRelays(cfg.connections);
     }).catch(() => {});
-  }, [manualConnectOpen]);
-
-  if (manualConnectOpen) {
-    return (
-      <div className="flex items-center justify-center h-screen bg-[#0a0a0a] text-gray-300 font-mono">
-        <div className="w-full max-w-sm p-8 bg-[#111] border border-gray-800 rounded-lg space-y-5">
-          <div>
-            <h1 className="text-lg font-bold mb-1">SessionBridge</h1>
-            <p className="text-[10px] text-gray-600">Connect to a relay server.</p>
-          </div>
-
-          {/* Saved connections */}
-          {savedRelays.length > 0 && (
-            <div>
-              <div className="text-[9px] font-bold text-gray-500 tracking-wider mb-2">SAVED RELAYS</div>
-              <div className="space-y-1">
-                {savedRelays.map((r) => (
-                  <button
-                    key={r.id}
-                    onClick={() => { setWsUrl(r.url); setToken(r.token || undefined); setManualConnectOpen(false); }}
-                    className="w-full flex items-center gap-2 px-3 py-2 bg-[#1a1a1a] border border-gray-700 rounded hover:border-purple-600 text-left transition-colors"
-                  >
-                    <div className="w-1.5 h-1.5 rounded-full bg-gray-600" />
-                    <span className="text-xs text-gray-300 truncate flex-1">{r.name}</span>
-                    <span className="text-[8px] text-gray-600 truncate max-w-[140px]">{r.url}</span>
-                  </button>
-                ))}
-              </div>
-              <div className="border-t border-gray-800 my-3" />
-            </div>
-          )}
-
-          {/* Manual connect form */}
-          <form onSubmit={(e) => {
-            e.preventDefault();
-            const url = (document.getElementById('connect-url') as HTMLInputElement)?.value.trim() || defaultUrl;
-            const tok = (document.getElementById('connect-token') as HTMLInputElement)?.value.trim() || '';
-            setWsUrl(url);
-            setToken(tok || undefined);
-            setManualConnectOpen(false);
-          }}>
-            <div className="text-[9px] font-bold text-gray-500 tracking-wider mb-2">MANUAL CONNECT</div>
-            <div className="space-y-2">
-              <input
-                id="connect-url"
-                type="text"
-                defaultValue={defaultUrl}
-                placeholder="ws://localhost:8080"
-                className="w-full bg-[#1a1a1a] border border-gray-700 rounded px-3 py-2 text-sm text-gray-200 placeholder-gray-600 outline-none focus:border-purple-500 font-mono"
-                autoFocus={savedRelays.length === 0}
-              />
-              <input
-                id="connect-token"
-                type="password"
-                placeholder="Token (optional)"
-                className="w-full bg-[#1a1a1a] border border-gray-700 rounded px-3 py-2 text-sm text-gray-200 placeholder-gray-600 outline-none focus:border-purple-500 font-mono"
-              />
-            </div>
-            <button
-              type="submit"
-              className="w-full bg-purple-700 hover:bg-purple-600 text-white rounded px-3 py-2 text-sm font-semibold transition-colors mt-3"
-            >
-              Connect
-            </button>
-          </form>
-
-          {/* Quick localhost connect */}
-          <div className="text-center">
-            <button
-              onClick={() => { setWsUrl(defaultUrl); setToken(undefined); setManualConnectOpen(false); }}
-              className="text-[10px] text-gray-600 hover:text-gray-400 transition-colors"
-            >
-              Connect to localhost
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  }, []);
 
   // ── Handle view request from pane (user picks view in EmptyPane) ──
   // Phase 4F: Opening a view NEVER auto-creates an instance. The tab is a UI
@@ -927,19 +1082,19 @@ function PageContent() {
   const handleRequestView = useCallback((paneId: string, tabId: string, viewType: ViewType) => {
     const entry = getViewEntry(viewType);
     const defaultTitle = entry?.meta.title || viewType.charAt(0).toUpperCase() + viewType.slice(1);
-    workbenchDispatch({ type: 'SET_TAB_VIEW', paneId, tabId, viewType, title: defaultTitle });
-  }, [workbenchDispatch]);
+    activeWorkbenchDispatch({ type: 'SET_TAB_VIEW', paneId, tabId, viewType, title: defaultTitle });
+  }, [activeWorkbenchDispatch]);
 
   // Phase 4F: Bind the active pane's current tab to an instanceId (called by views after explicit create).
-  const workbenchStateRef = useRef(workbenchState);
-  workbenchStateRef.current = workbenchState;
+  const workbenchStateRef = useRef(activeWorkbenchState);
+  workbenchStateRef.current = activeWorkbenchState;
   const handleBindCurrentTabInstance = useCallback((instanceId: string) => {
     const state = workbenchStateRef.current;
     const activePane = findPaneInTree(state.root, state.activePaneId);
     if (!activePane) return;
     const activeTab = activePane.tabs.find(t => t.id === activePane.activeTabId);
     if (!activeTab) return;
-    workbenchDispatch({
+    activeWorkbenchDispatch({
       type: 'SET_TAB_VIEW',
       paneId: activePane.id,
       tabId: activeTab.id,
@@ -947,7 +1102,20 @@ function PageContent() {
       title: activeTab.title,
       instanceId,
     });
-  }, [workbenchDispatch]);
+  }, [activeWorkbenchDispatch]);
+
+  // ── Close tab: kill if not kept ──
+  const handleCloseTab = useCallback((_paneId: string, _tabId: string, tab: PaneTab) => {
+    const instId = tab.instanceId;
+    if (instId) {
+      // Kept tabs survive tab close (≡ menu revival). Non-kept → kill process.
+      const isKept = appStateRef.current.persistentTabs.some(t => t.id === tab.id);
+      if (!isKept) {
+        killInstance(instId);
+        setAppState(prev => appReducer(prev, { type: 'REMOVE_INSTANCE_LAYOUT', instanceId: instId }));
+      }
+    }
+  }, [killInstance]);
 
   // ── Workbench context value (provides session/chat state to all view components) ──
   const workbenchContextValue = useMemo(() => ({
@@ -1025,9 +1193,11 @@ function PageContent() {
       <ConsoleHeader
         chromePolicy={chromePolicy}
         onMobileOpen={() => setMobileOpen(true)}
+        onMobileRightOpen={() => setMobileRightOpen(true)}
         statusColor={statusColor}
         statusText={statusText}
         connStatus={connStatus}
+        connectionUnstable={connectionUnstable}
         phaseColor={phaseColor}
         phaseLabel={phaseLabel}
         phase={phase}
@@ -1050,22 +1220,24 @@ function PageContent() {
         onToggleDashboard={() => {
                 // Add a dashboard tab to the active pane
                 const tabId = 'dash_' + Date.now().toString(36);
-                workbenchDispatch({
+                activeWorkbenchDispatch({
                   type: 'ADD_TAB',
-                  paneId: workbenchState.activePaneId,
+                  paneId: activeWorkbenchState.activePaneId,
                   tab: { id: tabId, title: 'Dashboard', viewType: 'dashboard' },
                 });
               }}
         showDashboard={false}
         onToggleCommandPalette={() => setShowCommandPalette(v => !v)}
-        leftSidebarOpen={state.leftSidebarOpen}
-        rightSidebarOpen={state.rightSidebarOpen}
+        leftSidebarOpen={effectiveLeftOpen}
+        rightSidebarOpen={effectiveRightOpen}
         onToggleLeftSidebar={() => dispatch({ type: 'TOGGLE_SIDEBAR', position: 'left' })}
         onToggleRightSidebar={() => dispatch({ type: 'TOGGLE_SIDEBAR', position: 'right' })}
+        connectionLabel={connectionLabel}
+        onOpenConnectionManager={() => setAppState(prev => appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: null }))}
       />
 
-      {/* ── Disconnect banner ── */}
-      {connStatus.status !== 'connected' && (
+      {/* ── Disconnect banner (30s grace) ── */}
+      {showBanner && (
         <div className="flex items-center justify-center gap-2 px-3 py-1.5 text-[11px] font-bold tracking-wider uppercase"
           style={{ backgroundColor: connStatus.status === 'connecting' ? '#1a3a1a' : '#3a1a1a', color: connStatus.status === 'connecting' ? '#4ade80' : '#f87171' }}>
           <span className={`w-1.5 h-1.5 rounded-full ${statusColor}`} />
@@ -1073,45 +1245,21 @@ function PageContent() {
         </div>
       )}
 
-      {/* ═══ OVERLAYS (extracted to ConsoleOverlays) ════ */}
-      <ConsoleOverlays
-        showSearch={showSearch}
-        searchPanelRef={searchPanelRef}
-        searchQuery={searchQuery}
-        searchInputRef={searchInputRef}
-        handleSearchInput={handleSearchInput}
-        searchLoading={searchLoading}
-        onCloseSearch={() => setShowSearch(false)}
-        searchResults={searchResults}
-        addLog={addLog}
-        handleLoadSession={handleLoadSession}
-        showCommandPalette={showCommandPalette}
-        extCommands={paletteCommands}
-        onCommand={handlePaletteSelect}
-        onCloseCommandPalette={() => setShowCommandPalette(false)}
-        viewingFile={viewingFile}
-        onCloseFileViewer={() => setViewingFile(null)}
-        forkTarget={forkTarget}
-        turns={turns}
-        forkPrompt={forkPrompt}
-        setForkPrompt={setForkPrompt}
-        onCloseFork={() => setForkTarget(null)}
-        onRewind={handleForkRewind}
-        onForkSnapshot={handleForkSnapshot}
-        onForkWithPrompt={handleForkWithPrompt}
-        ctxMenu={ctxMenu}
-        onCloseContextMenu={closeContextMenu}
-        settingsOpen={settingsOpen}
-        onCloseSettings={() => setSettingsOpen(false)}
-        wsUrl={wsUrl}
-        token={token}
-        onConnect={(url, tok) => { setWsUrl(url); setToken(tok); }}
+      {/* ── Instance bar (Phase 4N) — only workbench-level instances, not tab-level processes ── */}
+      <InstanceBar
+        instances={instances.filter((i: any) => appState.workbenchInstanceIds.includes(i.id) && (i.status === 'running' || i.status === 'starting'))}
+        activeInstanceId={appState.activeInstanceId}
+        onActivate={handleActivateInstanceBar}
+        onCreate={handleCreateInstanceBar}
+        onKill={handleKillInstanceBar}
+        onRename={handleRenameInstanceBar}
+        onOpenConnection={() => setAppState(prev => appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: null }))}
       />
 
-      <KeyHintOverlay whenContext={focusWhenContext} onCommand={handlePaletteSelect} />
+      <MobileExtraKeys activeInstanceId={appState.activeInstanceId} statusBarHidden={!showStatusBar} sendShellInput={sendShellInput} />
 
       <div className="flex flex-1 overflow-hidden">
-        <SidebarSlot open={state.leftSidebarOpen}>
+        <SidebarSlot open={effectiveLeftOpen}>
           <LeftSidebar
           fileTree={fileTree}
           expandedDirs={expandedDirs}
@@ -1136,19 +1284,21 @@ function PageContent() {
           onSendFile={(filePath) => {
             setInputValue(prev => prev + `@${filePath} `);
           }}
-          instances={instances}
-          activeInstanceId={activeInstanceId}
-          onActivateInstance={activateInstance}
-          onCreateInstance={createInstance}
-          onKillInstance={killInstance}
           onCommand={(cmdId) => runWorkbenchCommand({ command: cmdId }, actionRunContext)}
           projectCwd={projectInfo?.cwd || '.'}
+          instances={instances.filter((i: any) => appState.workbenchInstanceIds.includes(i.id) && (i.status === 'running' || i.status === 'starting'))}
+          activeInstanceId={activeInstanceId}
+          onActivateInstance={activateInstance}
+          onCreateInstance={(dir, _label, adapterId) => createInstance(dir, undefined, adapterId)}
+          onKillInstance={killInstance}
         />
         </SidebarSlot>
 
         {/* ═══ CENTER: WorkbenchLayout ════════ */}
         <main className="flex-1 flex flex-col relative bg-black min-w-0 min-h-0">
           <WorkbenchProvider value={workbenchContextValue}>
+          {appState.activeInstanceId ? (
+            <div className="flex flex-col flex-1 min-h-0 min-w-0">
           <div className="flex items-center justify-between h-7 px-2 border-b border-gray-800 bg-[#0a0a0a] shrink-0">
             <span className="flex items-center gap-2 text-[10px] font-bold text-gray-500 tracking-wider">
               WORKBENCH
@@ -1184,11 +1334,15 @@ function PageContent() {
 
           {/* ── WorkbenchLayout (pane/tab/view system) — fully generic, no hardcoded viewType checks ── */}
           <WorkbenchLayout
-            state={workbenchState}
-            dispatch={workbenchDispatch}
+            state={activeWorkbenchState}
+            dispatch={activeWorkbenchDispatch}
             onRequestView={handleRequestView}
             onContextTab={handleContextTab}
             onReorderTabs={handleReorderTabs}
+            closedKeptTabs={closedKeptTabs}
+            onReopenKeptTab={handleReopenKeptTab}
+            onCloseTab={handleCloseTab}
+            persistentTabIds={appState.persistentTabs.map(t => t.id)}
             renderView={(viewType, instanceId) => {
               // Generic view resolution: instance-bound views resolve through adapter system,
               // static views use viewType directly as the registry key.
@@ -1199,10 +1353,117 @@ function PageContent() {
               return <MainSlot viewId={resolvedViewId} instanceId={instanceId} />;
             }}
           />
+          </div>) : (
+            <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
+              <div className="p-6 space-y-8 max-w-3xl mx-auto w-full">
+                {/* ── Instances ── */}
+                <section>
+                  <h2 className="text-[11px] font-bold text-gray-500 tracking-wider uppercase mb-3">
+                    Instances ({appState.workbenchInstanceIds.length})
+                  </h2>
+                  {appState.workbenchInstanceIds.length === 0 ? (
+                    <div className="text-[10px] text-gray-700 italic px-2">No instances yet. Create one below.</div>
+                  ) : (
+                    <div className="space-y-1">
+                      {instances.filter((i: any) => appState.workbenchInstanceIds.includes(i.id) && (i.status === 'running' || i.status === 'starting')).map((inst: any) => (
+                        <div key={inst.id} className="flex items-center justify-between bg-[#111] border border-gray-800 rounded-lg px-4 py-3">
+                          <div className="flex items-center gap-3">
+                            <span className={`w-1.5 h-1.5 rounded-full ${
+                              inst.status === 'running' ? 'bg-emerald-500' : inst.status === 'starting' ? 'bg-yellow-500' : 'bg-red-500'
+                            }`} />
+                            <span className="text-sm text-gray-200">{inst.label || inst.id.slice(0, 12)}</span>
+                            {inst.source === 'remote' && <span className="text-[8px] bg-cyan-900/25 text-cyan-400 px-1 rounded font-mono">R</span>}
+                          </div>
+                          <button onClick={() => handleActivateInstanceBar(inst.id)}
+                            className="text-[10px] px-3 py-1 bg-purple-700 hover:bg-purple-600 text-white rounded transition-colors">Launch</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
+
+                {/* ── Servers ── */}
+                <section>
+                  <h2 className="text-[11px] font-bold text-gray-500 tracking-wider uppercase mb-3">Servers</h2>
+                  <div className="space-y-1">
+                    {savedRelays.length === 0 ? (
+                      <div className="text-[10px] text-gray-700 italic px-2">No saved servers.</div>
+                    ) : (
+                      savedRelays.map((r: any) => (
+                        <button key={r.id} onClick={() => { setWsUrl(r.url); setToken(r.token || undefined); }}
+                          className="w-full flex items-center gap-3 px-4 py-3 bg-[#111] border border-gray-800 rounded-lg hover:border-purple-700/50 text-left transition-colors"
+                        >
+                          <div className="w-1.5 h-1.5 rounded-full bg-gray-600" />
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm text-gray-200 truncate">{r.name}</div>
+                            <div className="text-[10px] text-gray-600 truncate">{r.url}</div>
+                          </div>
+                          {r.url === wsUrl ? (
+                            <span className="text-[9px] text-emerald-500 shrink-0">Connected</span>
+                          ) : (
+                            <span className="text-[10px] text-gray-500 shrink-0">Connect</span>
+                          )}
+                        </button>
+                      ))
+                    )}
+                    {/* Custom URL input */}
+                    <form onSubmit={(e) => { e.preventDefault(); if (customServerUrl.trim()) setWsUrl(customServerUrl.trim()); }}
+                      className="flex gap-1 pt-1"
+                    >
+                      <input type="text" value={customServerUrl} onChange={e => setCustomServerUrl(e.target.value)}
+                        placeholder="wss://server.example.com:8080"
+                        className="flex-1 bg-[#0d0d0d] border border-gray-700 rounded px-2 py-1.5 text-[11px] text-gray-200 outline-none focus:border-purple-500"
+                      />
+                      <button type="submit" className="px-3 py-1.5 bg-purple-700 hover:bg-purple-600 text-white text-[10px] rounded border border-purple-600 shrink-0">
+                        Connect
+                      </button>
+                    </form>
+                  </div>
+                </section>
+
+                {/* ── Create Instance ── */}
+                <section>
+                  <h2 className="text-[11px] font-bold text-gray-500 tracking-wider uppercase mb-3">Create Instance</h2>
+                  <div className="bg-[#111] border border-gray-800 rounded-lg p-4">
+                    <div className="flex gap-2">
+                      <button onClick={async () => {
+                        const adapterId = getDefaultAdapterId();
+                        const result = await createInstance(projectInfo?.cwd || '.', undefined, adapterId);
+                        if (result?.success && result?.instance?.id) {
+                          const id = result.instance.id;
+                          const paneId = genPaneId();
+                          const emptyTabId = genTabId();
+                          const emptyState = {
+                            root: { kind: 'pane' as const, id: paneId, tabs: [{ id: emptyTabId, title: 'Empty', viewType: 'empty' as const }], activeTabId: emptyTabId, zone: 'main' as const },
+                            activePaneId: paneId,
+                            bottom: null,
+                          };
+                          setAppState(prev => {
+                            let next = prev;
+                            next = appReducer(next, { type: 'ADD_WORKBENCH_INSTANCE', instanceId: id });
+                            if (!next.instanceStates[id]) next = appReducer(next, { type: 'RESTORE_INSTANCE_STATE', instanceId: id, state: emptyState });
+                            return appReducer(next, { type: 'SET_ACTIVE_INSTANCE', instanceId: id });
+                          });
+                          activateInstance(id);
+                        }
+                      }} className="px-4 py-2 bg-purple-700 hover:bg-purple-600 text-white rounded text-[11px] font-semibold transition-colors">
+                        New Instance
+                      </button>
+                      <button onClick={() => {
+                        setWsUrl(defaultUrl); setToken(undefined);
+                      }} className="px-4 py-2 border border-gray-700 hover:border-purple-700/50 text-gray-400 hover:text-gray-200 rounded text-[11px] transition-colors">
+                        Connect to Server...
+                      </button>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </div>
+          )}
           </WorkbenchProvider>
         </main>
 
-        <SidebarSlot open={state.rightSidebarOpen}>
+        <SidebarSlot open={effectiveRightOpen}>
           <RightSidebar
           activeTasks={activeTasks}
           queueInfo={queueInfo}
@@ -1236,6 +1497,8 @@ function PageContent() {
           queueStatus={queueStatus}
           onSetMode={setMode}
           onSetEffort={setEffort}
+          wsUrl={wsUrl}
+          token={token}
         />
       )}
 
@@ -1253,7 +1516,42 @@ function PageContent() {
         .prose-container li { overflow-wrap: break-word; }
       `}</style>
 
-      {/* Mobile sidebar overlay */}
+    </div>
+
+      {/* ═══ OVERLAYS — outside overflow-hidden to avoid clipping ════ */}
+      <ConsoleOverlays
+        showSearch={showSearch}
+        searchPanelRef={searchPanelRef}
+        searchQuery={searchQuery}
+        searchInputRef={searchInputRef}
+        handleSearchInput={handleSearchInput}
+        searchLoading={searchLoading}
+        onCloseSearch={() => setShowSearch(false)}
+        searchResults={searchResults}
+        addLog={addLog}
+        handleLoadSession={handleLoadSession}
+        showCommandPalette={showCommandPalette}
+        extCommands={paletteCommands}
+        onCommand={handlePaletteSelect}
+        onCloseCommandPalette={() => setShowCommandPalette(false)}
+        viewingFile={viewingFile}
+        onCloseFileViewer={() => setViewingFile(null)}
+        forkTarget={forkTarget}
+        turns={turns}
+        forkPrompt={forkPrompt}
+        setForkPrompt={setForkPrompt}
+        onCloseFork={() => setForkTarget(null)}
+        onRewind={handleForkRewind}
+        onForkSnapshot={handleForkSnapshot}
+        onForkWithPrompt={handleForkWithPrompt}
+        ctxMenu={ctxMenu}
+        onCloseContextMenu={closeContextMenu}
+        settingsOpen={settingsOpen}
+        onCloseSettings={() => setSettingsOpen(false)}
+      />
+
+      <KeyHintOverlay whenContext={focusWhenContext} onCommand={handlePaletteSelect} />
+
       <MobileSidebar
         open={mobileOpen}
         onClose={() => setMobileOpen(false)}
@@ -1277,13 +1575,38 @@ function PageContent() {
         onSendFile={(filePath) => {
           setInputValue(prev => prev + `@${filePath} `);
         }}
-        instances={instances}
         activeInstanceId={activeInstanceId}
-        onActivate={activateInstance}
         onKill={killInstance}
         onCommand={handlePaletteSelect}
+        activeView={focusViewId}
       />
-    </div>
+      <MobileRightPanel
+        open={mobileRightOpen}
+        onClose={() => setMobileRightOpen(false)}
+        activeTasks={activeTasks}
+        queueInfo={queueInfo}
+        onNewSession={handleNewSessionWrapper}
+        onQuickCompact={handleQuickCompact}
+        onSaveSnapshot={() => saveSnapshot()}
+        snapshots={snapshots}
+        onLoadSnapshot={loadSnapshotWrapper}
+        onForkSnapshot={forkFromSnapshotWrapper}
+        knownFiles={knownFiles}
+        onOpenFile={(filePath) => {
+          fetch(`/api/read-file?path=${encodeURIComponent(filePath)}`)
+            .then(r => r.json())
+            .then(data => {
+              if (data.content !== undefined) setViewingFile({ path: data.path || filePath, content: data.content });
+            })
+            .catch(() => {});
+        }}
+        shortenPath={shortenPath}
+        logs={logs}
+        msgLog={msgLog}
+        terminalTab={terminalTab}
+        onTerminalTabChange={setTerminalTab}
+        logsEndRef={logsEndRef}
+      />
       </RuntimePolicyProvider>
     </FocusProvider>
   );

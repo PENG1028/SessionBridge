@@ -72,3 +72,53 @@ extension 的功能声明优先放在 `sb-extension.json` 而非硬编码在 `sr
 3. 如果是基础设施 → 先评估是否真的需要，改后执行耦合检查
 4. 插件功能如需新增 API → 在 `src/api-routes.ts` 加，保持 `ApiContext` 模式
 5. 重要变更写 `docs/` 记录决策理由
+
+## 本地开发启动方式
+
+项目有两个服务端：
+
+| 服务 | 端口 | 命令 | 用途 |
+|------|------|------|------|
+| Relay Server | 8080 | `npm run dev` | WebSocket 中继 + API (/api/*)，**没有前端页面** |
+| Next.js Dev | 3000 | `npm run dev:web` | 前端 UI 开发服务器 |
+
+**开发时**：浏览器访问 `http://localhost:3000`，API 请求通过 rewrites 代理到 `localhost:8080`。
+**生产构建**：`npm run build` 生成静态文件到 `out/`，由 relay server 直接 serve。
+
+### `next.config.ts` 的 `output: 'export'` 规则
+
+`output: 'export'` **只在生产构建时需要**（`npm run build`）。运行 `next dev` 时必须注释掉，否则 Turbopack 不会正常编译和 HMR。如果刚刚 build 过，`out/` 目录必须一并删除。
+
+```bash
+# 从生产模式切回开发模式
+# 1. 注释 next.config.ts 里的 output: 'export'
+# 2. 删掉构建产物
+rm -rf .next out
+# 3. 启动
+npm run dev       # 终端 1 — relay
+npm run dev:web   # 终端 2 — 前端
+```
+
+## 已知踩坑
+
+### 源码修改后浏览器看到旧代码
+
+**症状**：改了 `app/` 下的 `.tsx`，源码确认已修改，换浏览器/清缓存/强制刷新都看到旧内容。
+
+**根因**：
+1. `next.config.ts` 里 `output: 'export'` 没注释 → dev server 不编译动态页面
+2. 或者 `out/` 目录残留（上次 `next build` 产物）→ dev server 直接 serve 旧静态文件
+3. 或者 `.next` 缓存损坏
+
+**修复**：
+```bash
+# 确认 next.config.ts 的 output: 'export' 已注释
+# 然后：
+rm -rf .next out
+# 重启 dev:web
+npm run dev:web
+```
+
+### 修改 relay server (src/) 后不生效
+
+Relay server 用 `tsx watch` 启动，改 `src/` 会自动重启。如果没生效 → 手动 Ctrl+C 重跑 `npm run dev`。

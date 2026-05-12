@@ -196,6 +196,8 @@ export interface InstanceHandle {
   stop: () => Promise<void>;
   /** Stream of output blocks (for UI rendering) */
   onBlock: (handler: (block: OutputBlock) => void) => () => void;
+  /** Optional PTY resize */
+  resize?: (cols: number, rows: number) => void;
 }
 
 // ═══════════════════════════════════════════════════════════════════

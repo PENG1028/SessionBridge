@@ -47,9 +47,6 @@ interface ConsoleOverlaysProps {
   // Settings
   settingsOpen: boolean;
   onCloseSettings: () => void;
-  wsUrl: string;
-  token: string | undefined;
-  onConnect: (url: string, token?: string) => void;
 }
 
 export function ConsoleOverlays(props: ConsoleOverlaysProps) {
@@ -141,9 +138,6 @@ export function ConsoleOverlays(props: ConsoleOverlaysProps) {
       <SettingsPanel
         open={props.settingsOpen}
         onClose={props.onCloseSettings}
-        currentUrl={props.wsUrl}
-        currentToken={props.token}
-        onConnect={props.onConnect}
       />
 
       {/* ═══ CONTEXT MENU ════ */}

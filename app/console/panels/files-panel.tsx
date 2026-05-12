@@ -1,8 +1,8 @@
 'use client';
 
-import { useRef, useCallback, useEffect } from 'react';
+import { useRef, useCallback } from 'react';
+import { Upload } from 'lucide-react';
 import { FileExplorer } from '../sidebar/file-explorer';
-import { onPanelAction } from '../sidebar/panel-action-events';
 
 interface FilesPanelProps {
   fileTree?: Record<string, { items: any[]; loaded: boolean }>;
@@ -34,15 +34,16 @@ export function FilesPanel(props: FilesPanelProps) {
     e.target.value = '';
   }, []);
 
-  // Listen for upload action from header button
-  useEffect(() => onPanelAction('files-upload', () => {
-    fileInputRef.current?.click();
-  }), []);
-
   return (
     <>
       <input ref={fileInputRef} type="file" className="hidden" onChange={handleUpload} />
-      <div className="flex-1 overflow-y-auto p-1.5 text-xs min-h-0">
+      <div className="flex-1 flex flex-col min-h-0">
+        <div className="shrink-0 flex items-center justify-end px-1 pt-1">
+          <button onClick={() => fileInputRef.current?.click()} title="Upload file to workspace" className="text-gray-600 hover:text-gray-300">
+            <Upload className="w-3 h-3" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto px-1.5 pb-1.5 text-xs min-h-0">
         {!fileTree?.['.']?.loaded ? (
           <div className="text-gray-600 text-[10px] p-3 italic">Loading files...</div>
         ) : (
@@ -57,6 +58,7 @@ export function FilesPanel(props: FilesPanelProps) {
             onSendFile={onSendFile || (() => {})}
           />
         )}
+        </div>
       </div>
     </>
   );

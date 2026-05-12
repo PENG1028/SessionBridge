@@ -4,9 +4,9 @@
 
 import { createServer, request as httpRequest, IncomingMessage, ServerResponse } from 'http';
 import { spawn, ChildProcess } from 'child_process';
-import { readFileSync, existsSync } from 'fs';
-import { join, extname } from 'path';
-import type { AgentConfig } from './config';
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
+import { join, extname, dirname } from 'path';
+import { configDir, type AgentConfig } from './config';
 import type { PermissionModel } from './permissions';
 import type { NotificationModel } from './notifications';
 import type { RelayConnection } from './relay-connection';
@@ -16,6 +16,12 @@ import { getSystemState, listProcesses, listProcessesSorted, type AgentIntrospec
 import type { HostInfo } from './extension-host-manager';
 import { extensionPoints } from './extension-points';
 import { detectNetwork } from '../src/network-detect';
+import {
+  initAuth, checkAuth, createSession, revokeSession,
+  listSessions, changePassword, loginPageHtml, setupPageHtml,
+  parseAuthCookie, getToken, isTokenSet, isAuthEnabled, setAuthEnabled,
+  type DashboardSession,
+} from './dashboard-auth';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -181,20 +187,286 @@ function buildIntrospection(): AgentIntrospection {
   };
 }
 
+/** Persist config changes (e.g. dashboardToken) back to agent.json. */
+function persistConfig(config: AgentConfig): void {
+  try {
+    const path = process.env.BRIDGE_CONFIG || join(configDir(), 'agent.json');
+    let existing: Record<string, unknown> = {};
+    try {
+      if (existsSync(path)) {
+        existing = JSON.parse(readFileSync(path, 'utf8'));
+      }
+    } catch { /* malformed — overwrite */ }
+    existing.dashboardToken = config.dashboardToken;
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify(existing, null, 2), 'utf8');
+    addDashboardLog('[auth] Token persisted to config');
+  } catch (e) {
+    addDashboardLog(`[auth] Failed to persist token: ${e}`);
+  }
+}
+
 export function startDashboard(config: AgentConfig, permissions: PermissionModel): Promise<void> {
+  // Initialize auth module (token may be empty — triggers first-run setup)
+  const authEnabled = config.dashboardAuthEnabled !== false;
+  initAuth(config.dashboardToken || '', authEnabled, config.dashboardSessionTtl);
+  if (!authEnabled) {
+    addDashboardLog('[auth] Dashboard authentication disabled');
+  } else if (config.dashboardToken) {
+    addDashboardLog('[auth] Using configured dashboard token');
+  } else {
+    addDashboardLog('[auth] No dashboard token set — first access will prompt for setup');
+    console.log(`[auth] No dashboard token set. Open http://${config.dashboardBind}:${config.dashboardPort} to create one.`);
+  }
   return new Promise((resolve) => {
     const server = createServer(async (req, res) => {
       const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
 
       // CORS preflight
       if (req.method === 'OPTIONS') {
-        res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET,POST', 'Access-Control-Allow-Headers': 'Content-Type' });
+        res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET,POST,DELETE', 'Access-Control-Allow-Headers': 'Content-Type, Authorization' });
         res.end();
         return;
       }
 
+      // ── Public routes (no auth required) ─────────────────────
+      const hasToken = isTokenSet();
+      const isPublic =
+        url.pathname === '/api/auth/check' ||
+        (!hasToken && (url.pathname === '/setup' || url.pathname === '/api/auth/setup')) ||
+        (hasToken && (url.pathname === '/login' || url.pathname === '/api/auth/login'));
+
+      // ── Auth gate for all other routes ────────────────────────
+      if (!isPublic && isAuthEnabled()) {
+        if (!hasToken) {
+          // No token set yet — redirect everything to /setup
+          if (url.pathname.startsWith('/api/')) {
+            jsonReply(res, 403, { error: 'Setup required', message: '请先设置访问密钥' });
+          } else {
+            res.writeHead(302, { 'Location': '/setup' });
+            res.end();
+          }
+          return;
+        }
+        const authResult = checkAuth(req);
+        if (!authResult.authenticated) {
+          // API requests get 401 JSON, page requests get redirected to /login
+          if (url.pathname.startsWith('/api/')) {
+            jsonReply(res, 401, { error: 'Unauthorized', message: '请先登录' });
+          } else {
+            res.writeHead(302, { 'Location': '/login' });
+            res.end();
+          }
+          return;
+        }
+      }
+
       try {
         switch (url.pathname) {
+          // ── Auth routes ──────────────────────────────────────
+          // First-run setup (only accessible when no token is set)
+          case '/setup': {
+            if (isTokenSet()) {
+              res.writeHead(302, { 'Location': '/login' });
+              res.end();
+              return;
+            }
+            const error = url.searchParams.get('error') || undefined;
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+            res.end(setupPageHtml(error));
+            return;
+          }
+
+          case '/api/auth/setup': {
+            if (isTokenSet()) {
+              jsonReply(res, 403, { error: 'Token already set' });
+              return;
+            }
+            if (req.method !== 'POST') { res.writeHead(405); res.end('Method Not Allowed'); return; }
+            const body = await readBody(req);
+            let password: string | null = null;
+            let confirm: string | null = null;
+            if (body.startsWith('{')) {
+              try {
+                const data = JSON.parse(body);
+                password = data.password;
+                confirm = data.confirm;
+              } catch { /* fall through */ }
+            } else {
+              const params = new URLSearchParams(body);
+              password = params.get('password');
+              confirm = params.get('confirm');
+            }
+            if (!password) {
+              res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+              res.end(setupPageHtml('请输入访问密钥'));
+              return;
+            }
+            if (password.length < 8) {
+              res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+              res.end(setupPageHtml('密钥长度至少 8 个字符'));
+              return;
+            }
+            if (password !== confirm) {
+              res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+              res.end(setupPageHtml('两次输入的密钥不一致'));
+              return;
+            }
+            // Token is now set
+            changePassword(password);
+            if (state) {
+              state.config.dashboardToken = password;
+              persistConfig(state.config);
+            }
+            // Create session for the setup user
+            const ua = req.headers['user-agent'] || undefined;
+            const { cookie } = createSession(ua);
+            addDashboardLog('[auth] Initial password set — dashboard secured');
+            console.log(`[auth] Dashboard token set by user. Use this to log in from other devices.`);
+            res.writeHead(302, { 'Location': '/', 'Set-Cookie': cookie });
+            res.end();
+            return;
+          }
+
+          case '/login': {
+            const error = url.searchParams.get('error') || undefined;
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+            res.end(loginPageHtml(error));
+            return;
+          }
+
+          case '/api/auth/login': {
+            if (req.method !== 'POST') { res.writeHead(405); res.end('Method Not Allowed'); return; }
+            const body = await readBody(req);
+            // Support both JSON and form-urlencoded
+            let submittedToken: string | null = null;
+            if (body.startsWith('{')) {
+              try { submittedToken = JSON.parse(body).token; } catch { /* fall through */ }
+            } else {
+              const params = new URLSearchParams(body);
+              submittedToken = params.get('token');
+            }
+            if (!submittedToken) {
+              res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+              res.end(loginPageHtml('请输入访问密钥'));
+              return;
+            }
+            const currentToken = getToken();
+            if (!currentToken || submittedToken !== currentToken) {
+              res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+              res.end(loginPageHtml('密钥错误，请重试'));
+              return;
+            }
+            const ua = req.headers['user-agent'] || undefined;
+            const { cookie } = createSession(ua);
+            addDashboardLog('[auth] Login succeeded');
+            res.writeHead(302, { 'Location': '/', 'Set-Cookie': cookie });
+            res.end();
+            return;
+          }
+
+          case '/api/auth/logout': {
+            if (req.method !== 'POST') { res.writeHead(405); res.end(); return; }
+            const cookie = parseAuthCookie(req);
+            if (cookie) revokeSession(cookie.sessionId);
+            addDashboardLog('[auth] Logout');
+            res.writeHead(200, {
+              'Set-Cookie': 'sb_session=; HttpOnly; SameSite=Lax; Max-Age=0; Path=/',
+            });
+            jsonReply(res, 200, { ok: true });
+            return;
+          }
+
+          case '/api/auth/sessions': {
+            if (req.method === 'DELETE') {
+              const sid = url.searchParams.get('id');
+              if (!sid) { jsonReply(res, 400, { error: 'Missing session id' }); return; }
+              revokeSession(sid);
+              addDashboardLog(`[auth] Session revoked: ${sid.slice(0, 8)}…`);
+              jsonReply(res, 200, { ok: true });
+              return;
+            }
+            const all = listSessions();
+            jsonReply(res, 200, all.map(s => ({
+              id: s.id.slice(0, 16) + '…',
+              createdAt: new Date(s.createdAt).toISOString(),
+              expiresAt: new Date(s.expiresAt).toISOString(),
+              userAgent: s.userAgent || '(unknown)',
+            })));
+            return;
+          }
+
+          case '/api/auth/change-password': {
+            if (req.method !== 'POST') { res.writeHead(405); res.end(); return; }
+            const body = await readBody(req);
+            let oldToken: string, newToken: string;
+            try {
+              const data = JSON.parse(body);
+              oldToken = data.oldToken;
+              newToken = data.newToken;
+            } catch {
+              jsonReply(res, 400, { error: 'Invalid JSON' });
+              return;
+            }
+            if (!oldToken || !newToken) {
+              jsonReply(res, 400, { error: 'Missing oldToken or newToken' });
+              return;
+            }
+            const current = getToken();
+            if (oldToken !== current) {
+              jsonReply(res, 403, { error: 'Current password is incorrect' });
+              return;
+            }
+            if (newToken.length < 8) {
+              jsonReply(res, 400, { error: 'New password must be at least 8 characters' });
+              return;
+            }
+            changePassword(newToken);
+            // Persist to config
+            if (state) {
+              state.config.dashboardToken = newToken;
+              persistConfig(state.config);
+            }
+            addDashboardLog('[auth] Password changed — all sessions invalidated');
+            jsonReply(res, 200, { ok: true, message: '密码已更改，所有会话已失效' });
+            return;
+          }
+
+          case '/api/auth/check': {
+            const authResult = checkAuth(req);
+            jsonReply(res, 200, {
+              authenticated: authResult.authenticated,
+              authEnabled: isAuthEnabled(),
+              tokenSet: isTokenSet(),
+              session: authResult.session ? {
+                createdAt: new Date(authResult.session.createdAt).toISOString(),
+                expiresAt: new Date(authResult.session.expiresAt).toISOString(),
+              } : null,
+            });
+            return;
+          }
+
+          case '/api/auth/toggle': {
+            if (req.method !== 'POST') { res.writeHead(405); res.end(); return; }
+            const body = await readBody(req);
+            let enabled: boolean;
+            try {
+              enabled = JSON.parse(body).enabled;
+            } catch {
+              jsonReply(res, 400, { error: 'Missing "enabled" field' });
+              return;
+            }
+            setAuthEnabled(enabled);
+            if (state) {
+              state.config.dashboardAuthEnabled = enabled;
+              persistConfig(state.config);
+            }
+            addDashboardLog(`[auth] Authentication ${enabled ? 'enabled' : 'disabled'}`);
+            jsonReply(res, 200, { ok: true, authEnabled: enabled });
+            return;
+          }
+
+          // ── Main routes ──────────────────────────────────────
           case '/':
           case '/index.html':
             // Serve the Next.js console (from out/) at root
@@ -515,6 +787,8 @@ export function startDashboard(config: AgentConfig, permissions: PermissionModel
               delete proxyHeaders['host'];
               delete proxyHeaders['connection'];
               delete proxyHeaders['keep-alive'];
+              // Tag the forwarded request so relay can detect circular proxies
+              proxyHeaders['x-forwarded-by'] = 'dashboard';
               const proxyReq = httpRequest(
                 { hostname: '127.0.0.1', port: relayPort, path: req.url, method: req.method, headers: proxyHeaders },
                 (proxyRes) => {

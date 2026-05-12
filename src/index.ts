@@ -63,6 +63,7 @@ async function main() {
     --upstream <url>       Connect to an external relay
     --relay-port <n>       Relay server port (default: 8080)
     --relay-token <token>  Relay server auth token
+    --dashboard-token <t>  Dashboard access token (auto-generated if not set)
     --role <relay|leaf>    Force node role (default: auto-detect)
     --dir <path>           Working directory (default: cwd)
     --label <name>         Node label (default: hostname)
@@ -76,6 +77,7 @@ async function main() {
   Setup options:
     --relay <url>          Set default relay URL
     --relay-token <token>  Set relay authentication token
+    --dashboard-token <t>  Set dashboard access token
     --ntfy-topic <topic>   Set ntfy.sh topic for push notifications
     --label <name>         Set default node label
 `);
@@ -218,10 +220,11 @@ async function main() {
 
     const relayUrl = sarg('relay');
     const relayToken = sarg('relay-token');
+    const dashboardToken = sarg('dashboard-token');
     const ntfyTopic = sarg('ntfy-topic');
     const label = sarg('label');
 
-    if (!relayUrl && !relayToken && !ntfyTopic && !label) {
+    if (!relayUrl && !relayToken && !dashboardToken && !ntfyTopic && !label) {
       console.log(`Config file: ${configPath}`);
       if (Object.keys(existing).length === 0) {
         console.log('(no config set — using defaults)');
@@ -236,6 +239,7 @@ async function main() {
 
     if (relayUrl) existing.upstreamRelay = relayUrl;
     if (relayToken) existing.relayToken = relayToken;
+    if (dashboardToken) existing.dashboardToken = dashboardToken;
     if (ntfyTopic) existing.ntfyTopic = ntfyTopic;
     if (label) existing.label = label;
 
@@ -313,6 +317,7 @@ async function main() {
     relayToken: arg('relay-token', '') || undefined,
     upstreamRelay: arg('upstream', '') || undefined,
     dashboardPort: parseInt(arg('dashboard-port', '9843'), 10),
+    dashboardToken: arg('dashboard-token', '') || undefined,
     logFile: arg('log-file', ''),
     pidFile: arg('pid-file', ''),
     devMode: hasFlag('dev'),
@@ -338,7 +343,8 @@ async function main() {
     );
     const dashAddr = `http://127.0.0.1:${node.config.dashboardPort}`;
     const nodeIdShort = node.config.nodeId?.slice(0, 12) || '…';
-    const hasToken = !!node.config.relayToken;
+    const hasRelayToken = !!node.config.relayToken;
+    const dashToken = node.config.dashboardToken || '(not set — open dashboard to create)';
 
     console.log(`\n╔${bar}╗`);
     console.log(`║  SessionBridge v0.6.0                                    ║`);
@@ -347,14 +353,15 @@ async function main() {
     console.log(`╠${bar}╣`);
     console.log(`║  Relay:     ${relayAddr.padEnd(51)}║`);
     console.log(`║  Dashboard: ${dashAddr.padEnd(51)}║`);
-    if (hasToken) {
-      console.log(`║  Token:     ${node.config.relayToken!.slice(0, 32).padEnd(39)}║`);
+    console.log(`║  Dash Key:  ${dashToken.padEnd(51)}║`);
+    if (hasRelayToken) {
+      console.log(`║  Relay Key: ${node.config.relayToken!.slice(0, 32).padEnd(39)}║`);
     }
     console.log(`╠${bar}╣`);
     if (node.resolvedRole === 'relay') {
       console.log(`║  Other nodes connect with:                                ║`);
       console.log(`║    bridge connect ${relayAddr.padEnd(41)}║`);
-      if (hasToken) console.log(`║    --token ${node.config.relayToken!.slice(0, 20).padEnd(46)}║`);
+      if (hasRelayToken) console.log(`║    --token ${node.config.relayToken!.slice(0, 20).padEnd(46)}║`);
       console.log(`║  Mobile: open ${(dashAddr + '/qr').padEnd(44)}║`);
     } else {
       console.log(`║  Connected to upstream relay.                              ║`);

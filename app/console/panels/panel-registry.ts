@@ -1,7 +1,31 @@
 'use client';
 
 import type { ComponentType, ReactNode } from 'react';
+import {
+  Activity, Camera, Cpu, FileText, Folder, ListChecks, Play, ScrollText, Terminal, Upload, Zap,
+} from 'lucide-react';
 import { evaluateWhen, type WhenContext } from '../../../lib/evaluate-when';
+
+// ── Icon Name Resolution ──────────────────────────────────────────
+// Maps string icon names from extension manifests to lucide components.
+
+const iconMap: Record<string, ComponentType<{ className?: string }>> = {
+  activity: Activity,
+  camera: Camera,
+  cpu: Cpu,
+  'file-text': FileText,
+  folder: Folder,
+  'list-checks': ListChecks,
+  play: Play,
+  'scroll-text': ScrollText,
+  terminal: Terminal,
+  upload: Upload,
+  zap: Zap,
+};
+
+function resolveIcon(name?: string): ComponentType<{ className?: string }> | undefined {
+  return name ? iconMap[name] : undefined;
+}
 
 // ── Panel Registration ────────────────────────────────────────
 
@@ -143,7 +167,7 @@ export function syncExtensionPanels(
         title: v.title,
         order: v.order ?? 100,
         when: v.when,
-        // TODO: map manifest icon names to lucide icons for extension panels.
+        icon: resolveIcon(v.icon),
         component: comp,
       });
       extensionPanelIds.add(v.id);

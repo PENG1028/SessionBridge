@@ -1,0 +1,45 @@
+{
+  "id": "host",
+  "displayName": "SessionBridge",
+  "version": "0.6.0",
+  "extensionKind": ["configuration-only", "visual"],
+  "icon": "cpu",
+  "engines": { "sessionbridge": "^0.6.0" },
+  "main": "./index.js",
+  "activationEvents": ["onStartupFinished"],
+  "runtime": {
+    "installHint": "Built-in — no installation required"
+  },
+  "capabilities": {
+    "terminal": false,
+    "fileContext": false,
+    "structuredEvents": false,
+    "approvals": false,
+    "modes": false,
+    "timeline": false,
+    "compact": false,
+    "tasks": false
+  },
+  "contributes": {
+    "views": {
+      "sidebar-left": []
+    },
+    "chrome": {
+      "header": [
+        { "id": "host.header.dashboard", "title": "Dashboard", "icon": "layout-dashboard", "command": "host.dashboard.open", "order": 10 },
+        { "id": "host.header.settings", "title": "Settings", "icon": "settings", "command": "host.settings.open", "order": 20 }
+      ],
+      "contextControls": [
+        {
+          "id": "host.hint.settings",
+          "kind": "hint",
+          "label": "Settings",
+          "keys": "⌘,",
+          "placement": "bottom-right",
+          "priority": 30,
+          "command": "host.settings.open"
+        }
+      ]
+    }
+  }
+}

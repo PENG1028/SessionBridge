@@ -11,7 +11,7 @@ registerView('terminal', {
     icon: TerminalIcon,
     sidebarRequirements: { left: 'auto', right: 'auto' },
     chrome: {
-      header: 'minimal',
+      header: 'full',
       statusBar: 'hidden',
       commandPalette: false,
       globalShortcuts: false,

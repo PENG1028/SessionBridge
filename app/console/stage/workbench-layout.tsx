@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState, type ReactNode, type MouseEvent as ReactMouseEvent } from 'react';
 import { PaneView } from './pane-view';
 import type { LayoutNode, SplitNode, PaneState, PaneTab, ViewType, WorkbenchState, WorkbenchAction } from './workbench-state';
-import { genTabId } from './workbench-state';
+import { genTabId, findPane } from './workbench-state';
 import { Terminal, X } from 'lucide-react';
 
 interface WorkbenchLayoutProps {
@@ -13,6 +13,10 @@ interface WorkbenchLayoutProps {
   onRequestView?: (paneId: string, tabId: string, viewType: ViewType) => void;
   onContextTab?: (tab: PaneTab, e: React.MouseEvent) => void;
   onReorderTabs?: (paneId: string, tabId: string, targetId: string) => void;
+  closedKeptTabs?: PaneTab[];
+  onReopenKeptTab?: (tab: PaneTab) => void;
+  onCloseTab?: (paneId: string, tabId: string, tab: PaneTab) => void;
+  persistentTabIds?: string[];
 }
 
 // ─── Draggable divider ─────────────────────────────────────────
@@ -48,6 +52,9 @@ function LayoutNodeRenderer({
   renderView,
   onContextTab,
   onReorderTabs,
+  closedKeptTabs,
+  onReopenKeptTab,
+  persistentTabIds,
 }: {
   node: LayoutNode;
   activePaneId: string;
@@ -59,6 +66,9 @@ function LayoutNodeRenderer({
   renderView: (viewType: ViewType, instanceId?: string) => ReactNode;
   onContextTab?: (tab: PaneTab, e: React.MouseEvent) => void;
   onReorderTabs?: (paneId: string, tabId: string, targetId: string) => void;
+  closedKeptTabs?: PaneTab[];
+  onReopenKeptTab?: (tab: PaneTab) => void;
+  persistentTabIds?: string[];
 }) {
   if (node.kind === 'pane') {
     const isActive = node.id === activePaneId;
@@ -79,6 +89,9 @@ function LayoutNodeRenderer({
           renderView={renderView}
           onContextTab={onContextTab}
           onReorderTabs={(tabId, targetId) => onReorderTabs?.(node.id, tabId, targetId)}
+          closedKeptTabs={closedKeptTabs}
+          onReopenKeptTab={onReopenKeptTab}
+          persistentTabIds={persistentTabIds}
         />
       </div>
     );
@@ -95,6 +108,9 @@ function LayoutNodeRenderer({
     renderView={renderView}
     onContextTab={onContextTab}
     onReorderTabs={onReorderTabs}
+    closedKeptTabs={closedKeptTabs}
+    onReopenKeptTab={onReopenKeptTab}
+    persistentTabIds={persistentTabIds}
   />;
 }
 
@@ -111,6 +127,9 @@ function SplitRenderer({
   renderView,
   onContextTab,
   onReorderTabs,
+  closedKeptTabs,
+  onReopenKeptTab,
+  persistentTabIds,
 }: {
   split: SplitNode;
   activePaneId: string;
@@ -122,6 +141,9 @@ function SplitRenderer({
   renderView: (viewType: ViewType, instanceId?: string) => ReactNode;
   onContextTab?: (tab: PaneTab, e: React.MouseEvent) => void;
   onReorderTabs?: (paneId: string, tabId: string, targetId: string) => void;
+  closedKeptTabs?: PaneTab[];
+  onReopenKeptTab?: (tab: PaneTab) => void;
+  persistentTabIds?: string[];
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState<{ index: number; start: number; startSizes: number[] } | null>(null);
@@ -212,6 +234,9 @@ function SplitRenderer({
               renderView={renderView}
               onContextTab={onContextTab}
               onReorderTabs={onReorderTabs}
+              closedKeptTabs={closedKeptTabs}
+              onReopenKeptTab={onReopenKeptTab}
+              persistentTabIds={persistentTabIds}
             />
           </div>
         );
@@ -296,7 +321,7 @@ function BottomDock({
 
 // ─── Main layout ───────────────────────────────────────────────
 
-export function WorkbenchLayout({ state, dispatch, renderView, onRequestView, onContextTab, onReorderTabs }: WorkbenchLayoutProps) {
+export function WorkbenchLayout({ state, dispatch, renderView, onRequestView, onContextTab, onReorderTabs, closedKeptTabs, onReopenKeptTab, onCloseTab: onBeforeCloseTab, persistentTabIds }: WorkbenchLayoutProps) {
   const onFocusPane = useCallback((id: string) => {
     dispatch({ type: 'FOCUS_PANE', paneId: id });
   }, [dispatch]);
@@ -306,8 +331,11 @@ export function WorkbenchLayout({ state, dispatch, renderView, onRequestView, on
   }, [dispatch]);
 
   const onCloseTab = useCallback((paneId: string, tabId: string) => {
+    const pane = findPane(state.root, paneId) || state.bottom;
+    const tab = pane && pane.kind === 'pane' ? pane.tabs.find(t => t.id === tabId) : undefined;
+    if (tab) onBeforeCloseTab?.(paneId, tabId, tab);
     dispatch({ type: 'CLOSE_TAB', paneId, tabId });
-  }, [dispatch]);
+  }, [dispatch, state, onBeforeCloseTab]);
 
   const onAddTab = useCallback((paneId: string) => {
     const tabId = genTabId();
@@ -336,6 +364,9 @@ export function WorkbenchLayout({ state, dispatch, renderView, onRequestView, on
         renderView={renderView}
         onContextTab={onContextTab}
         onReorderTabs={handleReorderTabs}
+        closedKeptTabs={closedKeptTabs}
+        onReopenKeptTab={onReopenKeptTab}
+        persistentTabIds={persistentTabIds}
       />
 
       {/* Bottom dock */}

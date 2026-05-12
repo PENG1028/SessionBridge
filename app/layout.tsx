@@ -4,8 +4,8 @@ import { NotificationProvider } from './console/shared/notification-context';
 import { ToastContainer } from './console/shared/toast-container';
 
 export const metadata: Metadata = {
-  title: 'SessionBridge — Remote Agent Console',
-  description: 'Remote agent console with multi-instance management',
+  title: 'Remote Console',
+  description: 'Remote agent console',
 };
 
 export const viewport: Viewport = {

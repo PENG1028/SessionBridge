@@ -24,6 +24,9 @@ export class PanelRegistry {
 
   /** Register side panel contributions from an extension manifest. */
   registerFromManifest(extensionId: string, manifest: ExtensionManifest): void {
+    // Remove existing entries for this extension first to prevent duplicates
+    // on re-activation (dev hot reload, reconnection).
+    this.unregister(extensionId);
     const views = manifest.contributes?.views;
     if (!views) return;
     for (const side of ['sidebar-left', 'sidebar-right'] as const) {

@@ -53,13 +53,13 @@ function def(
 // These are core workbench actions, not owned by any adapter/plugin.
 // ══════════════════════════════════════════════════════════════
   registerAction(def('host.settings.open', 'Settings',
-    ['commandPalette', 'header.right'],
+    ['commandPalette'],
     (ctx) => ctx.openSettings(),
     { icon: 'settings', shortcut: '⌘,', order: 40, category: 'Host' },
   ));
 
   registerAction(def('host.dashboard.open', 'Dashboard',
-    ['commandPalette', 'header.right'],
+    ['commandPalette'],
     (ctx) => {
       // Add a dashboard tab to the active pane
       const tabId = 'dash_' + Date.now().toString(36);
@@ -73,7 +73,7 @@ function def(
   ));
 
   registerAction(def('host.search.open', 'Search Sessions',
-    ['commandPalette', 'header.right'],
+    ['commandPalette'],
     (ctx) => ctx.openSearch(),
     { icon: 'search', shortcut: '⌘K', order: 20, category: 'Host' },
   ));
@@ -97,18 +97,10 @@ function def(
   ));
 
   // ── Host context menu actions (Phase 4K) ─────────────────────
-  // These are host-owned menu items dispatched from the context menu.
-  // Command resolution: action registry first, fallback sendCommand.
   registerAction(def('host.killInstance', 'Kill Instance',
     ['contextMenu', 'keybinding'],
     (ctx) => { if (ctx.instanceId) ctx.killInstance(ctx.instanceId); },
     { when: 'isRunning', shortcut: '⌘W', keybinding: 'Ctrl+W', order: 10, category: 'Host', danger: true, group: 'navigation' },
-  ));
-
-  registerAction(def('host.clearHistory', 'Clear History',
-    ['contextMenu'],
-    (ctx) => ctx.sendCommand('clear'),
-    { when: 'view == "claude-chat"', order: 10, category: 'Host', group: 'edit' },
   ));
 
   registerAction(def('host.toggleTerminal', 'Toggle Terminal',
@@ -124,34 +116,10 @@ function def(
     { shortcut: '⌘`', keybinding: 'Ctrl+`', order: 20, category: 'Host', group: 'view' },
   ));
 
-  registerAction(def('host.copyAll', 'Copy All',
-    ['contextMenu'],
-    (ctx) => {
-      const text = [...ctx.messages].map((m: any) => `[${m.role}] ${m.content}`).join('\n');
-      navigator.clipboard.writeText(text).catch(() => {});
-    },
-    { when: 'view == "claude-chat"', shortcut: '⌘⇧C', keybinding: 'Ctrl+Shift+C', order: 30, category: 'Host', group: 'edit' },
-  ));
-
   // ══════════════════════════════════════════════════════════════
-  // Claude/adapter compatibility actions — owned by claude-code adapter
-  // These are registered as host actions for backwards compatibility
-  // until the adapter can declare them via manifest contributes.menus.
+  // Claude-specific actions — need ActionRunContext so cannot be
+  // plain commands. Prioritized for manifest-declared dispatch.
   // ══════════════════════════════════════════════════════════════
-  // ── Claude actions ─────────────────────────────────────────
-  registerAction(def('claude.clearHistory', 'Clear History',
-    ['commandPalette', 'keybinding', 'contextMenu'],
-    (ctx) => {
-      // Clear messages — page.tsx handler does full reset
-      ctx.sendCommand('clear');
-    },
-    {
-      when: 'view == "claude-chat"',
-      shortcut: '⌘L', keybinding: 'Ctrl+L',
-      order: 10, category: 'Claude',
-    },
-  ));
-
   registerAction(def('claude.copyLastAssistant', 'Copy Last Response',
     ['commandPalette', 'keybinding', 'contextMenu'],
     (ctx) => {
@@ -161,77 +129,32 @@ function def(
         navigator.clipboard.writeText(last.content).catch(() => {});
       }
     },
-    {
-      when: 'view == "claude-chat"',
-      shortcut: '⌘⇧C', keybinding: 'Ctrl+Shift+C',
-      order: 20, category: 'Claude',
-    },
-  ));
-
-  registerAction(def('claude.restart', 'Restart Session',
-    ['commandPalette', 'keybinding'],
-    (ctx) => ctx.sendCommand('clear'),
-    {
-      when: 'view == "claude-chat"',
-      shortcut: '⌘R', keybinding: 'Ctrl+R',
-      order: 30, category: 'Claude',
-    },
+    { when: 'view == "claude-chat"', shortcut: '⌘⇧C', keybinding: 'Ctrl+Shift+C', order: 20, category: 'Claude' },
   ));
 
   registerAction(def('claude.mode.toggle', 'Toggle Mode Picker',
     ['commandPalette', 'keybinding'],
-    () => {
-      window.dispatchEvent(new CustomEvent('toggle-mode-picker'));
-    },
-    {
-      when: 'view == "claude-chat"',
-      shortcut: '⌘⇧M', keybinding: 'Ctrl+Shift+M',
-      order: 40, category: 'Claude',
-    },
+    () => { window.dispatchEvent(new CustomEvent('toggle-mode-picker')); },
+    { when: 'view == "claude-chat"', shortcut: '⌘⇧M', keybinding: 'Ctrl+Shift+M', order: 40, category: 'Claude' },
   ));
 
-  registerAction(def('claude.compact', 'Compact Conversation',
-    ['commandPalette'],
-    (ctx) => ctx.sendInput('/compact'),
-    {
-      when: 'view == "claude-chat"',
-      order: 50, category: 'Claude',
+  registerAction(def('claude.copyAll', 'Copy All',
+    ['contextMenu'],
+    (ctx) => {
+      const text = [...ctx.messages].map((m: any) => `[${m.role}] ${m.content}`).join('\n');
+      navigator.clipboard.writeText(text).catch(() => {});
     },
+    { when: 'view == "claude-chat"', shortcut: '⌘⇧C', keybinding: 'Ctrl+Shift+C', order: 30, category: 'Claude', group: 'edit' },
   ));
 
   // ══════════════════════════════════════════════════════════════
-  // Shell/terminal compatibility actions — owned by shell adapter
+  // Shell-specific actions — need ActionRunContext so cannot be
+  // plain commands.
   // ══════════════════════════════════════════════════════════════
-  // ── Terminal actions ───────────────────────────────────────
   registerAction(def('terminal.new', 'New Terminal',
     ['commandPalette', 'contextMenu'],
     (ctx) => ctx.createInstance(ctx.projectCwd, undefined, 'shell'),
-    {
-      when: 'view == "terminal"',
-      order: 10, category: 'Terminal',
-    },
-  ));
-
-  registerAction(def('terminal.kill', 'Kill Instance',
-    ['commandPalette', 'contextMenu'],
-    (ctx) => {
-      if (ctx.instanceId) ctx.killInstance(ctx.instanceId);
-    },
-    {
-      when: 'view == "terminal"',
-      order: 20, category: 'Terminal',
-      danger: true,
-    },
-  ));
-
-  registerAction(def('terminal.clear', 'Clear Terminal',
-    ['commandPalette', 'contextMenu', 'keybinding'],
-    (ctx) => ctx.sendCommand('clear'),
-    {
-      when: 'view == "terminal"',
-      shortcut: '⌘L', keybinding: 'Ctrl+L',
-      order: 30, category: 'Terminal',
-    },
+    { when: 'view == "terminal"', order: 10, category: 'Terminal' },
   ));
 
   // ── Quick actions ──────────────────────────────────────────

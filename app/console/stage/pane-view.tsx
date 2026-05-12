@@ -16,9 +16,12 @@ interface PaneViewProps {
   renderView: (viewType: ViewType, instanceId?: string) => ReactNode;
   onContextTab?: (tab: PaneTab, e: React.MouseEvent) => void;
   onReorderTabs?: (tabId: string, targetId: string) => void;
+  closedKeptTabs?: PaneTab[];
+  onReopenKeptTab?: (tab: PaneTab) => void;
+  persistentTabIds?: string[];
 }
 
-export function PaneView({ pane, isActive, onFocus, onSelectTab, onCloseTab, onAddTab, onRequestView, renderView, onContextTab, onReorderTabs }: PaneViewProps) {
+export function PaneView({ pane, isActive, onFocus, onSelectTab, onCloseTab, onAddTab, onRequestView, renderView, onContextTab, onReorderTabs, closedKeptTabs, onReopenKeptTab, persistentTabIds }: PaneViewProps) {
   const activeTab = pane.tabs.find(t => t.id === pane.activeTabId) || pane.tabs[0];
   if (!activeTab) {
     return (
@@ -41,14 +44,28 @@ export function PaneView({ pane, isActive, onFocus, onSelectTab, onCloseTab, onA
         onAddTab={onAddTab}
         onContextTab={onContextTab}
         onReorderTabs={onReorderTabs}
+        closedKeptTabs={closedKeptTabs}
+        onReopenKeptTab={onReopenKeptTab}
+        persistentTabIds={persistentTabIds}
       />
 
-      <div className="flex-1 flex flex-col min-w-0 min-h-0">
-        {activeTab.viewType === 'empty' ? (
-          <EmptyPane onSelectView={(vt) => onRequestView?.(pane.activeTabId, vt)} />
-        ) : (
-          renderView(activeTab.viewType, activeTab.instanceId)
-        )}
+      <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden relative">
+        {pane.tabs.map(tab => (
+          <div
+            key={tab.id}
+            className="flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden"
+            style={tab.id === pane.activeTabId
+              ? { display: 'flex', visibility: 'visible' }
+              : { display: 'flex', position: 'absolute', inset: 0, visibility: 'hidden', pointerEvents: 'none' }
+            }
+          >
+            {tab.viewType === 'empty' ? (
+              <EmptyPane onSelectView={(vt) => onRequestView?.(tab.id, vt)} />
+            ) : (
+              renderView(tab.viewType, tab.instanceId)
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );

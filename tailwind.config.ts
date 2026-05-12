@@ -15,6 +15,20 @@ const config: Config = {
       fontFamily: {
         mono: ['Menlo', 'Monaco', '"Courier New"', 'monospace'],
       },
+      keyframes: {
+        'slide-in': {
+          '0%': { transform: 'translateX(-100%)' },
+          '100%': { transform: 'translateX(0)' },
+        },
+        'slide-in-right': {
+          '0%': { transform: 'translateX(100%)' },
+          '100%': { transform: 'translateX(0)' },
+        },
+      },
+      animation: {
+        'slide-in': 'slide-in 0.2s ease-out',
+        'slide-in-right': 'slide-in-right 0.2s ease-out',
+      },
     },
   },
   plugins: [],

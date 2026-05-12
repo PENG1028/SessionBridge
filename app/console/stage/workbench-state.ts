@@ -174,19 +174,15 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       const pane = findPane(state.root, action.paneId) || state.bottom;
       if (!pane || pane.kind !== 'pane') return state;
       if (pane.tabs.length <= 1) {
-        // Last tab — remove the whole pane
+        // Last tab — replace with empty tab so user can pick a new view
+        // (don't remove the pane / kill the instance)
+        const emptyTabId = genTabId();
+        const emptyTab: PaneTab = { id: emptyTabId, title: 'Empty', viewType: 'empty' };
+        const updatedPane: PaneState = { ...pane, tabs: [emptyTab], activeTabId: emptyTabId };
         if (pane.zone === 'bottom') {
-          return { ...state, bottom: null };
+          return { ...state, bottom: updatedPane };
         }
-        const newRoot = removeNode(state.root, action.paneId);
-        if (!newRoot) return state;
-        // Find first remaining pane to focus
-        let newFocus = state.activePaneId;
-        if (action.paneId === state.activePaneId) {
-          const first = findFirstPane(newRoot);
-          newFocus = first?.id || state.activePaneId;
-        }
-        return { ...state, root: newRoot, activePaneId: newFocus };
+        return { ...state, root: replaceNode(state.root, action.paneId, updatedPane) };
       }
       const newTabs = pane.tabs.filter(t => t.id !== action.tabId);
       const wasActive = pane.activeTabId === action.tabId;
@@ -420,4 +416,169 @@ export function ensureInstanceTab(state: WorkbenchState, instanceId: string, tit
     return workbenchReducer(state, { type: 'ADD_TAB', paneId: activePane.id, tab });
   }
   return state;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// AppWorkbenchState — multi-instance wrapper
+// ═══════════════════════════════════════════════════════════════
+
+export interface AppWorkbenchState {
+  /** Per-instance layout trees — keyed by instanceId */
+  instanceStates: Record<string, WorkbenchState>;
+  /** Fallback layout when no instance is selected */
+  globalState: WorkbenchState;
+  /** Which instance's layout is currently shown. null → global layout */
+  activeInstanceId: string | null;
+  /** Tabs that have been marked "Keep" (survive refresh, shown in ≡ menu when closed) */
+  persistentTabs: PaneTab[];
+  /** Instance IDs that appear in the InstanceBar (not tab-level processes like shell terminals). */
+  workbenchInstanceIds: string[];
+}
+
+export type AppWorkbenchAction =
+  | { type: 'INSTANCE_ACTION'; instanceId: string; action: WorkbenchAction }
+  | { type: 'GLOBAL_ACTION'; action: WorkbenchAction }
+  | { type: 'SET_ACTIVE_INSTANCE'; instanceId: string | null }
+  | { type: 'RESTORE_INSTANCE_STATE'; instanceId: string; state: WorkbenchState }
+  | { type: 'REMOVE_INSTANCE_LAYOUT'; instanceId: string }
+  | { type: 'KEEP_TAB'; tab: PaneTab }
+  | { type: 'UNKEEP_TAB'; tabId: string }
+  | { type: 'ADD_WORKBENCH_INSTANCE'; instanceId: string }
+  | { type: 'REMOVE_WORKBENCH_INSTANCE'; instanceId: string }
+  | { type: 'SET_WORKBENCH_INSTANCES'; instanceIds: string[] };
+
+export function appReducer(state: AppWorkbenchState, action: AppWorkbenchAction): AppWorkbenchState {
+  switch (action.type) {
+    case 'INSTANCE_ACTION': {
+      const prev = state.instanceStates[action.instanceId];
+      if (!prev) return state;
+      return {
+        ...state,
+        instanceStates: {
+          ...state.instanceStates,
+          [action.instanceId]: workbenchReducer(prev, action.action),
+        },
+      };
+    }
+    case 'GLOBAL_ACTION':
+      return { ...state, globalState: workbenchReducer(state.globalState, action.action) };
+    case 'SET_ACTIVE_INSTANCE':
+      return { ...state, activeInstanceId: action.instanceId };
+    case 'RESTORE_INSTANCE_STATE':
+      if (state.instanceStates[action.instanceId]) return state; // already exists
+      return {
+        ...state,
+        instanceStates: { ...state.instanceStates, [action.instanceId]: action.state },
+      };
+    case 'REMOVE_INSTANCE_LAYOUT': {
+      const { [action.instanceId]: _, ...rest } = state.instanceStates;
+      return {
+        ...state,
+        instanceStates: rest,
+        activeInstanceId: state.activeInstanceId === action.instanceId ? null : state.activeInstanceId,
+        workbenchInstanceIds: state.workbenchInstanceIds.filter(id => id !== action.instanceId),
+      };
+    }
+    case 'KEEP_TAB':
+      if (state.persistentTabs.some(t => t.id === action.tab.id)) return state;
+      return { ...state, persistentTabs: [...state.persistentTabs, action.tab] };
+    case 'UNKEEP_TAB':
+      return { ...state, persistentTabs: state.persistentTabs.filter(t => t.id !== action.tabId) };
+    case 'ADD_WORKBENCH_INSTANCE':
+      if (state.workbenchInstanceIds.includes(action.instanceId)) return state;
+      return { ...state, workbenchInstanceIds: [...state.workbenchInstanceIds, action.instanceId] };
+    case 'REMOVE_WORKBENCH_INSTANCE':
+      return { ...state, workbenchInstanceIds: state.workbenchInstanceIds.filter(id => id !== action.instanceId) };
+    case 'SET_WORKBENCH_INSTANCES':
+      return { ...state, workbenchInstanceIds: action.instanceIds };
+    default:
+      return state;
+  }
+}
+
+/** Get the active WorkbenchState for rendering. */
+export function getActiveWorkbenchState(app: AppWorkbenchState): WorkbenchState {
+  if (app.activeInstanceId && app.instanceStates[app.activeInstanceId]) {
+    return app.instanceStates[app.activeInstanceId];
+  }
+  return app.globalState;
+}
+
+/** Create initial AppWorkbenchState — global layout starts empty, no instance selected. */
+export function createAppInitialState(): AppWorkbenchState {
+  const emptyPane = createEmptyPane('main');
+  return {
+    instanceStates: {},
+    globalState: { root: emptyPane, activePaneId: emptyPane.id, bottom: null },
+    activeInstanceId: null,
+    persistentTabs: [],
+    workbenchInstanceIds: [],
+  };
+}
+
+// ─── localStorage persistence ────────────────────────────────
+
+const STORAGE_LAYOUTS_KEY = 'sb-instance-layouts';
+const STORAGE_PERSISTENT_KEY = 'sb-persistent-tabs';
+const STORAGE_WORKBENCH_IDS_KEY = 'sb-workbench-ids';
+
+function serializeLayout(state: WorkbenchState): string {
+  return JSON.stringify(state);
+}
+
+function deserializeLayout(json: string): WorkbenchState | null {
+  try { return JSON.parse(json); } catch { return null; }
+}
+
+export function saveLayoutsToStorage(
+  instanceStates: Record<string, WorkbenchState>,
+  persistentTabs: PaneTab[],
+  workbenchInstanceIds?: string[],
+): void {
+  try {
+    const layouts: Record<string, string> = {};
+    for (const [id, state] of Object.entries(instanceStates)) {
+      layouts[id] = serializeLayout(state);
+    }
+    localStorage.setItem(STORAGE_LAYOUTS_KEY, JSON.stringify(layouts));
+    localStorage.setItem(STORAGE_PERSISTENT_KEY, JSON.stringify(persistentTabs));
+    if (workbenchInstanceIds) {
+      localStorage.setItem(STORAGE_WORKBENCH_IDS_KEY, JSON.stringify(workbenchInstanceIds));
+    }
+  } catch { /* best effort */ }
+}
+
+export function loadLayoutsFromStorage(): {
+  instanceStates: Record<string, string>;
+  persistentTabs: PaneTab[];
+  workbenchInstanceIds: string[];
+} | null {
+  try {
+    const layoutsRaw = localStorage.getItem(STORAGE_LAYOUTS_KEY);
+    const persistentRaw = localStorage.getItem(STORAGE_PERSISTENT_KEY);
+    const workbenchRaw = localStorage.getItem(STORAGE_WORKBENCH_IDS_KEY);
+    if (!layoutsRaw && !persistentRaw && !workbenchRaw) return null;
+    return {
+      instanceStates: layoutsRaw ? JSON.parse(layoutsRaw) : {},
+      persistentTabs: persistentRaw ? JSON.parse(persistentRaw) : [],
+      workbenchInstanceIds: workbenchRaw ? JSON.parse(workbenchRaw) : [],
+    };
+  } catch { return null; }
+}
+
+/** Given saved serialized layouts + current server instances, return deserialized states. */
+export function restoreInstanceStatesFromStorage(
+  savedStr: Record<string, string>,
+  persistentTabs: PaneTab[],
+  serverInstanceIds: string[],
+): { states: Record<string, WorkbenchState>; persistentTabs: PaneTab[] } {
+  const states: Record<string, WorkbenchState> = {};
+  for (const id of serverInstanceIds) {
+    const saved = savedStr[id];
+    if (saved) {
+      const state = deserializeLayout(saved);
+      if (state) states[id] = state;
+    }
+  }
+  return { states, persistentTabs: persistentTabs.filter(t => t && t.id) };
 }

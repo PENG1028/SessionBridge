@@ -24,8 +24,15 @@
   },
   "contributes": {
     "views": {
+      "sidebar-left": [
+        { "id": "quick-actions", "title": "Quick Actions", "icon": "zap", "order": 20, "defaultVisible": true, "when": "view == \"claude-chat\"" }
+      ],
       "sidebar-right": [
         { "id": "tasks", "title": "Tasks", "icon": "list-checks", "order": 10, "defaultVisible": true, "when": "view == \"claude-chat\"" },
+        { "id": "session-actions", "title": "Actions", "icon": "play", "order": 20, "defaultVisible": true, "when": "view == \"claude-chat\"" },
+        { "id": "snapshots", "title": "Snapshots", "icon": "camera", "order": 30, "defaultVisible": true, "when": "view == \"claude-chat\"" },
+        { "id": "files-context", "title": "Files in Context", "icon": "file-text", "order": 40, "defaultVisible": true, "when": "view == \"claude-chat\"" },
+        { "id": "terminal-log", "title": "Terminal Log", "icon": "terminal", "order": 50, "defaultVisible": true, "when": "view == \"claude-chat\"" },
         { "id": "logs", "title": "Logs", "icon": "scroll-text", "order": 100, "defaultVisible": false, "when": "view == \"claude-chat\"" },
         { "id": "terminal", "title": "Terminal", "icon": "terminal", "order": 100, "defaultVisible": false, "when": "view == \"claude-chat\"" }
       ]
@@ -38,11 +45,16 @@
     "commands": [
       { "id": "claude.cost", "title": "Show Cost", "category": "Session", "icon": "dollar-sign" },
       { "id": "claude.compact", "title": "Compact Conversation", "category": "Session", "icon": "compress", "when": "isRunning" },
-      { "id": "claude.status", "title": "Session Status", "category": "Session", "icon": "info" }
+      { "id": "claude.status", "title": "Session Status", "category": "Session", "icon": "info" },
+      { "id": "claude.clearHistory", "title": "Clear History", "category": "Session", "when": "view == \"claude-chat\"" },
+      { "id": "claude.restart", "title": "Restart Session", "category": "Session", "when": "view == \"claude-chat\"" }
     ],
     "menus": [
       { "id": "claude.menu.rewind", "menu": "chat/context", "title": "Rewind Last Change", "command": "rewind", "group": "navigation", "when": "view == \"claude-chat\"" },
-      { "id": "claude.menu.compact", "menu": "chat/context", "title": "Compact Session", "command": "claude.compact", "group": "edit", "when": "view == \"claude-chat\" && isRunning" }
+      { "id": "claude.menu.compact", "menu": "chat/context", "title": "Compact Session", "command": "claude.compact", "group": "edit", "when": "view == \"claude-chat\" && isRunning" },
+      { "id": "claude.menu.clearHistory", "menu": "chat/context", "title": "Clear History", "command": "claude.clearHistory", "group": "edit", "when": "view == \"claude-chat\"" },
+      { "id": "claude.menu.copyAll", "menu": "chat/context", "title": "Copy All", "command": "claude.copyAll", "group": "edit", "when": "view == \"claude-chat\"" },
+      { "id": "claude.menu.restart", "menu": "chat/context", "title": "Restart Session", "command": "claude.restart", "group": "navigation", "when": "view == \"claude-chat\"" }
     ],
     "chrome": {
       "statusBar": [

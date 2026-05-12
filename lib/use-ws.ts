@@ -88,6 +88,10 @@ export function useSession(
     addMsgLog('command', name);
   }, [addMsgLog]);
 
+  const sendShellInput = useCallback((data: string, instanceId: string) => {
+    clientRef.current?.sendShellInput(data, instanceId);
+  }, []);
+
   const sendResize = useCallback((cols: number, rows: number) => {
     clientRef.current?.sendResize(cols, rows);
   }, []);
@@ -189,6 +193,9 @@ export function useSession(
       onInstanceSwitched: (id) => {
         activeInstanceIdRef.current = id;
         setActiveInstanceId(id);
+      },
+      onInstanceUpdated: (instance) => {
+        setInstances(prev => prev.map(i => i.id === instance.id ? { ...i, ...instance } : i));
       },
       onSystemNotify,
       onSystemNotifyDismiss,
@@ -301,6 +308,7 @@ export function useSession(
     serverBlocks,
     sendInput,
     sendCommand,
+    sendShellInput,
     sendResize,
     queueStatus,
     // Workspace state

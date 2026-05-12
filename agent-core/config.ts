@@ -33,6 +33,15 @@ export interface NodeConfig {
   dashboardPort: number;
   dashboardBind: string;
 
+  /** Dashboard access token (auto-generated on first start). Used as login password. */
+  dashboardToken?: string;
+
+  /** Enable dashboard authentication (default: true). Set to false to disable login. */
+  dashboardAuthEnabled?: boolean;
+
+  /** Dashboard session TTL in seconds (default: 1209600 = 14 days). */
+  dashboardSessionTtl?: number;
+
   // Capabilities
   adapters?: string[];
   permissions?: PermissionConfig;
@@ -70,6 +79,8 @@ const DEFAULT_CONFIG: NodeConfig = {
   relayBind: '0.0.0.0',
   dashboardPort: 9843,
   dashboardBind: '127.0.0.1',
+  dashboardAuthEnabled: true,
+  dashboardSessionTtl: 1209600, // 14 days
 };
 
 export function configDir(): string {

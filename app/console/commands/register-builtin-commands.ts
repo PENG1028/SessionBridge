@@ -17,45 +17,19 @@ export interface BuiltinHandlers {
 }
 
 export function registerBuiltinCommands(h: BuiltinHandlers): void {
-  registerCommand({
-    id: 'shell.clear',
-    title: 'Clear Terminal',
-    handler: () => h.sendCommand('clear'),
-  });
+  // ── Shell ──
+  registerCommand({ id: 'shell.clear', title: 'Clear Terminal', handler: () => h.sendCommand('clear') });
+  registerCommand({ id: 'shell.kill', title: 'Kill Instance', handler: (instanceId?: string) => { if (instanceId) h.killInstance(instanceId); } });
 
-  registerCommand({
-    id: 'shell.kill',
-    title: 'Kill Instance',
-    handler: (instanceId?: string) => {
-      if (instanceId) h.killInstance(instanceId);
-    },
-  });
+  // ── Claude ──
+  registerCommand({ id: 'claude.compact', title: 'Compact Conversation', category: 'Claude', handler: () => h.sendInput('/compact') });
+  registerCommand({ id: 'claude.clearHistory', title: 'Clear History', category: 'Claude', handler: () => h.sendCommand('clear') });
+  registerCommand({ id: 'claude.restart', title: 'Restart Session', category: 'Claude', handler: () => h.sendCommand('clear') });
 
-  registerCommand({
-    id: 'claude.compact',
-    title: 'Compact Conversation',
-    category: 'Claude',
-    handler: () => h.sendInput('/compact'),
-  });
+  // ── Host ──
+  registerCommand({ id: 'host.npmTest', title: 'npm test', category: 'Host', handler: () => h.sendInput('npm test') });
+  registerCommand({ id: 'host.gitStatus', title: 'git status', category: 'Host', handler: () => h.sendInput('git status') });
 
-  registerCommand({
-    id: 'host.npmTest',
-    title: 'npm test',
-    category: 'Host',
-    handler: () => h.sendInput('npm test'),
-  });
-
-  registerCommand({
-    id: 'host.gitStatus',
-    title: 'git status',
-    category: 'Host',
-    handler: () => h.sendInput('git status'),
-  });
-
-  registerCommand({
-    id: 'system.refresh',
-    title: 'Reload Page',
-    category: 'System',
-    handler: () => h.reload(),
-  });
+  // ── System ──
+  registerCommand({ id: 'system.refresh', title: 'Reload Page', category: 'System', handler: () => h.reload() });
 }

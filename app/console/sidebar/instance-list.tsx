@@ -39,7 +39,7 @@ export function InstanceList({ instances, activeInstanceId, onActivate, onKill }
           <div
             key={inst.id}
             onClick={() => onActivate(inst.id)}
-            className={`group flex items-center gap-2.5 px-2.5 py-2 rounded-md cursor-pointer transition-all select-none ${
+            className={`group flex items-center gap-2.5 px-2.5 py-2 rounded-md cursor-pointer transition-all ${
               isActive
                 ? 'bg-purple-900/25 text-purple-100 ring-1 ring-purple-700/40'
                 : 'text-gray-400 hover:bg-gray-800/60 hover:text-gray-300'
