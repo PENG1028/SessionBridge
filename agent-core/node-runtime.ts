@@ -37,6 +37,7 @@ export class NodeRuntime {
   configReceiver: AgentConfigReceiver;
 
   private startTime = Date.now();
+  private cachedAdapters: { id: string; available: boolean }[] = [];
   private shellProc: ChildProcess | null = null;
   private relayServer: import('../src/relay-server').NodeRelayServer | null = null;
   /** Extension host manager (only active in dev mode). */
@@ -133,7 +134,7 @@ export class NodeRuntime {
       setExtensionHost(this.hostManager);
       this.startFileWatcher();
     }
-    const adapters = await this.detectAdapters();
+    this.cachedAdapters = await this.detectAdapters();
     const adapterScenarios = await this.collectNotificationScenarios();
     const savedSettings = this.notifications.settings;
     this.notifications = new NotificationModel(adapterScenarios, savedSettings);
@@ -144,7 +145,7 @@ export class NodeRuntime {
       notifications: this.notifications,
       relayConnected: false,
       instanceId: null,
-      adapters,
+      adapters: this.cachedAdapters,
       startTime: this.startTime,
     });
 
@@ -447,7 +448,7 @@ export class NodeRuntime {
       notifications: this.notifications,
       relayConnected: this.relay.instanceId !== null,
       instanceId: this.relay.instanceId,
-      adapters: [] as { id: string; available: boolean }[],
+      adapters: this.cachedAdapters,
       startTime: this.startTime,
     };
   }
