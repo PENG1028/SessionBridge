@@ -683,7 +683,7 @@ function bufferOutputFor(i: import("./instance-manager").InstanceData, data: str
 }
 
 // ─── HTTP Server ──────────────────────────────────────────────────
-const OUT_DIR = join(__dirname, "../out");
+const OUT_DIR = join(process.cwd(), "out");
 let ROOT_DIR = inst().dir;
 
 const serverRequestHandler = (req: import("http").IncomingMessage, res: import("http").ServerResponse) => {
