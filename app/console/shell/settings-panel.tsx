@@ -232,15 +232,30 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
   const [saving, setSaving] = useState(false);
   const [validationErrors, setValidationErrors] = useState<Record<string, string[]>>({});
 
+  // ── Admin auth state ──────────────────────────────────────────
+  const [adminExpanded, setAdminExpanded] = useState(false);
+  const [pwFormOpen, setPwFormOpen] = useState(false);
+  const [adminState, setAdminState] = useState<{
+    authEnabled: boolean; tokenSet: boolean; loading: boolean;
+  }>({ authEnabled: false, tokenSet: false, loading: true });
+  const [oldPw, setOldPw] = useState('');
+  const [newPw, setNewPw] = useState('');
+  const [confirmPw, setConfirmPw] = useState('');
+  const [pwMsg, setPwMsg] = useState<{ type: 'ok' | 'error'; text: string } | null>(null);
+  const [sessions, setSessions] = useState<{ id: string; createdAt: string; expiresAt: string; userAgent: string }[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [toggleMsg, setToggleMsg] = useState('');
+
   // Load schema + values from both scopes
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const [schemaRes, userRes, wsRes] = await Promise.all([
+      const [schemaRes, userRes, wsRes, authRes] = await Promise.all([
         fetch('/api/configuration/schema'),
         fetch('/api/configuration/values?scope=user'),
         fetch('/api/configuration/values?scope=workspace'),
+        fetch('/api/auth/check'),
       ]);
       if (!schemaRes.ok) throw new Error(`Schema: ${schemaRes.status}`);
       if (!userRes.ok) throw new Error(`User values: ${userRes.status}`);
@@ -248,6 +263,10 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
       const schemaData = await schemaRes.json();
       const userData = await userRes.json();
       const wsData = await wsRes.json();
+      if (authRes.ok) {
+        const authData = await authRes.json();
+        setAdminState(prev => ({ ...prev, authEnabled: authData.authEnabled, tokenSet: authData.tokenSet, loading: false }));
+      }
       setConfigs(schemaData.contributions || []);
       setUserValues(userData.values || {});
       setWorkspaceValues(wsData.values || {});
@@ -507,7 +526,171 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
             <div className="px-4 py-8 text-center text-gray-700 text-[10px]">
               {searchQuery ? 'No settings match your search' : 'No settings registered'}
             </div>
-          ) : (
+          ) : (<>
+            {/* ── Admin Auth Section ─────────────────────────────── */}
+            <div>
+              <button
+                onClick={() => setAdminExpanded(v => !v)}
+                className="w-full flex items-center gap-2 px-4 py-2 hover:bg-white/[0.02] transition-colors text-left sticky top-0 bg-[#151515] border-b border-gray-800/50"
+              >
+                <ChevronRight className={`w-3 h-3 text-gray-600 transition-transform ${adminExpanded ? 'rotate-90' : ''}`} />
+                <span className="text-[11px] font-semibold text-gray-300">Admin</span>
+                <span className="text-[9px] text-gray-600">Authentication</span>
+              </button>
+
+              {adminExpanded && (
+                <div className="px-4 divide-y divide-gray-800/30">
+                  {adminState.loading ? (
+                    <div className="py-4 text-[10px] text-gray-600">Loading...</div>
+                  ) : (
+                    <>
+                      {/* Auth toggle */}
+                      <div className="flex items-center justify-between py-3">
+                        <div>
+                          <div className="text-[11px] text-gray-200">Require password for remote access</div>
+                          <div className="text-[9px] text-gray-600 mt-0.5">
+                            {adminState.tokenSet ? 'Password is set' : 'No password set — first remote visitor will be prompted'}
+                          </div>
+                        </div>
+                        <button
+                          onClick={async () => {
+                            setToggleMsg('');
+                            try {
+                              const r = await fetch('/api/auth/toggle', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ enabled: !adminState.authEnabled }),
+                              });
+                              if (!r.ok) { setToggleMsg('Failed'); return; }
+                              const d = await r.json();
+                              setAdminState(prev => ({ ...prev, authEnabled: d.authEnabled }));
+                              setToggleMsg(d.authEnabled ? 'ON' : 'OFF');
+                              setTimeout(() => setToggleMsg(''), 2000);
+                            } catch { setToggleMsg('Error'); }
+                          }}
+                          className={`relative w-9 h-5 rounded-full transition-colors ${
+                            adminState.authEnabled ? 'bg-purple-600' : 'bg-gray-700'
+                          }`}
+                        >
+                          <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                            adminState.authEnabled ? 'translate-x-4' : ''
+                          }`} />
+                        </button>
+                      </div>
+                      {toggleMsg && (
+                        <div className="text-[9px] text-purple-400 pb-1 -mt-1">{toggleMsg}</div>
+                      )}
+
+                      {/* Change password */}
+                      <div className="py-3">
+                        <button
+                          onClick={() => { setPwFormOpen(v => !v); setPwMsg(null); }}
+                          className="text-[11px] text-gray-300 hover:text-gray-100 transition-colors"
+                        >
+                          {pwFormOpen ? '−' : '+'} Change password
+                        </button>
+                        {pwFormOpen && (
+                          <div className="mt-2 space-y-2">
+                            <input
+                              type="password" value={oldPw}
+                              onChange={e => setOldPw(e.target.value)}
+                              placeholder="Current password"
+                              className="w-full bg-[#0d0d0d] border border-gray-700 rounded px-2 py-1.5 text-[11px] text-gray-200 outline-none focus:border-purple-500"
+                            />
+                            <input
+                              type="password" value={newPw}
+                              onChange={e => setNewPw(e.target.value)}
+                              placeholder="New password (min 8 chars)"
+                              className="w-full bg-[#0d0d0d] border border-gray-700 rounded px-2 py-1.5 text-[11px] text-gray-200 outline-none focus:border-purple-500"
+                            />
+                            <input
+                              type="password" value={confirmPw}
+                              onChange={e => setConfirmPw(e.target.value)}
+                              placeholder="Confirm new password"
+                              className="w-full bg-[#0d0d0d] border border-gray-700 rounded px-2 py-1.5 text-[11px] text-gray-200 outline-none focus:border-purple-500"
+                            />
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={async () => {
+                                  setPwMsg(null);
+                                  if (newPw.length < 8) { setPwMsg({ type: 'error', text: 'Min 8 characters' }); return; }
+                                  if (newPw !== confirmPw) { setPwMsg({ type: 'error', text: 'Passwords do not match' }); return; }
+                                  try {
+                                    const r = await fetch('/api/auth/change-password', {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ oldToken: oldPw, newToken: newPw }),
+                                    });
+                                    const d = await r.json();
+                                    if (r.ok) {
+                                      setPwMsg({ type: 'ok', text: 'Password changed' });
+                                      setOldPw(''); setNewPw(''); setConfirmPw('');
+                                    } else {
+                                      setPwMsg({ type: 'error', text: d.error || 'Failed' });
+                                    }
+                                  } catch { setPwMsg({ type: 'error', text: 'Network error' }); }
+                                }}
+                                className="px-2.5 py-1 bg-purple-700 hover:bg-purple-600 text-white text-[10px] rounded border border-purple-600 transition-colors"
+                              >Change</button>
+                              {pwMsg && (
+                                <span className={`text-[9px] ${pwMsg.type === 'ok' ? 'text-emerald-400' : 'text-red-400'}`}>
+                                  {pwMsg.text}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Sessions */}
+                      <div className="py-3">
+                        <button
+                          onClick={async () => {
+                            if (sessions.length === 0 && !sessionsLoading) {
+                              setSessionsLoading(true);
+                              try {
+                                const r = await fetch('/api/auth/sessions');
+                                if (r.ok) setSessions(await r.json());
+                              } catch {}
+                              setSessionsLoading(false);
+                            } else {
+                              setSessions([]);
+                            }
+                          }}
+                          className="text-[11px] text-gray-300 hover:text-gray-100 transition-colors"
+                        >
+                          {sessions.length > 0 ? '−' : '+'} Active sessions ({sessions.length > 0 ? sessions.length : '...'})
+                        </button>
+                        {sessions.length > 0 && (
+                          <div className="mt-2 space-y-1">
+                            {sessionsLoading && <div className="text-[9px] text-gray-600">Loading...</div>}
+                            {sessions.map(s => (
+                              <div key={s.id} className="flex items-center gap-2 px-2 py-1.5 bg-[#0d0d0d] rounded border border-gray-800">
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-[10px] text-gray-300 truncate font-mono">{s.id}</div>
+                                  <div className="text-[8px] text-gray-600">{s.userAgent} · {new Date(s.createdAt).toLocaleDateString()} — {new Date(s.expiresAt).toLocaleDateString()}</div>
+                                </div>
+                                <button
+                                  onClick={async () => {
+                                    try {
+                                      const r = await fetch(`/api/auth/sessions?id=${encodeURIComponent(s.id)}`, { method: 'DELETE' });
+                                      if (r.ok) setSessions(prev => prev.filter(x => x.id !== s.id));
+                                    } catch {}
+                                  }}
+                                  className="text-[8px] text-gray-600 hover:text-red-400 transition-colors shrink-0"
+                                >Revoke</button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* ── Config Sections ──────────────────────────────────── */}
             <div className="py-2">
               {sortedConfigs.map((ext) => {
                 const isCollapsed = collapsed[ext.extensionId] ?? false;
@@ -562,7 +745,7 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
                 );
               })}
             </div>
-          )}
+          </>)}
         </div>
       </div>
     </>

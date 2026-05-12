@@ -6,9 +6,9 @@
 // User file:  ~/.sessionbridge/settings.json
 // Workspace:  <workspace>/.sessionbridge/settings.json (optional)
 
-import { homedir } from 'os';
 import { join, dirname } from 'path';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'fs';
+import { configDir } from '../../agent-core/config';
 import type {
   ConfigurationScope,
   ConfigurationPropertySchema,
@@ -25,8 +25,7 @@ export class ConfigurationStore {
   private loaded = false;
 
   constructor() {
-    const dir = join(homedir(), '.sessionbridge');
-    this.userPath = join(dir, 'settings.json');
+    this.userPath = join(configDir(), 'settings.json');
   }
 
   /**

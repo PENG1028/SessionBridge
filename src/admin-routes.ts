@@ -20,8 +20,9 @@ import { extensionPoints } from "../agent-core/extension-points";
 
 import {
   initAuth, checkAuth, createSession, revokeSession,
-  listSessions, changePassword, loginPageHtml, setupPageHtml,
-  parseAuthCookie, getToken, isTokenSet, isAuthEnabled, setAuthEnabled,
+  listSessions, changePassword, setAuthEnabled,
+  loginPageHtml, setupPageHtml,
+  parseAuthCookie, getToken, isTokenSet, isAuthEnabled,
   type AdminSession,
 } from "./admin-auth";
 
@@ -364,6 +365,7 @@ export async function registerAdminRoutes(
           return true;
         }
         changePassword(password);
+        setAuthEnabled(true);
         persistToken(password);
         ctx.addLog('[auth] Initial password set — admin secured');
         console.log(`[auth] Admin token set by user. Use this to log in from other devices.`);

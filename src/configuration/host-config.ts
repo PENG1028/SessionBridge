@@ -57,20 +57,6 @@ export function registerHostConfig(): void {
       description: '@deprecated Dashboard is now served through relay port',
       ...restart,
     },
-    'dashboard.authEnabled': {
-      type: 'boolean', default: true, scope: 'workspace',
-      description: 'Require password to access the dashboard',
-    },
-    'dashboardToken': {
-      type: 'string', default: '', scope: 'workspace',
-      description: 'Dashboard access password (empty = prompt on first access)',
-      ...secret,
-    },
-    'dashboardSessionTtl': {
-      type: 'integer', default: 1209600, scope: 'workspace',
-      minimum: 3600, maximum: 31536000,
-      description: 'Dashboard session duration in seconds (default: 14 days)',
-    },
 
     // Notifications
     'ntfyTopic': {
