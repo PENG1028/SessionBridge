@@ -182,12 +182,15 @@ export function DirectoryPicker({
     const isSel = selected === fp;
     const children = isDir ? tree[fp] : null;
     // Larger tap targets on mobile
-    const py = mobile ? 'py-2' : 'py-0.5';
+    const py = mobile ? 'py-2.5' : 'py-0.5';
+    const textSize = mobile ? 'text-[13px]' : 'text-[11px]';
+    const iconSize = mobile ? 'w-3.5 h-3.5' : 'w-3 h-3';
+    const chevronSize = mobile ? 'w-3 h-3' : 'w-2.5 h-2.5';
 
     return (
       <div key={fp}>
         <div
-          className={`flex items-center gap-1.5 pl-1 ${py} rounded cursor-pointer text-[11px] ${
+          className={`flex items-center gap-1.5 pl-1 ${py} rounded cursor-pointer ${textSize} ${
             isSel
               ? 'bg-purple-800/30 text-gray-200'
               : 'text-gray-400 hover:bg-gray-900 hover:text-gray-200'
@@ -198,26 +201,26 @@ export function DirectoryPicker({
           {isDir ? (
             <button
               onClick={e => { e.stopPropagation(); toggleDir(fp); }}
-              className={`p-0.5 hover:bg-gray-800 rounded shrink-0 ${mobile ? 'p-1' : ''}`}
+              className={`rounded shrink-0 hover:bg-gray-800 ${mobile ? 'p-1.5' : 'p-0.5'}`}
             >
-              <ChevronRight className={`w-2.5 h-2.5 transition-transform ${isExp ? 'rotate-90' : ''}`} />
+              <ChevronRight className={`${chevronSize} transition-transform ${isExp ? 'rotate-90' : ''}`} />
             </button>
           ) : (
-            <span className="w-[18px] shrink-0" />
+            <span className={mobile ? 'w-[26px] shrink-0' : 'w-[18px] shrink-0'} />
           )}
           {isDir
-            ? <Folder className="w-3 h-3 text-yellow-600 shrink-0" />
-            : <File className="w-3 h-3 text-blue-500 shrink-0" />
+            ? <Folder className={`${iconSize} text-yellow-600 shrink-0`} />
+            : <File className={`${iconSize} text-blue-500 shrink-0`} />
           }
           <span className="truncate flex-1 min-w-0">{entry.name}</span>
-          {isSel && <Check className="w-2.5 h-2.5 text-purple-400 shrink-0 mr-1" />}
+          {isSel && <Check className={`${mobile ? 'w-3 h-3' : 'w-2.5 h-2.5'} text-purple-400 shrink-0 mr-1`} />}
           {isDir && isSel && (
             <button
               onClick={e => { e.stopPropagation(); navigateTo(fp); }}
-              className="p-0.5 hover:bg-purple-700/40 rounded shrink-0 text-gray-500 hover:text-purple-300 transition-colors"
+              className={`${mobile ? 'p-1' : 'p-0.5'} hover:bg-purple-700/40 rounded shrink-0 text-gray-500 hover:text-purple-300 transition-colors`}
               title="Navigate into directory"
             >
-              <ArrowRightFromLine className="w-3 h-3" />
+              <ArrowRightFromLine className={`${mobile ? 'w-3.5 h-3.5' : 'w-3 h-3'}`} />
             </button>
           )}
         </div>
@@ -239,13 +242,13 @@ export function DirectoryPicker({
       {/* Search bar */}
       <div className="shrink-0 px-2 pt-2 pb-1">
         <div className="flex items-center gap-1.5 px-2 py-1 bg-gray-900 border border-gray-700 rounded">
-          <Search className="w-3 h-3 text-gray-600 shrink-0" />
+          <Search className={`${mobile ? 'w-3.5 h-3.5' : 'w-3 h-3'} text-gray-600 shrink-0`} />
           <input
             type="text"
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Filter..."
-            className="flex-1 bg-transparent text-[11px] text-gray-200 outline-none placeholder:text-gray-700"
+            className={`flex-1 bg-transparent outline-none placeholder:text-gray-700 ${mobile ? 'text-[13px] py-1.5' : 'text-[11px]'}`}
             autoFocus
           />
         </div>
@@ -259,7 +262,11 @@ export function DirectoryPicker({
             <span
               onClick={() => navigateTo(seg.path)}
               title={seg.path === '.' ? rootCwd : seg.path}
-              className={`text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap transition-colors cursor-pointer ${
+              className={`whitespace-nowrap rounded transition-colors cursor-pointer ${
+                mobile
+                  ? 'text-[11px] px-2 py-1'
+                  : 'text-[10px] px-1.5 py-0.5'
+              } ${
                 seg.path === selected
                   ? 'bg-purple-800/30 text-purple-300 font-semibold'
                   : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800'
@@ -274,16 +281,18 @@ export function DirectoryPicker({
       {/* Tree / search results */}
       <div className="flex-1 overflow-y-auto px-1 pb-1 min-h-0">
         {!tree['.']?.loaded ? (
-          <div className="text-gray-600 text-[10px] p-3 italic">Loading files...</div>
+          <div className={`text-gray-600 p-3 italic ${mobile ? 'text-[12px]' : 'text-[10px]'}`}>Loading files...</div>
         ) : searchResults !== null && searchResults.length === 0 ? (
-          <div className="text-gray-700 text-[10px] p-3 italic">No matches</div>
+          <div className={`text-gray-700 p-3 italic ${mobile ? 'text-[12px]' : 'text-[10px]'}`}>No matches</div>
         ) : searchResults !== null ? (
           /* Flat search results — search always searches from project root */
           <div className="space-y-px">
             {searchResults.map(r => (
               <div
                 key={r.path}
-                className={`flex items-center gap-1.5 px-2 py-1.5 rounded cursor-pointer text-[11px] ${
+                className={`flex items-center gap-1.5 px-2 rounded cursor-pointer ${
+                  mobile ? 'py-2.5 text-[13px]' : 'py-1.5 text-[11px]'
+                } ${
                   selected === r.path
                     ? 'bg-purple-800/30 text-gray-200'
                     : 'text-gray-400 hover:bg-gray-900 hover:text-gray-200'
@@ -296,11 +305,11 @@ export function DirectoryPicker({
                 }}
               >
                 {r.isDir
-                  ? <Folder className="w-3 h-3 text-yellow-600 shrink-0" />
-                  : <File className="w-3 h-3 text-blue-500 shrink-0" />
+                  ? <Folder className={`${mobile ? 'w-3.5 h-3.5' : 'w-3 h-3'} text-yellow-600 shrink-0`} />
+                  : <File className={`${mobile ? 'w-3.5 h-3.5' : 'w-3 h-3'} text-blue-500 shrink-0`} />
                 }
                 <span className="truncate flex-1 min-w-0">{r.path}</span>
-                {selected === r.path && <Check className="w-2.5 h-2.5 text-purple-400 shrink-0" />}
+                {selected === r.path && <Check className={`${mobile ? 'w-3 h-3' : 'w-2.5 h-2.5'} text-purple-400 shrink-0`} />}
               </div>
             ))}
           </div>
@@ -311,11 +320,15 @@ export function DirectoryPicker({
       </div>
 
       {/* Bottom bar */}
-      <div className="shrink-0 flex items-center justify-between px-3 py-2 border-t border-gray-800 bg-gray-900/50">
-        <span className="text-[9px] text-gray-600 font-mono truncate max-w-[60%]" title={selected}>{selected}</span>
+      <div className={`shrink-0 flex items-center justify-between px-3 border-t border-gray-800 bg-gray-900/50 ${mobile ? 'py-3' : 'py-2'}`}>
+        <span className={`font-mono truncate max-w-[60%] text-gray-600 ${mobile ? 'text-[11px]' : 'text-[9px]'}`} title={selected}>{selected}</span>
         <button
           onClick={() => { onSelect(selected); onClose(); }}
-          className="px-3 py-1 bg-purple-700 hover:bg-purple-600 text-white text-[10px] rounded border border-purple-600 transition-colors"
+          className={`bg-purple-700 hover:bg-purple-600 text-white rounded border border-purple-600 transition-colors ${
+            mobile
+              ? 'px-5 py-2 text-[13px]'
+              : 'px-3 py-1 text-[10px]'
+          }`}
         >
           Select
         </button>

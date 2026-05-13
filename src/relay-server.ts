@@ -350,6 +350,15 @@ function getPeerInfo(ws: WebSocket): Record<string, unknown> | null {
   return info;
 }
 
+/** Normalize WebSocket remote address for IP-based grouping. */
+function normalizePeerIP(ws: WebSocket): string {
+  if (!(ws as any)._socket) return '127.0.0.1';
+  const raw = (ws as any)._socket.remoteAddress || '127.0.0.1';
+  let ip = raw.replace(/^::ffff:/, '');
+  if (ip === '::1') ip = '127.0.0.1';
+  return ip;
+}
+
 function collectPeers(): { peers: Record<string, unknown>[]; links: { source: string; target: string; type: string }[] } {
   const peers: Record<string, unknown>[] = [{
     ...localNodeInfo,
@@ -358,20 +367,43 @@ function collectPeers(): { peers: Record<string, unknown>[]; links: { source: st
     connectedAt: START_TIME,
     isLocal: true,
   }];
-  const seenBrowserIds = new Set<string>();
+  // Group browser connections by IP — same device = one VIEW node regardless of tab count
+  const browserByIP = new Map<string, { count: number; connectedAt: number; label: string }>();
   for (const ws of clients) {
     if (!(ws as any)._isAgent) {
-      // Browser connections — deduplicate by browserId (avoid duplicate VIEW cards)
-      const info = getPeerInfo(ws);
-      if (!info) continue;
-      const browserId = info.id as string;
-      if (seenBrowserIds.has(browserId)) continue;
-      seenBrowserIds.add(browserId);
-      peers.push(info);
+      const label = (ws as any)._browserLabel;
+      if (!label) continue;
+      const ip = normalizePeerIP(ws);
+      const group = browserByIP.get(ip);
+      if (group) {
+        group.count++;
+        const ca = (ws as any)._connectedAt || Date.now();
+        if (ca < group.connectedAt) group.connectedAt = ca;
+      } else {
+        browserByIP.set(ip, {
+          count: 1,
+          connectedAt: (ws as any)._connectedAt || Date.now(),
+          label,
+        });
+      }
       continue;
     }
     const info = getPeerInfo(ws);
     if (info) peers.push(info);
+  }
+  // Add one aggregated VIEW node per unique IP
+  for (const [ip, group] of browserByIP) {
+    const networkType = classifyPeerIP(ip);
+    peers.push({
+      id: `view_${ip}`,
+      name: group.label,
+      ip,
+      type: 'browser',
+      networkType,
+      hasPublicAccess: networkType === 'wan',
+      connectedAt: group.connectedAt,
+      tabCount: group.count,
+    });
   }
   // Also collect agents (agents are removed from clients set but have _isAgent)
   for (const inst of instanceManager.list()) {
@@ -422,30 +454,30 @@ function collectPeers(): { peers: Record<string, unknown>[]; links: { source: st
 }
 
 function broadcastPeers(): void {
+  const { peers, links } = collectPeers();
   for (const ws of clients) {
-    const { peers, links } = collectPeers();
-    const browserId = (ws as any)._browserId;
-    if (browserId) {
+    if ((ws as any)._isAgent) {
+      send(ws, envelope("peer.list", { peers, links }));
+    } else {
+      const ip = normalizePeerIP(ws);
       send(ws, envelope("peer.list", {
-        peers: peers.filter(p => p.id !== browserId),
+        peers: peers.filter(p => p.type !== 'browser' || p.ip !== ip),
         links,
       }));
-    } else {
-      send(ws, envelope("peer.list", { peers, links }));
     }
   }
 }
 
 function sendPeers(ws: WebSocket): void {
   const { peers, links } = collectPeers();
-  const browserId = (ws as any)._browserId;
-  if (browserId) {
+  if ((ws as any)._isAgent) {
+    send(ws, envelope("peer.list", { peers, links }));
+  } else {
+    const ip = normalizePeerIP(ws);
     send(ws, envelope("peer.list", {
-      peers: peers.filter(p => p.id !== browserId),
+      peers: peers.filter(p => p.type !== 'browser' || p.ip !== ip),
       links,
     }));
-  } else {
-    send(ws, envelope("peer.list", { peers, links }));
   }
 }
 

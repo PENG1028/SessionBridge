@@ -16,6 +16,7 @@ interface PeerInfo {
   port?: number;
   isLocal?: boolean;
   latency?: number;
+  tabCount?: number;
 }
 
 interface ConnectionItem {
@@ -149,7 +150,7 @@ function latencyLabel(ms?: number): string {
 // ─── Node Card ───
 
 function NodeCard({ peer, kind, onEnter, wsHost }: {
-  peer: { name: string; ip?: string; port?: number; networkType?: string };
+  peer: { name: string; ip?: string; port?: number; networkType?: string; tabCount?: number };
   kind: NodeKind;
   onEnter?: () => void;
   wsHost?: string;
@@ -191,7 +192,9 @@ function NodeCard({ peer, kind, onEnter, wsHost }: {
             </span>
           )}
           {kind === 'VIEW' ? (
-            <span className="text-[9px] px-2 py-0.5 rounded bg-gray-700/30 text-gray-400 border border-gray-700/40 shrink-0">View</span>
+            <span className="text-[9px] px-2 py-0.5 rounded bg-gray-700/30 text-gray-400 border border-gray-700/40 shrink-0">
+              {peer.tabCount && peer.tabCount > 1 ? `${peer.tabCount}t` : 'View'}
+            </span>
           ) : clickable ? (
             <span className="text-[9px] px-2 py-0.5 rounded bg-purple-700/30 text-purple-300 border border-purple-700/40 shrink-0">Enter</span>
           ) : null}
@@ -282,7 +285,7 @@ export function NodeNetworkView({
   newConnUrl, onNewConnUrlChange, onAddConnection,
   onEnterNode, upstreamUrl, onConnectUpstream, onDisconnectUpstream,
   upstreamConnectingUrl, upstreamError, upstreamErrorUrl,
-  isLocalPage, browserId,
+  isLocalPage,
 }: NodeNetworkViewProps) {
   // ── Derived data ──
   const wsHost = (() => { try { return new URL(wsUrl).hostname; } catch { return '127.0.0.1'; } })();
@@ -296,7 +299,7 @@ export function NodeNetworkView({
   const remotePeers = peers.filter(p => p.id !== '__local__' && !p.isLocal && !(p.type === 'agent' && p.networkType === 'loopback'));
   const relayPeers = remotePeers.filter(p => p.type === 'agent' && p.role === 'relay');
   const leafPeers = remotePeers.filter(p => p.type === 'agent' && p.role !== 'relay');
-  const viewers = peers.filter(p => p.type === 'browser' && p.networkType !== 'loopback' && p.id !== browserId);
+  const viewers = peers.filter(p => p.type === 'browser' && p.networkType !== 'loopback');
 
   const isUpstreamConnected = upstreamUrl && !isLocalUrl(upstreamUrl) && connections.some(c => c.url === upstreamUrl);
   const upstreamPeer = (() => {
@@ -318,7 +321,7 @@ export function NodeNetworkView({
 
   type TopoEntry = {
     kind: 'node';
-    data: { peer: { name: string; ip?: string; port?: number; networkType?: string }; kind: NodeKind; onEnter?: () => void; wsHost?: string };
+    data: { peer: { name: string; ip?: string; port?: number; networkType?: string; tabCount?: number }; kind: NodeKind; onEnter?: () => void; wsHost?: string };
   } | {
     kind: 'link';
     label: string;
@@ -331,7 +334,7 @@ export function NodeNetworkView({
 
   function addNode(
     id: string,
-    peer: { name: string; ip?: string; port?: number; networkType?: string },
+    peer: { name: string; ip?: string; port?: number; networkType?: string; tabCount?: number },
     kind: NodeKind,
     linkLabel?: string, linkLatency?: string, linkMuted?: boolean,
     onEnter?: () => void,
@@ -411,9 +414,10 @@ export function NodeNetworkView({
 
   // 1. Browser viewers → 被访问 / view
   for (const v of viewers) {
+    const tabLabel = v.tabCount && v.tabCount > 1 ? ` (${v.tabCount}t)` : '';
     panelConns.push({
       id: `viewer:${v.id}`,
-      name: `Browser ${v.ip || v.name}`,
+      name: `Browser ${v.ip || v.name}${tabLabel}`,
       direction: '被访问',
       connType: 'view',
       status: 'connected',
