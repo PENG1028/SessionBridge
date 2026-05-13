@@ -399,9 +399,11 @@ function PageContent() {
       const tabs: any[] = Array.isArray(msg.tabs) ? msg.tabs : [];
       if (!nodeId) return;
       setAppState(prev => {
-        if (prev.activeInstanceId !== nodeId) return prev; // not viewing this node
         const currentWs = prev.instanceStates[nodeId];
-        if (!currentWs) return prev;
+        if (!currentWs) {
+          // First time seeing this node's tabs — create workbench state
+          return { ...prev, instanceStates: { ...prev.instanceStates, [nodeId]: buildStateFromTabs(tabs as PaneTab[]) } };
+        }
         const currentTabs = collectAllTabs(currentWs);
         // Only update if tabs actually differ
         if (tabs.length === currentTabs.length && tabs.every((t, i) => t.id === currentTabs[i]?.id)) {
