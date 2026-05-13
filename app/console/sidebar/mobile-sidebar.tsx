@@ -9,7 +9,7 @@ import { useFocus } from '../workbench/focus-context';
 interface MobileSidebarProps {
   open: boolean;
   onClose: () => void;
-  fileTree: Record<string, { items: any[]; loaded: boolean }>;
+  fileTree: Record<string, { items: any[]; loaded: boolean; error?: string }>;
   expandedDirs: Set<string>;
   onToggleDir: (path: string) => void;
   onOpenFile: (path: string) => void;

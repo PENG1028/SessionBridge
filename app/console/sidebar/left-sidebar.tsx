@@ -11,7 +11,7 @@ const MAX_W = 600;
 const DEFAULT_W = 224;
 
 interface LeftSidebarProps {
-  fileTree: Record<string, { items: any[]; loaded: boolean }>;
+  fileTree: Record<string, { items: any[]; loaded: boolean; error?: string }>;
   expandedDirs: Set<string>;
   onToggleDir: (dirPath: string) => void;
   onOpenFile: (filePath: string) => void;

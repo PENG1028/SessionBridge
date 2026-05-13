@@ -42,7 +42,7 @@ import type { ActionRunContext } from './console/actions/action-types';
 void __coreActionsRegistered;
 import type { ContextMenuItem } from './console/shell/context-menu';
 import { ConsoleOverlays } from './console/overlays/console-overlays';
-import { getLastActiveDir, setLastActiveDir, getRestoreLastPath, addPathBookmark } from './lib/path-bookmarks';
+import { getLastActiveDir, setLastActiveDir, getRestoreLastPath, addPathBookmark, setBookmarkScope } from './lib/path-bookmarks';
 import { NodeBar } from './console/stage/node-bar';
 import { NodeNetworkView } from './console/sidebar/node-network-view';
 import { KeyHintOverlay } from './console/chrome/key-hint-overlay';
@@ -363,33 +363,10 @@ function PageContent() {
     }).catch(() => {});
   }, []);
 
-  // ── File tree state ─────────────────────
-  const [fileTree, setFileTree] = useState<Record<string, {items: any[]; loaded: boolean}>>({});
-  const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set(['.']));
-  const [fileTreeRoot, setFileTreeRoot] = useState('');
-  const fetchDir = useCallback(async (dir: string) => {
-    try {
-      const res = await fetch(`/api/list?dir=${encodeURIComponent(dir)}`);
-      const data = await res.json();
-      if (data.items) {
-        setFileTreeRoot(data.cwd || '');
-        setFileTree(prev => ({...prev, [dir]: {items: data.items, loaded: true}}));
-      }
-    } catch {}
-  }, []);
-  // Fetch root on mount
-  useEffect(() => { fetchDir('.'); }, [fetchDir]);
-
-  const onNavigatePath = useCallback((path: string) => {
-    setLastActiveDir(path);
-    setFileTreeRoot(path);
-    setFileTree(prev => {
-      if (prev[path]?.loaded) return prev;
-      return prev;
-    });
-    fetchDir(path);
-    setExpandedDirs(new Set(['.', path]));
-  }, [fetchDir]);
+  // ── File tree state (per-node, keyed by wsUrl) ──
+  const [nodeFileTree, setNodeFileTree] = useState<Record<string, Record<string, {items: any[]; loaded: boolean; error?: string}>>>({});
+  const [nodeExpandedDirs, setNodeExpandedDirs] = useState<Record<string, string[]>>({});
+  const [nodeFileTreeRoot, setNodeFileTreeRoot] = useState<Record<string, string>>({});
 
   const actionEndRef = useRef<HTMLDivElement>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
@@ -479,6 +456,60 @@ function PageContent() {
     const nodeId = appState.activeInstanceId;
     return nodeId?.startsWith('upstream:') ? nodeId.slice('upstream:'.length) : wsUrl;
   }, [appState.activeInstanceId, wsUrl]);
+  // Derived active-node file tree values
+  const fileTree = nodeFileTree[activeNodeWsUrl] || {};
+  const expandedDirs = new Set(nodeExpandedDirs[activeNodeWsUrl] || ['.']);
+  const fileTreeRoot = nodeFileTreeRoot[activeNodeWsUrl] || '';
+
+  // Sync bookmark scope with active node
+  useEffect(() => {
+    try {
+      const host = activeNodeWsUrl !== wsUrl ? new URL(activeNodeWsUrl).hostname : null;
+      setBookmarkScope(host);
+      window.dispatchEvent(new CustomEvent('sb-bookmarks-changed'));
+    } catch {}
+  }, [activeNodeWsUrl, wsUrl]);
+
+  const fetchDir = useCallback(async (dir: string) => {
+    const prefix = activeNodeWsUrl !== wsUrl ? wsToHttpUrl(activeNodeWsUrl) : '';
+    const apiUrl = `${prefix}/api/list?dir=${encodeURIComponent(dir)}`;
+    try {
+      const res = await fetch(apiUrl);
+      const data = await res.json();
+      if (data.items) {
+        setNodeFileTreeRoot(prev => ({...prev, [activeNodeWsUrl]: data.cwd || ''}));
+        setNodeFileTree(prev => ({
+          ...prev,
+          [activeNodeWsUrl]: { ...(prev[activeNodeWsUrl] || {}), [dir]: {items: data.items, loaded: true} }
+        }));
+      } else {
+        setNodeFileTree(prev => ({
+          ...prev,
+          [activeNodeWsUrl]: { ...(prev[activeNodeWsUrl] || {}), [dir]: {items: [], loaded: true, error: data.error || 'Directory not found'} }
+        }));
+      }
+    } catch (err) {
+      setNodeFileTree(prev => ({
+        ...prev,
+        [activeNodeWsUrl]: { ...(prev[activeNodeWsUrl] || {}), [dir]: {items: [], loaded: true, error: String(err)} }
+      }));
+    }
+  }, [activeNodeWsUrl, wsUrl]);
+  // Fetch root when active node changes
+  useEffect(() => { fetchDir('.'); }, [fetchDir]);
+
+  const onNavigatePath = useCallback((path: string) => {
+    setLastActiveDir(path);
+    setNodeFileTreeRoot(prev => ({...prev, [activeNodeWsUrl]: path}));
+    setNodeFileTree(prev => {
+      const nodeTree = prev[activeNodeWsUrl];
+      if (nodeTree?.[path]?.loaded) return prev;
+      return prev;
+    });
+    fetchDir(path);
+    setNodeExpandedDirs(prev => ({...prev, [activeNodeWsUrl]: ['.', path]}));
+  }, [fetchDir, activeNodeWsUrl]);
+
   // Phase 4I: Instance changes (sidebar click) no longer auto-create tabs.
   // Tab is the subject — instance is a tab's binding. Only shell tabs are
   // restored on reconnect via the instances[] effect below.
@@ -900,8 +931,9 @@ function PageContent() {
       const info = await fetch('/api/info').then(r => r.json());
       setProjectInfo(info);
       addLog(`[System] Switched to ${info.projectName || info.cwd}`);
-      setFileTree({});
-      setExpandedDirs(new Set(['.']));
+      setNodeFileTree(prev => ({...prev, [wsUrl]: {}}));
+      setNodeExpandedDirs(prev => ({...prev, [wsUrl]: ['.']}));
+      setNodeFileTreeRoot(prev => ({...prev, [wsUrl]: ''}));
       fetchDir('.');
     } catch {}
     setSwitching(false);
@@ -1564,15 +1596,18 @@ function PageContent() {
           fileTree={fileTree}
           expandedDirs={expandedDirs}
           onToggleDir={(dirPath) => {
-            setExpandedDirs(prev => {
-              const next = new Set(prev);
-              if (next.has(dirPath)) next.delete(dirPath);
-              else { next.add(dirPath); fetchDir(dirPath); }
-              return next;
+            setNodeExpandedDirs(prev => {
+              const current = prev[activeNodeWsUrl] || ['.'];
+              const isExpanded = current.includes(dirPath);
+              const next = isExpanded
+                ? current.filter(d => d !== dirPath)
+                : [...current, dirPath];
+              if (!isExpanded) fetchDir(dirPath);
+              return { ...prev, [activeNodeWsUrl]: next };
             });
           }}
           onOpenFile={(filePath) => {
-            fetch(`/api/read-file?path=${encodeURIComponent(filePath)}`)
+            fetch(`${activeNodeWsUrl === wsUrl ? '' : wsToHttpUrl(activeNodeWsUrl)}/api/read-file?path=${encodeURIComponent(filePath)}`)
               .then(r => r.json())
               .then(data => {
                 if (data.content !== undefined) {
@@ -1698,7 +1733,7 @@ function PageContent() {
           onForkSnapshot={forkFromSnapshotWrapper}
           knownFiles={knownFiles}
           onOpenFile={(filePath) => {
-            fetch(`/api/read-file?path=${encodeURIComponent(filePath)}`)
+            fetch(`${activeNodeWsUrl === wsUrl ? '' : wsToHttpUrl(activeNodeWsUrl)}/api/read-file?path=${encodeURIComponent(filePath)}`)
               .then(r => r.json())
               .then(data => {
                 if (data.content !== undefined) setViewingFile({ path: data.path || filePath, content: data.content });
@@ -1782,13 +1817,19 @@ function PageContent() {
         onClose={() => setMobileOpen(false)}
         fileTree={fileTree}
         expandedDirs={expandedDirs}
-        onToggleDir={(path) => setExpandedDirs(prev => {
-          const next = new Set(prev);
-          next.has(path) ? next.delete(path) : next.add(path);
-          return next;
-        })}
+        onToggleDir={(dirPath) => {
+          setNodeExpandedDirs(prev => {
+            const current = prev[activeNodeWsUrl] || ['.'];
+            const isExpanded = current.includes(dirPath);
+            const next = isExpanded
+              ? current.filter(d => d !== dirPath)
+              : [...current, dirPath];
+            if (!isExpanded) fetchDir(dirPath);
+            return { ...prev, [activeNodeWsUrl]: next };
+          });
+        }}
         onOpenFile={(filePath) => {
-          fetch(`/api/read-file?path=${encodeURIComponent(filePath)}`)
+          fetch(`${activeNodeWsUrl === wsUrl ? '' : wsToHttpUrl(activeNodeWsUrl)}/api/read-file?path=${encodeURIComponent(filePath)}`)
             .then(r => r.json())
             .then(data => {
               if (data.content !== undefined) {
@@ -1821,7 +1862,7 @@ function PageContent() {
         onForkSnapshot={forkFromSnapshotWrapper}
         knownFiles={knownFiles}
         onOpenFile={(filePath) => {
-          fetch(`/api/read-file?path=${encodeURIComponent(filePath)}`)
+          fetch(`${activeNodeWsUrl === wsUrl ? '' : wsToHttpUrl(activeNodeWsUrl)}/api/read-file?path=${encodeURIComponent(filePath)}`)
             .then(r => r.json())
             .then(data => {
               if (data.content !== undefined) setViewingFile({ path: data.path || filePath, content: data.content });

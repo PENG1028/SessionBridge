@@ -54,15 +54,24 @@ export function TerminalView({ instanceId }: TerminalViewProps) {
     })();
   }, [instanceId, createInstance, bindCurrentTabInstance, projectCwd]);
 
-  // Sync cwd when projectCwd changes
+  // Sync cwd when projectCwd changes — but only if RESTORE is OFF
+  // or there's no saved last-active directory.
   useEffect(() => {
-    if (projectCwd) setCwd(projectCwd);
+    if (projectCwd) {
+      if (getRestoreLastPath() && getLastActiveDir()) return;
+      setCwd(projectCwd);
+    }
   }, [projectCwd]);
 
-  /** Resolve a relative path (from picker, e.g. "./src/foo") to absolute using project root. */
+  /** Resolve a relative path (from picker, e.g. "./src/foo") to absolute using project root.
+   *  Leaves already-absolute paths untouched so Windows paths (F:/...) aren't
+   *  incorrectly joined onto a Linux projectCwd when connected to a remote relay. */
   const resolveRel = useCallback((rel: string): string => {
+    // Already absolute on Unix or Windows — use as-is
+    const normalized = rel.replace(/\\/g, '/');
+    if (normalized.startsWith('/') || /^[A-Za-z]:\//.test(normalized)) return normalized;
     const base = (projectCwd || '.').replace(/\\/g, '/').replace(/\/$/, '');
-    const r = rel.replace(/\\/g, '/').replace(/^\.\/?/, '');
+    const r = normalized.replace(/^\.\/?/, '');
     return r ? base + '/' + r : base;
   }, [projectCwd]);
 

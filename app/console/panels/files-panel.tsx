@@ -5,7 +5,7 @@ import { Upload } from 'lucide-react';
 import { FileExplorer } from '../sidebar/file-explorer';
 
 interface FilesPanelProps {
-  fileTree?: Record<string, { items: any[]; loaded: boolean }>;
+  fileTree?: Record<string, { items: any[]; loaded: boolean; error?: string }>;
   expandedDirs?: Set<string>;
   onToggleDir?: (dirPath: string) => void;
   onOpenFile?: (filePath: string) => void;
@@ -47,6 +47,11 @@ export function FilesPanel(props: FilesPanelProps) {
         <div className="flex-1 overflow-y-auto px-1.5 pb-1.5 text-xs min-h-0">
         {!fileTree?.['.']?.loaded ? (
           <div className="text-gray-600 text-[10px] p-3 italic">Loading files...</div>
+        ) : fileTree?.['.']?.error ? (
+          <div className="text-gray-700 text-[9px] p-3 italic leading-relaxed">
+            Could not load file tree.<br />
+            <span className="text-gray-600">{fileTree['.'].error}</span>
+          </div>
         ) : (
           <FileExplorer
             entries={fileTree['.']?.items || []}

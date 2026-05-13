@@ -11,6 +11,7 @@ interface FileTreeEntry {
 interface FileTreeData {
   items: FileTreeEntry[];
   loaded: boolean;
+  error?: string;
 }
 
 interface FileExplorerProps {
@@ -82,7 +83,10 @@ export function FileExplorer({
                   />
                 </div>
               )}
-              {isExpanded && !children?.loaded && (
+              {isExpanded && children?.error && (
+                <div className="text-gray-700 text-[8px] pl-6 italic">{children.error}</div>
+              )}
+              {isExpanded && !children?.loaded && !children?.error && (
                 <div className="text-gray-700 text-[8px] pl-6 italic">loading...</div>
               )}
             </div>
