@@ -110,6 +110,18 @@ const PENDING_TIMEOUT_MS = 30_000;
 const sessionPersistence = new SessionPersistence(process.cwd(), eventBus);
 const permissions = new PermissionModel();
 
+// ─── Workbench tab sync ────────────────────────────────────
+// Server-side workbench tab store + subscriber tracking for cross-device sync.
+const workbenchTabStore = new Map<string, any[]>();
+const workbenchSubscribers = new Map<string, Set<WebSocket>>();
+
+function cleanupWorkbenchSubs(ws: WebSocket): void {
+  for (const [nodeId, subs] of workbenchSubscribers) {
+    subs.delete(ws);
+    if (subs.size === 0) workbenchSubscribers.delete(nodeId);
+  }
+}
+
 // ─── Admin routes state (merged from old dashboard server) ────
 const adminLogs: string[] = [];
 const adminShellInstances = new Map<string, ShellRunInstance>();
@@ -601,8 +613,12 @@ async function spawnShellForWs(ws: WebSocket, instanceId?: string): Promise<impo
       // instance's own adapter guarantees we spawn with the correct adapter type.
       terminalAdapter = existing.adapterId ? adapterRegistry.get(existing.adapterId) : undefined;
       if (!terminalAdapter) {
-        send(ws, envelope("error", { code: "INVALID_ADAPTER", message: `Instance ${instanceId} has unknown adapter: ${existing.adapterId}` }));
-        throw new Error(`Instance ${instanceId} has unknown adapter: ${existing.adapterId}`);
+        // Adapter not found (e.g., 'unknown') — fall back to shell adapter
+        terminalAdapter = adapterRegistry.get('shell') || resolveAdapterByCapability('terminal', true);
+      }
+      if (!terminalAdapter) {
+        send(ws, envelope("error", { code: "INVALID_ADAPTER", message: `Instance ${instanceId} has unknown adapter: ${existing.adapterId} and no shell fallback` }));
+        throw new Error(`Instance ${instanceId} has unknown adapter: ${existing.adapterId} and no shell fallback`);
       }
       if (!terminalAdapter.getCapabilities().terminal) {
         send(ws, envelope("error", { code: "NOT_TERMINAL", message: "Instance is not terminal-capable — cannot attach shell" }));
@@ -2097,6 +2113,46 @@ function setupWssHandlers(): void {
       return;
     }
 
+    // ── Workbench tab sync ─────────────────────────────
+    if (msg.type === "workbench.subscribe") {
+      const nodeId = String(msg.nodeId || '');
+      if (!nodeId) return;
+      if (!workbenchSubscribers.has(nodeId)) workbenchSubscribers.set(nodeId, new Set());
+      workbenchSubscribers.get(nodeId)!.add(ws);
+      // Send current tab state immediately
+      const tabs = workbenchTabStore.get(nodeId) || [];
+      send(ws, envelope("workbench.tabs", { nodeId, tabs }));
+      return;
+    }
+
+    if (msg.type === "workbench.unsubscribe") {
+      const nodeId = String(msg.nodeId || '');
+      if (!nodeId) return;
+      const subs = workbenchSubscribers.get(nodeId);
+      if (subs) {
+        subs.delete(ws);
+        if (subs.size === 0) workbenchSubscribers.delete(nodeId);
+      }
+      return;
+    }
+
+    if (msg.type === "workbench.tabs") {
+      const nodeId = String(msg.nodeId || '');
+      const tabs = Array.isArray(msg.tabs) ? msg.tabs : [];
+      if (!nodeId) return;
+      workbenchTabStore.set(nodeId, tabs);
+      // Broadcast to all OTHER subscribers
+      const subs = workbenchSubscribers.get(nodeId);
+      if (subs) {
+        for (const client of subs) {
+          if (client !== ws && client.readyState === WebSocket.OPEN) {
+            send(client, envelope("workbench.tabs", { nodeId, tabs }));
+          }
+        }
+      }
+      return;
+    }
+
     // ── Claude chat commands ────────────────────────────────
     const targetInst = msg.instanceId ? (instanceManager.get(msg.instanceId) || inst()) : inst();
     const prevActive = instanceManager.activeId;
@@ -2264,6 +2320,9 @@ function setupWssHandlers(): void {
         }
       }
     }
+    // Cleanup workbench subscribers
+    cleanupWorkbenchSubs(ws);
+
     // Persist session state
     sessionPersistence.save(instanceManager);
   });

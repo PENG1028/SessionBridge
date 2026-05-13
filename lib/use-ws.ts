@@ -93,6 +93,11 @@ export function useSession(
     clientRef.current?.sendShellInput(data, instanceId);
   }, []);
 
+  const sendMessage = useCallback((type: string, body: Record<string, unknown> = {}) => {
+    clientRef.current?.send(type, body);
+    addMsgLog('system', type);
+  }, [addMsgLog]);
+
   const sendResize = useCallback((cols: number, rows: number) => {
     clientRef.current?.sendResize(cols, rows);
   }, []);
@@ -328,5 +333,7 @@ export function useSession(
     killInstance,
     // Extension points
     extensionPointsData,
+    // Generic message send
+    sendMessage,
   };
 }

@@ -42,6 +42,38 @@ export interface WorkbenchState {
 
 import { getAllViewEntries, getAdapterViewId, getAllAdapterTypes } from '../main/view-registry';
 
+/** Collect all non-empty tabs from a workbench state (flat list). */
+export function collectAllTabs(state: WorkbenchState): PaneTab[] {
+  const tabs: PaneTab[] = [];
+  visitPanes(state.root, pane => {
+    for (const tab of pane.tabs) {
+      if (tab.viewType !== 'empty') tabs.push(tab);
+    }
+  });
+  if (state.bottom) {
+    for (const tab of state.bottom.tabs) {
+      if (tab.viewType !== 'empty') tabs.push(tab);
+    }
+  }
+  return tabs;
+}
+
+/** Build a single-pane WorkbenchState from a flat tab list. */
+export function buildStateFromTabs(tabs: PaneTab[], preserveActiveTabId?: string): WorkbenchState {
+  const paneId = genPaneId();
+  if (tabs.length === 0) {
+    return createInitialState();
+  }
+  const activeTabId = preserveActiveTabId && tabs.some(t => t.id === preserveActiveTabId)
+    ? preserveActiveTabId
+    : tabs[0].id;
+  return {
+    root: { kind: 'pane' as const, id: paneId, tabs, activeTabId, zone: 'main' as const },
+    activePaneId: paneId,
+    bottom: null,
+  };
+}
+
 // ─── ID generation ─────────────────────────────────────────────
 
 let _counter = 0;
@@ -475,7 +507,9 @@ export function appReducer(state: AppWorkbenchState, action: AppWorkbenchAction)
       return {
         ...state,
         instanceStates: rest,
-        activeInstanceId: state.activeInstanceId === action.instanceId ? null : state.activeInstanceId,
+        // Keep activeInstanceId — don't kick user back to root. If the layout
+        // that was removed happens to be the active one, getActiveWorkbenchState
+        // falls back to globalState.
         workbenchInstanceIds: state.workbenchInstanceIds.filter(id => id !== action.instanceId),
       };
     }

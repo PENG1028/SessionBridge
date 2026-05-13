@@ -49,7 +49,7 @@ import { KeyHintOverlay } from './console/chrome/key-hint-overlay';
 import { MobileExtraKeys } from './console/chrome/mobile-extra-keys';
 import { LayoutProvider, useLayout, SidebarSlot, MainSlot, FocusProvider, RuntimePolicyProvider, useFocus, useRuntimePolicy, WorkbenchProvider } from './console/workbench';
 import { WorkbenchLayout } from './console/stage/workbench-layout';
-import { appReducer, createAppInitialState, getActiveWorkbenchState, createInitialState, findPane as findPaneInTree, ensureInstanceTab, saveLayoutsToStorage, loadLayoutsFromStorage, restoreInstanceStatesFromStorage, genTabId, type ViewType, type PaneTab, type LayoutNode, type WorkbenchState, type WorkbenchAction, type AppWorkbenchState, type AppWorkbenchAction } from './console/stage/workbench-state';
+import { appReducer, createAppInitialState, getActiveWorkbenchState, createInitialState, findPane as findPaneInTree, ensureInstanceTab, saveLayoutsToStorage, loadLayoutsFromStorage, restoreInstanceStatesFromStorage, genTabId, collectAllTabs, buildStateFromTabs, type ViewType, type PaneTab, type LayoutNode, type WorkbenchState, type WorkbenchAction, type AppWorkbenchState, type AppWorkbenchAction } from './console/stage/workbench-state';
 
 // ==========================================
 // Types
@@ -393,10 +393,32 @@ function PageContent() {
         const id = sessionStorage.getItem('bridge-browser-id');
         if (id) setBrowserId(id);
       } catch {}
+    } else if (msg.type === 'workbench.tabs') {
+      // Server sent updated workbench tabs for a node
+      const nodeId: string = msg.nodeId;
+      const tabs: any[] = Array.isArray(msg.tabs) ? msg.tabs : [];
+      if (!nodeId) return;
+      setAppState(prev => {
+        if (prev.activeInstanceId !== nodeId) return prev; // not viewing this node
+        const currentWs = prev.instanceStates[nodeId];
+        if (!currentWs) return prev;
+        const currentTabs = collectAllTabs(currentWs);
+        // Only update if tabs actually differ
+        if (tabs.length === currentTabs.length && tabs.every((t, i) => t.id === currentTabs[i]?.id)) {
+          return prev;
+        }
+        // Preserve active tab selection if the tab still exists
+        const currentActiveId = currentWs.root.kind === 'pane' ? currentWs.root.activeTabId : '';
+        const newWs = buildStateFromTabs(tabs as PaneTab[], currentActiveId);
+        return {
+          ...prev,
+          instanceStates: { ...prev.instanceStates, [nodeId]: newWs },
+        };
+      });
     }
   }, []);
 
-  const { connStatus, msgLog, sendInput, sendShellInput, sendCommand, serverBlocks, sessions, activeSessionId, activateSession, spawnSession, isWorkspace, queueStatus, instances, activeInstanceId, activateInstance, createInstance, killInstance, extensionPointsData } = useSession(wsUrl, token ?? undefined, undefined, undefined, undefined, onSystemNotify, dismiss, handleSystemMessage);
+  const { connStatus, msgLog, sendInput, sendShellInput, sendCommand, serverBlocks, sessions, activeSessionId, activateSession, spawnSession, isWorkspace, queueStatus, instances, activeInstanceId, activateInstance, createInstance, killInstance, extensionPointsData, sendMessage } = useSession(wsUrl, token ?? undefined, undefined, undefined, undefined, onSystemNotify, dismiss, handleSystemMessage);
 
   // ── 30s grace before showing disconnect banner ──
   const [showBanner, setShowBanner] = useState(false);
@@ -441,14 +463,32 @@ function PageContent() {
   const appDispatch = useCallback((action: AppWorkbenchAction) => {
     setAppState(prev => appReducer(prev, action));
   }, []);
+
+  // Workbench actions that change the tab structure (need cross-device sync)
+  const structuralActions = new Set([
+    'ADD_TAB', 'CLOSE_TAB', 'SET_TAB_VIEW', 'SPLIT_PANE', 'UNSPLIT_PANE',
+    'REORDER_TABS', 'ADD_EMPTY_PANE', 'ADD_BOTTOM_PANE', 'REMOVE_PANE',
+    'SPLIT_PANE_VERTICAL', 'SPLIT_PANE_HORIZONTAL', 'CLEAR_INSTANCE_TABS',
+  ]);
+
   const activeWorkbenchDispatch = useCallback((action: WorkbenchAction) => {
     setAppState(prev => {
-      if (prev.activeInstanceId && prev.instanceStates[prev.activeInstanceId]) {
-        return appReducer(prev, { type: 'INSTANCE_ACTION', instanceId: prev.activeInstanceId, action });
+      const activeId = prev.activeInstanceId;
+      if (activeId && prev.instanceStates[activeId]) {
+        const next = appReducer(prev, { type: 'INSTANCE_ACTION', instanceId: activeId, action });
+        // Send structural tab changes to server for cross-device sync
+        if (structuralActions.has(action.type)) {
+          const ws = next.instanceStates[activeId];
+          if (ws) {
+            const tabs = collectAllTabs(ws);
+            sendMessage('workbench.tabs', { nodeId: activeId, tabs });
+          }
+        }
+        return next;
       }
       return appReducer(prev, { type: 'GLOBAL_ACTION', action });
     });
-  }, []);
+  }, [sendMessage]);
   const activeWorkbenchState = useMemo(() => getActiveWorkbenchState(appState), [appState]);
   const appStateRef = useRef(appState);
   appStateRef.current = appState;
@@ -514,37 +554,12 @@ function PageContent() {
   // Tab is the subject — instance is a tab's binding. Only shell tabs are
   // restored on reconnect via the instances[] effect below.
 
-  // When an instance arrives or is removed, sync workbench tabs accordingly
+  // Track instance IDs for lifecycle management — workbench tab sync is now
+  // server-driven (workbench.subscribe/workbench.tabs messages).
   const prevInstanceIds = useRef<string[]>([]);
   useEffect(() => {
-    // Don't cleanup during disconnection/reconnection (server restart, etc.)
-    // — instances may temporarily be empty but layouts are persisted.
     if (connStatus.status !== 'connected') return;
-    const currentIds = instances.map((i: any) => i.id);
-    const added = currentIds.filter(id => !prevInstanceIds.current.includes(id));
-    const removed = prevInstanceIds.current.filter(id => !currentIds.includes(id));
-    prevInstanceIds.current = currentIds;
-
-    // Auto-create terminal tabs for newly added instances
-    for (const id of added) {
-      const inst = instances.find((i: any) => i.id === id);
-      if (inst && inst.status !== 'stopped') {
-        setAppState(prev => {
-          const activeId = prev.activeInstanceId;
-          if (!activeId) return prev;
-          const ws = prev.instanceStates[activeId];
-          if (!ws) return prev;
-          const newWs = ensureInstanceTab(ws, id, inst.label || id.slice(0, 12), 'terminal');
-          if (newWs === ws) return prev;
-          return { ...prev, instanceStates: { ...prev.instanceStates, [activeId]: newWs } };
-        });
-      }
-    }
-
-    // Clean up layouts for removed instances
-    for (const id of removed) {
-      setAppState(prev => appReducer(prev, { type: 'REMOVE_INSTANCE_LAYOUT', instanceId: id }));
-    }
+    prevInstanceIds.current = instances.map((i: any) => i.id);
   }, [instances, connStatus.status]);
 
   // ── Pane focus / Chrome policy ────────────
@@ -729,30 +744,9 @@ function PageContent() {
         }
         return next;
       });
-    } else {
-      // Fresh start — auto-populate with terminal tabs for all active instances
-      const activeInsts = instances.filter((i: any) => i.status !== 'stopped');
-      if (activeInsts.length > 0) {
-        // Build initial layout with terminal tabs for all active instances
-        const tabs = activeInsts.map((inst: any) => ({
-          id: genTabId(),
-          title: inst.label || inst.id.slice(0, 12),
-          viewType: 'terminal' as const,
-          instanceId: inst.id,
-        }));
-        let layout: WorkbenchState = {
-          root: { kind: 'pane' as const, id: 'pane_1', zone: 'main' as const, tabs, activeTabId: tabs[0].id },
-          activePaneId: 'pane_1',
-          bottom: null,
-        };
-        setAppState(prev => appReducer(
-          { ...prev, instanceStates: { ...prev.instanceStates, [activeInsts[0].id]: layout } },
-          { type: 'SET_WORKBENCH_INSTANCES', instanceIds: activeInsts.map((i: any) => i.id) }
-        ));
-      }
     }
-    // Prevent the removal effect from seeing these as "added"
-    prevInstanceIds.current = instances.map((i: any) => i.id);
+    // else: fresh start — no saved layouts. Server-driven sync will provide
+    // tabs when the user enters a node via workbench.subscribe/workbench.tabs.
   }, [instances]);
 
   // ── Auto-save layouts to localStorage with debounce (Phase 4N) ──
@@ -1203,33 +1197,17 @@ function PageContent() {
     const currentState = appStateRef.current;
     if (currentState.activeInstanceId === nodeId) {
       // Toggle off — back to node view
+      sendMessage('workbench.unsubscribe', { nodeId });
       setAppState(prev => appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: null }));
     } else {
+      // Subscribe to this node's workbench tabs (server will send workbench.tabs)
+      sendMessage('workbench.subscribe', { nodeId });
       // Enter this node — create workbench layout if needed
       setAppState(prev => {
         if (prev.instanceStates[nodeId]) {
           return appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: nodeId });
         }
-        // Auto-populate with terminal tabs for ALL active instances
-        const activeInsts = instances.filter((i: any) => i.status !== 'stopped');
-        if (activeInsts.length > 0) {
-          const tabs = activeInsts.map((inst: any) => ({
-            id: genTabId(),
-            title: inst.label || inst.id.slice(0, 12),
-            viewType: 'terminal' as const,
-            instanceId: inst.id,
-          }));
-          const layout: WorkbenchState = {
-            root: { kind: 'pane' as const, id: 'pane_1', zone: 'main' as const, tabs, activeTabId: tabs[0].id },
-            activePaneId: 'pane_1',
-            bottom: null,
-          };
-          return appReducer(
-            { ...prev, instanceStates: { ...prev.instanceStates, [nodeId]: layout } },
-            { type: 'SET_ACTIVE_INSTANCE', instanceId: nodeId }
-          );
-        }
-        // No active instances — start with empty pane
+        // Start with empty initial state; server tabs arrive async via workbench.tabs
         const newLayout = createInitialState(nodeId.startsWith('inst_') ? nodeId : undefined);
         return appReducer(
           { ...prev, instanceStates: { ...prev.instanceStates, [nodeId]: newLayout } },
@@ -1237,7 +1215,7 @@ function PageContent() {
         );
       });
     }
-  }, [instances]);
+  }, [sendMessage]);
 
   // ── Closed kept tabs for ≡ menu (Phase 4N) ──
   const closedKeptTabs = useMemo(() => {

@@ -414,6 +414,11 @@ export class WSClient {
     await this.sendEnv("session.list_req", {});
   }
 
+  /** Send an arbitrary message type to the server. */
+  async send(type: string, body: Record<string, unknown> = {}) {
+    await this.sendEnv(type, body);
+  }
+
   disconnect() {
     this.closed = true;
     this._crypto = null;
