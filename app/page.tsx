@@ -49,7 +49,7 @@ import { KeyHintOverlay } from './console/chrome/key-hint-overlay';
 import { MobileExtraKeys } from './console/chrome/mobile-extra-keys';
 import { LayoutProvider, useLayout, SidebarSlot, MainSlot, FocusProvider, RuntimePolicyProvider, useFocus, useRuntimePolicy, WorkbenchProvider } from './console/workbench';
 import { WorkbenchLayout } from './console/stage/workbench-layout';
-import { appReducer, createAppInitialState, getActiveWorkbenchState, createInitialState, findPane as findPaneInTree, saveLayoutsToStorage, loadLayoutsFromStorage, restoreInstanceStatesFromStorage, genTabId, type ViewType, type PaneTab, type LayoutNode, type WorkbenchAction, type AppWorkbenchState, type AppWorkbenchAction } from './console/stage/workbench-state';
+import { appReducer, createAppInitialState, getActiveWorkbenchState, createInitialState, findPane as findPaneInTree, ensureInstanceTab, saveLayoutsToStorage, loadLayoutsFromStorage, restoreInstanceStatesFromStorage, genTabId, type ViewType, type PaneTab, type LayoutNode, type WorkbenchState, type WorkbenchAction, type AppWorkbenchState, type AppWorkbenchAction } from './console/stage/workbench-state';
 
 // ==========================================
 // Types
@@ -483,15 +483,34 @@ function PageContent() {
   // Tab is the subject — instance is a tab's binding. Only shell tabs are
   // restored on reconnect via the instances[] effect below.
 
-  // When an instance is killed/removed, clean up its layout
+  // When an instance arrives or is removed, sync workbench tabs accordingly
   const prevInstanceIds = useRef<string[]>([]);
   useEffect(() => {
     // Don't cleanup during disconnection/reconnection (server restart, etc.)
     // — instances may temporarily be empty but layouts are persisted.
     if (connStatus.status !== 'connected') return;
     const currentIds = instances.map((i: any) => i.id);
+    const added = currentIds.filter(id => !prevInstanceIds.current.includes(id));
     const removed = prevInstanceIds.current.filter(id => !currentIds.includes(id));
     prevInstanceIds.current = currentIds;
+
+    // Auto-create terminal tabs for newly added instances
+    for (const id of added) {
+      const inst = instances.find((i: any) => i.id === id);
+      if (inst && inst.status !== 'stopped') {
+        setAppState(prev => {
+          const activeId = prev.activeInstanceId;
+          if (!activeId) return prev;
+          const ws = prev.instanceStates[activeId];
+          if (!ws) return prev;
+          const newWs = ensureInstanceTab(ws, id, inst.label || id.slice(0, 12), 'terminal');
+          if (newWs === ws) return prev;
+          return { ...prev, instanceStates: { ...prev.instanceStates, [activeId]: newWs } };
+        });
+      }
+    }
+
+    // Clean up layouts for removed instances
     for (const id of removed) {
       setAppState(prev => appReducer(prev, { type: 'REMOVE_INSTANCE_LAYOUT', instanceId: id }));
     }
@@ -680,16 +699,29 @@ function PageContent() {
         return next;
       });
     } else {
-      // Fresh start — auto-populate with the first instance from server
-      const firstId = instances[0]?.id;
-      if (firstId) {
-        const initialLayout = createInitialState(firstId);
+      // Fresh start — auto-populate with terminal tabs for all active instances
+      const activeInsts = instances.filter((i: any) => i.status !== 'stopped');
+      if (activeInsts.length > 0) {
+        // Build initial layout with terminal tabs for all active instances
+        const tabs = activeInsts.map((inst: any) => ({
+          id: genTabId(),
+          title: inst.label || inst.id.slice(0, 12),
+          viewType: 'terminal' as const,
+          instanceId: inst.id,
+        }));
+        let layout: WorkbenchState = {
+          root: { kind: 'pane' as const, id: 'pane_1', zone: 'main' as const, tabs, activeTabId: tabs[0].id },
+          activePaneId: 'pane_1',
+          bottom: null,
+        };
         setAppState(prev => appReducer(
-          { ...prev, instanceStates: { ...prev.instanceStates, [firstId]: initialLayout } },
-          { type: 'SET_WORKBENCH_INSTANCES', instanceIds: [firstId] }
+          { ...prev, instanceStates: { ...prev.instanceStates, [activeInsts[0].id]: layout } },
+          { type: 'SET_WORKBENCH_INSTANCES', instanceIds: activeInsts.map((i: any) => i.id) }
         ));
       }
     }
+    // Prevent the removal effect from seeing these as "added"
+    prevInstanceIds.current = instances.map((i: any) => i.id);
   }, [instances]);
 
   // ── Auto-save layouts to localStorage with debounce (Phase 4N) ──
