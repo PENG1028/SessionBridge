@@ -164,23 +164,52 @@ async function main() {
       process.exit(1);
     }
 
+    // Determine the GitHub remote
+    const remotes = execSync('git remote -v', { cwd: projectDir, encoding: 'utf-8' });
+    let remote = 'origin';
+    for (const line of remotes.split('\n')) {
+      const m = line.match(/^(\S+)\s+(\S+)\s+\(fetch\)$/);
+      if (m && m[1] === 'origin' && m[2].includes('github.com')) { remote = 'origin'; break; }
+      if (m && m[2].includes('github.com')) { remote = m[1]; break; }
+    }
+
+    const branch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: projectDir, encoding: 'utf-8' }).trim();
+
+    console.log(`[update] Remote: ${remote}, Branch: ${branch}`);
+
+    // Stash local changes
+    try { execSync('git stash --include-untracked', { cwd: projectDir, stdio: 'pipe' }); } catch {}
+
     console.log('[update] Pulling latest changes...');
     try {
-      execSync('git pull', { stdio: 'inherit', cwd: projectDir });
+      execSync(`git pull ${remote} ${branch} --ff-only`, { stdio: 'inherit', cwd: projectDir });
     } catch {
-      console.error('[update] git pull failed. Check your network and git status.');
-      process.exit(1);
+      console.log('[update] Fast-forward failed, trying merge...');
+      try {
+        execSync(`git pull ${remote} ${branch}`, { stdio: 'inherit', cwd: projectDir });
+      } catch {
+        console.error('[update] git pull failed. Check your network and git status.');
+        process.exit(1);
+      }
     }
 
     console.log('[update] Installing dependencies...');
     try {
-      execSync('npm install --omit=dev', { stdio: 'inherit', cwd: projectDir });
+      execSync('npm install', { stdio: 'inherit', cwd: projectDir });
     } catch {
       console.error('[update] npm install failed.');
       process.exit(1);
     }
 
-    console.log('[update] Restarting...');
+    console.log('[update] Building...');
+    try {
+      execSync('npm run build', { stdio: 'inherit', cwd: projectDir, env: { ...process.env, BRIDGE_EXPORT: '1' } });
+    } catch {
+      console.error('[update] Build failed.');
+      process.exit(1);
+    }
+
+    console.log('[update] Update complete! Restarting...');
     const filteredArgs = process.argv.slice(1).filter(a => a !== '--update');
     const child = spawn(process.execPath, filteredArgs, {
       cwd: process.cwd(),

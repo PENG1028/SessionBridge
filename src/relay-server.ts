@@ -1038,33 +1038,87 @@ const serverRequestHandler = async (req: import("http").IncomingMessage, res: im
   // ── API: Check for updates ──────────────────────────────
   if (path === "/api/check-update") {
     const { execSync } = require("child_process");
+    const scriptPath = join(process.cwd(), "scripts", "check-update.js");
     try {
-      const result = execSync(`node "${join(__dirname, "../scripts/check-update.js")}"`, {
-        encoding: "utf-8", timeout: 10000, stdio: ['pipe', 'pipe', 'pipe'],
+      const result = execSync(`node "${scriptPath}"`, {
+        encoding: "utf-8", timeout: 70000, stdio: ['pipe', 'pipe', 'pipe'],
       });
-      const data = JSON.parse(result.trim());
+      // stderr from git fetch may have been mixed in — extract last JSON line
+      const lines = result.trim().split('\n').filter(Boolean);
+      const lastJson = lines.filter((l: string) => l.startsWith('{')).pop() || '{}';
+      let data;
+      try { data = JSON.parse(lastJson); } catch { data = { error: 'parse failed' }; }
+      data.currentVersion = SERVER_VERSION;
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(data));
     } catch {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ current: SERVER_VERSION, latest: SERVER_VERSION, hasUpdate: false, error: "check failed" }));
+      res.end(JSON.stringify({ currentVersion: SERVER_VERSION, hasUpdate: false, error: "check failed" }));
     }
     return;
   }
 
-  // ── API: Trigger update ─────────────────────────────────
+  // ── API: Trigger update (SSE stream) ────────────────────
   if (path === "/api/do-update" && req.method === "POST") {
-    const { execSync } = require("child_process");
-    try {
-      execSync(`node "${join(__dirname, "../scripts/update.js")}" --force`, {
-        encoding: "utf-8", timeout: 120000, stdio: 'pipe',
-      });
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ success: true, message: "Update installed. Restart to apply." }));
-    } catch (err) {
-      res.writeHead(500, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ success: false, error: String(err) }));
-    }
+    const scriptPath = join(process.cwd(), "scripts", "update.js");
+    const { spawn } = require("child_process");
+
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+      "Access-Control-Allow-Origin": "*",
+    });
+
+    // Helper to send SSE events
+    const send = (event: string, data: unknown) => {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+
+    send("status", { message: "Starting update..." });
+
+    const proc = spawn(process.execPath, [scriptPath, "--force"], {
+      cwd: process.cwd(),
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, FORCE_COLOR: '0' },
+    });
+
+    proc.stdout?.on("data", (chunk: Buffer) => {
+      const text = chunk.toString().trim();
+      if (text) send("log", { message: text });
+    });
+
+    proc.stderr?.on("data", (chunk: Buffer) => {
+      const text = chunk.toString().trim();
+      if (text) send("log", { message: text });
+    });
+
+    proc.on("close", (code: number | null) => {
+      if (code === 0) {
+        send("complete", { message: "Update complete. Restart server to apply changes." });
+      } else {
+        send("error", { message: `Update failed (exit code ${code})` });
+      }
+      res.end();
+    });
+
+    proc.on("error", (err: Error) => {
+      send("error", { message: err.message });
+      res.end();
+    });
+    return;
+  }
+
+  // ── API: Restart server ─────────────────────────────────
+  if (path === "/api/restart" && req.method === "POST") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ success: true, message: "Restarting..." }));
+    // Spawn a child that waits 500ms then kills us — the process manager restarts us
+    const { spawn } = require("child_process");
+    const killer = spawn(process.execPath, ["-e", `
+      setTimeout(() => { process.kill(${process.pid}, 'SIGTERM'); }, 500);
+    `], { detached: true, stdio: 'ignore' });
+    killer.unref();
     return;
   }
 

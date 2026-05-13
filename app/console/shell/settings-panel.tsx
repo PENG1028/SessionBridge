@@ -246,6 +246,15 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [toggleMsg, setToggleMsg] = useState('');
 
+  // ── Update state ──────────────────────────────────────────────
+  const [updateExpanded, setUpdateExpanded] = useState(false);
+  const [updateState, setUpdateState] = useState<'idle' | 'checking' | 'available' | 'uptodate' | 'error' | 'updating' | 'complete'>('idle');
+  const [updateInfo, setUpdateInfo] = useState<{
+    currentHash?: string; latestHash?: string; behindCount?: number;
+    currentVersion?: string; currentBranch?: string; error?: string | null;
+  }>({});
+  const [updateLog, setUpdateLog] = useState<string[]>([]);
+
   // Load schema + values from both scopes
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -686,6 +695,212 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
                       </div>
                     </>
                   )}
+                </div>
+              )}
+            </div>
+
+            {/* ── Updates Section ──────────────────────────────── */}
+            <div>
+              <button
+                onClick={() => setUpdateExpanded(v => !v)}
+                className="w-full flex items-center gap-2 px-4 py-2 hover:bg-white/[0.02] transition-colors text-left sticky top-0 bg-[#151515] border-b border-gray-800/50"
+              >
+                <ChevronRight className={`w-3 h-3 text-gray-600 transition-transform ${updateExpanded ? 'rotate-90' : ''}`} />
+                <span className="text-[11px] font-semibold text-gray-300">Updates</span>
+                {updateState === 'available' && (
+                  <span className="text-[8px] text-amber-400 bg-amber-900/20 px-1.5 py-0.5 rounded ml-auto animate-pulse">
+                    1 available
+                  </span>
+                )}
+              </button>
+
+              {updateExpanded && (
+                <div className="px-4 divide-y divide-gray-800/30">
+                  {/* Current version */}
+                  <div className="py-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-[11px] text-gray-200">Current Version</div>
+                        <div className="text-[9px] text-gray-500 mt-0.5 font-mono">
+                          v{updateInfo.currentVersion || '—'}
+                          {updateInfo.currentHash ? ` (${updateInfo.currentHash})` : ''}
+                          {updateInfo.currentBranch ? ` · ${updateInfo.currentBranch}` : ''}
+                        </div>
+                      </div>
+
+                      {/* Check button */}
+                      <button
+                        onClick={async () => {
+                          setUpdateState('checking');
+                          setUpdateInfo({});
+                          try {
+                            const res = await fetch('/api/check-update');
+                            const data = await res.json();
+                            setUpdateInfo(data);
+                            if (data.hasUpdate) {
+                              setUpdateState('available');
+                            } else if (data.error) {
+                              setUpdateState('error');
+                            } else {
+                              setUpdateState('uptodate');
+                            }
+                          } catch {
+                            setUpdateState('error');
+                            setUpdateInfo({ error: 'Network error' });
+                          }
+                        }}
+                        disabled={updateState === 'checking' || updateState === 'updating'}
+                        className="px-2.5 py-1 bg-purple-700 hover:bg-purple-600 disabled:opacity-50 text-white text-[10px] rounded border border-purple-600 transition-colors flex items-center gap-1"
+                      >
+                        {updateState === 'checking' ? (
+                          <><span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Checking</>
+                        ) : (
+                          'Check for Updates'
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Status messages */}
+                  {updateState === 'uptodate' && (
+                    <div className="py-2">
+                      <span className="text-[10px] text-emerald-400">✓ Up to date</span>
+                    </div>
+                  )}
+
+                  {updateState === 'error' && (
+                    <div className="py-2">
+                      <div className="flex items-center gap-2 px-2 py-1.5 bg-red-900/20 border border-red-800/30 rounded">
+                        <span className="text-[9px] text-red-400">
+                          {updateInfo.error || 'Update check failed'}
+                        </span>
+                        <button
+                          onClick={async () => {
+                            setUpdateState('checking');
+                            try {
+                              const res = await fetch('/api/check-update');
+                              const data = await res.json();
+                              setUpdateInfo(data);
+                              setUpdateState(data.hasUpdate ? 'available' : data.error ? 'error' : 'uptodate');
+                            } catch {
+                              setUpdateState('error');
+                            }
+                          }}
+                          className="text-[9px] text-purple-400 hover:text-purple-300 ml-auto shrink-0"
+                        >
+                          retry
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {updateState === 'available' && (
+                    <div className="py-3 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[9px] text-amber-400 bg-amber-900/20 px-1.5 py-0.5 rounded">Update available</span>
+                      </div>
+                      <div className="text-[9px] text-gray-400 font-mono">
+                        {updateInfo.currentHash} → <span className="text-amber-300">{updateInfo.latestHash}</span>
+                        {updateInfo.behindCount ? ` (${updateInfo.behindCount} commit(s) ahead)` : ''}
+                      </div>
+
+                      {/* Update button */}
+                      <button
+                        onClick={async () => {
+                          setUpdateState('updating');
+                          setUpdateLog([]);
+                          try {
+                            const res = await fetch('/api/do-update', { method: 'POST' });
+                            const reader = res.body?.getReader();
+                            if (!reader) throw new Error('No response body');
+
+                            const decoder = new TextDecoder();
+                            let buffer = '';
+                            let currentEvent = '';
+                            while (true) {
+                              const { done, value } = await reader.read();
+                              if (done) break;
+                              buffer += decoder.decode(value, { stream: true });
+                              // Parse SSE events
+                              const lines = buffer.split('\n');
+                              buffer = lines.pop() || ''; // keep incomplete line
+                              for (const line of lines) {
+                                if (line.startsWith('event: ')) {
+                                  currentEvent = line.slice(7).trim();
+                                } else if (line.startsWith('data: ')) {
+                                  try {
+                                    const payload = JSON.parse(line.slice(6));
+                                    if (payload.message) {
+                                      setUpdateLog(prev => [...prev, payload.message]);
+                                    }
+                                    if (currentEvent === 'complete') {
+                                      setUpdateState('complete');
+                                    } else if (currentEvent === 'error') {
+                                      setUpdateState('error');
+                                    }
+                                    if (currentEvent === 'complete' || currentEvent === 'error') {
+                                      currentEvent = '';
+                                    }
+                                  } catch {}
+                                }
+                              }
+                            }
+                          } catch (err) {
+                            setUpdateState('error');
+                            setUpdateLog(prev => [...prev, `Error: ${(err as Error).message}`]);
+                          }
+                        }}
+                        className="px-3 py-1.5 bg-amber-700 hover:bg-amber-600 text-white text-[10px] rounded border border-amber-600 transition-colors"
+                      >
+                        {updateState === 'available' ? 'Update & Rebuild' : 'Updating...'}
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Update progress log */}
+                  {updateState === 'updating' && updateLog.length > 0 && (
+                    <div className="py-2">
+                      <div className="bg-[#0a0a0a] border border-gray-800 rounded max-h-40 overflow-y-auto px-2 py-1.5 font-mono text-[9px] leading-relaxed">
+                        {updateLog.map((line, i) => (
+                          <div key={i} className={
+                            line.startsWith('✓') ? 'text-emerald-400'
+                            : line.startsWith('✗') ? 'text-red-400'
+                            : line.startsWith('→') ? 'text-amber-400'
+                            : line.startsWith('  ╔') || line.startsWith('  ╚') || line.startsWith('  ║') ? 'text-gray-500'
+                            : 'text-gray-400'
+                          }>
+                            {line}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Update complete */}
+                  {updateState === 'complete' && (
+                    <div className="py-3 space-y-2">
+                      <div className="text-[10px] text-emerald-400">✓ Update complete!</div>
+                      <div className="text-[9px] text-gray-500">Restart the server to apply changes.</div>
+                      <button
+                        onClick={async () => {
+                          try {
+                            await fetch('/api/restart', { method: 'POST' });
+                            setUpdateState('idle');
+                          } catch {}
+                        }}
+                        className="px-3 py-1.5 bg-purple-700 hover:bg-purple-600 text-white text-[10px] rounded border border-purple-600 transition-colors"
+                      >
+                        Restart Server
+                      </button>
+                    </div>
+                  )}
+
+                  {/* CLI hint */}
+                  <div className="py-2">
+                    <div className="text-[8px] text-gray-700">
+                      CLI: <span className="font-mono">bridge update</span> · or run <span className="font-mono">node scripts/update.js</span> in project root
+                    </div>
+                  </div>
                 </div>
               )}
             </div>

@@ -1,82 +1,56 @@
 #!/usr/bin/env node
-// ─── SessionBridge Self-Updater ───────────────────────────────────
-// Downloads the latest release from GitHub and replaces the current installation.
+// ─── SessionBridge Git-based Updater ─────────────────────────────────
+// Pulls the latest code from GitHub, installs dependencies, and rebuilds.
 //
 // Usage:
 //   node scripts/update.js                  # check + prompt + update
 //   node scripts/update.js --force          # update without prompt
-//   node scripts/update.js --check-only     # just check, no download
+//   node scripts/update.js --check-only     # just check, no update
 //
-// How it works:
-//   1. Check GitHub for latest release
-//   2. Download the portable zip
-//   3. Extract to a temp directory
-//   4. Swap with current installation
-//   5. Restart (or prompt to restart)
+// Steps:
+//   1. git pull from the tracked GitHub remote
+//   2. npm install
+//   3. npm run build (or just build:server for faster updates)
+//   4. Signal success (caller handles restart)
 
-const https = require('https');
-const { createWriteStream, existsSync, readFileSync, writeFileSync, renameSync, rmSync, mkdirSync, cpSync } = require('fs');
-const { join, dirname } = require('path');
-const { spawn } = require('child_process');
-const { VERSION } = require('../adapters/version');
+const { execSync, spawn } = require('child_process');
+const { existsSync, readFileSync } = require('fs');
+const { join } = require('path');
 
-const GITHUB_REPO = process.env.BRIDGE_REPO || 'sessionbridge/sessionbridge';
 const ROOT = join(__dirname, '..');
-const BACKUP_DIR = join(ROOT, '.bridge-backup');
 
-// ─── Helpers ───────────────────────────────────
+// Read version from package.json
+let VERSION = '0.0.0';
+try {
+  VERSION = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version || VERSION;
+} catch {} // fallback
 
-function fetchJSON(url) {
-  return new Promise((resolve, reject) => {
-    https.get(url, { headers: { 'User-Agent': 'sessionbridge' } }, (res) => {
-      let data = '';
-      res.on('data', (c) => data += c);
-      res.on('end', () => {
-        try { resolve(JSON.parse(data)); }
-        catch (e) { reject(new Error(`Invalid JSON: ${e.message}`)); }
-      });
-    }).on('error', reject);
-  });
+function run(cmd, opts = {}) {
+  const env = { ...process.env, ...opts.env };
+  // Pipe stdio by default so user sees progress
+  const stdio = opts.stdio || 'inherit';
+  try {
+    return execSync(cmd, { cwd: ROOT, encoding: 'utf-8', timeout: opts.timeout || 300000, stdio, env });
+  } catch (e) {
+    throw new Error(`Command failed: ${cmd}\n${e.stderr || e.message}`);
+  }
 }
 
-function download(url, dest) {
-  return new Promise((resolve, reject) => {
-    const file = createWriteStream(dest);
-    https.get(url, { headers: { 'User-Agent': 'sessionbridge' } }, (res) => {
-      if (res.statusCode === 302 || res.statusCode === 301) {
-        file.close();
-        rmSync(dest);
-        return download(res.headers.location, dest).then(resolve).catch(reject);
-      }
-      if (res.statusCode !== 200) {
-        file.close();
-        rmSync(dest);
-        return reject(new Error(`HTTP ${res.statusCode}`));
-      }
-      res.pipe(file);
-      file.on('finish', () => { file.close(); resolve(); });
-    }).on('error', (err) => { file.close(); rmSync(dest); reject(err); });
-  });
-}
-
-function extractZip(zipPath, dest) {
-  return new Promise((resolve, reject) => {
-    // Use system unzip (cross-platform enough)
-    const proc = spawn('unzip', ['-o', zipPath, '-d', dest], { stdio: 'pipe' });
-    proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`unzip exited ${code}`)));
-    proc.on('error', () => {
-      // Fallback: try powershell on Windows, or node's built-in
-      if (process.platform === 'win32') {
-        const ps = spawn('powershell', [
-          '-Command',
-          `Expand-Archive -Path '${zipPath}' -DestinationPath '${dest}' -Force`
-        ], { stdio: 'pipe' });
-        ps.on('close', (code) => code === 0 ? resolve() : reject(new Error(`Expand-Archive failed: ${code}`)));
-      } else {
-        reject(new Error('unzip not available. Install unzip or extract manually.'));
-      }
-    });
-  });
+function getRemote() {
+  const out = run('git remote -v', { stdio: 'pipe', timeout: 10000 });
+  const lines = out.split('\n').filter(Boolean);
+  for (const line of lines) {
+    const parts = line.match(/^(\S+)\s+(\S+)\s+\(fetch\)$/);
+    if (parts && parts[1] === 'origin' && parts[2].includes('github.com')) return 'origin';
+  }
+  // Fallback: any GitHub remote
+  for (const line of lines) {
+    const parts = line.match(/^(\S+)\s+(\S+)\s+\(fetch\)$/);
+    if (parts && parts[2].includes('github.com')) return parts[1];
+  }
+  // Last resort: first remote
+  const first = lines[0]?.match(/^(\S+)/);
+  return first ? first[1] : 'origin';
 }
 
 function prompt(msg) {
@@ -89,8 +63,6 @@ function prompt(msg) {
   });
 }
 
-// ─── Main ──────────────────────────────────────
-
 async function main() {
   const force = process.argv.includes('--force');
   const checkOnly = process.argv.includes('--check-only');
@@ -99,114 +71,99 @@ async function main() {
   console.log('  ╔═══════════════════════════════════════╗');
   console.log('  ║  SessionBridge Updater                ║');
   console.log('  ╚═══════════════════════════════════════╝');
-  console.log(`  Current version: v${VERSION}`);
+  console.log(`  Version: v${VERSION}`);
   console.log('');
 
-  // 1. Check for update
-  console.log('  Checking for updates...');
-  let release;
-  try {
-    release = await fetchJSON(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`);
-  } catch (err) {
-    console.error(`  ✗ Failed to check: ${err.message}`);
+  // 1. Verify git repo
+  if (!existsSync(join(ROOT, '.git'))) {
+    console.error('  ✗ Not a git repository. Update requires a git clone.');
     process.exit(1);
   }
 
-  const latest = release.tag_name.replace(/^v/, '');
-  if (latest === VERSION) {
-    console.log(`  ✓ v${VERSION} is already the latest version.`);
+  const branch = run('git rev-parse --abbrev-ref HEAD', { stdio: 'pipe', timeout: 10000 });
+  const remote = getRemote();
+  const currentHash = run('git rev-parse HEAD', { stdio: 'pipe', timeout: 10000 }).slice(0, 12);
+
+  console.log(`  Branch: ${branch}`);
+  console.log(`  Remote: ${remote}`);
+  console.log(`  Commit: ${currentHash}`);
+  console.log('');
+
+  // 2. Check for update
+  console.log('  Checking for updates...');
+  try {
+    run(`git fetch ${remote} --quiet`, { timeout: 60000 });
+  } catch (err) {
+    console.error(`  ✗ Failed to fetch: ${err.message}`);
+    process.exit(1);
+  }
+
+  const remoteRef = `${remote}/${branch}`;
+  const latestHash = run(`git rev-parse ${remoteRef}`, { stdio: 'pipe', timeout: 10000 }).slice(0, 12);
+  const behindCount = parseInt(run(`git rev-list --count HEAD..${remoteRef}`, { stdio: 'pipe', timeout: 10000 }) || '0', 10);
+
+  if (!latestHash) {
+    console.error('  ✗ Could not resolve remote branch.');
+    process.exit(1);
+  }
+
+  if (currentHash === latestHash) {
+    console.log(`  ✓ Already up to date (${currentHash}).`);
     return;
   }
 
-  console.log(`  → Update available: v${VERSION} → v${latest}`);
-  console.log(`  ${release.html_url}`);
-
+  console.log(`  → Update available: ${currentHash} → ${latestHash} (${behindCount} commit(s) ahead)`);
   if (checkOnly) return;
-
-  // 2. Find the zip asset
-  const asset = release.assets?.find(a => a.name.endsWith('.zip') && a.name.includes('sessionbridge'));
-  if (!asset) {
-    console.error('  ✗ No portable zip found in release assets.');
-    process.exit(1);
-  }
 
   // 3. Confirm
   if (!force) {
-    const ok = await prompt('\n  Download and install?');
+    const ok = await prompt('\n  Pull latest and rebuild?');
     if (!ok) { console.log('  Cancelled.'); return; }
   }
 
-  // 4. Download
-  console.log(`  Downloading ${asset.name}...`);
-  const tmpDir = join(ROOT, '.bridge-update-tmp');
-  const zipPath = join(tmpDir, asset.name);
-  mkdirSync(tmpDir, { recursive: true });
-
+  // 4. Stash any local changes
+  console.log('');
+  console.log('  Stashing local changes...');
   try {
-    await download(asset.browser_download_url, zipPath);
-    console.log('  Download complete.');
+    run('git stash --include-untracked', { timeout: 10000 });
+  } catch { /* nothing to stash */ }
+
+  // 5. Pull
+  console.log('  Pulling latest code...');
+  try {
+    run(`git pull ${remote} ${branch} --ff-only`);
+  } catch {
+    // Fallback: try merge
+    console.log('  Fast-forward failed, trying merge...');
+    run(`git pull ${remote} ${branch}`);
+  }
+  console.log('  ✓ Pull complete.');
+
+  // 6. Install dependencies
+  console.log('  Installing dependencies...');
+  try {
+    run('npm install');
   } catch (err) {
-    console.error(`  ✗ Download failed: ${err.message}`);
-    rmSync(tmpDir, { recursive: true });
+    console.error(`  ✗ npm install failed: ${err.message}`);
     process.exit(1);
   }
+  console.log('  ✓ Dependencies installed.');
 
-  // 5. Extract
-  console.log('  Extracting...');
-  const extractDir = join(tmpDir, 'extracted');
-  mkdirSync(extractDir, { recursive: true });
-
+  // 7. Build (with BRIDGE_EXPORT=1 so Next.js generates static out/)
+  console.log('  Building...');
   try {
-    await extractZip(zipPath, extractDir);
+    run('npm run build', { env: { ...process.env, BRIDGE_EXPORT: '1' } });
   } catch (err) {
-    console.error(`  ✗ Extraction failed: ${err.message}`);
-    console.log('  You can manually extract the zip and replace the files.');
-    rmSync(tmpDir, { recursive: true });
+    console.error(`  ✗ Build failed: ${err.message}`);
     process.exit(1);
   }
+  console.log('  ✓ Build complete.');
 
-  // Find the actual extracted folder (might be nested)
-  const extractedItems = require('fs').readdirSync(extractDir);
-  const sourceDir = extractedItems.length === 1 && require('fs').statSync(join(extractDir, extractedItems[0])).isDirectory()
-    ? join(extractDir, extractedItems[0])
-    : extractDir;
-
-  // 6. Swap
-  console.log('  Installing...');
-
-  // Backup current installation (just key dirs)
-  if (existsSync(BACKUP_DIR)) rmSync(BACKUP_DIR, { recursive: true });
-  mkdirSync(BACKUP_DIR, { recursive: true });
-
-  const dirsToReplace = ['dist', 'out', 'adapters', 'lib', 'public', 'scripts', 'node_modules'];
-  for (const dir of dirsToReplace) {
-    const src = join(sourceDir, dir);
-    if (existsSync(src)) {
-      const dst = join(ROOT, dir);
-      if (existsSync(dst)) {
-        renameSync(dst, join(BACKUP_DIR, dir));
-      }
-      renameSync(src, dst);
-    }
-  }
-
-  // Update package.json
-  const newPkg = join(sourceDir, 'package.json');
-  if (existsSync(newPkg)) {
-    const oldPkg = join(ROOT, 'package.json');
-    if (existsSync(oldPkg)) cpSync(oldPkg, join(BACKUP_DIR, 'package.json'));
-    cpSync(newPkg, oldPkg);
-  }
-
-  // 7. Cleanup
-  rmSync(tmpDir, { recursive: true });
-
-  console.log(`  ✓ Updated to v${latest}!`);
-
-  // 8. Suggest restart
+  console.log('');
+  console.log(`  ✓ Update complete!`);
   console.log('');
   console.log('  Restart the server to apply the update.');
-  console.log('  If running as a service: bridge daemon restart');
+  console.log('  If running via PM2: pm2 restart sessionbridge');
   console.log('  If in terminal: Ctrl+C then npm start');
   console.log('');
 }

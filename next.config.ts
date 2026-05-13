@@ -1,7 +1,7 @@
 import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
-  // output: 'export',  // 仅在 build 时启用；dev 时注释掉，否则 Turbo 不刷新
+  ...(process.env.BRIDGE_EXPORT === '1' ? { output: 'export' as const } : {}),
   images: { unoptimized: true },
   // Required for static export with dynamic routes
   trailingSlash: true,
