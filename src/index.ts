@@ -292,8 +292,8 @@ async function main() {
   const { NodeRuntime } = await import("../agent-core/node-runtime");
   const { hostname } = await import("os");
 
-  const roleStr = arg('role', 'auto');
-  const role = (roleStr === 'relay' || roleStr === 'leaf') ? roleStr : 'auto';
+  const roleOpt = arg('role', '');
+  const role = (roleOpt === 'relay' || roleOpt === 'leaf') ? roleOpt : undefined;
   const isDaemon = process.env.BRIDGE_DAEMON === '1';
 
   // Check daemon collision only in foreground mode
@@ -311,7 +311,7 @@ async function main() {
 
   const node = new NodeRuntime({
     label: arg('label', hostname()),
-    role: role as 'auto' | 'relay' | 'leaf',
+    ...(role ? { role } : {}),
     workingDirectory: arg('dir', process.cwd()),
     relayPort: parseInt(arg('relay-port', '8080'), 10),
     relayToken: arg('relay-token', '') || undefined,
