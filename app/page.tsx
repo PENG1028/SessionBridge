@@ -1178,6 +1178,26 @@ function PageContent() {
         if (prev.instanceStates[nodeId]) {
           return appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: nodeId });
         }
+        // Auto-populate with terminal tabs for ALL active instances
+        const activeInsts = instances.filter((i: any) => i.status !== 'stopped');
+        if (activeInsts.length > 0) {
+          const tabs = activeInsts.map((inst: any) => ({
+            id: genTabId(),
+            title: inst.label || inst.id.slice(0, 12),
+            viewType: 'terminal' as const,
+            instanceId: inst.id,
+          }));
+          const layout: WorkbenchState = {
+            root: { kind: 'pane' as const, id: 'pane_1', zone: 'main' as const, tabs, activeTabId: tabs[0].id },
+            activePaneId: 'pane_1',
+            bottom: null,
+          };
+          return appReducer(
+            { ...prev, instanceStates: { ...prev.instanceStates, [nodeId]: layout } },
+            { type: 'SET_ACTIVE_INSTANCE', instanceId: nodeId }
+          );
+        }
+        // No active instances — start with empty pane
         const newLayout = createInitialState(nodeId.startsWith('inst_') ? nodeId : undefined);
         return appReducer(
           { ...prev, instanceStates: { ...prev.instanceStates, [nodeId]: newLayout } },
@@ -1185,7 +1205,7 @@ function PageContent() {
         );
       });
     }
-  }, []);
+  }, [instances]);
 
   // ── Closed kept tabs for ≡ menu (Phase 4N) ──
   const closedKeptTabs = useMemo(() => {
