@@ -23,6 +23,7 @@ import type { AgentCapabilityHost, NotificationScenario, RuntimeInfo } from '../
 import { spawn, type ChildProcess } from 'child_process';
 import { watch, type FSWatcher } from 'fs';
 import { resolve } from 'path';
+import os from 'os';
 import { ExtensionHostManager } from './extension-host-manager';
 import { extensionPoints } from './extension-points';
 import { adapterRegistry } from '../extensions/registry';
@@ -98,12 +99,17 @@ export class NodeRuntime {
     this.resolvedRole = await this.resolveRole();
     this.addLog(`[node] Role: ${this.resolvedRole}`);
 
-    // 2. Start relay server if this node can be a relay
-    if (this.resolvedRole === 'relay') {
-      const { NodeRelayServer, setNodeId, appendAdminLog, writeToShellByRelayId } = await import('../src/relay-server');
+    // 2. Always start the local HTTP/UI server. Relay mode is a capability,
+    // not a prerequisite for controlling the local node from its page.
+    {
+      const { NodeRelayServer, setNodeId, setLocalNodeInfo, appendAdminLog, writeToShellByRelayId } = await import('../src/relay-server');
       this.appendRelayLog = appendAdminLog;
       this._writeToShellByRelayId = writeToShellByRelayId;
-      this.relayServer = new NodeRelayServer(this.config.relayPort, this.config.relayToken);
+      const detected = detectNetwork(this.config.relayPort, !!this.config.relayToken);
+      const publicIp = detected.ips.find(ip => ip.type === 'public' && ip.family === 'IPv4');
+      const lanIp = detected.ips.find(ip => ip.type === 'lan' && ip.family === 'IPv4');
+      const bind = this.resolvedRole === 'relay' ? this.config.relayBind : '127.0.0.1';
+      this.relayServer = new NodeRelayServer(this.config.relayPort, this.config.relayToken, bind);
 
       // Initialize admin auth before relay listens (so remote login sessions work)
       if (this.config.dashboardToken) {
@@ -115,7 +121,14 @@ export class NodeRuntime {
       const actualPort = await this.relayServer.start();
       // Inject persistent node identity into EventBus (for event routing / mesh / audit)
       if (this.config.nodeId) setNodeId(this.config.nodeId);
-      this.addLog(`[node] Relay server on port ${actualPort}, nodeId: ${this.config.nodeId ? this.config.nodeId.slice(0, 8) + '…' : 'none'}`);
+      setLocalNodeInfo({
+        name: this.config.label || os.hostname(),
+        role: this.resolvedRole,
+        ip: publicIp?.addr || lanIp?.addr || '127.0.0.1',
+        port: actualPort,
+        networkType: publicIp ? 'wan' : lanIp ? 'lan' : 'loopback',
+      });
+      this.addLog(`[node] Local UI server on ${bind}:${actualPort}, nodeId: ${this.config.nodeId ? this.config.nodeId.slice(0, 8) + '…' : 'none'}`);
     }
 
     // 3. (Dashboard server removed — all admin routes now handled by relay)
@@ -169,6 +182,7 @@ export class NodeRuntime {
       this.addLog(`[node] Upstream relay: ${this.config.upstreamRelay}`);
     }
     this.setupRelayHandlers();
+    this.relay.setRole(this.resolvedRole);
     this.relay.connect();
     this.addLog('[node] Relay connection initiated');
   }
@@ -246,6 +260,8 @@ export class NodeRuntime {
   private async resolveRole(): Promise<'relay' | 'leaf'> {
     if (this.config.role === 'relay') return 'relay';
     if (this.config.role === 'leaf') return 'leaf';
+    // If upstream relay is configured, act as leaf
+    if (this.config.upstreamRelay) return 'leaf';
     // Auto-detect
     const detected = await detectNetworkCapability();
     return detected;

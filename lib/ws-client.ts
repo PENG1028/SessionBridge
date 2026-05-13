@@ -124,6 +124,17 @@ export class WSClient {
       } else {
         helloBody.workspace = workspace ?? false;
       }
+      // Persistent browser ID for self-identification (filter self from VIEW)
+      try {
+        const existing = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('bridge-browser-id') : null;
+        if (existing) {
+          helloBody.clientToken = existing;
+        } else {
+          const newId = 'browser_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+          helloBody.clientToken = newId;
+          if (typeof sessionStorage !== 'undefined') sessionStorage.setItem('bridge-browser-id', newId);
+        }
+      } catch {}
       this.ws!.send(env("hello", helloBody));
     };
 

@@ -17,6 +17,7 @@ import { VERSION } from "../extensions/version";
 import { getSystemState, listProcesses, listProcessesSorted } from "../agent-core/introspection";
 import { detectNetwork } from "./network-detect";
 import { extensionPoints } from "../agent-core/extension-points";
+import { persistUpstreamRelay } from "../agent-core/config";
 
 import {
   initAuth, checkAuth, createSession, revokeSession,
@@ -756,18 +757,24 @@ export async function registerAdminRoutes(
       case '/api/connect': {
         if (req.method === 'POST') {
           const body11 = await readBody(req);
-          const { relayUrl, token } = JSON.parse(body11);
-          if (!relayUrl) { json(res, 400, { error: 'Missing relayUrl' }); return true; }
+          const { relayUrl, token, disconnect } = JSON.parse(body11);
           const relay = ctx.relayConnection;
-          if (relay) {
+          if (!relay) { json(res, 503, { error: 'Relay connection not available' }); return true; }
+
+          if (disconnect || !relayUrl) {
+            ctx.addLog('[connect] Disconnecting from upstream...');
+            await relay.shutdown();
+            (relay as any).config.upstreamRelay = '';
+            persistUpstreamRelay(''); // clear persisted config
+            json(res, 200, { ok: true, relayUrl: '', message: 'Disconnected' });
+          } else {
             ctx.addLog(`[connect] Connecting to ${relayUrl}...`);
             if (token) ctx.addLog(`[connect] Token set`);
             await relay.shutdown();
             (relay as any).config.upstreamRelay = relayUrl;
+            persistUpstreamRelay(relayUrl); // persist for auto-connect on restart
             relay.connect();
             json(res, 200, { ok: true, relayUrl, message: 'Reconnecting...' });
-          } else {
-            json(res, 503, { error: 'Relay connection not available' });
           }
           return true;
         } else {
@@ -775,7 +782,7 @@ export async function registerAdminRoutes(
           const upstreamRelay = relay ? (relay as any).config?.upstreamRelay || '' : '';
           const token = ctx.relayToken || '';
           json(res, 200, {
-            relayUrl: upstreamRelay || `ws://127.0.0.1:${ctx.relayPort}`,
+            relayUrl: upstreamRelay,
             token: token ? token.slice(0, 8) + '…' : '(none)',
             command: upstreamRelay ? `bridge connect ${upstreamRelay}${token ? ` --token ${token.slice(0, 16)}…` : ''}` : 'bridge (default)',
             role: ctx.role || 'auto',

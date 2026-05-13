@@ -24,6 +24,7 @@ import { registerApiRoutes, type AliasStore } from "./api-routes";
 import { registerAdminRoutes, type AdminRouteContext, type ShellRunInstance } from "./admin-routes";
 import { RelayConfigManager } from "../agent-core/config-sync";
 import { PermissionModel } from "../agent-core/permissions";
+import { RelayConnection } from "../agent-core/relay-connection";
 import { CryptoStream } from "./crypto-stream";
 import { tryDecrypt } from "./crypto-layer";
 import { loadOrCreateIdentity } from "./identity-manager";
@@ -66,6 +67,29 @@ export function setNodeId(id: string): void {
 /** Get the current nodeId (empty string if not set yet). */
 export function getNodeId(): string {
   return eventBus.nodeId;
+}
+
+type LocalNodeInfo = {
+  id: string;
+  name: string;
+  role: 'relay' | 'leaf';
+  ip: string;
+  port: number;
+  networkType: 'loopback' | 'lan' | 'wan';
+};
+
+let localNodeInfo: LocalNodeInfo = {
+  id: '__local__',
+  name: os.hostname(),
+  role: 'leaf',
+  ip: '127.0.0.1',
+  port: PORT,
+  networkType: 'loopback',
+};
+
+/** Allow runtime to publish the actual local node represented by this server. */
+export function setLocalNodeInfo(info: Partial<LocalNodeInfo>): void {
+  localNodeInfo = { ...localNodeInfo, ...info, id: '__local__' };
 }
 
 // ─── Core Services ────────────────────────────────────────────────
@@ -319,9 +343,25 @@ function getPeerInfo(ws: WebSocket): Record<string, unknown> | null {
 }
 
 function collectPeers(): { peers: Record<string, unknown>[]; links: { source: string; target: string; type: string }[] } {
-  const peers: Record<string, unknown>[] = [];
+  const peers: Record<string, unknown>[] = [{
+    ...localNodeInfo,
+    type: 'agent',
+    hasPublicAccess: localNodeInfo.role === 'relay' || localNodeInfo.networkType === 'wan',
+    connectedAt: START_TIME,
+    isLocal: true,
+  }];
+  const seenBrowserIds = new Set<string>();
   for (const ws of clients) {
-    if (!(ws as any)._isAgent) continue; // skip browser connections — not network peers
+    if (!(ws as any)._isAgent) {
+      // Browser connections — deduplicate by browserId (avoid duplicate VIEW cards)
+      const info = getPeerInfo(ws);
+      if (!info) continue;
+      const browserId = info.id as string;
+      if (seenBrowserIds.has(browserId)) continue;
+      seenBrowserIds.add(browserId);
+      peers.push(info);
+      continue;
+    }
     const info = getPeerInfo(ws);
     if (info) peers.push(info);
   }
@@ -349,8 +389,8 @@ function collectPeers(): { peers: Record<string, unknown>[]; links: { source: st
 
   // Build topology links from peer list
   const links: { source: string; target: string; type: string }[] = [];
-  const relayPeers = peers.filter(p => p.type === 'agent' && (p.role === 'relay' || p.hasPublicAccess));
-  const leafPeers = peers.filter(p => p.type === 'agent' && p.role !== 'relay' && !p.hasPublicAccess);
+  const relayPeers = peers.filter(p => p.id !== '__local__' && p.type === 'agent' && (p.role === 'relay' || p.hasPublicAccess));
+  const leafPeers = peers.filter(p => p.id !== '__local__' && p.type === 'agent' && p.role !== 'relay' && !p.hasPublicAccess);
 
   for (const leaf of leafPeers) {
     const explicitRelayId = leaf.connectedToRelayId as string | undefined;
@@ -364,7 +404,7 @@ function collectPeers(): { peers: Record<string, unknown>[]; links: { source: st
       links.push({ source: '__local__', target: leaf.id as string, type: 'agent' });
     }
   }
-  // If relays exist, link them to local
+  // If relays exist, link them to local.
   for (const rp of relayPeers) {
     links.push({ source: '__local__', target: rp.id as string, type: 'relay' });
   }
@@ -373,13 +413,31 @@ function collectPeers(): { peers: Record<string, unknown>[]; links: { source: st
 }
 
 function broadcastPeers(): void {
-  const { peers, links } = collectPeers();
-  broadcast(envelope("peer.list", { peers, links }));
+  for (const ws of clients) {
+    const { peers, links } = collectPeers();
+    const browserId = (ws as any)._browserId;
+    if (browserId) {
+      send(ws, envelope("peer.list", {
+        peers: peers.filter(p => p.id !== browserId),
+        links,
+      }));
+    } else {
+      send(ws, envelope("peer.list", { peers, links }));
+    }
+  }
 }
 
 function sendPeers(ws: WebSocket): void {
   const { peers, links } = collectPeers();
-  send(ws, envelope("peer.list", { peers, links }));
+  const browserId = (ws as any)._browserId;
+  if (browserId) {
+    send(ws, envelope("peer.list", {
+      peers: peers.filter(p => p.id !== browserId),
+      links,
+    }));
+  } else {
+    send(ws, envelope("peer.list", { peers, links }));
+  }
 }
 
 function sendBlock(block: Record<string, unknown>) {
@@ -841,7 +899,7 @@ const serverRequestHandler = async (req: import("http").IncomingMessage, res: im
     relayPort: PORT,
     upstreamRelay: undefined,
     relayToken: relayToken || undefined,
-    role: 'relay',
+    role: localNodeInfo.role,
     shellInstances: adminShellInstances,
     relayToShellId: adminRelayToShellId,
     extensionHost: null,
@@ -1556,7 +1614,7 @@ function setupWssHandlers(): void {
         (ws as any)._browserId = msg.clientToken || `browser_${Date.now()}`;
         (ws as any)._connectedAt = Date.now();
         sendPeers(ws);          // send peer list to the new connection
-        // No broadcast — browser is not a network peer
+        broadcastPeers();       // notify other clients (VIEW card appears)
       }
 
       // Complete crypto handshake if client provided ephemeral key
@@ -2250,10 +2308,12 @@ export async function startRelayServer(port?: number): Promise<{ close: () => vo
 export class NodeRelayServer {
   private _port: number;
   private _token: string;
+  private _bind?: string;
 
-  constructor(port?: number, token?: string) {
+  constructor(port?: number, token?: string, bind?: string) {
     this._port = port ?? PORT;
     this._token = token || '';
+    this._bind = bind;
   }
 
   /** Start the relay HTTP+WebSocket server. Returns the actual port. */
@@ -2301,7 +2361,7 @@ export class NodeRelayServer {
     }
     // Start listening
     return new Promise((resolve, reject) => {
-      httpServer!.listen(this._port, () => {
+      httpServer!.listen(this._port, this._bind, () => {
         const addr = httpServer!.address() as import("net").AddressInfo;
         this._port = addr.port;
         console.log(`[relay] Listening on ${addr.port}`);

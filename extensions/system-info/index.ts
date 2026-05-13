@@ -118,19 +118,12 @@ export async function activate(): Promise<AgentAdapter> {
  * network topology (e.g., --role leaf for devices behind CGNAT).
  */
 export async function detectNetworkCapability(): Promise<'relay' | 'leaf'> {
-  return new Promise((resolve) => {
-    try {
-      const { createServer } = require('net');
-      const s = createServer();
-      s.on('error', () => resolve('leaf'));
-      s.listen(0, '0.0.0.0', () => {
-        try { s.close(); } catch {}
-        resolve('relay');
-      });
-    } catch {
-      resolve('leaf');
-    }
-  });
+  try {
+    const { detectNetwork } = await import('../../src/network-detect');
+    return detectNetwork(8080, false).hasPublicIP ? 'relay' : 'leaf';
+  } catch {
+    return 'leaf';
+  }
 }
 
 function formatBytes(b: number): string {

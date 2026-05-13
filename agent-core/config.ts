@@ -149,5 +149,27 @@ function persistNodeId(nodeId: string): void {
   }
 }
 
+/** Persist or clear upstreamRelay URL so auto-connect survives restarts. */
+export function persistUpstreamRelay(upstreamRelay: string): void {
+  try {
+    const path = process.env.BRIDGE_CONFIG || join(configDir(), 'agent.json');
+    let existing: Record<string, unknown> = {};
+    try {
+      if (existsSync(path)) {
+        existing = JSON.parse(readFileSync(path, 'utf8'));
+      }
+    } catch { /* malformed — overwrite */ }
+    if (upstreamRelay) {
+      existing.upstreamRelay = upstreamRelay;
+    } else {
+      delete existing.upstreamRelay;
+    }
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify(existing, null, 2), 'utf8');
+  } catch (e) {
+    console.warn(`[config] Failed to persist upstreamRelay: ${e}`);
+  }
+}
+
 // Backward compat re-export
 export type AgentConfig = NodeConfig;

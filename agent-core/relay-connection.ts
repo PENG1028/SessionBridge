@@ -32,6 +32,8 @@ export class RelayConnection extends EventEmitter {
   private _instanceId: string | null = null;
   private _cryptoStream: CryptoStream | null = null;
   private _identity: ReturnType<typeof loadOrCreateIdentity>;
+  /** Network role: 'relay' or 'leaf'. Set before connect() if known. */
+  private _role: string = 'leaf';
 
   constructor(private config: NodeConfig) {
     super();
@@ -39,6 +41,7 @@ export class RelayConnection extends EventEmitter {
   }
 
   get instanceId(): string | null { return this._instanceId; }
+  setRole(role: 'relay' | 'leaf'): void { this._role = role; }
 
   /** Current WebSocket send buffer size (bytes). Used for backpressure control. */
   get bufferedAmount(): number {
@@ -100,6 +103,7 @@ export class RelayConnection extends EventEmitter {
           this.sendRaw(JSON.stringify(envelope('agent.register', {
             dir: this.config.workingDirectory,
             label: this.config.label,
+            role: this._role,
           })));
           break;
 

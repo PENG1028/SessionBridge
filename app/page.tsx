@@ -243,16 +243,37 @@ function PageContent() {
   const params = typeof window !== 'undefined' ? new URL(window.location.href).searchParams : new URLSearchParams();
   const urlParam = params.get('url');
   const tokenParam = params.get('token');
-  const [wsUrl, setWsUrl] = useState(() => {
-    // URL param wins; fall back to localStorage; then default
-    if (urlParam) return urlParam;
+  // Use default URL initially for SSR/CSR consistency; restore from localStorage after mount
+  const [wsUrl, setWsUrl] = useState(() => urlParam || defaultUrl);
+  const [token, setToken] = useState<string | undefined>(tokenParam || undefined);
+
+  // ── Page access mode: LOCAL (localhost) vs VIEW (remote) ──
+  // Use state + effect to avoid SSR/CSR hydration mismatch
+  const [isLocalPage, setIsLocalPage] = useState(false);
+  const [browserId, setBrowserId] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    setIsLocalPage(
+      window.location.hostname === 'localhost' ||
+      window.location.hostname === '127.0.0.1' ||
+      window.location.hostname === '0.0.0.0'
+    );
+    if (typeof sessionStorage !== 'undefined') {
+      setBrowserId(sessionStorage.getItem('bridge-browser-id') || undefined);
+    }
+  }, []);
+
+  // Hydrate wsUrl from localStorage on mount (avoids SSR/CSR mismatch)
+  useEffect(() => {
+    if (urlParam) return; // URL param takes precedence, already set
+    // When page is loaded from localhost, always use local relay
+    // Don't restore a potentially stale remote wsUrl from localStorage
+    const host = window.location.hostname;
+    if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0') return;
     try {
       const saved = localStorage.getItem('bridge-ws-url');
-      if (saved) return saved;
+      if (saved && saved !== wsUrl) setWsUrl(saved);
     } catch {}
-    return defaultUrl;
-  });
-  const [token, setToken] = useState<string | undefined>(tokenParam || undefined);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Persist wsUrl to localStorage on change
   useEffect(() => {
@@ -353,6 +374,11 @@ function PageContent() {
     if (msg.type === 'peer.list' && Array.isArray(msg.peers)) {
       setPeers(msg.peers);
       if (Array.isArray(msg.links)) setPeerLinks(msg.links);
+      // Re-read browserId — ws-client may have just generated it in onopen
+      try {
+        const id = sessionStorage.getItem('bridge-browser-id');
+        if (id) setBrowserId(id);
+      } catch {}
     }
   }, []);
 
@@ -1063,6 +1089,54 @@ function PageContent() {
     }
   }, [activeWorkbenchDispatch]);
 
+  // ── Upstream relay connection (local node connected as leaf) ──
+  const [upstreamUrl, setUpstreamUrl] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    fetch('/api/connect', { method: 'GET' }).then(r => r.json()).then(data => {
+      if (data?.relayUrl) setUpstreamUrl(data.relayUrl);
+    }).catch(() => {});
+  }, []);
+
+  // ── Handle connect local node as leaf to a remote relay ──
+  const handleConnectUpstream = useCallback(async (url: string) => {
+    try {
+      const res = await fetch('/api/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ relayUrl: url }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        addLog(`[System] Connecting local node upstream to ${url}...`);
+        setUpstreamUrl(url);
+      } else {
+        addLog(`[Error] Failed to connect: ${data.error || 'unknown error'}`);
+      }
+    } catch (err) {
+      addLog(`[Error] Failed to connect: ${err}`);
+    }
+  }, [addLog]);
+
+  // ── Handle disconnect upstream ──
+  const handleDisconnectUpstream = useCallback(async () => {
+    try {
+      const res = await fetch('/api/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ disconnect: true }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        addLog('[System] Disconnected upstream');
+        setUpstreamUrl(undefined);
+      } else {
+        addLog(`[Error] Failed to disconnect: ${data.error || 'unknown error'}`);
+      }
+    } catch (err) {
+      addLog(`[Error] Failed to disconnect: ${err}`);
+    }
+  }, [addLog]);
+
   // ── Saved connections (project-level) ──────────────
   const [connections, setConnections] = useState<any[]>([]);
   const [newConnUrl, setNewConnUrl] = useState('');
@@ -1385,12 +1459,16 @@ function PageContent() {
                   links={peerLinks}
                   wsUrl={wsUrl}
                   connections={connections}
-                  onConnect={(url) => setWsUrl(url)}
                   onDeleteConnection={handleDeleteConnection}
                   newConnUrl={newConnUrl}
                   onNewConnUrlChange={setNewConnUrl}
                   onAddConnection={handleAddConnection}
                   onEnterNode={handleEnterNode}
+                  upstreamUrl={upstreamUrl}
+                  onConnectUpstream={handleConnectUpstream}
+                  onDisconnectUpstream={handleDisconnectUpstream}
+                  isLocalPage={isLocalPage}
+                  browserId={browserId}
                 />
               </div>
             </div>

@@ -12,6 +12,7 @@ interface PeerInfo {
   networkType?: 'loopback' | 'lan' | 'wan' | 'unknown';
   hasPublicAccess?: boolean;
   connectedAt?: number;
+  isLocal?: boolean;
 }
 
 interface NodeBarProps {
@@ -61,9 +62,10 @@ export function NodeBar({ peers, wsUrl, activeNodeId, onEnterNode, onOpenConnect
     connectedAt: Date.now(),
   };
 
-  // Filter out the local agent peer (it's already shown as the hardcoded localPeer)
-  const remotePeers = peers.filter(p => !(p.type === 'agent' && p.networkType === 'loopback'));
-  const allEntries: PeerInfo[] = [localPeer, ...remotePeers];
+  // Show only agent nodes (not browser connections — they appear in VIEW section)
+  const reportedLocalPeer = peers.find(p => p.id === '__local__' || p.isLocal);
+  const remotePeers = peers.filter(p => p.id !== '__local__' && !p.isLocal && p.type === 'agent' && p.networkType !== 'loopback');
+  const allEntries: PeerInfo[] = reportedLocalPeer ? [reportedLocalPeer, ...remotePeers] : remotePeers;
 
   // Filter dismissed + if active node was dismissed, auto exit
   const visible = allEntries.filter(p => !dismissed.has(p.id));
