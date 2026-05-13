@@ -159,7 +159,7 @@ function dismissNotify(id: string): void {
 }
 
 const defaultAdapterId = getDefaultAdapterId();
-const defaultInstance = instanceManager.create(process.cwd(), 'local');
+const defaultInstance = instanceManager.create(process.cwd(), os.hostname());
 defaultInstance.status = "running";
 defaultInstance.adapterId = defaultAdapterId;
 instanceManager.setActive(defaultInstance.id);
@@ -616,7 +616,7 @@ async function spawnShellForWs(ws: WebSocket, instanceId?: string): Promise<impo
         send(ws, envelope("error", { code: "NO_TERMINAL_ADAPTER", message: "No terminal-capable adapter available" }));
         throw new Error('No terminal-capable adapter available for shell.spawn');
       }
-      i = instanceManager.create(process.cwd(), "local", "local", terminalAdapter.id);
+      i = instanceManager.create(process.cwd(), os.hostname(), "local", terminalAdapter.id);
     }
   } else {
     // No instanceId — create new instance with shell adapter specifically.
@@ -625,7 +625,7 @@ async function spawnShellForWs(ws: WebSocket, instanceId?: string): Promise<impo
       send(ws, envelope("error", { code: "NO_TERMINAL_ADAPTER", message: "No terminal-capable adapter available" }));
       throw new Error('No terminal-capable adapter available for shell.spawn');
     }
-    i = instanceManager.create(process.cwd(), "local", "local", terminalAdapter.id);
+    i = instanceManager.create(process.cwd(), os.hostname(), "local", terminalAdapter.id);
   }
 
   // Apply alias from the alias store (if one exists for this instance)

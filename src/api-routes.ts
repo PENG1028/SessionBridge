@@ -334,7 +334,7 @@ export function registerApiRoutes(
 
         const newInst = instanceManager.create(
           targetDir,
-          label || "local",
+          label || os.hostname(),
           "local",
           adapterId,
         );
