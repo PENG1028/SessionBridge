@@ -27,6 +27,9 @@ interface RightSidebarProps {
   terminalTab: 'log' | 'raw';
   onTerminalTabChange: (tab: 'log' | 'raw') => void;
   logsEndRef: React.RefObject<HTMLDivElement | null>;
+  // ── Path bookmarks ──
+  onNavigatePath?: (path: string) => void;
+  currentActiveDir?: string;
 }
 
 export function RightSidebar(props: RightSidebarProps) {

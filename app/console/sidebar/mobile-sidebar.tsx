@@ -14,6 +14,7 @@ interface MobileSidebarProps {
   onToggleDir: (path: string) => void;
   onOpenFile: (path: string) => void;
   onSendFile: (path: string) => void;
+  onBookmarkDir?: (path: string) => void;
   onCommand: (cmdId: string) => void;
   activeView?: string;
   activeInstanceId?: string | null;
@@ -22,7 +23,7 @@ interface MobileSidebarProps {
 
 export function MobileSidebar({
   open, onClose,
-  fileTree, expandedDirs, onToggleDir, onOpenFile, onSendFile,
+  fileTree, expandedDirs, onToggleDir, onOpenFile, onSendFile, onBookmarkDir,
   onCommand, activeView, activeInstanceId, onKill,
 }: MobileSidebarProps) {
   const { whenContext } = useFocus();
@@ -79,6 +80,7 @@ export function MobileSidebar({
                         onToggleDir={onToggleDir}
                         onOpenFile={onOpenFile}
                         onSendFile={onSendFile}
+                        onBookmarkDir={onBookmarkDir}
                       />
                     ) : (
                       <div className="text-gray-600 text-[10px] p-3 italic">Loading...</div>

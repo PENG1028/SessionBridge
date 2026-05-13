@@ -16,6 +16,7 @@ interface LeftSidebarProps {
   onToggleDir: (dirPath: string) => void;
   onOpenFile: (filePath: string) => void;
   onSendFile: (filePath: string) => void;
+  onBookmarkDir?: (filePath: string) => void;
   onCommand: (commandId: string) => void;
   projectCwd: string;
   instances?: any[];

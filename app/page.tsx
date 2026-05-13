@@ -42,6 +42,7 @@ import type { ActionRunContext } from './console/actions/action-types';
 void __coreActionsRegistered;
 import type { ContextMenuItem } from './console/shell/context-menu';
 import { ConsoleOverlays } from './console/overlays/console-overlays';
+import { getLastActiveDir, setLastActiveDir, getRestoreLastPath, addPathBookmark } from './lib/path-bookmarks';
 import { NodeBar } from './console/stage/node-bar';
 import { NodeNetworkView } from './console/sidebar/node-network-view';
 import { KeyHintOverlay } from './console/chrome/key-hint-overlay';
@@ -378,6 +379,17 @@ function PageContent() {
   }, []);
   // Fetch root on mount
   useEffect(() => { fetchDir('.'); }, [fetchDir]);
+
+  const onNavigatePath = useCallback((path: string) => {
+    setLastActiveDir(path);
+    setFileTreeRoot(path);
+    setFileTree(prev => {
+      if (prev[path]?.loaded) return prev;
+      return prev;
+    });
+    fetchDir(path);
+    setExpandedDirs(new Set(['.', path]));
+  }, [fetchDir]);
 
   const actionEndRef = useRef<HTMLDivElement>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
@@ -1520,6 +1532,9 @@ function PageContent() {
           onSendFile={(filePath) => {
             setInputValue(prev => prev + `@${filePath} `);
           }}
+          onBookmarkDir={(dirPath) => {
+            addPathBookmark(dirPath);
+          }}
           onCommand={(cmdId) => runWorkbenchCommand({ command: cmdId }, actionRunContext)}
           projectCwd={activeNodeProjectInfo?.cwd || '.'}
           instances={instances.filter((i: any) => appState.workbenchInstanceIds.includes(i.id) && (i.status === 'running' || i.status === 'starting'))}
@@ -1644,6 +1659,8 @@ function PageContent() {
           terminalTab={terminalTab}
           onTerminalTabChange={setTerminalTab}
           logsEndRef={logsEndRef}
+          onNavigatePath={onNavigatePath}
+          currentActiveDir={fileTreeRoot || '.'}
         />
         </SidebarSlot>
       </div>
@@ -1730,6 +1747,9 @@ function PageContent() {
         }}
         onSendFile={(filePath) => {
           setInputValue(prev => prev + `@${filePath} `);
+        }}
+        onBookmarkDir={(dirPath) => {
+          addPathBookmark(dirPath);
         }}
         activeInstanceId={activeInstanceId}
         onKill={killInstance}

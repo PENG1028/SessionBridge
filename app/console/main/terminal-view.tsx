@@ -6,6 +6,7 @@ import { useWorkbench } from '../workbench/workbench-context';
 import ShellTerminal from '../../shell-terminal';
 import { DirectoryPicker } from '../dialogs/directory-picker';
 import { TitleBar } from '../shared/title-bar';
+import { getLastActiveDir, getRestoreLastPath, setLastActiveDir } from '../../lib/path-bookmarks';
 
 interface TerminalViewProps {
   instanceId?: string;
@@ -21,7 +22,12 @@ export function TerminalView({ instanceId }: TerminalViewProps) {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const autoCreated = useRef(false);
-  const [cwd, setCwd] = useState(projectCwd || '.');
+  const [cwd, setCwd] = useState(() => {
+    if (typeof window !== 'undefined' && getRestoreLastPath()) {
+      return getLastActiveDir() || projectCwd || '.';
+    }
+    return projectCwd || '.';
+  });
   const [pickerOpen, setPickerOpen] = useState(false);
 
   // Auto-create a new shell instance when no instanceId
@@ -64,6 +70,7 @@ export function TerminalView({ instanceId }: TerminalViewProps) {
   const sendCd = useCallback((path: string) => {
     const absPath = resolveRel(path);
     setCwd(absPath);
+    setLastActiveDir(absPath);
     if (!instanceId) return;
     const qPath = absPath.replace(/\\/g, '/');
     const cdCmd = `cd "${qPath}"\r`;

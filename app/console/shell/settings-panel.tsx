@@ -558,11 +558,17 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
                         <div>
                           <div className="text-[11px] text-gray-200">Require password for remote access</div>
                           <div className="text-[9px] text-gray-600 mt-0.5">
-                            {adminState.tokenSet ? 'Password is set' : 'No password set — first remote visitor will be prompted'}
+                            {!adminState.tokenSet
+                              ? 'No password set — set one below to enable remote access protection'
+                              : adminState.authEnabled
+                                ? 'Remote access requires login'
+                                : 'Remote access does not require login'
+                            }
                           </div>
                         </div>
                         <button
                           onClick={async () => {
+                            if (!adminState.tokenSet) { setToggleMsg('Set a password first'); setTimeout(() => setToggleMsg(''), 2000); return; }
                             setToggleMsg('');
                             try {
                               const r = await fetch('/api/auth/toggle', {
@@ -570,7 +576,7 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({ enabled: !adminState.authEnabled }),
                               });
-                              if (!r.ok) { setToggleMsg('Failed'); return; }
+                              if (!r.ok) { const d = await r.json(); setToggleMsg(d.error || 'Failed'); return; }
                               const d = await r.json();
                               setAdminState(prev => ({ ...prev, authEnabled: d.authEnabled }));
                               setToggleMsg(d.authEnabled ? 'ON' : 'OFF');
@@ -578,8 +584,8 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
                             } catch { setToggleMsg('Error'); }
                           }}
                           className={`relative w-9 h-5 rounded-full transition-colors ${
-                            adminState.authEnabled ? 'bg-purple-600' : 'bg-gray-700'
-                          }`}
+                            !adminState.tokenSet ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'
+                          } ${adminState.authEnabled ? 'bg-purple-600' : 'bg-gray-700'}`}
                         >
                           <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
                             adminState.authEnabled ? 'translate-x-4' : ''
@@ -590,22 +596,24 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
                         <div className="text-[9px] text-purple-400 pb-1 -mt-1">{toggleMsg}</div>
                       )}
 
-                      {/* Change password */}
+                      {/* Set / Change password */}
                       <div className="py-3">
                         <button
-                          onClick={() => { setPwFormOpen(v => !v); setPwMsg(null); }}
+                          onClick={() => { setPwFormOpen(v => !v); setPwMsg(null); setOldPw(''); }}
                           className="text-[11px] text-gray-300 hover:text-gray-100 transition-colors"
                         >
-                          {pwFormOpen ? '−' : '+'} Change password
+                          {pwFormOpen ? '−' : '+'} {adminState.tokenSet ? 'Change password' : 'Set password'}
                         </button>
                         {pwFormOpen && (
                           <div className="mt-2 space-y-2">
-                            <input
-                              type="password" value={oldPw}
-                              onChange={e => setOldPw(e.target.value)}
-                              placeholder="Current password"
-                              className="w-full bg-[#0d0d0d] border border-gray-700 rounded px-2 py-1.5 text-[11px] text-gray-200 outline-none focus:border-purple-500"
-                            />
+                            {adminState.tokenSet && (
+                              <input
+                                type="password" value={oldPw}
+                                onChange={e => setOldPw(e.target.value)}
+                                placeholder="Current password"
+                                className="w-full bg-[#0d0d0d] border border-gray-700 rounded px-2 py-1.5 text-[11px] text-gray-200 outline-none focus:border-purple-500"
+                              />
+                            )}
                             <input
                               type="password" value={newPw}
                               onChange={e => setNewPw(e.target.value)}
@@ -625,22 +633,34 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps) {
                                   if (newPw.length < 8) { setPwMsg({ type: 'error', text: 'Min 8 characters' }); return; }
                                   if (newPw !== confirmPw) { setPwMsg({ type: 'error', text: 'Passwords do not match' }); return; }
                                   try {
-                                    const r = await fetch('/api/auth/change-password', {
+                                    const endpoint = adminState.tokenSet ? '/api/auth/change-password' : '/api/auth/setup';
+                                    const body = adminState.tokenSet
+                                      ? JSON.stringify({ oldToken: oldPw, newToken: newPw })
+                                      : JSON.stringify({ password: newPw, confirm: newPw });
+                                    const r = await fetch(endpoint, {
                                       method: 'POST',
                                       headers: { 'Content-Type': 'application/json' },
-                                      body: JSON.stringify({ oldToken: oldPw, newToken: newPw }),
+                                      body,
                                     });
                                     const d = await r.json();
                                     if (r.ok) {
-                                      setPwMsg({ type: 'ok', text: 'Password changed' });
+                                      setPwMsg({ type: 'ok', text: adminState.tokenSet ? 'Password changed' : 'Password set' });
                                       setOldPw(''); setNewPw(''); setConfirmPw('');
+                                      // Refetch auth state so toggle updates
+                                      if (!adminState.tokenSet) {
+                                        const authRes = await fetch('/api/auth/check');
+                                        if (authRes.ok) {
+                                          const authData = await authRes.json();
+                                          setAdminState(prev => ({ ...prev, authEnabled: authData.authEnabled, tokenSet: authData.tokenSet }));
+                                        }
+                                      }
                                     } else {
                                       setPwMsg({ type: 'error', text: d.error || 'Failed' });
                                     }
                                   } catch { setPwMsg({ type: 'error', text: 'Network error' }); }
                                 }}
                                 className="px-2.5 py-1 bg-purple-700 hover:bg-purple-600 text-white text-[10px] rounded border border-purple-600 transition-colors"
-                              >Change</button>
+                              >{adminState.tokenSet ? 'Change' : 'Set'}</button>
                               {pwMsg && (
                                 <span className={`text-[9px] ${pwMsg.type === 'ok' ? 'text-emerald-400' : 'text-red-400'}`}>
                                   {pwMsg.text}

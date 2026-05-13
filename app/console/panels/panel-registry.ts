@@ -2,7 +2,7 @@
 
 import type { ComponentType, ReactNode } from 'react';
 import {
-  Activity, Camera, Cpu, FileText, Folder, ListChecks, Play, ScrollText, Terminal, Upload, Zap,
+  Activity, Bookmark, Camera, Cpu, FileText, Folder, ListChecks, Play, ScrollText, Terminal, Upload, Zap,
 } from 'lucide-react';
 import { evaluateWhen, type WhenContext } from '../../../lib/evaluate-when';
 
@@ -11,6 +11,7 @@ import { evaluateWhen, type WhenContext } from '../../../lib/evaluate-when';
 
 const iconMap: Record<string, ComponentType<{ className?: string }>> = {
   activity: Activity,
+  bookmark: Bookmark,
   camera: Camera,
   cpu: Cpu,
   'file-text': FileText,

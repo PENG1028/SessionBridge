@@ -10,10 +10,11 @@ interface FilesPanelProps {
   onToggleDir?: (dirPath: string) => void;
   onOpenFile?: (filePath: string) => void;
   onSendFile?: (filePath: string) => void;
+  onBookmarkDir?: (filePath: string) => void;
 }
 
 export function FilesPanel(props: FilesPanelProps) {
-  const { fileTree, expandedDirs, onToggleDir, onOpenFile, onSendFile } = props;
+  const { fileTree, expandedDirs, onToggleDir, onOpenFile, onSendFile, onBookmarkDir } = props;
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -56,6 +57,7 @@ export function FilesPanel(props: FilesPanelProps) {
             onToggleDir={onToggleDir || (() => {})}
             onOpenFile={onOpenFile || (() => {})}
             onSendFile={onSendFile || (() => {})}
+            onBookmarkDir={onBookmarkDir}
           />
         )}
         </div>

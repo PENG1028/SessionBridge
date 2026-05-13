@@ -21,6 +21,7 @@ import { FilesContextPanel } from './files-context-panel';
 import { TerminalLogPanel } from './terminal-log-panel';
 
 import { FilesPanel } from './files-panel';
+import { PathBookmarksPanel } from './path-bookmarks-panel';
 
 // Extension-manifest-declared panels (registered as component overrides)
 registerPanelComponent('logs', LogsPanel);
@@ -36,6 +37,7 @@ registerPanelComponent('snapshots', SnapshotsPanel);
 registerPanelComponent('files-context', FilesContextPanel);
 registerPanelComponent('terminal-log', TerminalLogPanel);
 registerPanelComponent('files', FilesPanel);
+registerPanelComponent('path-bookmarks', PathBookmarksPanel);
 
 /** Prevent tree-shaking — ensures module-level side effects fire. */
 export const __extensionPanelComponentsRegistered = true;

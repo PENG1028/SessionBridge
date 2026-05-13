@@ -285,7 +285,9 @@ export async function registerAdminRoutes(
     (!hasToken && (pathname === '/setup' || pathname === '/api/auth/setup')) ||
     (hasToken && (pathname === '/login' || pathname === '/api/auth/login'));
 
-  if (!isPublic && isAuthEnabled()) {
+  // Also protect when no token is set: remote visitors must go through /setup first.
+  // Localhost is always allowed regardless of auth state.
+  if (!isPublic && (isAuthEnabled() || (!hasToken && !isLocal))) {
     if (!hasToken) {
       if (pathname.startsWith('/api/')) {
         json(res, 403, { error: 'Setup required', message: '请先设置访问密钥' });
@@ -511,6 +513,10 @@ export async function registerAdminRoutes(
           enabled = JSON.parse(body4).enabled;
         } catch {
           json(res, 400, { error: 'Missing "enabled" field' });
+          return true;
+        }
+        if (enabled && !isTokenSet()) {
+          json(res, 400, { error: 'Set a password first' });
           return true;
         }
         setAuthEnabled(enabled);

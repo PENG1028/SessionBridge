@@ -27,7 +27,8 @@
         { "id": "files", "title": "Files", "icon": "folder", "order": 10, "defaultVisible": true, "when": "view == \"terminal\"" }
       ],
       "sidebar-right": [
-        { "id": "processes", "title": "Processes", "icon": "activity", "defaultVisible": true, "when": "view == \"terminal\"" }
+        { "id": "path-bookmarks", "title": "Path Bookmarks", "icon": "bookmark", "order": 5, "defaultVisible": true, "when": "view == \"terminal\"" },
+        { "id": "processes", "title": "Processes", "icon": "activity", "order": 10, "defaultVisible": true, "when": "view == \"terminal\"" }
       ]
     },
     "commands": [
