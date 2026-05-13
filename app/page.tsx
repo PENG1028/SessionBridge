@@ -283,13 +283,26 @@ function PageContent() {
     if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0') return;
     try {
       const saved = localStorage.getItem('bridge-ws-url');
-      if (saved && saved !== wsUrl) setWsUrl(saved);
+      // Only restore if the saved URL points to the same host as the current page
+      // (prevents stale cross-origin wsUrl from localStorage)
+      if (saved && saved !== wsUrl) {
+        try {
+          const savedHost = new URL(saved).hostname;
+          if (savedHost === host) setWsUrl(saved);
+        } catch {
+          // Invalid URL in storage, ignore
+        }
+      }
     } catch {}
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Persist wsUrl to localStorage on change
+  // Persist wsUrl to localStorage on change (only if it matches current page)
   useEffect(() => {
-    try { localStorage.setItem('bridge-ws-url', wsUrl); } catch {}
+    try {
+      const curHost = window.location.hostname;
+      const urlHost = new URL(wsUrl).hostname;
+      if (urlHost === curHost) localStorage.setItem('bridge-ws-url', wsUrl);
+    } catch {} // ignore cross-origin or invalid URLs
   }, [wsUrl]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const { state, dispatch } = useLayout();
