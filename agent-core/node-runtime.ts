@@ -276,10 +276,19 @@ export class NodeRuntime {
         'Agent connected',
         `Instance: ${instanceId}`,
       );
-      this.spawnShell();
+      // Only auto-spawn when running as a local relay (not when leaf upstream)
+      // to avoid idle PowerShell prompts flooding the relay.
+      if (!this.config.upstreamRelay) {
+        this.spawnShell();
+      }
     });
 
     this.relay.on('stdin', (relayInstanceId, data) => {
+      // Auto-spawn shell on first stdin if not already running
+      if (!this.shellProc) {
+        this.addLog('[node] Auto-spawning shell on stdin');
+        this.spawnShell();
+      }
       if (!this._writeToShellByRelayId?.(relayInstanceId, data)) {
         if (this.shellProc?.stdin?.writable) {
           this.shellProc.stdin.write(data);
