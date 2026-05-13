@@ -73,7 +73,10 @@ export function detectNetwork(
         continue;
       }
       const type = classifyIP(addr.address);
-      if (type === "public") hasPublicIP = true;
+      // Treat public IPv6 as informational for now. A globally scoped IPv6
+      // address does not guarantee inbound reachability through firewall/router
+      // policy, and it made home PCs advertise RELAY too aggressively.
+      if (type === "public" && addr.family === "IPv4") hasPublicIP = true;
       ips.push({ type, addr: addr.address, family: addr.family, interface: name });
     }
   }

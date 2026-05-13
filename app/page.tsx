@@ -22,7 +22,6 @@ import { __extensionPanelComponentsRegistered } from './console/panels/register-
 import { syncChromeContributions } from './console/chrome/chrome-registry';
 import { syncContextMenus } from './console/menus/context-menu-registry';
 import { evaluateWhen } from '../lib/evaluate-when';
-import { getDefaultAdapterId } from '../extensions/registry';
 void __extensionPanelComponentsRegistered;
 void __coreViewsRegistered;
 import { useNotification } from './console/shared/notification-context';
@@ -163,6 +162,19 @@ function shortenPath(p: string): string {
   const parts = p.replace(/\\/g, '/').split('/').filter(Boolean);
   if (parts.length <= 2) return p;
   return '...' + parts.slice(-2).join('/');
+}
+
+function isLocalUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return u.hostname === '127.0.0.1' || u.hostname === 'localhost' || u.hostname === '0.0.0.0';
+  } catch {
+    return true;
+  }
+}
+
+function wsToHttpUrl(url: string): string {
+  return url.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:');
 }
 /** Convert API block descriptors into UI Block[] for historical session loading */
 function parseSessionBlocks(apiBlocks: any[]): Block[] {
@@ -438,6 +450,10 @@ function PageContent() {
   const activeWorkbenchState = useMemo(() => getActiveWorkbenchState(appState), [appState]);
   const appStateRef = useRef(appState);
   appStateRef.current = appState;
+  const activeNodeWsUrl = useMemo(() => {
+    const nodeId = appState.activeInstanceId;
+    return nodeId?.startsWith('upstream:') ? nodeId.slice('upstream:'.length) : wsUrl;
+  }, [appState.activeInstanceId, wsUrl]);
   // Phase 4I: Instance changes (sidebar click) no longer auto-create tabs.
   // Tab is the subject — instance is a tab's binding. Only shell tabs are
   // restored on reconnect via the instances[] effect below.
@@ -685,6 +701,57 @@ function PageContent() {
   }, [sendCommand, addLog]);
 
   // ── Hook integration (extracted from page.tsx to reduce size) ──
+  const [nodeProjectInfo, setNodeProjectInfo] = useState<Record<string, { cwd: string; projectName: string }>>({});
+  useEffect(() => {
+    if (activeNodeWsUrl === wsUrl) return;
+    let cancelled = false;
+    fetch(`${wsToHttpUrl(activeNodeWsUrl)}/api/info`)
+      .then(r => r.json())
+      .then(info => {
+        if (cancelled || !info?.cwd) return;
+        setNodeProjectInfo(prev => ({
+          ...prev,
+          [activeNodeWsUrl]: {
+            cwd: info.cwd,
+            projectName: info.projectName || info.cwd,
+          },
+        }));
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [activeNodeWsUrl, wsUrl]);
+
+  const activeNodeProjectInfo = useMemo(() => {
+    if (activeNodeWsUrl === wsUrl) return projectInfo;
+    const known = nodeProjectInfo[activeNodeWsUrl];
+    if (known) return known;
+    try {
+      const host = new URL(activeNodeWsUrl).hostname;
+      return { cwd: '.', projectName: host };
+    } catch {
+      return { cwd: '.', projectName: 'remote' };
+    }
+  }, [activeNodeWsUrl, wsUrl, projectInfo, nodeProjectInfo]);
+
+  const createNodeInstance = useCallback(async (dir: string, label?: string, adapterId?: string) => {
+    if (activeNodeWsUrl === wsUrl) return createInstance(dir, label, adapterId);
+    try {
+      const res = await fetch(`${wsToHttpUrl(activeNodeWsUrl)}/api/instances`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dir, label, adapterId }),
+      });
+      const result = await res.json();
+      if (!res.ok && !result.error) result.error = `${res.status} ${res.statusText}`;
+      addLog(`[System] Created remote instance on ${new URL(activeNodeWsUrl).hostname}: ${result.success ? 'OK' : result.error}`);
+      return result;
+    } catch (err) {
+      const apiUrl = `${wsToHttpUrl(activeNodeWsUrl)}/api/instances`;
+      addLog(`[Error] Remote instance create failed (${apiUrl}): ${err}`);
+      return { success: false, error: `Failed to fetch ${apiUrl}: ${String(err)}` };
+    }
+  }, [activeNodeWsUrl, wsUrl, createInstance, addLog]);
+
   const { messagesBySession, setMessagesBySession, messages, sessionKey, updateSession, handleNewSession, isRestoring, snapshots, saveSnapshot, loadSnapshot, forkFromSnapshot, knownFiles } = useMessageSessions(
     projectInfo, isWorkspace, activeSessionId, activeInstanceId, addLog, sendCommand
   );
@@ -799,13 +866,13 @@ function PageContent() {
     activeAdapterId: focusAdapterId,
     isRunning: focusIsRunning,
     instanceId: focusInstanceId,
-    projectCwd: projectInfo?.cwd || '.',
+    projectCwd: activeNodeProjectInfo?.cwd || '.',
     messages,
     workbenchState: activeWorkbenchState,
     workbenchDispatch: activeWorkbenchDispatch,
     sendCommand,
     sendInput: (text: string) => sendInput(text, activeSessionId || undefined),
-    createInstance,
+    createInstance: createNodeInstance,
     killInstance,
     openSettings: () => setSettingsOpen(true),
     openSearch: openSearchPanel,
@@ -813,15 +880,15 @@ function PageContent() {
     toggleLeftSidebar: () => dispatch({ type: 'TOGGLE_SIDEBAR', position: 'left' }),
     toggleRightSidebar: () => dispatch({ type: 'TOGGLE_SIDEBAR', position: 'right' }),
     notify: (n) => notify({ id: n.title, type: n.type as any, title: n.title, message: n.message }),
-  }), [focusViewId, focusAdapterId, focusIsRunning, focusInstanceId, projectInfo, messages, activeWorkbenchState, activeWorkbenchDispatch, sendCommand, sendInput, activeSessionId, createInstance, killInstance, openSearchPanel, dispatch, notify]);
+  }), [focusViewId, focusAdapterId, focusIsRunning, focusInstanceId, activeNodeProjectInfo?.cwd, messages, activeWorkbenchState, activeWorkbenchDispatch, sendCommand, sendInput, activeSessionId, createNodeInstance, killInstance, openSearchPanel, dispatch, notify]);
 
   // ── Context menu — uses actionRunContext, must be after its definition ──
   const { ctxMenu, setCtxMenu, openContextMenu, handleWorkbenchContextMenu, closeContextMenu } = useContextMenu(
     actionRunContext,
     focusWhenContext,
     getAllAdapterTypes,
-    projectInfo?.cwd || '.',
-    createInstance,
+    activeNodeProjectInfo?.cwd || '.',
+    createNodeInstance,
   );
 
   // Handle command palette selection — unified dispatch through runWorkbenchCommand
@@ -1054,7 +1121,7 @@ function PageContent() {
         if (prev.instanceStates[nodeId]) {
           return appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: nodeId });
         }
-        const newLayout = createInitialState(nodeId);
+        const newLayout = createInitialState(nodeId.startsWith('inst_') ? nodeId : undefined);
         return appReducer(
           { ...prev, instanceStates: { ...prev.instanceStates, [nodeId]: newLayout } },
           { type: 'SET_ACTIVE_INSTANCE', instanceId: nodeId }
@@ -1091,6 +1158,9 @@ function PageContent() {
 
   // ── Upstream relay connection (local node connected as leaf) ──
   const [upstreamUrl, setUpstreamUrl] = useState<string | undefined>(undefined);
+  const [upstreamConnectingUrl, setUpstreamConnectingUrl] = useState<string | undefined>(undefined);
+  const [upstreamError, setUpstreamError] = useState<string | undefined>(undefined);
+  const [upstreamErrorUrl, setUpstreamErrorUrl] = useState<string | undefined>(undefined);
   useEffect(() => {
     fetch('/api/connect', { method: 'GET' }).then(r => r.json()).then(data => {
       if (data?.relayUrl) setUpstreamUrl(data.relayUrl);
@@ -1099,6 +1169,10 @@ function PageContent() {
 
   // ── Handle connect local node as leaf to a remote relay ──
   const handleConnectUpstream = useCallback(async (url: string) => {
+    setUpstreamError(undefined);
+    setUpstreamErrorUrl(undefined);
+    setUpstreamConnectingUrl(url);
+    addLog(`[System] Connecting local node upstream to ${url}...`);
     try {
       const res = await fetch('/api/connect', {
         method: 'POST',
@@ -1106,14 +1180,23 @@ function PageContent() {
         body: JSON.stringify({ relayUrl: url }),
       });
       const data = await res.json();
+      setUpstreamConnectingUrl(undefined);
       if (data.ok) {
-        addLog(`[System] Connecting local node upstream to ${url}...`);
         setUpstreamUrl(url);
+        setUpstreamError(undefined);
+        setUpstreamErrorUrl(undefined);
       } else {
-        addLog(`[Error] Failed to connect: ${data.error || 'unknown error'}`);
+        const errMsg = data.error || '连接失败';
+        setUpstreamError(errMsg);
+        setUpstreamErrorUrl(url);
+        addLog(`[Error] Failed to connect: ${errMsg}`);
       }
     } catch (err) {
-      addLog(`[Error] Failed to connect: ${err}`);
+      setUpstreamConnectingUrl(undefined);
+      const errMsg = String(err);
+      setUpstreamError(errMsg);
+      setUpstreamErrorUrl(url);
+      addLog(`[Error] Failed to connect: ${errMsg}`);
     }
   }, [addLog]);
 
@@ -1129,6 +1212,8 @@ function PageContent() {
       if (data.ok) {
         addLog('[System] Disconnected upstream');
         setUpstreamUrl(undefined);
+        setUpstreamError(undefined);
+        setUpstreamErrorUrl(undefined);
       } else {
         addLog(`[Error] Failed to disconnect: ${data.error || 'unknown error'}`);
       }
@@ -1140,11 +1225,19 @@ function PageContent() {
   // ── Saved connections (project-level) ──────────────
   const [connections, setConnections] = useState<any[]>([]);
   const [newConnUrl, setNewConnUrl] = useState('');
+  const autoUpstreamAttemptedRef = useRef(false);
   useEffect(() => {
     fetch('/api/connections').then(r => r.json()).then((data: any) => {
       if (data?.connections) setConnections(data.connections);
     }).catch(() => {});
   }, []);
+  useEffect(() => {
+    if (autoUpstreamAttemptedRef.current || upstreamUrl) return;
+    const remoteConnections = connections.filter((c: any) => !isLocalUrl(c.url));
+    if (remoteConnections.length !== 1) return;
+    autoUpstreamAttemptedRef.current = true;
+    void handleConnectUpstream(remoteConnections[0].url);
+  }, [connections, upstreamUrl, handleConnectUpstream]);
   const handleDeleteConnection = useCallback(async (id: string) => {
     try {
       const res = await fetch(`/api/connections/${id}`, { method: 'DELETE' });
@@ -1174,6 +1267,38 @@ function PageContent() {
       setNewConnUrl('');
     } catch {}
   }, [newConnUrl]);
+
+  const nodeBarPeers = useMemo(() => {
+    if (!upstreamUrl || isLocalUrl(upstreamUrl)) return peers;
+
+    try {
+      const upstream = new URL(upstreamUrl);
+      const upstreamId = `upstream:${upstreamUrl}`;
+      const alreadyListed = peers.some((peer: any) =>
+        peer.id === upstreamId ||
+        (!peer.isLocal && peer.ip === upstream.hostname)
+      );
+      if (alreadyListed) return peers;
+
+      const saved = connections.find((conn: any) => conn.url === upstreamUrl);
+      const networkType = saved?.networkType === 'lan' ? 'lan' : 'wan';
+      return [
+        ...peers,
+        {
+          id: upstreamId,
+          name: saved?.name || upstream.hostname,
+          ip: upstream.hostname,
+          type: 'agent',
+          role: 'relay',
+          networkType,
+          hasPublicAccess: networkType === 'wan',
+          connectedAt: Date.now(),
+        },
+      ];
+    } catch {
+      return peers;
+    }
+  }, [peers, upstreamUrl, connections]);
 
   // ── Handle view request from pane (user picks view in EmptyPane) ──
   // Phase 4F: Opening a view NEVER auto-creates an instance. The tab is a UI
@@ -1220,7 +1345,7 @@ function PageContent() {
 
   // ── Workbench context value (provides session/chat state to all view components) ──
   const workbenchContextValue = useMemo(() => ({
-    wsUrl,
+    wsUrl: activeNodeWsUrl,
     token: token ?? undefined,
     logs,
     messages,
@@ -1253,11 +1378,11 @@ function PageContent() {
     handleInterrupt,
     setForkTarget,
     setForkPrompt,
-    createInstance,
+    createInstance: createNodeInstance,
     instances,
     bindCurrentTabInstance: handleBindCurrentTabInstance,
     activeInstanceId,
-    projectCwd: projectInfo?.cwd || '.',
+    projectCwd: activeNodeProjectInfo?.cwd || '.',
     activateInstance,
     activeExternalSession,
     clearExternalSession: () => {
@@ -1269,7 +1394,7 @@ function PageContent() {
     scrollContainerRef: scrollContainerRef as React.RefObject<HTMLDivElement | null>,
     actionEndRef: actionEndRef as React.RefObject<HTMLDivElement | null>,
   }), [
-    wsUrl, token, logs, messages, turns,
+    activeNodeWsUrl, token, logs, messages, turns,
     phase, setPhase, currentActivity, setCurrentActivity,
     connStatus, isRestoring, historyLoading,
     inputValue, setInputValue,
@@ -1281,10 +1406,10 @@ function PageContent() {
     handleInterrupt,
     sendCommand, sendInput,
     setForkTarget, setForkPrompt,
-    createInstance, handleBindCurrentTabInstance, activateInstance, activeInstanceId,
-    projectInfo?.cwd,
+    createNodeInstance, handleBindCurrentTabInstance, activateInstance, activeInstanceId,
+    activeNodeProjectInfo?.cwd,
     activeExternalSession,
-    cmdPanelRef, scrollContainerRef, actionEndRef, projectInfo?.cwd,
+    cmdPanelRef, scrollContainerRef, actionEndRef,
   ]);
 
   return (
@@ -1347,7 +1472,7 @@ function PageContent() {
 
       {/* ── Node bar — shows peers (+ local node) for entering workbenches ── */}
       <NodeBar
-        peers={peers}
+        peers={nodeBarPeers}
         wsUrl={wsUrl}
         activeNodeId={appState.activeInstanceId}
         onEnterNode={handleEnterNode}
@@ -1383,11 +1508,11 @@ function PageContent() {
             setInputValue(prev => prev + `@${filePath} `);
           }}
           onCommand={(cmdId) => runWorkbenchCommand({ command: cmdId }, actionRunContext)}
-          projectCwd={projectInfo?.cwd || '.'}
+          projectCwd={activeNodeProjectInfo?.cwd || '.'}
           instances={instances.filter((i: any) => appState.workbenchInstanceIds.includes(i.id) && (i.status === 'running' || i.status === 'starting'))}
           activeInstanceId={activeInstanceId}
           onActivateInstance={activateInstance}
-          onCreateInstance={(dir, label, adapterId) => createInstance(dir, label, adapterId)}
+          onCreateInstance={(dir, label, adapterId) => createNodeInstance(dir, label, adapterId)}
           onKillInstance={killInstance}
         />
         </SidebarSlot>
@@ -1445,8 +1570,9 @@ function PageContent() {
               // Generic view resolution: instance-bound views resolve through adapter system,
               // static views use viewType directly as the registry key.
               // No viewType-specific branching — plugins can add views without touching page.tsx.
-              const resolvedViewId = instanceId
-                ? getAdapterViewId(instances.find((i: any) => i.id === instanceId)?.adapterId || getAllAdapterTypes()[0]?.id || getDefaultAdapterId()) || viewType
+              const boundInstance = instanceId ? instances.find((i: any) => i.id === instanceId) : null;
+              const resolvedViewId = boundInstance?.adapterId
+                ? getAdapterViewId(boundInstance.adapterId) || viewType
                 : viewType;
               return <MainSlot viewId={resolvedViewId} instanceId={instanceId} />;
             }}
@@ -1467,6 +1593,10 @@ function PageContent() {
                   upstreamUrl={upstreamUrl}
                   onConnectUpstream={handleConnectUpstream}
                   onDisconnectUpstream={handleDisconnectUpstream}
+                  upstreamConnectingUrl={upstreamConnectingUrl}
+                  upstreamError={upstreamError}
+                  upstreamErrorUrl={upstreamErrorUrl}
+                  upstreamStatus={upstreamUrl ? 'connected' : undefined}
                   isLocalPage={isLocalPage}
                   browserId={browserId}
                 />

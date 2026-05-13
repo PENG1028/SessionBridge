@@ -102,9 +102,10 @@ export class NodeRuntime {
     // 2. Always start the local HTTP/UI server. Relay mode is a capability,
     // not a prerequisite for controlling the local node from its page.
     {
-      const { NodeRelayServer, setNodeId, setLocalNodeInfo, appendAdminLog, writeToShellByRelayId } = await import('../src/relay-server');
+      const { NodeRelayServer, setNodeId, setLocalNodeInfo, setRelayConnection, appendAdminLog, writeToShellByRelayId } = await import('../src/relay-server');
       this.appendRelayLog = appendAdminLog;
       this._writeToShellByRelayId = writeToShellByRelayId;
+      setRelayConnection(this.relay);
       const detected = detectNetwork(this.config.relayPort, !!this.config.relayToken);
       const publicIp = detected.ips.find(ip => ip.type === 'public' && ip.family === 'IPv4');
       const lanIp = detected.ips.find(ip => ip.type === 'lan' && ip.family === 'IPv4');

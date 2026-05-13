@@ -5,6 +5,7 @@ import {
   Cpu, Activity, HardDrive, Clock, Fingerprint, Server,
   Wifi, Box, Puzzle, Terminal, ChevronRight, Bell,
 } from 'lucide-react';
+import { useWorkbench } from '../workbench/workbench-context';
 
 // ─── Types ─────────────────────────────────────
 
@@ -45,8 +46,12 @@ function fmtUptime(s: number): string {
   return `${h}h ${m}m`;
 }
 
-async function apiJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(url, init);
+function wsToHttpUrl(url: string): string {
+  return url.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:');
+}
+
+async function apiJson<T>(baseUrl: string, url: string, init?: RequestInit): Promise<T> {
+  const r = await fetch(`${baseUrl}${url}`, init);
   if (!r.ok) throw new Error(r.statusText);
   return r.json();
 }
@@ -85,6 +90,8 @@ function StatusCard({ icon: Icon, label, value, sub }: { icon: any; label: strin
 // ─── Main Dashboard ────────────────────────────
 
 export function DashboardView() {
+  const { wsUrl } = useWorkbench();
+  const apiBase = wsToHttpUrl(wsUrl).replace(/\/$/, '');
   const [data, setData] = useState<StatusData | null>(null);
   const [ext, setExt] = useState<ExtData | null>(null);
   const [procs, setProcs] = useState<ProcEntry[]>([]);
@@ -94,9 +101,9 @@ export function DashboardView() {
   const refresh = useCallback(async () => {
     try {
       const [s, p, l] = await Promise.all([
-        apiJson<StatusData>('/api/status'),
-        apiJson<ProcEntry[]>('/api/processes?sort=cpu&limit=10').catch(() => []),
-        apiJson<string[]>('/api/logs').catch(() => []),
+        apiJson<StatusData>(apiBase, '/api/status'),
+        apiJson<ProcEntry[]>(apiBase, '/api/processes?sort=cpu&limit=10').catch(() => []),
+        apiJson<string[]>(apiBase, '/api/logs').catch(() => []),
       ]);
       setData(s);
       setProcs(p);
@@ -106,26 +113,26 @@ export function DashboardView() {
       setErr(e.message || 'Failed to load');
     }
     // Extensions separately (may 404)
-    apiJson<ExtData>('/api/extensions').then(setExt).catch(() => {});
-  }, []);
+    apiJson<ExtData>(apiBase, '/api/extensions').then(setExt).catch(() => {});
+  }, [apiBase]);
 
   useEffect(() => { refresh(); const t = setInterval(refresh, 5000); return () => clearInterval(t); }, [refresh]);
 
   const togglePerm = useCallback(async (cat: string, val: boolean) => {
-    await apiJson('/api/permissions', {
+    await apiJson(apiBase, '/api/permissions', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ category: cat, value: val }),
     });
     refresh();
-  }, [refresh]);
+  }, [apiBase, refresh]);
 
   const toggleNotif = useCallback(async (id: string, val: boolean) => {
-    await apiJson('/api/notifications', {
+    await apiJson(apiBase, '/api/notifications', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ scenarioId: id, value: val }),
     });
     refresh();
-  }, [refresh]);
+  }, [apiBase, refresh]);
 
   if (err && !data) {
     return (

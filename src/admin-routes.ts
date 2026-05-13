@@ -763,26 +763,39 @@ export async function registerAdminRoutes(
 
           if (disconnect || !relayUrl) {
             ctx.addLog('[connect] Disconnecting from upstream...');
-            await relay.shutdown();
-            (relay as any).config.upstreamRelay = '';
+            await relay.disconnectUpstream();
             persistUpstreamRelay(''); // clear persisted config
             json(res, 200, { ok: true, relayUrl: '', message: 'Disconnected' });
           } else {
             ctx.addLog(`[connect] Connecting to ${relayUrl}...`);
             if (token) ctx.addLog(`[connect] Token set`);
-            await relay.shutdown();
-            (relay as any).config.upstreamRelay = relayUrl;
+            await relay.reconnectTo(relayUrl);
+            const registered = await relay.waitUntilRegistered(5000);
+            if (!registered) {
+              const reason = relay.lastError || `status=${relay.status}`;
+              ctx.addLog(`[connect] Failed to register upstream: ${reason}`);
+              await relay.disconnectUpstream();
+              persistUpstreamRelay('');
+              json(res, 502, { ok: false, relayUrl: '', status: relay.status, error: `Upstream not reachable or did not register (${reason})` });
+              return true;
+            }
             persistUpstreamRelay(relayUrl); // persist for auto-connect on restart
-            relay.connect();
-            json(res, 200, { ok: true, relayUrl, message: 'Reconnecting...' });
+            json(res, 200, { ok: true, relayUrl, status: relay.status, instanceId: relay.instanceId, message: 'Connected' });
           }
           return true;
         } else {
           const relay = ctx.relayConnection;
-          const upstreamRelay = relay ? (relay as any).config?.upstreamRelay || '' : '';
+          const isRegistered = !!relay?.instanceId;
+          const upstreamRelay = isRegistered ? relay.upstreamRelay || '' : '';
+          const configuredRelay = relay?.upstreamRelay || '';
           const token = ctx.relayToken || '';
           json(res, 200, {
             relayUrl: upstreamRelay,
+            configuredRelay,
+            connected: isRegistered,
+            status: relay?.status || 'unavailable',
+            instanceId: relay?.instanceId || '',
+            error: relay?.lastError || '',
             token: token ? token.slice(0, 8) + '…' : '(none)',
             command: upstreamRelay ? `bridge connect ${upstreamRelay}${token ? ` --token ${token.slice(0, 16)}…` : ''}` : 'bridge (default)',
             role: ctx.role || 'auto',

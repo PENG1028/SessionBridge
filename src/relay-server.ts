@@ -86,10 +86,16 @@ let localNodeInfo: LocalNodeInfo = {
   port: PORT,
   networkType: 'loopback',
 };
+let runtimeRelayConnection: RelayConnection | null = null;
 
 /** Allow runtime to publish the actual local node represented by this server. */
 export function setLocalNodeInfo(info: Partial<LocalNodeInfo>): void {
   localNodeInfo = { ...localNodeInfo, ...info, id: '__local__' };
+}
+
+/** Allow NodeRuntime to expose its live upstream/loopback connection to admin routes. */
+export function setRelayConnection(connection: RelayConnection): void {
+  runtimeRelayConnection = connection;
 }
 
 // ─── Core Services ────────────────────────────────────────────────
@@ -895,7 +901,7 @@ const serverRequestHandler = async (req: import("http").IncomingMessage, res: im
     nodeStartTime: START_TIME,
     adapters: [],
     permissions,
-    relayConnection: null,
+    relayConnection: runtimeRelayConnection,
     relayPort: PORT,
     upstreamRelay: undefined,
     relayToken: relayToken || undefined,

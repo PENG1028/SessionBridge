@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { getDefaultAdapterId } from '../../../extensions/registry';
+import { useWorkbench } from '../workbench/workbench-context';
 
 // ── Logs Panel ──────────────────────────────────────────────
 
@@ -53,11 +54,16 @@ export function TerminalPanel(props: { msgLog?: any[] }) {
 
 // ── System Panel ────────────────────────────────────────────
 
+function wsToHttpUrl(url: string): string {
+  return url.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:');
+}
+
 export function SystemPanel(props: { projectCwd?: string }) {
+  const { wsUrl } = useWorkbench();
   const [info, setInfo] = useState<{ cwd?: string; platform?: string; hostname?: string; uptime?: number } | null>(null);
 
   useEffect(() => {
-    fetch('/api/info').then(r => r.json()).then(data => {
+    fetch(`${wsToHttpUrl(wsUrl).replace(/\/$/, '')}/api/info`).then(r => r.json()).then(data => {
       setInfo({
         cwd: data.cwd,
         platform: data.platform || (typeof navigator !== 'undefined' ? navigator.platform : ''),
@@ -65,7 +71,7 @@ export function SystemPanel(props: { projectCwd?: string }) {
         uptime: data.uptime,
       });
     }).catch(() => {});
-  }, []);
+  }, [wsUrl]);
 
   return (
     <div className="border-t border-gray-800 bg-[#111]">

@@ -34,6 +34,8 @@ export class RelayConnection extends EventEmitter {
   private _identity: ReturnType<typeof loadOrCreateIdentity>;
   /** Network role: 'relay' or 'leaf'. Set before connect() if known. */
   private _role: string = 'leaf';
+  private _status: 'idle' | 'connecting' | 'connected' | 'registered' | 'closed' | 'error' = 'idle';
+  private _lastError = '';
 
   constructor(private config: NodeConfig) {
     super();
@@ -41,7 +43,22 @@ export class RelayConnection extends EventEmitter {
   }
 
   get instanceId(): string | null { return this._instanceId; }
+  get status(): string { return this._status; }
+  get lastError(): string { return this._lastError; }
+  get upstreamRelay(): string | undefined { return this.config.upstreamRelay; }
   setRole(role: 'relay' | 'leaf'): void { this._role = role; }
+
+  async reconnectTo(upstreamRelay: string): Promise<void> {
+    await this.shutdown();
+    this.config.upstreamRelay = upstreamRelay;
+    this.closing = false;
+    this.connect();
+  }
+
+  async disconnectUpstream(): Promise<void> {
+    await this.shutdown();
+    this.config.upstreamRelay = undefined;
+  }
 
   /** Current WebSocket send buffer size (bytes). Used for backpressure control. */
   get bufferedAmount(): number {
@@ -60,10 +77,13 @@ export class RelayConnection extends EventEmitter {
   connect(): void {
     if (this.closing) return;
 
+    this._status = 'connecting';
+    this._lastError = '';
     this.ws = new WebSocket(this.config.upstreamRelay || `ws://127.0.0.1:${this.config.relayPort}`);
 
     this.ws.on('open', () => {
       this.reconnectDelay = 1000;
+      this._status = 'connected';
 
       // Create crypto stream for ECDH handshake
       const cryptoStream = new CryptoStream(this.ws!, this._identity);
@@ -109,6 +129,7 @@ export class RelayConnection extends EventEmitter {
 
         case 'agent.registered':
           this._instanceId = msg.instanceId;
+          this._status = 'registered';
           this.emit('registered', this._instanceId);
           break;
 
@@ -158,12 +179,39 @@ export class RelayConnection extends EventEmitter {
       this.ws = null;
       this._instanceId = null;
       this._cryptoStream = null;
+      this._status = this.closing ? 'closed' : 'error';
       this.emit('close');
       if (!this.closing) this.scheduleReconnect();
     });
 
-    this.ws.on('error', () => {
+    this.ws.on('error', (err) => {
+      this._status = 'error';
+      this._lastError = err instanceof Error ? err.message : String(err);
       // close event fires after this
+    });
+  }
+
+  waitUntilRegistered(timeoutMs = 5000): Promise<boolean> {
+    if (this._instanceId) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.off('registered', onRegistered);
+        this.off('error', onDone);
+        this.off('close', onDone);
+      };
+      const onRegistered = () => {
+        cleanup();
+        resolve(true);
+      };
+      const onDone = () => {
+        cleanup();
+        resolve(false);
+      };
+      const timer = setTimeout(onDone, timeoutMs);
+      this.once('registered', onRegistered);
+      this.once('error', onDone);
+      this.once('close', onDone);
     });
   }
 
