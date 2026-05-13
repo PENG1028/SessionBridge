@@ -2,6 +2,8 @@
 
 import { Cpu, Monitor, Server, X } from 'lucide-react';
 
+// ─── Types ───
+
 interface PeerInfo {
   id: string;
   name: string;
@@ -13,6 +15,7 @@ interface PeerInfo {
   connectedAt?: number;
   port?: number;
   isLocal?: boolean;
+  latency?: number;
 }
 
 interface ConnectionItem {
@@ -43,7 +46,8 @@ interface NodeNetworkViewProps {
   browserId?: string;
 }
 
-// ─── Display node kind ───
+// ─── Theme helpers ───
+
 type NodeKind = 'RELAY' | 'LEAF' | 'VIEW' | 'LOCAL';
 
 function nodeTheme(kind: NodeKind) {
@@ -55,7 +59,7 @@ function nodeTheme(kind: NodeKind) {
   }
 }
 
-function badgeStyle(kind: NodeKind) {
+function kindBadgeStyle(kind: NodeKind) {
   switch (kind) {
     case 'RELAY': return 'text-amber-400 border-amber-700/30 bg-amber-900/30';
     case 'LEAF': return 'text-blue-400 border-blue-700/30 bg-blue-900/20';
@@ -73,7 +77,44 @@ function iconColor(kind: NodeKind) {
   }
 }
 
+// ─── Little badges ───
+
+function StatusBadge({ status }: { status: 'connected' | 'connecting' | 'failed' | 'saved' }) {
+  const colors: Record<string, string> = {
+    connected: 'text-emerald-400 border-emerald-700/30 bg-emerald-900/10',
+    connecting: 'text-amber-400 border-amber-700/30 bg-amber-900/10',
+    failed: 'text-red-400 border-red-700/30 bg-red-900/10',
+    saved: 'text-gray-500 border-gray-700 bg-gray-800',
+  };
+  return <span className={`text-[8px] px-1.5 py-0.5 rounded font-mono border ${colors[status] || colors.saved}`}>{status}</span>;
+}
+
+function DirectionBadge({ direction }: { direction: string }) {
+  const colors: Record<string, string> = {
+    '被访问': 'text-gray-400 border-gray-700/50 bg-gray-800/50',
+    '被连接': 'text-blue-400 border-blue-700/30 bg-blue-900/20',
+    '主动连接': 'text-purple-400 border-purple-700/30 bg-purple-900/20',
+    '保存': 'text-gray-500 border-gray-700 bg-gray-800',
+  };
+  return <span className={`text-[8px] px-1.5 py-0.5 rounded font-mono border ${colors[direction] || colors['保存']}`}>{direction}</span>;
+}
+
+function TypeBadge({ connType }: { connType: string }) {
+  const colors: Record<string, string> = {
+    'view': 'text-gray-500 border-gray-700 bg-gray-800',
+    'incoming leaf': 'text-blue-400 border-blue-700/30 bg-blue-900/20',
+    'upstream': 'text-amber-400 border-amber-700/30 bg-amber-900/20',
+    'lan leaf': 'text-green-400 border-green-700/30 bg-green-900/20',
+  };
+  return <span className={`text-[8px] px-1.5 py-0.5 rounded font-mono border ${colors[connType] || 'text-gray-500 border-gray-700 bg-gray-800'}`}>{connType}</span>;
+}
+
+function LatencyBadge({ latency }: { latency: string }) {
+  return <span className="text-[8px] px-1.5 py-0.5 rounded font-mono border border-gray-700/40 bg-gray-800/40 text-gray-400">{latency}</span>;
+}
+
 // ─── Helpers ───
+
 function isLocalUrl(url: string): boolean {
   try {
     const u = new URL(url);
@@ -100,11 +141,25 @@ function networkClass(type?: string) {
   }
 }
 
+function latencyLabel(ms?: number): string {
+  if (ms === undefined || ms === null) return '--';
+  return `${ms}ms`;
+}
+
 // ─── Node Card ───
-function NodeCard({ peer, kind, onEnter }: { peer: { name: string; ip?: string; port?: number; networkType?: string }; kind: NodeKind; onEnter?: () => void }) {
+
+function NodeCard({ peer, kind, onEnter, wsHost }: {
+  peer: { name: string; ip?: string; port?: number; networkType?: string };
+  kind: NodeKind;
+  onEnter?: () => void;
+  wsHost?: string;
+}) {
   const Icon = kind === 'VIEW' ? Monitor : kind === 'RELAY' ? Server : Cpu;
   const clickable = kind !== 'VIEW' && !!onEnter;
-  const address = peer.ip ? `${peer.ip}:${peer.port || 8080}` : undefined;
+
+  const hasSplit = kind === 'RELAY' && wsHost && peer.ip && wsHost !== peer.ip && wsHost !== '127.0.0.1' && wsHost !== 'localhost';
+  const addressLine = peer.ip ? `${peer.ip}:${peer.port || 8080}` : undefined;
+  const publicLine = hasSplit ? `${wsHost}:${peer.port || 8080}` : undefined;
 
   return (
     <div
@@ -115,7 +170,14 @@ function NodeCard({ peer, kind, onEnter }: { peer: { name: string; ip?: string; 
         <Icon className={`w-4 h-4 shrink-0 ${iconColor(kind)}`} />
         <div className="min-w-0 flex-1">
           <div className="text-sm font-semibold text-gray-100 truncate">{peer.name}</div>
-          {address && <div className="text-[10px] text-gray-500 font-mono truncate">{address}</div>}
+          {hasSplit && publicLine && (
+            <div className="text-[10px] text-amber-500/80 font-mono truncate">public {publicLine}</div>
+          )}
+          {addressLine && (
+            <div className="text-[10px] text-gray-500 font-mono truncate">
+              {hasSplit ? `internal ${addressLine}` : addressLine}
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           {peer.networkType && (
@@ -124,7 +186,7 @@ function NodeCard({ peer, kind, onEnter }: { peer: { name: string; ip?: string; 
             </span>
           )}
           {kind !== 'LOCAL' && (
-            <span className={`text-[8px] px-1.5 py-0.5 rounded font-mono border shrink-0 ${badgeStyle(kind)}`}>
+            <span className={`text-[8px] px-1.5 py-0.5 rounded font-mono border shrink-0 ${kindBadgeStyle(kind)}`}>
               {kind}
             </span>
           )}
@@ -139,51 +201,56 @@ function NodeCard({ peer, kind, onEnter }: { peer: { name: string; ip?: string; 
   );
 }
 
-// ─── Link Line ───
-function LinkLine({ label, muted }: { label: string; muted?: boolean }) {
+// ─── Link Line with optional latency badge ───
+
+function LinkLine({ label, latency, muted }: { label: string; latency?: string; muted?: boolean }) {
   return (
-    <div className={`ml-5 -my-1 border-l-2 pl-4 py-2 ${muted ? 'border-gray-700/50 text-gray-500' : 'border-amber-700/30 text-amber-600/70'}`}>
-      <div className="text-[9px] font-mono">{label}</div>
+    <div className={`ml-5 -my-1 border-l-2 pl-4 py-2 flex items-center gap-2 ${muted ? 'border-gray-700/50' : 'border-amber-700/30'}`}>
+      <div className={`text-[9px] font-mono ${muted ? 'text-gray-500' : 'text-amber-600/70'}`}>{label}</div>
+      {latency && latency !== '--' && (
+        <span className="text-[8px] px-1.5 py-0.5 rounded font-mono bg-gray-800 border border-gray-700 text-gray-400">{latency}</span>
+      )}
     </div>
   );
 }
 
-// ─── Connection Badge ───
-function ConnBadge({ status }: { status: 'connected' | 'connecting' | 'failed' | 'saved' }) {
-  const colors: Record<string, string> = {
-    connected: 'text-emerald-400 border-emerald-700/30 bg-emerald-900/10',
-    connecting: 'text-amber-400 border-amber-700/30 bg-amber-900/10',
-    failed: 'text-red-400 border-red-700/30 bg-red-900/10',
-    saved: 'text-gray-500 border-gray-700 bg-gray-800',
-  };
-  return <span className={`text-[8px] px-1.5 py-0.5 rounded font-mono border ${colors[status] || colors.saved}`}>{status}</span>;
-}
+// ─── Connection Card (redesigned) ───
 
-// ─── Connection Card ───
 function ConnectionCard({
-  url, status, connType, active, onConnect, onDisconnect, onDelete,
+  name, url, direction, connType, status, active, latency, isPeer,
+  onConnect, onDisconnect, onDelete,
 }: {
-  url: string; status: 'connected' | 'connecting' | 'failed' | 'saved'; connType: string;
-  active: boolean; onConnect?: () => void; onDisconnect?: () => void; onDelete?: () => void;
+  name: string;
+  url?: string;
+  direction: string;
+  connType: string;
+  status: 'connected' | 'connecting' | 'failed' | 'saved';
+  active: boolean;
+  latency: string;
+  isPeer: boolean;
+  onConnect?: () => void;
+  onDisconnect?: () => void;
+  onDelete?: () => void;
 }) {
+  const displayName = name || url?.replace(/^wss?:\/\//, '') || '';
   return (
-    <div className="border border-gray-700/60 rounded-md bg-gray-900/20 overflow-hidden">
-      <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 text-xs">
-        <div className="min-w-0 flex-1">
-          <div className="text-gray-300 truncate font-mono">{url}</div>
-          <div className="mt-0.5 flex items-center gap-1.5">
-            <ConnBadge status={status} />
-            <span className="text-[8px] px-1.5 py-0.5 rounded font-mono border border-amber-700/30 bg-amber-900/10 text-amber-500">
-              {connType}
-            </span>
-            {active && (
-              <span className="text-[8px] px-1.5 py-0.5 rounded font-mono border border-purple-700/40 bg-purple-900/20 text-purple-400">
-                active
-              </span>
-            )}
+    <div className={`border rounded-md bg-gray-900/20 overflow-hidden ${active ? 'border-emerald-700/40' : 'border-gray-700/60'}`}>
+      <div className="px-2.5 py-1.5 text-xs">
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0 flex-1 font-mono text-gray-300 truncate" title={url || name}>
+            {displayName}
           </div>
+          {active && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" title="active" />}
         </div>
-        <div className="flex items-center gap-1 shrink-0">
+        <div className="mt-1 flex flex-wrap items-center gap-1">
+          <DirectionBadge direction={direction} />
+          <TypeBadge connType={connType} />
+          <LatencyBadge latency={latency} />
+          <StatusBadge status={status} />
+        </div>
+      </div>
+      {!isPeer && (
+        <div className="flex justify-end gap-1 px-2.5 pb-1.5">
           {status === 'connecting' ? (
             <span className="text-[8px] px-1.5 py-0.5 text-amber-500 animate-pulse">连接中...</span>
           ) : active ? (
@@ -197,18 +264,19 @@ function ConnectionCard({
               >启用</button>
             )
           )}
-          {!active && (
+          {!active && onDelete && (
             <button onClick={onDelete} className="text-gray-600 hover:text-red-400 px-0.5">
               <X className="w-2.5 h-2.5" />
             </button>
           )}
         </div>
-      </div>
+      )}
     </div>
   );
 }
 
 // ─── Main Export ───
+
 export function NodeNetworkView({
   peers, wsUrl, connections, onDeleteConnection,
   newConnUrl, onNewConnUrlChange, onAddConnection,
@@ -220,21 +288,16 @@ export function NodeNetworkView({
   const wsHost = (() => { try { return new URL(wsUrl).hostname; } catch { return '127.0.0.1'; } })();
   const isLocalAccess = wsHost === '127.0.0.1' || wsHost === 'localhost' || wsHost === '0.0.0.0';
 
-  // Local node (the machine running the relay the page is connected to)
   const localPeer = peers.find(p => p.id === '__local__' || p.isLocal);
   const localName = localPeer?.name || (isLocalPage ? '本机' : wsHost);
   const localIp = localPeer?.ip || wsHost;
   const localPort = localPeer?.port || 8080;
 
-  // Remote agent peers: real connected nodes, not loopback
   const remotePeers = peers.filter(p => p.id !== '__local__' && !p.isLocal && !(p.type === 'agent' && p.networkType === 'loopback'));
-  // Only use role field to classify — hasPublicAccess is a network hint, not a role
   const relayPeers = remotePeers.filter(p => p.type === 'agent' && p.role === 'relay');
   const leafPeers = remotePeers.filter(p => p.type === 'agent' && p.role !== 'relay');
-  // Browser viewers (excluding self)
   const viewers = peers.filter(p => p.type === 'browser' && p.networkType !== 'loopback' && p.id !== browserId);
 
-  // Upstream relay info
   const isUpstreamConnected = upstreamUrl && !isLocalUrl(upstreamUrl) && connections.some(c => c.url === upstreamUrl);
   const upstreamPeer = (() => {
     if (!isUpstreamConnected || !upstreamUrl) return null;
@@ -252,25 +315,42 @@ export function NodeNetworkView({
   })();
 
   // ── Build topology ──
-  // Ordered by access path: entry (VIEW/browser) → relay → leafs
-  type TopoEntry = { kind: 'node'; data: { peer: { name: string; ip?: string; port?: number; networkType?: string }; kind: NodeKind; onEnter?: () => void } } | { kind: 'link'; label: string; muted?: boolean };
+
+  type TopoEntry = {
+    kind: 'node';
+    data: { peer: { name: string; ip?: string; port?: number; networkType?: string }; kind: NodeKind; onEnter?: () => void; wsHost?: string };
+  } | {
+    kind: 'link';
+    label: string;
+    latency?: string;
+    muted?: boolean;
+  };
 
   const topo: TopoEntry[] = [];
   const addedIds = new Set<string>();
 
-  function addNode(id: string, peer: { name: string; ip?: string; port?: number; networkType?: string }, kind: NodeKind, linkLabel?: string, linkMuted?: boolean, onEnter?: () => void) {
+  function addNode(
+    id: string,
+    peer: { name: string; ip?: string; port?: number; networkType?: string },
+    kind: NodeKind,
+    linkLabel?: string, linkLatency?: string, linkMuted?: boolean,
+    onEnter?: () => void,
+  ) {
     if (addedIds.has(id)) return;
-    if (linkLabel && topo.length > 0) topo.push({ kind: 'link', label: linkLabel, muted: linkMuted });
-    topo.push({ kind: 'node', data: { peer, kind, onEnter } });
+    const passWsHost = kind === 'RELAY' ? wsHost : undefined;
+    if (linkLabel && topo.length > 0) {
+      topo.push({ kind: 'link', label: linkLabel, latency: linkLatency, muted: linkMuted });
+    }
+    topo.push({ kind: 'node', data: { peer, kind, onEnter, wsHost: passWsHost } });
     addedIds.add(id);
   }
 
-  // 1. VIEW entry — when accessing remotely, show the browser as the entry point
+  // 1. VIEW entry
   if (!isLocalAccess) {
     addNode('__view__', { name: 'Current Browser', ip: wsHost, networkType: 'wan' }, 'VIEW');
   }
 
-  // 2. Entry relay — upstream relay URL > local peer if role=relay > first remote relay
+  // 2. Entry relay
   const entryRelay = upstreamPeer || (localPeer?.role === 'relay' ? {
     id: '__local__',
     name: localName,
@@ -287,34 +367,131 @@ export function NodeNetworkView({
 
   if (entryRelay) {
     const linkLabel = upstreamPeer ? 'connected upstream' : !isLocalAccess ? 'view entry' : undefined;
-    addNode(entryRelay.id, entryRelay, 'RELAY', linkLabel, !isLocalAccess && !upstreamPeer, () => onEnterNode?.(entryRelay!.id));
+    addNode(entryRelay.id, entryRelay, 'RELAY', linkLabel, undefined, !isLocalAccess && !upstreamPeer, () => onEnterNode?.(entryRelay!.id));
   }
 
-  // 3. Local node (if not already shown as relay entry)
+  // 3. Local node (if not already relay)
   if (localPeer && localPeer.role !== 'relay') {
     addNode('__local__', { name: localName, ip: localIp, port: localPort, networkType: localPeer.networkType || categorizeNetwork(localIp) }, 'LOCAL',
-      upstreamUrl ? 'connected upstream' : !isLocalAccess ? 'view entry' : undefined, !isLocalAccess && !upstreamUrl,
+      upstreamUrl ? 'connected upstream' : !isLocalAccess ? 'view entry' : undefined, undefined, !isLocalAccess && !upstreamUrl,
       () => onEnterNode?.('__local__'));
   }
 
-  // 4. Remote leaf nodes
+  // 4. Leaf nodes
   for (const leaf of leafPeers) {
-    addNode(leaf.id, { name: leaf.name, ip: leaf.ip, port: leaf.port, networkType: leaf.networkType || categorizeNetwork(leaf.ip || '127.0.0.1') }, 'LEAF', 'leaf connected', false, () => onEnterNode?.(leaf.id));
+    const ll = leaf.latency !== undefined ? latencyLabel(leaf.latency) : undefined;
+    addNode(leaf.id, { name: leaf.name, ip: leaf.ip, port: leaf.port, networkType: leaf.networkType || categorizeNetwork(leaf.ip || '127.0.0.1') }, 'LEAF',
+      'leaf connected', ll, false, () => onEnterNode?.(leaf.id));
   }
 
-  // 5. Remote relay peers that aren't the entry (additional relays in the network)
+  // 5. Additional relays (beyond the entry)
   for (const relay of relayPeers) {
     if (entryRelay && relay.id === entryRelay.id) continue;
-    addNode(relay.id, { name: relay.name, ip: relay.ip, port: relay.port, networkType: relay.networkType || categorizeNetwork(relay.ip || '127.0.0.1') }, 'RELAY', 'relay / upstream', false, () => onEnterNode?.(relay.id));
+    addNode(relay.id, { name: relay.name, ip: relay.ip, port: relay.port, networkType: relay.networkType || categorizeNetwork(relay.ip || '127.0.0.1') }, 'RELAY', 'relay / upstream', undefined, false, () => onEnterNode?.(relay.id));
   }
 
-  // ── Determine connection status for each saved URL ──
-  function connStatus(url: string): { status: 'connected' | 'connecting' | 'failed' | 'saved'; active: boolean } {
-    if (url === upstreamUrl) return { status: 'connected', active: true };
-    if (url === upstreamConnectingUrl) return { status: 'connecting', active: false };
-    if (url === upstreamErrorUrl) return { status: 'failed', active: false };
-    return { status: 'saved', active: false };
+  // ── Build connection panel entries ──
+
+  type PanelConnection = {
+    id: string;
+    name: string;
+    url?: string;
+    direction: string;
+    connType: string;
+    status: 'connected' | 'connecting' | 'failed' | 'saved';
+    active: boolean;
+    latency: string;
+    isPeer: boolean;
+    onConnect?: () => void;
+    onDisconnect?: () => void;
+    onDelete?: () => void;
+  };
+
+  const panelConns: PanelConnection[] = [];
+
+  // 1. Browser viewers → 被访问 / view
+  for (const v of viewers) {
+    panelConns.push({
+      id: `viewer:${v.id}`,
+      name: `Browser ${v.ip || v.name}`,
+      direction: '被访问',
+      connType: 'view',
+      status: 'connected',
+      active: true,
+      latency: latencyLabel(v.latency),
+      isPeer: true,
+    });
   }
+
+  // 2. Incoming leaf agents → 被连接 / incoming leaf
+  for (const leaf of leafPeers) {
+    const leafAddr = leaf.ip ? `ws://${leaf.ip}:${leaf.port || 8080}` : leaf.name;
+    panelConns.push({
+      id: `incoming:${leaf.id}`,
+      name: leaf.name || leafAddr,
+      url: leafAddr,
+      direction: '被连接',
+      connType: 'incoming leaf',
+      status: 'connected',
+      active: true,
+      latency: latencyLabel(leaf.latency),
+      isPeer: true,
+    });
+  }
+
+  // 3. Active upstream → 主动连接 / upstream
+  if (upstreamUrl && !isLocalUrl(upstreamUrl)) {
+    const saved = connections.find(c => c.url === upstreamUrl);
+    let upstreamLatency: number | undefined;
+    try {
+      const uHost = new URL(upstreamUrl).hostname;
+      const peerWithLatency = peers.find(p => p.ip === uHost);
+      if (peerWithLatency) upstreamLatency = peerWithLatency.latency;
+    } catch { /* ignore */ }
+    const isConnecting = upstreamUrl === upstreamConnectingUrl;
+    const isFailed = upstreamUrl === upstreamErrorUrl && !!upstreamError;
+    const connStatus: 'connected' | 'connecting' | 'failed' | 'saved' = isConnecting ? 'connecting' : isFailed ? 'failed' : 'connected';
+    panelConns.push({
+      id: 'upstream:active',
+      name: saved?.name || (() => { try { return new URL(upstreamUrl).hostname; } catch { return upstreamUrl; } })(),
+      url: upstreamUrl,
+      direction: '主动连接',
+      connType: 'upstream',
+      status: connStatus,
+      active: !isConnecting && !isFailed,
+      latency: upstreamLatency ? latencyLabel(upstreamLatency) : '--',
+      isPeer: false,
+      onDisconnect: onDisconnectUpstream,
+    });
+  }
+
+  // 4. Saved connections → 保存
+  for (const conn of connections) {
+    if (isLocalUrl(conn.url)) continue;
+    // Skip if this is the active upstream (already shown above)
+    if (conn.url === upstreamUrl && !upstreamErrorUrl && upstreamUrl) continue;
+    const ct = conn.networkType === 'lan' ? 'lan leaf' : 'upstream';
+    panelConns.push({
+      id: `saved:${conn.id}`,
+      name: conn.name,
+      url: conn.url,
+      direction: '保存',
+      connType: ct,
+      status: 'saved',
+      active: false,
+      latency: '--',
+      isPeer: false,
+      onConnect: () => onConnectUpstream?.(conn.url),
+      onDelete: () => onDeleteConnection(conn.id),
+    });
+  }
+
+  // Sort: active first, then by direction priority
+  const dirOrder = ['被访问', '被连接', '主动连接', '保存'];
+  panelConns.sort((a, b) => {
+    if (a.active !== b.active) return a.active ? -1 : 1;
+    return dirOrder.indexOf(a.direction) - dirOrder.indexOf(b.direction);
+  });
 
   // ── Render ──
   return (
@@ -325,30 +502,12 @@ export function NodeNetworkView({
           {topo.map((entry, i) =>
             entry.kind === 'node'
               ? <NodeCard key={`n-${i}`} {...entry.data} />
-              : <LinkLine key={`l-${i}`} label={entry.label} muted={entry.muted} />
+              : <LinkLine key={`l-${i}`} label={entry.label} latency={entry.latency} muted={entry.muted} />
           )}
         </div>
       ) : (
         <div className="border rounded-lg border-gray-700/60 bg-gray-800/20 px-3.5 py-4 text-sm text-gray-500">
-          disconnected / loading: 没有真实后端节点数据，不显示伪造卡片。
-        </div>
-      )}
-
-      {/* ── Browser viewers (linked into existing topology vs listed separately) ── */}
-      {viewers.length > 0 && (
-        <div className="space-y-1">
-          <div className="text-[9px] text-gray-600 font-medium uppercase tracking-wider px-0.5">浏览器接入</div>
-          {viewers.map((viewer) => (
-            <LinkLine key={`sep-${viewer.id}`} label="view entry" muted />
-          ))}
-          {viewers.map((viewer) => (
-            <div key={viewer.id}>
-              <NodeCard
-                peer={{ name: viewer.name || 'Browser View', ip: viewer.ip ? `via ${viewer.ip}` : undefined, networkType: viewer.networkType }}
-                kind="VIEW"
-              />
-            </div>
-          ))}
+          disconnected / loading
         </div>
       )}
 
@@ -364,58 +523,46 @@ export function NodeNetworkView({
       <div className="border-t border-gray-800 pt-3">
         <h3 className="text-[9px] font-bold text-gray-600 tracking-wider uppercase mb-2 px-1">
           连接管理
-          {upstreamUrl && (
-            <span className="ml-2 text-emerald-500 font-normal">
-              ● {connections.find(c => c.url === upstreamUrl)?.name || upstreamUrl}
+          {panelConns.some(c => c.active) && (
+            <span className="ml-2 text-emerald-500 font-normal text-[9px]">
+              ● {panelConns.filter(c => c.active).length} active
             </span>
           )}
         </h3>
 
-        <div className="space-y-1.5">
-          {connections.filter(c => !isLocalUrl(c.url)).length === 0 && !upstreamUrl ? (
-            <div className="px-2.5 py-2 text-[10px] text-gray-600">
-              暂无连接。输入远程 relay 地址保存并连接。
-            </div>
-          ) : (
-            connections.filter(c => !isLocalUrl(c.url)).map((conn) => {
-              const { status, active } = connStatus(conn.url);
-              return (
-                <ConnectionCard
-                  key={conn.id}
-                  url={conn.url}
-                  status={status}
-                  connType={conn.networkType === 'lan' ? 'lan leaf' : 'upstream'}
-                  active={active}
-                  onConnect={status === 'saved' ? () => onConnectUpstream?.(conn.url) : undefined}
-                  onDisconnect={active ? onDisconnectUpstream : undefined}
-                  onDelete={status === 'saved' ? () => onDeleteConnection(conn.id) : undefined}
-                />
-              );
-            })
-          )}
+        {panelConns.length === 0 ? (
+          <div className="px-2.5 py-2 text-[10px] text-gray-600">
+            暂无连接。
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            {panelConns.map((pc) => (
+              <ConnectionCard key={pc.id} {...pc} />
+            ))}
+          </div>
+        )}
 
-          {/* ── Add connection form ── */}
-          <form onSubmit={onAddConnection} className="flex gap-1 pt-1">
-            <input
-              type="text"
-              value={newConnUrl}
-              onChange={e => onNewConnUrlChange(e.target.value)}
-              placeholder="ws://&lt;ip&gt;:8080"
-              className="flex-1 bg-[#0d0d0d] border border-gray-700 rounded px-2 py-1.5 text-[10px] text-gray-200 outline-none focus:border-purple-500"
-            />
-            <div className="flex gap-1 shrink-0">
-              {onConnectUpstream && newConnUrl.trim() && (
-                <button type="button"
-                  onClick={() => onConnectUpstream(newConnUrl.trim())}
-                  className="px-2 py-1 bg-purple-700 hover:bg-purple-600 text-white text-[9px] rounded border border-purple-600"
-                >连接</button>
-              )}
-              <button type="submit"
-                className="px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 text-[9px] rounded border border-gray-700"
-              >保存</button>
-            </div>
-          </form>
-        </div>
+        {/* ── Add connection form ── */}
+        <form onSubmit={onAddConnection} className="flex gap-1 pt-2 mt-2 border-t border-gray-800/60">
+          <input
+            type="text"
+            value={newConnUrl}
+            onChange={e => onNewConnUrlChange(e.target.value)}
+            placeholder="ws://&lt;ip&gt;:8080"
+            className="flex-1 bg-[#0d0d0d] border border-gray-700 rounded px-2 py-1.5 text-[10px] text-gray-200 outline-none focus:border-purple-500"
+          />
+          <div className="flex gap-1 shrink-0">
+            {onConnectUpstream && newConnUrl.trim() && (
+              <button type="button"
+                onClick={() => onConnectUpstream(newConnUrl.trim())}
+                className="px-2 py-1 bg-purple-700 hover:bg-purple-600 text-white text-[9px] rounded border border-purple-600"
+              >连接</button>
+            )}
+            <button type="submit"
+              className="px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 text-[9px] rounded border border-gray-700"
+            >保存</button>
+          </div>
+        </form>
       </div>
     </div>
   );

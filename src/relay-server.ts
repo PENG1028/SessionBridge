@@ -345,6 +345,8 @@ function getPeerInfo(ws: WebSocket): Record<string, unknown> | null {
   if (isAgent) {
     info.role = (ws as any)._agentRole || 'leaf';
   }
+  const latency = (ws as any)._latency;
+  if (latency !== undefined) info.latency = latency;
   return info;
 }
 
@@ -389,6 +391,7 @@ function collectPeers(): { peers: Record<string, unknown>[]; links: { source: st
         hasPublicAccess: networkType === 'wan',
         connectedAt: inst.createdAt,
         connectedToRelayId: viaRelayId || null,
+        latency: (ws2 as any)._latency,
       });
     }
   }
@@ -1508,9 +1511,10 @@ function heartbeatPing() {
     if (ws.readyState !== WebSocket.OPEN) continue;
     if (heartbeatMap.get(ws) === false) {
       ws.terminate();
-      return;
+      continue;
     }
     heartbeatMap.set(ws, false);
+    (ws as any)._lastPingTime = Date.now();
     send(ws, envelope("ping"));
   }
 }
@@ -1662,6 +1666,10 @@ function setupWssHandlers(): void {
     }
     if (msg.type === "pong") {
       heartbeatMap.set(ws, true);
+      if ((ws as any)._lastPingTime) {
+        (ws as any)._latency = Date.now() - (ws as any)._lastPingTime;
+        (ws as any)._lastPingTime = undefined;
+      }
       return;
     }
 
@@ -1689,6 +1697,7 @@ function setupWssHandlers(): void {
       (ws as any)._agentLabel = label;
       (ws as any)._agentRole = msg.role || 'leaf';
       (ws as any)._viaRelayId = msg.viaRelayId || undefined;
+      (ws as any)._connectedAt = Date.now();
       clients.delete(ws);
       send(ws, envelope("agent.registered", { instanceId: remoteInst.id, sessionId: remoteInst.id }));
       const entry = instanceManager.toJSON().find(i => i.id === remoteInst.id);
