@@ -1,6 +1,6 @@
 'use client';
 
-import { Cpu, Globe, Network, Wifi, Monitor, Server, X } from 'lucide-react';
+import { Cpu, Monitor, Server, X } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -8,8 +8,8 @@ interface PeerInfo {
   id: string;
   name: string;
   ip?: string;
-  type: 'agent' | 'browser';
-  role?: 'relay' | 'leaf' | 'view';
+  type: 'agent';
+  role?: 'relay' | 'leaf';
   networkType?: 'loopback' | 'lan' | 'wan' | 'unknown';
   hasPublicAccess?: boolean;
   connectedAt?: number;
@@ -18,7 +18,7 @@ interface PeerInfo {
 interface TopoLink {
   source: string;
   target: string;
-  type: 'agent' | 'view' | 'relay';
+  type: 'agent' | 'relay';
 }
 
 interface NodeNetworkViewProps {
@@ -75,7 +75,6 @@ export function NodeNetworkView({
   const leafNodes = remotePeers.filter(p =>
     p.type === 'agent' && p.role !== 'relay' && !p.hasPublicAccess
   );
-  const browserViews = remotePeers.filter(p => p.type === 'browser');
 
   // Build topology: for each relay, find its children
   function childrenOf(relayId: string): PeerInfo[] {
@@ -88,11 +87,6 @@ export function NodeNetworkView({
     const link = links.find(l => l.target === leafId && l.type === 'agent');
     if (!link) return undefined;
     return relayNodes.find(r => r.id === link.source);
-  }
-  function browsersBehind(relayId: string): PeerInfo[] {
-    if (!links) return [];
-    const targetIds = links.filter(l => l.source === relayId && l.type === 'view').map(l => l.target);
-    return browserViews.filter(p => targetIds.includes(p.id));
   }
 
   const currentConn = connections.find(c => c.url === wsUrl);
@@ -135,7 +129,6 @@ export function NodeNetworkView({
               <div className="text-[9px] text-gray-600 font-medium uppercase tracking-wider">网络拓扑</div>
               {relayNodes.map(r => {
                 const children = childrenOf(r.id);
-                const browsers = browsersBehind(r.id);
                 const directLeaves = leafNodes.filter(l => !relayOf(l.id));
                 return (
                   <div key={r.id}>
@@ -159,14 +152,6 @@ export function NodeNetworkView({
                             <span className="truncate flex-1">{l.name}</span>
                             <span className={`text-[7px] px-1 py-0.5 rounded font-mono border ${networkColor(l.networkType)}`}>{l.networkType?.toUpperCase()}</span>
                             <span className="text-[7px] text-purple-500/60 hover:text-purple-400 ml-1">Enter</span>
-                          </div>
-                        ))}
-                        {browsers.length > 0 && browsers.map(b => (
-                          <div key={b.id} className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs text-gray-500 italic">
-                            <span className="text-[8px] text-gray-600/40 shrink-0 font-mono">├─</span>
-                            <Monitor className="w-2.5 h-2.5 shrink-0" />
-                            <span className="truncate">{b.name}</span>
-                            <span className="text-[7px] px-1 py-0.5 rounded font-mono border border-gray-700 bg-gray-800 text-gray-500">VIEW</span>
                           </div>
                         ))}
                       </div>
@@ -299,8 +284,7 @@ export function NodeNetworkView({
             <div className="px-3 py-2 space-y-1">
               {(() => {
                 const children = childrenOf(relay.id);
-                const browsers = browsersBehind(relay.id);
-                if (children.length === 0 && browsers.length === 0) {
+                if (children.length === 0) {
                   return <div className="text-[10px] text-gray-700 italic px-2 py-1">没有子节点连接到此 relay</div>;
                 }
                 return (
@@ -315,14 +299,6 @@ export function NodeNetworkView({
                         <span className="text-[7px] text-purple-500/60 hover:text-purple-400 ml-1">Enter</span>
                       </div>
                     ))}
-                    {browsers.map(b => (
-                      <div key={b.id} className="flex items-center gap-2.5 px-2.5 py-1 rounded-md text-xs text-gray-500 italic">
-                        <Monitor className="w-3 h-3 shrink-0" />
-                        <span className="truncate flex-1">{b.name}</span>
-                        <span className="text-[8px] px-1.5 py-0.5 rounded font-mono border border-gray-700 bg-gray-800 text-gray-500 shrink-0">VIEW</span>
-                        <span className="text-[9px] text-gray-600">通过 {relay.name} 观察</span>
-                      </div>
-                    ))}
                   </>
                 );
               })()}
@@ -330,10 +306,10 @@ export function NodeNetworkView({
           </div>
         ))}
 
-        {relayNodes.length === 0 && leafNodes.length === 0 && browserViews.length === 0 && (
+        {relayNodes.length === 0 && leafNodes.length === 0 && (
           <div className="text-[10px] text-gray-700 italic px-2 py-3 text-center">网络中无其他节点</div>
         )}
-        {relayNodes.length === 0 && (leafNodes.length > 0 || browserViews.length > 0) && (
+        {relayNodes.length === 0 && leafNodes.length > 0 && (
           <div className="border border-gray-700/40 rounded-lg overflow-hidden">
             <div className="px-3 py-2 space-y-1">
               <div className="text-[9px] text-gray-600 font-medium uppercase tracking-wider px-1">直连节点</div>
@@ -343,13 +319,6 @@ export function NodeNetworkView({
                   <span className="truncate flex-1">{l.name}</span>
                   <span className={`text-[8px] px-1.5 py-0.5 rounded font-mono border ${networkColor(l.networkType)}`}>{l.networkType?.toUpperCase()}</span>
                   <span className="text-[7px] text-purple-500/60 hover:text-purple-400 ml-1">Enter</span>
-                </div>
-              ))}
-              {browserViews.map(b => (
-                <div key={b.id} className="flex items-center gap-2.5 px-2.5 py-1 rounded-md text-xs text-gray-500 italic">
-                  <Monitor className="w-3 h-3 shrink-0" />
-                  <span className="truncate flex-1">{b.name}</span>
-                  <span className="text-[8px] px-1.5 py-0.5 rounded font-mono border border-gray-700 bg-gray-800 text-gray-500">VIEW</span>
                 </div>
               ))}
             </div>

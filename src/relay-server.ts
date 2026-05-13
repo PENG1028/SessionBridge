@@ -303,21 +303,25 @@ function getPeerInfo(ws: WebSocket): Record<string, unknown> | null {
   const ip = rawIP.replace(/^::ffff:/, '');
   const networkType = classifyPeerIP(ip);
   const isAgent = !!(ws as any)._isAgent;
-  return {
+  const info: Record<string, unknown> = {
     id: (ws as any)._agentInstanceId || (ws as any)._browserId || `peer_${Date.now()}`,
     name: label,
     ip,
     type: isAgent ? 'agent' : 'browser',
-    role: isAgent ? ((ws as any)._agentRole || 'leaf') : 'view',
     networkType,
     hasPublicAccess: networkType === 'wan',
     connectedAt: (ws as any)._connectedAt || Date.now(),
   };
+  if (isAgent) {
+    info.role = (ws as any)._agentRole || 'leaf';
+  }
+  return info;
 }
 
 function collectPeers(): { peers: Record<string, unknown>[]; links: { source: string; target: string; type: string }[] } {
   const peers: Record<string, unknown>[] = [];
   for (const ws of clients) {
+    if (!(ws as any)._isAgent) continue; // skip browser connections — not network peers
     const info = getPeerInfo(ws);
     if (info) peers.push(info);
   }
@@ -358,15 +362,6 @@ function collectPeers(): { peers: Record<string, unknown>[]; links: { source: st
     } else {
       // Unknown topology — leaf connects to local node directly
       links.push({ source: '__local__', target: leaf.id as string, type: 'agent' });
-    }
-  }
-  // Link browsers to their nearest relay or local
-  const browserPeers = peers.filter(p => p.type === 'browser');
-  for (const bp of browserPeers) {
-    if (relayPeers.length > 0) {
-      links.push({ source: relayPeers[0].id as string, target: bp.id as string, type: 'view' });
-    } else {
-      links.push({ source: '__local__', target: bp.id as string, type: 'view' });
     }
   }
   // If relays exist, link them to local
@@ -1561,7 +1556,7 @@ function setupWssHandlers(): void {
         (ws as any)._browserId = msg.clientToken || `browser_${Date.now()}`;
         (ws as any)._connectedAt = Date.now();
         sendPeers(ws);          // send peer list to the new connection
-        broadcastPeers();       // notify others about the new peer
+        // No broadcast — browser is not a network peer
       }
 
       // Complete crypto handshake if client provided ephemeral key

@@ -1,14 +1,14 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, Cpu, Monitor, Server, X } from 'lucide-react';
+import { Plus, Cpu, Server, X } from 'lucide-react';
 
 interface PeerInfo {
   id: string;
   name: string;
   ip?: string;
-  type: 'agent' | 'browser';
-  role?: 'relay' | 'leaf' | 'view';
+  type: 'agent';
+  role?: 'relay' | 'leaf';
   networkType?: 'loopback' | 'lan' | 'wan' | 'unknown';
   hasPublicAccess?: boolean;
   connectedAt?: number;
@@ -23,7 +23,6 @@ interface NodeBarProps {
 }
 
 function nodeIcon(peer: PeerInfo) {
-  if (peer.type === 'browser') return Monitor;
   if (peer.role === 'relay' || peer.hasPublicAccess) return Server;
   return Cpu;
 }
@@ -64,7 +63,7 @@ export function NodeBar({ peers, wsUrl, activeNodeId, onEnterNode, onOpenConnect
 
   // Filter out the local agent peer (it's already shown as the hardcoded localPeer)
   const remotePeers = peers.filter(p => !(p.type === 'agent' && p.networkType === 'loopback'));
-  const allEntries: PeerInfo[] = [localPeer, ...remotePeers.filter(p => p.type !== 'browser')];
+  const allEntries: PeerInfo[] = [localPeer, ...remotePeers];
 
   // Filter dismissed + if active node was dismissed, auto exit
   const visible = allEntries.filter(p => !dismissed.has(p.id));

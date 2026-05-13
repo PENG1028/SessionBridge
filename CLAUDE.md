@@ -99,6 +99,11 @@ npm run dev       # 终端 1 — relay
 npm run dev:web   # 终端 2 — 前端
 ```
 
+## 访问模型
+
+两种模式：**本地管理面板**（`localhost` 绕过 auth）、**远程访问**（需登录认证）。
+浏览器不是网络 peer，peer 列表只描述 agent 间的拓扑关系。详见 [`docs/access-model.md`](docs/access-model.md)。
+
 ## 已知踩坑
 
 ### 源码修改后浏览器看到旧代码
