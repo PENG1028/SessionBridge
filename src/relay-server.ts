@@ -143,6 +143,12 @@ function syncTabsByLabel(nodeId: string, tabs: any[], sourceLabel?: string, send
   if (matchedLocal) {
     workbenchTabStore.set('__local__', tabs);
     broadcastTabs('__local__', tabs, sender);
+  } else if (label && localNodeInfo?.name === label) {
+    // No local instance matched, but the label matches the local node's name.
+    // Broadcast to __local__ subscribers so the browser sees cross-relay tabs
+    // even before opening any terminal on the local node.
+    workbenchTabStore.set('__local__', tabs);
+    broadcastTabs('__local__', tabs, sender);
   }
 }
 
@@ -2241,7 +2247,7 @@ function setupWssHandlers(): void {
         // __local__ is the browser-side ID for the local relay itself.
         // Use the primary local instance's label for cross-relay forwarding.
         const pri = instanceManager.list().find(i => i.source === 'local');
-        label = pri?.label;
+        label = pri?.label || localNodeInfo?.name;
       }
       // Forward to remote agent's WebSocket if this node belongs to
       // an agent connection (VPS—leaf cross-relay sync direction).
