@@ -22,6 +22,8 @@ export interface RelayConnectionEvents {
   error: (code: string, message: string) => void;
   configPush: (entries: { key: string; value: unknown }[], requestId: string) => void;
   close: () => void;
+  /** Catch-all for messages not handled by the switch (e.g. workbench.*). */
+  relayMessage: (msg: any) => void;
 }
 
 export class RelayConnection extends EventEmitter {
@@ -72,6 +74,11 @@ export class RelayConnection extends EventEmitter {
     } else if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(data);
     }
+  }
+
+  /** Send an arbitrary enveloped message upstream. */
+  async send(type: string, body: Record<string, unknown> = {}): Promise<void> {
+    this.sendRaw(JSON.stringify(envelope(type, body)));
   }
 
   connect(): void {
@@ -171,6 +178,10 @@ export class RelayConnection extends EventEmitter {
 
         case 'error':
           this.emit('error', msg.code || '', msg.message || '');
+          break;
+
+        default:
+          this.emit('relayMessage', msg);
           break;
       }
     });

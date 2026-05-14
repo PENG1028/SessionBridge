@@ -251,7 +251,7 @@ export default function Page() {
 function PageContent() {
   // ── Connection state: default to localhost, persist last known URL ──
   const defaultUrl = typeof window !== 'undefined'
-    ? `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.hostname}:8080`
+    ? `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}`
     : 'ws://localhost:8080';
   const params = typeof window !== 'undefined' ? new URL(window.location.href).searchParams : new URLSearchParams();
   const urlParam = params.get('url');

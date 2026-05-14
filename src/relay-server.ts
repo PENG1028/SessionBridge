@@ -98,6 +98,49 @@ export function setRelayConnection(connection: RelayConnection): void {
   runtimeRelayConnection = connection;
 }
 
+// ─── Upstream Relay Forwarding ──────────────────────────────────
+// Allows forwarding workbench.* messages to an upstream relay
+// via the NodeRuntime's RelayConnection.
+let _sendUpstream: ((type: string, body: any) => void) | null = null;
+
+export function setRelayUpstream(fn: (type: string, body: any) => void): void {
+  _sendUpstream = fn;
+}
+
+/**
+ * Handle a workbench message forwarded from the upstream relay.
+ * Called by NodeRuntime when the upstream RelayConnection emits 'relayMessage'.
+ */
+export function onUpstreamMessage(msg: any): void {
+  if (!msg || !msg.type) return;
+  if (msg.type === "workbench.tabs") {
+    const nodeId = String(msg.nodeId || '');
+    const tabs = Array.isArray(msg.tabs) ? msg.tabs : [];
+    if (!nodeId) return;
+    // Only update store and broadcast if tabs have actual content.
+    // Empty tabs (from subscribe responses) must not overwrite existing
+    // local store or confuse subscribers with stale empty state.
+    if (tabs.length > 0) {
+      // Only broadcast if tabs actually changed — prevents echoing
+      // a node's own tabs back to its subscribers when the upstream
+      // relay broadcasts to this node's agent connection.
+      const existing = workbenchTabStore.get(nodeId);
+      const changed = !existing || JSON.stringify(existing) !== JSON.stringify(tabs);
+      if (changed) {
+        workbenchTabStore.set(nodeId, tabs);
+        const subs = workbenchSubscribers.get(nodeId);
+        if (subs) {
+          for (const client of subs) {
+            if (client.readyState === WebSocket.OPEN) {
+              send(client, envelope("workbench.tabs", { nodeId, tabs }));
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
 // ─── Core Services ────────────────────────────────────────────────
 const eventBus = new RelayEventBus();
 const instanceManager = new InstanceManager(eventBus);
@@ -2122,6 +2165,8 @@ function setupWssHandlers(): void {
       // Send current tab state immediately
       const tabs = workbenchTabStore.get(nodeId) || [];
       send(ws, envelope("workbench.tabs", { nodeId, tabs }));
+      // Notify upstream relay so it also subscribes this node's agent WS
+      _sendUpstream?.("workbench.subscribe", { nodeId });
       return;
     }
 
@@ -2131,7 +2176,11 @@ function setupWssHandlers(): void {
       const subs = workbenchSubscribers.get(nodeId);
       if (subs) {
         subs.delete(ws);
-        if (subs.size === 0) workbenchSubscribers.delete(nodeId);
+        if (subs.size === 0) {
+          workbenchSubscribers.delete(nodeId);
+          // Last local subscriber left — unsubscribe upstream
+          _sendUpstream?.("workbench.unsubscribe", { nodeId });
+        }
       }
       return;
     }
@@ -2143,13 +2192,23 @@ function setupWssHandlers(): void {
       workbenchTabStore.set(nodeId, tabs);
       // Broadcast to all OTHER subscribers
       const subs = workbenchSubscribers.get(nodeId);
+      let bcastCount = 0;
       if (subs) {
         for (const client of subs) {
           if (client !== ws && client.readyState === WebSocket.OPEN) {
+            bcastCount++;
             send(client, envelope("workbench.tabs", { nodeId, tabs }));
           }
         }
       }
+      const nodeInst = instanceManager.get(nodeId);
+      // Forward to remote agent's WebSocket if this node belongs to
+      // an agent connection (VPS→leaf cross-relay sync direction).
+      if (nodeInst?.source === 'remote' && nodeInst.agentConnection && nodeInst.agentConnection !== ws) {
+        send(nodeInst.agentConnection, envelope("workbench.tabs", { nodeId, tabs }));
+      }
+      // Forward to upstream relay for cross-relay sync
+      _sendUpstream?.("workbench.tabs", { nodeId, tabs });
       return;
     }
 

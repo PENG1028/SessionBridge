@@ -11,8 +11,8 @@ const nextConfig: NextConfig = {
   async rewrites() {
     return [
       // Match with and without trailing slash (trailingSlash: true adds /)
-      { source: '/api/:path*/', destination: 'http://localhost:8080/api/:path*' },
-      { source: '/api/:path*',  destination: 'http://localhost:8080/api/:path*' },
+      { source: '/api/:path*/', destination: 'http://localhost:9000/api/:path*' },
+      { source: '/api/:path*',  destination: 'http://localhost:9000/api/:path*' },
     ];
   },
 };
