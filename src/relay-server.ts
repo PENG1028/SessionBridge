@@ -176,9 +176,12 @@ export function onUpstreamMessage(msg: any): void {
         broadcastTabs(nodeId, tabs);
       }
     }
-    // Cross-relay label normalization: tabs from upstream use a different
-    // instance ID. Find local instances with the same label and sync there.
-    syncTabsByLabel(nodeId, tabs, msg._label);
+    // Cross-relay label normalization: only when tabs carry content.
+    // Empty tabs from a subscribe-response must not overwrite existing
+    // local store for a different instance ID via label matching.
+    if (tabs.length > 0) {
+      syncTabsByLabel(nodeId, tabs, msg._label);
+    }
   }
 }
 

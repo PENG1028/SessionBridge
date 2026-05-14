@@ -416,8 +416,12 @@ function PageContent() {
         if (tabs.length === 0 && currentTabs.length > 0) {
           return prev;
         }
-        // Only update if tabs actually differ
-        if (tabs.length === currentTabs.length && tabs.every((t, i) => t.id === currentTabs[i]?.id)) {
+        // Only update if tabs actually differ — compare full fields:
+        // id, title, viewType, instanceId.  A tab can change from 'empty'
+        // to 'terminal' without its id changing, and we must pick that up.
+        const tabEq = (a: any, b: any) =>
+          a.id === b.id && a.title === b.title && a.viewType === b.viewType && a.instanceId === b.instanceId;
+        if (tabs.length === currentTabs.length && tabs.every((t, i) => tabEq(t, currentTabs[i]))) {
           return prev;
         }
         // Preserve active tab selection if the tab still exists
@@ -484,12 +488,18 @@ function PageContent() {
     'SPLIT_PANE_VERTICAL', 'SPLIT_PANE_HORIZONTAL', 'CLEAR_INSTANCE_TABS',
   ]);
 
-  // Stable ref to sendMessage so the dispatch callback never goes stale
-  const sendMessageRef = useRef(sendMessage);
-  sendMessageRef.current = sendMessage;
+  // Set inside setState updater (runs during render), flushed via useEffect
+  // after React commits. This avoids reading the ref before the updater executes
+  // in concurrent / batched update scenarios.
+  const pendingSyncRef = useRef<{ nodeId: string; tabs: any[] } | null>(null);
 
-  // Sync queue: set inside setState updater, flushed via setTimeout after React commit
-  const syncQueueRef = useRef<{ nodeId: string; tabs: any[] } | null>(null);
+  useEffect(() => {
+    if (pendingSyncRef.current) {
+      const q = pendingSyncRef.current;
+      pendingSyncRef.current = null;
+      sendMessage('workbench.tabs', q);
+    }
+  }, [appState.instanceStates, sendMessage]);
 
   const activeWorkbenchDispatch = useCallback((action: WorkbenchAction) => {
     setAppState(prev => {
@@ -499,20 +509,13 @@ function PageContent() {
         if (structuralActions.has(action.type)) {
           const ws = next.instanceStates[activeId];
           if (ws) {
-            syncQueueRef.current = { nodeId: activeId, tabs: collectAllTabs(ws) };
+            pendingSyncRef.current = { nodeId: activeId, tabs: collectAllTabs(ws) };
           }
         }
         return next;
       }
       return appReducer(prev, { type: 'GLOBAL_ACTION', action });
     });
-    // Flush after React commits (setTimeout deferral ensures state is committed)
-    if (syncQueueRef.current) {
-      const q = syncQueueRef.current;
-      syncQueueRef.current = null;
-      const send = sendMessageRef.current;
-      setTimeout(() => send('workbench.tabs', q), 0);
-    }
   }, []);
   const activeWorkbenchState = useMemo(() => getActiveWorkbenchState(appState), [appState]);
   const appStateRef = useRef(appState);
