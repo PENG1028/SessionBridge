@@ -129,11 +129,20 @@ function broadcastTabs(nodeId: string, tabs: any[], sender?: WebSocket): void {
 function syncTabsByLabel(nodeId: string, tabs: any[], sourceLabel?: string, sender?: WebSocket): void {
   const label = sourceLabel || instanceManager.get(nodeId)?.label;
   if (!label) return;
+  let matchedLocal = false;
   for (const inst of instanceManager.list()) {
     if (inst.label === label && inst.id !== nodeId) {
       workbenchTabStore.set(inst.id, tabs);
       broadcastTabs(inst.id, tabs, sender);
+      if (inst.source === 'local') matchedLocal = true;
     }
+  }
+  // __local__ is used by browser NodeBar for the local relay's own node.
+  // When we matched a local instance, also sync tabs to __local__ subscribers
+  // so the browser sees cross-relay updates.
+  if (matchedLocal) {
+    workbenchTabStore.set('__local__', tabs);
+    broadcastTabs('__local__', tabs, sender);
   }
 }
 
@@ -2220,7 +2229,13 @@ function setupWssHandlers(): void {
       broadcastTabs(nodeId, tabs, ws);
       const nodeInst = instanceManager.get(nodeId);
       // Include label so the receiving relay can map to its own instance IDs.
-      const label = nodeInst?.label;
+      let label = nodeInst?.label;
+      if (!nodeInst && nodeId === '__local__') {
+        // __local__ is the browser-side ID for the local relay itself.
+        // Use the primary local instance's label for cross-relay forwarding.
+        const pri = instanceManager.list().find(i => i.source === 'local');
+        label = pri?.label;
+      }
       // Forward to remote agent's WebSocket if this node belongs to
       // an agent connection (VPS—leaf cross-relay sync direction).
       if (nodeInst?.source === 'remote' && nodeInst.agentConnection && nodeInst.agentConnection !== ws) {
