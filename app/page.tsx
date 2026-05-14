@@ -398,7 +398,6 @@ function PageContent() {
       const nodeId: string = msg.nodeId;
       let tabs: any[] = Array.isArray(msg.tabs) ? msg.tabs : [];
       if (!nodeId) return;
-      console.log(`[UI workbench.tabs] nodeId=${nodeId} tabs=${tabs.length}`);
       // For remote agent nodes (inst_xxx), rebind stale tab instanceIds to
       // the remote instance ID, overriding any local instance saved from
       // previous broken sessions.
@@ -485,24 +484,35 @@ function PageContent() {
     'SPLIT_PANE_VERTICAL', 'SPLIT_PANE_HORIZONTAL', 'CLEAR_INSTANCE_TABS',
   ]);
 
+  // Ref to track pending workbench sync (avoids side-effects inside setState callback)
+  const pendingSyncRef = useRef<{ nodeId: string; tabs: any[] } | null>(null);
+
+  // Send workbench.tabs to server when pending sync is set (after state update)
+  useEffect(() => {
+    if (pendingSyncRef.current) {
+      const { nodeId, tabs } = pendingSyncRef.current;
+      pendingSyncRef.current = null;
+      sendMessage('workbench.tabs', { nodeId, tabs });
+    }
+  }, [appState, sendMessage]);
+
   const activeWorkbenchDispatch = useCallback((action: WorkbenchAction) => {
     setAppState(prev => {
       const activeId = prev.activeInstanceId;
       if (activeId && prev.instanceStates[activeId]) {
         const next = appReducer(prev, { type: 'INSTANCE_ACTION', instanceId: activeId, action });
-        // Send structural tab changes to server for cross-device sync
+        // Schedule cross-device sync AFTER state update commits
         if (structuralActions.has(action.type)) {
           const ws = next.instanceStates[activeId];
           if (ws) {
-            const tabs = collectAllTabs(ws);
-            sendMessage('workbench.tabs', { nodeId: activeId, tabs });
+            pendingSyncRef.current = { nodeId: activeId, tabs: collectAllTabs(ws) };
           }
         }
         return next;
       }
       return appReducer(prev, { type: 'GLOBAL_ACTION', action });
     });
-  }, [sendMessage]);
+  }, []);
   const activeWorkbenchState = useMemo(() => getActiveWorkbenchState(appState), [appState]);
   const appStateRef = useRef(appState);
   appStateRef.current = appState;

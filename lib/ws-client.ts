@@ -93,6 +93,10 @@ export class WSClient {
   private maxRetryInterval = 30000;
   private retryMultiplier = 1.5;
 
+  get isOpen(): boolean {
+    return this.ws?.readyState === WebSocket.OPEN;
+  }
+
   constructor(url: string, token: string, cb: WSCallback) {
     this.url = url;
     this.token = token;
