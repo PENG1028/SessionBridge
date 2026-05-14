@@ -50,6 +50,8 @@ export class NodeRuntime {
   private appendRelayLog: ((msg: string) => void) | null = null;
   /** Reference to relay's writeToShellByRelayId (set after dynamic import). */
   private _writeToShellByRelayId: ((relayId: string, data: string) => boolean) | null = null;
+  /** Per-instance remote shells spawned via relay.shell.spawn */
+  private remoteShells: Map<string, ChildProcess> = new Map();
 
   constructor(configOverrides: Partial<NodeConfig> & { relayUrl?: string } = {}) {
     this.config = resolveConfig(configOverrides);
@@ -112,7 +114,11 @@ export class NodeRuntime {
         setRelayUpstream((type, body) => this.relay.send(type, body));
       }
       this.relay.on('relayMessage', (msg: any) => {
-        if (msg.type?.startsWith('workbench.')) onUpstreamMessage(msg);
+        if (msg.type?.startsWith('workbench.')) {
+          onUpstreamMessage(msg);
+        } else if (msg.type === 'relay.shell.spawn') {
+          this.spawnRemoteShell(msg.instanceId, msg.dir);
+        }
       });
       const detected = detectNetwork(this.config.relayPort, !!this.config.relayToken);
       const publicIp = detected.ips.find(ip => ip.type === 'public' && ip.family === 'IPv4');
@@ -292,6 +298,14 @@ export class NodeRuntime {
     });
 
     this.relay.on('stdin', (relayInstanceId, data) => {
+      // Route to per-instance remote shell if one exists
+      if (relayInstanceId && this.remoteShells.has(relayInstanceId)) {
+        const proc = this.remoteShells.get(relayInstanceId);
+        if (proc?.stdin?.writable) {
+          proc.stdin.write(data);
+        }
+        return;
+      }
       // Auto-spawn shell on first stdin if not already running
       if (!this.shellProc) {
         this.addLog('[node] Auto-spawning shell on stdin');
@@ -305,6 +319,11 @@ export class NodeRuntime {
     });
 
     this.relay.on('close', () => {
+      // Clean up any per-instance remote shells
+      for (const [id, proc] of this.remoteShells) {
+        proc.kill();
+      }
+      this.remoteShells.clear();
       this.capabilityHost.notifications.notify(
         'agent.disconnected',
         'Agent disconnected',
@@ -450,6 +469,40 @@ export class NodeRuntime {
       this.shellProc = null;
       try { require('fs').unlinkSync(this.shellPidFile); } catch { /* ignore */ }
     }
+  }
+
+  /** Spawn a shell for a specific remote instance (triggered via relay.shell.spawn). */
+  private spawnRemoteShell(instanceId: string, dir?: string): void {
+    if (this.remoteShells.has(instanceId)) {
+      this.addLog(`[node] Remote shell for instance ${instanceId} already running, skipping`);
+      return;
+    }
+    const permCheck = this.permissions.check('shellAccess');
+    if (!permCheck.allowed) {
+      this.addLog(`[node] Remote shell spawn blocked: ${permCheck.reason}`);
+      return;
+    }
+    const [cmd, ...args] = process.platform === 'win32'
+      ? ['powershell.exe', '-NoLogo', '-NoExit']
+      : ['bash', '--login'];
+    const proc = spawn(cmd, args, {
+      cwd: dir || this.config.workingDirectory,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    this.addLog(`[node] Remote shell spawned for instance ${instanceId}: ${cmd} (pid ${proc.pid})`);
+    this.remoteShells.set(instanceId, proc);
+
+    proc.stdout?.on('data', (chunk: Buffer) => {
+      this.relay.sendStdoutForInstance(instanceId, chunk.toString());
+    });
+    proc.stderr?.on('data', (chunk: Buffer) => {
+      this.relay.sendStderrForInstance(instanceId, chunk.toString());
+    });
+    proc.on('close', (code) => {
+      this.addLog(`[node] Remote shell for instance ${instanceId} exited: ${code}`);
+      this.remoteShells.delete(instanceId);
+      this.relay.sendInstanceExit(instanceId, code ?? -1);
+    });
   }
 
   private async detectAdapters(): Promise<{ id: string; available: boolean }[]> {

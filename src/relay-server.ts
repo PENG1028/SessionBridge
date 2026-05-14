@@ -729,11 +729,18 @@ async function spawnShellForWs(ws: WebSocket, instanceId?: string): Promise<impo
   if (!shellWsMap.has(ws)) shellWsMap.set(ws, new Set());
   shellWsMap.get(ws)!.add(i.id);
 
-  // Remote instances: shell already runs on the agent, don't spawn locally
+  // Remote instances: proxy shell spawn to the agent via WebSocket
   if (i.source === 'remote') {
     i.status = 'running';
-    send(ws, envelope("shell.output", { data: `\x1b[36mConnected to remote shell on ${i.label || i.id}\x1b[0m\r\n`, stream: "stdout" }));
-    sendStdin(i, '\n');
+    subscribeShellOutput(i.id, ws);
+    // Replay any buffered output
+    for (const chunk of i.outputBuffer) {
+      send(ws, envelope("shell.output", { data: chunk, stream: "stdout" }));
+    }
+    // Tell the agent to spawn a shell for this instance
+    if (i.agentConnection && i.agentConnection.readyState === WebSocket.OPEN) {
+      send(i.agentConnection, envelope("relay.shell.spawn", { instanceId: i.id, dir: i.dir }));
+    }
     return i;
   }
 
