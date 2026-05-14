@@ -405,6 +405,11 @@ function PageContent() {
           return { ...prev, instanceStates: { ...prev.instanceStates, [nodeId]: buildStateFromTabs(tabs as PaneTab[]) } };
         }
         const currentTabs = collectAllTabs(currentWs);
+        // Don't let empty server tabs overwrite locally-initialized tabs
+        // (e.g. after createInitialState set instanceId from peer.id)
+        if (tabs.length === 0 && currentTabs.length > 0) {
+          return prev;
+        }
         // Only update if tabs actually differ
         if (tabs.length === currentTabs.length && tabs.every((t, i) => t.id === currentTabs[i]?.id)) {
           return prev;
