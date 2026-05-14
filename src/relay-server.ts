@@ -130,8 +130,10 @@ function syncTabsByLabel(nodeId: string, tabs: any[], sourceLabel?: string, send
   const label = sourceLabel || instanceManager.get(nodeId)?.label;
   if (!label) return;
   let matchedLocal = false;
+  console.log(`[DEBUG syncTabsByLabel] nodeId=${nodeId} label=${label} tabs=${tabs.length} instances=${instanceManager.list().length} localNode=${localNodeInfo?.name}`);
   for (const inst of instanceManager.list()) {
     if (inst.label === label && inst.id !== nodeId) {
+      console.log(`[DEBUG syncTabsByLabel]   matched inst=${inst.id} source=${inst.source} label=${inst.label}`);
       workbenchTabStore.set(inst.id, tabs);
       broadcastTabs(inst.id, tabs, sender);
       if (inst.source === 'local') matchedLocal = true;
@@ -147,9 +149,11 @@ function syncTabsByLabel(nodeId: string, tabs: any[], sourceLabel?: string, send
     // No local instance matched, but the label matches the local node's name.
     // Broadcast to __local__ subscribers so the browser sees cross-relay tabs
     // even before opening any terminal on the local node.
+    console.log(`[DEBUG syncTabsByLabel] name match fallback — broadcasting to __local__`);
     workbenchTabStore.set('__local__', tabs);
     broadcastTabs('__local__', tabs, sender);
   }
+  console.log(`[DEBUG syncTabsByLabel] done: matchedLocal=${matchedLocal}`);
 }
 
 /**
@@ -162,6 +166,7 @@ export function onUpstreamMessage(msg: any): void {
     const nodeId = String(msg.nodeId || '');
     const tabs = Array.isArray(msg.tabs) ? msg.tabs : [];
     if (!nodeId) return;
+    console.log(`[DEBUG onUpstreamMsg] nodeId=${nodeId} tabs=${tabs.length} _label=${msg._label || 'none'} localNode=${localNodeInfo?.name}`);
     // Only update store and broadcast if tabs have actual content.
     // Empty tabs (from subscribe responses) must not overwrite existing
     // local store or confuse subscribers with stale empty state.
@@ -171,6 +176,7 @@ export function onUpstreamMessage(msg: any): void {
       // relay broadcasts to this node's agent connection.
       const existing = workbenchTabStore.get(nodeId);
       const changed = !existing || JSON.stringify(existing) !== JSON.stringify(tabs);
+      console.log(`[DEBUG onUpstreamMsg] existing=${!!existing} changed=${changed}`);
       if (changed) {
         workbenchTabStore.set(nodeId, tabs);
         broadcastTabs(nodeId, tabs);
@@ -2237,6 +2243,7 @@ function setupWssHandlers(): void {
       const nodeId = String(msg.nodeId || '');
       const tabs = Array.isArray(msg.tabs) ? msg.tabs : [];
       if (!nodeId) return;
+      console.log(`[DEBUG workbench.tabs] nodeId=${nodeId} tabs=${tabs.length} label=${msg._label || 'none'} _isAgent=${!!(ws as any)._isAgent} localNode=${localNodeInfo?.name}`);
       workbenchTabStore.set(nodeId, tabs);
       // Broadcast to all OTHER subscribers
       broadcastTabs(nodeId, tabs, ws);
@@ -2249,13 +2256,16 @@ function setupWssHandlers(): void {
         const pri = instanceManager.list().find(i => i.source === 'local');
         label = pri?.label || localNodeInfo?.name;
       }
+      console.log(`[DEBUG workbench.tabs] nodeInst=${nodeInst?.id || 'null'} source=${nodeInst?.source || 'null'} hasAgentConn=${!!nodeInst?.agentConnection} label=${label} hasUpstream=${!!_sendUpstream}`);
       // Forward to remote agent's WebSocket if this node belongs to
       // an agent connection (VPS—leaf cross-relay sync direction).
       if (nodeInst?.source === 'remote' && nodeInst.agentConnection && nodeInst.agentConnection !== ws) {
+        console.log(`[DEBUG workbench.tabs] FORWARDING to agent WS, agentOK=${nodeInst.agentConnection.readyState === 1}`);
         send(nodeInst.agentConnection, envelope("workbench.tabs", { nodeId, tabs, _label: label }));
       }
       // Forward to upstream relay for cross-relay sync
       _sendUpstream?.("workbench.tabs", { nodeId, tabs, _label: label });
+      console.log(`[DEBUG workbench.tabs] calling syncTabsByLabel(nodeId=${nodeId}, label=${msg._label})`);
       // Cross-relay label normalization: if the incoming message uses
       // a different instance ID than what local subscribers expect,
       // find instances with the same label and sync there.
