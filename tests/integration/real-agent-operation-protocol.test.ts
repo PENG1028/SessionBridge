@@ -296,17 +296,14 @@ async function main() {
     // Verify agent can receive relay.operation.input (the relay forwards input to agent)
     drain(agent.inbox, 'relay.operation.input');
     a.ws.send(env('operation.input', { operationId: inputOpId, data: 'stdin-data-from-browser' }));
-    await delay(300);
 
-    // The agent's input handler echoes back via operation.output with stream=stdin_echo
-    const agentInboxMsgs = agent.inbox.map(s => { try { return JSON.parse(s); } catch { return null; } }).filter(Boolean);
-    const relayInputMsg = agentInboxMsgs.find(m => {
-      const msg = m?.v === 1 && m?.body ? { ...m.body, type: m.type } : m;
-      return msg?.type === 'relay.operation.input' && msg?.operationId === inputOpId;
-    });
+    // Use waitFor instead of delay to tolerate WAN latency
+    const relayInputMsg = await waitFor(agent.inbox, m =>
+      m.type === 'relay.operation.input',
+    'Agent receives relay.operation.input', 8000);
     check('Agent received relay.operation.input', !!relayInputMsg);
     check('relay.operation.input has correct operationId',
-      relayInputMsg?.body?.operationId === inputOpId || relayInputMsg?.operationId === inputOpId);
+      relayInputMsg?.operationId === inputOpId);
 
     // ── T8: Bad nodeId → TARGET_NOT_FOUND, no fallback ────────
     console.log('\n── T8: Bad nodeId → TARGET_NOT_FOUND, no local fallback ──');
