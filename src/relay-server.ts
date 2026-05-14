@@ -32,6 +32,8 @@ import { detectNetwork } from "./network-detect";
 import { configRegistry } from "./configuration/registry";
 import { configStore } from "./configuration/store";
 import { secretStore } from "./configuration/secret-store";
+import { RemoteOperationManager, OperationError } from "./remote-operation-manager";
+import type { OperationKind, OperationInput } from "./remote-operation-manager";
 
 // ─── Session provider helper — first adapter that provides SessionProvider ──
 function sessionProvider() {
@@ -345,6 +347,8 @@ const shellLockMap = new Map<string, WebSocket>();
 const shellSubscribers = new Map<string, Set<WebSocket>>();
 /** Guard: instanceId → in-flight spawn promise, prevents double-spawn from shell.input handler */
 const pendingShellSpawns = new Map<string, Promise<unknown>>();
+
+const operationManager = new RemoteOperationManager();
 
 function subscribeShellOutput(instanceId: string, ws: WebSocket): void {
   if (!shellSubscribers.has(instanceId)) shellSubscribers.set(instanceId, new Set());
@@ -685,7 +689,7 @@ async function spawnShellForWs(ws: WebSocket, instanceId?: string): Promise<impo
   const permResult = permissions.check('shellAccess', { action: 'spawn_shell' });
   if (!permResult.allowed) {
     send(ws, envelope("error", { code: "ACCESS_DENIED", message: permResult.reason || "Shell access denied" }));
-    throw new Error(permResult.reason || 'Shell access denied');
+    throw Object.assign(new Error(permResult.reason || 'Shell access denied'), { _reported: true });
   }
 
   let i: import("./instance-manager").InstanceData;
@@ -705,28 +709,26 @@ async function spawnShellForWs(ws: WebSocket, instanceId?: string): Promise<impo
       }
       if (!terminalAdapter) {
         send(ws, envelope("error", { code: "INVALID_ADAPTER", message: `Instance ${instanceId} has unknown adapter: ${existing.adapterId} and no shell fallback` }));
-        throw new Error(`Instance ${instanceId} has unknown adapter: ${existing.adapterId} and no shell fallback`);
+        throw Object.assign(new Error(`Instance ${instanceId} has unknown adapter: ${existing.adapterId} and no shell fallback`), { _reported: true });
       }
       if (!terminalAdapter.getCapabilities().terminal) {
         send(ws, envelope("error", { code: "NOT_TERMINAL", message: "Instance is not terminal-capable — cannot attach shell" }));
-        throw new Error(`Instance ${instanceId} is not terminal-capable`);
+        throw Object.assign(new Error(`Instance ${instanceId} is not terminal-capable`), { _reported: true });
       }
       i = existing;
     } else {
-      // Instance not found — create new one with shell adapter specifically.
-      terminalAdapter = adapterRegistry.get('shell') || resolveAdapterByCapability('terminal', true);
-      if (!terminalAdapter) {
-        send(ws, envelope("error", { code: "NO_TERMINAL_ADAPTER", message: "No terminal-capable adapter available" }));
-        throw new Error('No terminal-capable adapter available for shell.spawn');
-      }
-      i = instanceManager.create(process.cwd(), os.hostname(), "local", terminalAdapter.id);
+      // Explicit instanceId was provided but not found — must not fallback to local shell.
+      // This prevents stale instanceIds (e.g. from localStorage after relay restart) from
+      // silently creating a wrong shell on the wrong machine.
+      send(ws, envelope("error", { code: "INSTANCE_NOT_FOUND", message: `Instance ${instanceId} not found` }));
+      throw Object.assign(new Error(`Instance ${instanceId} not found`), { _reported: true });
     }
   } else {
     // No instanceId — create new instance with shell adapter specifically.
     terminalAdapter = adapterRegistry.get('shell') || resolveAdapterByCapability('terminal', true);
     if (!terminalAdapter) {
       send(ws, envelope("error", { code: "NO_TERMINAL_ADAPTER", message: "No terminal-capable adapter available" }));
-      throw new Error('No terminal-capable adapter available for shell.spawn');
+      throw Object.assign(new Error('No terminal-capable adapter available for shell.spawn'), { _reported: true });
     }
     i = instanceManager.create(process.cwd(), os.hostname(), "local", terminalAdapter.id);
   }
@@ -740,16 +742,20 @@ async function spawnShellForWs(ws: WebSocket, instanceId?: string): Promise<impo
 
   // Remote instances: proxy shell spawn to the agent via WebSocket
   if (i.source === 'remote') {
+    // Remote agent must be connected to forward shell.spawn.
+    // If the agent disconnected, fail explicitly — don't silently succeed
+    // and leave the browser thinking the shell is running.
+    if (!i.agentConnection || i.agentConnection.readyState !== WebSocket.OPEN) {
+      send(ws, envelope("error", { code: "REMOTE_AGENT_DISCONNECTED", message: `Agent for instance ${i.id} (${i.label}) is not connected` }));
+      throw Object.assign(new Error(`Agent for instance ${i.id} is not connected`), { _reported: true });
+    }
     i.status = 'running';
     subscribeShellOutput(i.id, ws);
     // Replay any buffered output
     for (const chunk of i.outputBuffer) {
       send(ws, envelope("shell.output", { data: chunk, stream: "stdout" }));
     }
-    // Tell the agent to spawn a shell for this instance
-    if (i.agentConnection && i.agentConnection.readyState === WebSocket.OPEN) {
-      send(i.agentConnection, envelope("relay.shell.spawn", { instanceId: i.id, dir: i.dir }));
-    }
+    send(i.agentConnection, envelope("relay.shell.spawn", { instanceId: i.id, dir: i.dir }));
     return i;
   }
 
@@ -1944,8 +1950,11 @@ function setupWssHandlers(): void {
       // causing the wrong adapter to parse this instance's output.
       const instAdapter = remoteInst.adapterId ? adapterRegistry.get(remoteInst.adapterId) : undefined;
       if (!instAdapter) {
-        // Unknown adapter: broadcast as raw output, no parseLine
-        broadcast(envelope("shell.output", { data: line.slice(0, 65536), stream: "stdout" }));
+        // Unknown adapter: send to shell subscribers only, not global broadcast
+        broadcastShellOutput(remoteInst.id, line.slice(0, 65536), "stdout");
+        // Also emit via operation manager for unified tracking
+        const op = operationManager.findByInstanceAndKind(remoteInst.id, "terminal");
+        if (op) operationManager.emitOutput(op.operationId, "stdout", line.slice(0, 65536), send, envelope);
         remoteInst.outputBuffer.push(line);
         remoteInst.outputSize += line.length;
         while (remoteInst.outputSize > 512 * 1024 && remoteInst.outputBuffer.length > 0) {
@@ -1955,8 +1964,11 @@ function setupWssHandlers(): void {
       }
       const caps = instAdapter.getCapabilities();
       if (!caps.structuredEvents) {
-        // Raw shell output → terminal view (cap line size for broadcast)
-        broadcast(envelope("shell.output", { data: line.slice(0, 65536), stream: "stdout" }));
+        // Raw shell output → send to shell subscribers only
+        broadcastShellOutput(remoteInst.id, line.slice(0, 65536), "stdout");
+        // Also emit via operation manager for unified tracking
+        const op = operationManager.findByInstanceAndKind(remoteInst.id, "terminal");
+        if (op) operationManager.emitOutput(op.operationId, "stdout", line.slice(0, 65536), send, envelope);
         remoteInst.outputBuffer.push(line);
         remoteInst.outputSize += line.length;
         while (remoteInst.outputSize > 512 * 1024 && remoteInst.outputBuffer.length > 0) {
@@ -1981,8 +1993,8 @@ function setupWssHandlers(): void {
       const stderrAdapter = remoteInst.adapterId ? adapterRegistry.get(remoteInst.adapterId) : undefined;
       const stderrCaps = stderrAdapter?.getCapabilities();
       if (stderrCaps && !stderrCaps.structuredEvents) {
-        // Raw shell stderr → terminal view
-        broadcast(envelope("shell.output", { data: data.slice(0, 65536), stream: "stderr" }));
+        // Raw shell stderr → shell subscribers only
+        broadcastShellOutput(remoteInst.id, data.slice(0, 65536), "stderr");
       } else {
         broadcast(envelope("instance.output", { data: data.slice(0, 65536) }));
       }
@@ -1991,6 +2003,39 @@ function setupWssHandlers(): void {
       while (remoteInst.outputSize > 512 * 1024 && remoteInst.outputBuffer.length > 0) {
         remoteInst.outputSize -= remoteInst.outputBuffer.shift()?.length ?? 0;
       }
+      return;
+    }
+
+    // ── Agent → relay: operation output/status/result ─────
+    if (msg.type === "agent.operation.output") {
+      const operationId = String(msg.operationId || "");
+      const stream = (msg.stream as "stdout" | "stderr" | "structured") || "stdout";
+      const data = String(msg.data || "");
+      if (!operationId) return;
+
+      operationManager.emitOutput(operationId, stream, data, send, envelope);
+      return;
+    }
+
+    if (msg.type === "agent.operation.status") {
+      const operationId = String(msg.operationId || "");
+      const status = msg.status as import("./remote-operation-manager").OperationStatus;
+      if (!operationId || !status) return;
+
+      operationManager.emitStatus(operationId, status, msg.detail, send, envelope);
+      return;
+    }
+
+    if (msg.type === "agent.operation.result") {
+      const operationId = String(msg.operationId || "");
+      if (!operationId) return;
+
+      operationManager.complete(operationId, {
+        success: !!msg.success,
+        data: msg.data,
+        exitCode: typeof msg.exitCode === 'number' ? msg.exitCode : undefined,
+        error: msg.error,
+      }, send, envelope);
       return;
     }
 
@@ -2124,8 +2169,6 @@ function setupWssHandlers(): void {
 
     // ── Shell terminal ────────────────────────────────────
     if (msg.type === "shell.spawn" || msg.type === "shell_spawn") {
-      const si = instanceManager.get(msg.instanceId);
-      console.log(`[DIAG shell.spawn] instanceId=${msg.instanceId} found=${!!si} source=${si?.source || 'N/A'} label=${si?.label || 'N/A'} agentOpen=${si?.agentConnection?.readyState}`);
       spawnShellForWs(ws, msg.instanceId).then((shellInst) => {
         // Track shell in client session for reconnect recovery
         const clientToken = wsToClientToken.get(ws);
@@ -2133,8 +2176,23 @@ function setupWssHandlers(): void {
           const session = clientSessionMap.get(clientToken);
           if (session) session.shellIds.add(shellInst.id);
         }
+        // Also register as an operation for unified tracking
+        let existingOp = operationManager.findByInstanceAndKind(shellInst.id, "terminal");
+        if (!existingOp) {
+          existingOp = operationManager.create(shellInst.id, "terminal", {
+            instanceId: shellInst.id,
+            createdBy: clientToken || "shell.spawn",
+          });
+        }
+        operationManager.subscribe(existingOp.operationId, ws, send, envelope);
+        operationManager.emitStatus(existingOp.operationId, "running", "Shell spawned", send, envelope);
       }).catch((err) => {
-        send(ws, envelope("error", { code: "INTERNAL_ERROR", message: `Shell spawn failed: ${err}` }));
+        // spawnShellForWs already sends its own error envelope for known failures
+        // (INSTANCE_NOT_FOUND, ACCESS_DENIED, etc.). Only send INTERNAL_ERROR for
+        // truly unexpected exceptions that didn't originate from our error reporting.
+        if (!(err as any)._reported) {
+          send(ws, envelope("error", { code: "INTERNAL_ERROR", message: `Shell spawn failed: ${err}` }));
+        }
       });
       return;
     }
@@ -2209,6 +2267,79 @@ function setupWssHandlers(): void {
       return;
     }
 
+    // ── Remote Operation: unified remote execution ──────────
+    if (msg.type === "operation.start") {
+      const nodeId = String(msg.nodeId || "");
+      const kind = (msg.kind || "task") as OperationKind;
+      const clientToken = wsToClientToken.get(ws) || "unknown";
+      if (!nodeId) { send(ws, envelope("error", { code: "MISSING_NODE", message: "nodeId is required" })); return; }
+
+      try {
+        const instance = operationManager.validateTarget(nodeId, (id) => instanceManager.get(id));
+        const op = operationManager.create(nodeId, kind, {
+          instanceId: msg.instanceId,
+          pluginId: msg.pluginId,
+          command: msg.command,
+          input: msg.input as OperationInput | undefined,
+          createdBy: clientToken,
+        });
+
+        // Subscribe the requesting browser
+        operationManager.subscribe(op.operationId, ws, send, envelope);
+
+        // Emit starting status
+        operationManager.emitStatus(op.operationId, "starting", undefined, send, envelope);
+
+        // Forward to remote agent
+        if (instance.source === "remote") {
+          operationManager.forwardToAgent(op, instance, send, envelope);
+          operationManager.emitStatus(op.operationId, "running", "Forwarded to agent", send, envelope);
+        }
+      } catch (err) {
+        if (err instanceof OperationError) {
+          send(ws, envelope("error", { code: err.code, message: err.message }));
+        } else {
+          send(ws, envelope("error", { code: "INTERNAL_ERROR", message: `Operation start failed: ${(err as Error).message}` }));
+        }
+      }
+      return;
+    }
+
+    if (msg.type === "operation.input") {
+      const operationId = String(msg.operationId || "");
+      const data = String(msg.data || "");
+      if (!operationId) return;
+
+      operationManager.forwardInputToAgent(
+        operationId, data,
+        (id) => instanceManager.get(id),
+        send, envelope,
+      );
+      return;
+    }
+
+    if (msg.type === "operation.subscribe") {
+      const operationId = String(msg.operationId || "");
+      if (!operationId) return;
+
+      const op = operationManager.subscribe(operationId, ws, send, envelope);
+      if (!op) {
+        send(ws, envelope("error", { code: "OPERATION_NOT_FOUND", message: `Operation ${operationId} not found` }));
+      }
+      return;
+    }
+
+    if (msg.type === "operation.cancel") {
+      const operationId = String(msg.operationId || "");
+      if (!operationId) return;
+
+      const ok = operationManager.cancel(operationId, send, envelope);
+      if (!ok) {
+        send(ws, envelope("error", { code: "OPERATION_NOT_FOUND", message: `Operation ${operationId} not found or already terminal` }));
+      }
+      return;
+    }
+
     // ── Workbench tab sync ─────────────────────────────
     if (msg.type === "workbench.subscribe") {
       const nodeId = String(msg.nodeId || '');
@@ -2242,7 +2373,6 @@ function setupWssHandlers(): void {
       const nodeId = String(msg.nodeId || '');
       const tabs = Array.isArray(msg.tabs) ? msg.tabs : [];
       if (!nodeId) return;
-      console.log(`[DEBUG workbench.tabs] nodeId=${nodeId} tabs=${tabs.length} label=${msg._label || 'none'} _isAgent=${!!(ws as any)._isAgent} localNode=${localNodeInfo?.name}`);
       workbenchTabStore.set(nodeId, tabs);
       // Broadcast to all OTHER subscribers
       broadcastTabs(nodeId, tabs, ws);
@@ -2255,16 +2385,13 @@ function setupWssHandlers(): void {
         const pri = instanceManager.list().find(i => i.source === 'local');
         label = pri?.label || localNodeInfo?.name;
       }
-      console.log(`[DEBUG workbench.tabs] nodeInst=${nodeInst?.id || 'null'} source=${nodeInst?.source || 'null'} hasAgentConn=${!!nodeInst?.agentConnection} label=${label} hasUpstream=${!!_sendUpstream}`);
       // Forward to remote agent's WebSocket if this node belongs to
       // an agent connection (VPS—leaf cross-relay sync direction).
       if (nodeInst?.source === 'remote' && nodeInst.agentConnection && nodeInst.agentConnection !== ws) {
-        console.log(`[DEBUG workbench.tabs] FORWARDING to agent WS, agentOK=${nodeInst.agentConnection.readyState === 1}`);
         send(nodeInst.agentConnection, envelope("workbench.tabs", { nodeId, tabs, _label: label }));
       }
       // Forward to upstream relay for cross-relay sync
       _sendUpstream?.("workbench.tabs", { nodeId, tabs, _label: label });
-      console.log(`[DEBUG workbench.tabs] calling syncTabsByLabel(nodeId=${nodeId}, label=${msg._label})`);
       // Cross-relay label normalization: if the incoming message uses
       // a different instance ID than what local subscribers expect,
       // find instances with the same label and sync there.
