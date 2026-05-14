@@ -108,6 +108,36 @@ export function setRelayUpstream(fn: (type: string, body: any) => void): void {
 }
 
 /**
+ * Broadcast tabs to subscribers, optionally excluding a sender.
+ * Shared helper for onUpstreamMessage and the workbench.tabs handler.
+ */
+function broadcastTabs(nodeId: string, tabs: any[], sender?: WebSocket): void {
+  const subs = workbenchSubscribers.get(nodeId);
+  if (!subs) return;
+  for (const client of subs) {
+    if (client !== sender && client.readyState === WebSocket.OPEN) {
+      send(client, envelope("workbench.tabs", { nodeId, tabs }));
+    }
+  }
+}
+
+/**
+ * After storing tabs for a nodeId, also sync to any other instances
+ * that share the same label (hostname). This bridges cross-relay sync
+ * where the same physical node has different instance IDs on each relay.
+ */
+function syncTabsByLabel(nodeId: string, tabs: any[], sourceLabel?: string, sender?: WebSocket): void {
+  const label = sourceLabel || instanceManager.get(nodeId)?.label;
+  if (!label) return;
+  for (const inst of instanceManager.list()) {
+    if (inst.label === label && inst.id !== nodeId) {
+      workbenchTabStore.set(inst.id, tabs);
+      broadcastTabs(inst.id, tabs, sender);
+    }
+  }
+}
+
+/**
  * Handle a workbench message forwarded from the upstream relay.
  * Called by NodeRuntime when the upstream RelayConnection emits 'relayMessage'.
  */
@@ -128,16 +158,12 @@ export function onUpstreamMessage(msg: any): void {
       const changed = !existing || JSON.stringify(existing) !== JSON.stringify(tabs);
       if (changed) {
         workbenchTabStore.set(nodeId, tabs);
-        const subs = workbenchSubscribers.get(nodeId);
-        if (subs) {
-          for (const client of subs) {
-            if (client.readyState === WebSocket.OPEN) {
-              send(client, envelope("workbench.tabs", { nodeId, tabs }));
-            }
-          }
-        }
+        broadcastTabs(nodeId, tabs);
       }
     }
+    // Cross-relay label normalization: tabs from upstream use a different
+    // instance ID. Find local instances with the same label and sync there.
+    syncTabsByLabel(nodeId, tabs, msg._label);
   }
 }
 
@@ -2191,24 +2217,21 @@ function setupWssHandlers(): void {
       if (!nodeId) return;
       workbenchTabStore.set(nodeId, tabs);
       // Broadcast to all OTHER subscribers
-      const subs = workbenchSubscribers.get(nodeId);
-      let bcastCount = 0;
-      if (subs) {
-        for (const client of subs) {
-          if (client !== ws && client.readyState === WebSocket.OPEN) {
-            bcastCount++;
-            send(client, envelope("workbench.tabs", { nodeId, tabs }));
-          }
-        }
-      }
+      broadcastTabs(nodeId, tabs, ws);
       const nodeInst = instanceManager.get(nodeId);
+      // Include label so the receiving relay can map to its own instance IDs.
+      const label = nodeInst?.label;
       // Forward to remote agent's WebSocket if this node belongs to
-      // an agent connection (VPS→leaf cross-relay sync direction).
+      // an agent connection (VPS—leaf cross-relay sync direction).
       if (nodeInst?.source === 'remote' && nodeInst.agentConnection && nodeInst.agentConnection !== ws) {
-        send(nodeInst.agentConnection, envelope("workbench.tabs", { nodeId, tabs }));
+        send(nodeInst.agentConnection, envelope("workbench.tabs", { nodeId, tabs, _label: label }));
       }
       // Forward to upstream relay for cross-relay sync
-      _sendUpstream?.("workbench.tabs", { nodeId, tabs });
+      _sendUpstream?.("workbench.tabs", { nodeId, tabs, _label: label });
+      // Cross-relay label normalization: if the incoming message uses
+      // a different instance ID than what local subscribers expect,
+      // find instances with the same label and sync there.
+      syncTabsByLabel(nodeId, tabs, msg._label, ws);
       return;
     }
 
@@ -2218,20 +2241,6 @@ function setupWssHandlers(): void {
     instanceManager.setActive(targetInst.id);
 
     switch (msg.type) {
-      case "direct":
-      case "auth":
-        // Already handled above — no-op (except "direct" falls through)
-        break;
-
-      case "instance.input":
-      case "input": {
-        sendBlock({ blockType: "user", text: msg.data });
-        enqueueInput(msg.data, "web");
-        instanceManager.startOperation(targetInst.id, 'chat', msg.data?.slice(0, 200));
-        auditLog.log('instance.input', 'web', { text: msg.data?.slice(0, 200) }, targetInst.id);
-        break;
-      }
-
       case "instance.command":
       case "command": {
         const name = msg.name;
