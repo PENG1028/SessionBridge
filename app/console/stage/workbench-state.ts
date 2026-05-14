@@ -601,17 +601,35 @@ export function loadLayoutsFromStorage(): {
 }
 
 /** Given saved serialized layouts + current server instances, return deserialized states. */
+/** Clear stale instanceIds on restored tab data that no longer exist
+ *  on the current relay (instance IDs rotate on every relay restart). */
+function cleanStaleInstanceIds(state: WorkbenchState, validIds: Set<string>): void {
+  const clean = (pane: PaneState) => {
+    for (const tab of pane.tabs) {
+      if (tab.instanceId && !validIds.has(tab.instanceId)) {
+        (tab as any).instanceId = undefined;
+      }
+    }
+  };
+  visitPanes(state.root, clean);
+  if (state.bottom) clean(state.bottom);
+}
+
 export function restoreInstanceStatesFromStorage(
   savedStr: Record<string, string>,
   persistentTabs: PaneTab[],
   serverInstanceIds: string[],
 ): { states: Record<string, WorkbenchState>; persistentTabs: PaneTab[] } {
   const states: Record<string, WorkbenchState> = {};
+  const validIdSet = new Set(serverInstanceIds);
   for (const id of serverInstanceIds) {
     const saved = savedStr[id];
     if (saved) {
       const state = deserializeLayout(saved);
-      if (state) states[id] = state;
+      if (state) {
+        cleanStaleInstanceIds(state, validIdSet);
+        states[id] = state;
+      }
     }
   }
   return { states, persistentTabs: persistentTabs.filter(t => t && t.id) };
