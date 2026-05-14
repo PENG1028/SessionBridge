@@ -396,8 +396,14 @@ function PageContent() {
     } else if (msg.type === 'workbench.tabs') {
       // Server sent updated workbench tabs for a node
       const nodeId: string = msg.nodeId;
-      const tabs: any[] = Array.isArray(msg.tabs) ? msg.tabs : [];
+      let tabs: any[] = Array.isArray(msg.tabs) ? msg.tabs : [];
       if (!nodeId) return;
+      // For remote agent nodes (inst_xxx), rebind stale tab instanceIds to
+      // the remote instance ID, overriding any local instance saved from
+      // previous broken sessions.
+      if (nodeId.startsWith('inst_')) {
+        tabs = tabs.map((t: any) => ({ ...t, instanceId: nodeId }));
+      }
       setAppState(prev => {
         const currentWs = prev.instanceStates[nodeId];
         if (!currentWs) {
