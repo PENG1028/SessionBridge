@@ -2124,6 +2124,8 @@ function setupWssHandlers(): void {
 
     // ── Shell terminal ────────────────────────────────────
     if (msg.type === "shell.spawn" || msg.type === "shell_spawn") {
+      const si = instanceManager.get(msg.instanceId);
+      console.log(`[DIAG shell.spawn] instanceId=${msg.instanceId} found=${!!si} source=${si?.source || 'N/A'} label=${si?.label || 'N/A'} agentOpen=${si?.agentConnection?.readyState}`);
       spawnShellForWs(ws, msg.instanceId).then((shellInst) => {
         // Track shell in client session for reconnect recovery
         const clientToken = wsToClientToken.get(ws);
