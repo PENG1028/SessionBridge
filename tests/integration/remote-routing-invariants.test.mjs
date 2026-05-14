@@ -92,6 +92,22 @@ function drain(inbox, type) {
   return msgs;
 }
 
+async function collectMatching(inbox, predicate, minCount, timeout = 5000) {
+  const start = Date.now();
+  const collected = [];
+  while (collected.length < minCount && Date.now() - start < timeout) {
+    for (let i = 0; i < inbox.length; i++) {
+      try {
+        const m = JSON.parse(inbox[i]);
+        const msg = m.v === 1 && m.body ? { ...m.body, type: m.type } : m;
+        if (predicate(msg)) { collected.push(msg); inbox.splice(i, 1); break; }
+      } catch {}
+    }
+    if (collected.length < minCount) await delay(100);
+  }
+  return collected;
+}
+
 async function listInstances() {
   try {
     const res = await fetch(`${RELAY_HTTP}/api/instances`);
@@ -288,11 +304,11 @@ async function main() {
     agent.ws.send(env('agent.operation.output', { operationId: replayOpId, stream: 'structured', data: JSON.stringify({ seq: 1 }) }));
     agent.ws.send(env('agent.operation.output', { operationId: replayOpId, stream: 'structured', data: JSON.stringify({ seq: 2 }) }));
     agent.ws.send(env('agent.operation.output', { operationId: replayOpId, stream: 'structured', data: JSON.stringify({ seq: 3 }) }));
-    await delay(200);
 
-    // Verify A got them
-    const aBuffered = drain(a.inbox, 'operation.output');
-    check('A received 3 buffered outputs', aBuffered.filter(m => m.operationId === replayOpId).length >= 3);
+    // Verify A got them (use collectMatching to tolerate WAN latency)
+    const aBuffered = await collectMatching(a.inbox,
+      m => m.type === 'operation.output' && m.operationId === replayOpId, 3, 5000);
+    check('A received 3 buffered outputs', aBuffered.length >= 3);
 
     // Late joiner C connects
     const c = await connectBrowser('C'); conns.push(c);
@@ -372,15 +388,16 @@ async function main() {
       data: { fast: true },
       exitCode: 0,
     }));
-    await delay(200);
+    // Confirm A got result + completed status (use waitFor to tolerate WAN latency)
+    const aDoneResult = await waitFor(a.inbox, m =>
+      m.type === 'operation.result' && m.operationId === completedOpId,
+    'A receives completed operation result', 5000);
+    check('A received completed operation result', aDoneResult?.success === true);
 
-    // Confirm A got result + completed status
-    const aDoneResult = drain(a.inbox, 'operation.result');
-    const aDoneStatus = drain(a.inbox, 'operation.status');
-    check('A received completed operation result',
-      aDoneResult.some(m => m.operationId === completedOpId && m.success === true));
-    check('A received completed operation status',
-      aDoneStatus.some(m => m.operationId === completedOpId && m.status === 'completed'));
+    const aDoneStatus = await waitFor(a.inbox, m =>
+      m.type === 'operation.status' && m.operationId === completedOpId && m.status === 'completed',
+    'A receives completed operation status', 5000);
+    check('A received completed operation status', !!aDoneStatus);
 
     // Late joiner D connects AFTER operation completed
     const d_browser = await connectBrowser('D'); conns.push(d_browser);
@@ -601,10 +618,11 @@ async function main() {
     // Cancelling again should fail
     drain(a.inbox, 'error');
     a.ws.send(env('operation.cancel', { operationId: cancelOpId }));
-    await delay(200);
-    const cancelAgainErrors = drain(a.inbox, 'error');
-    check('Double cancel returns error',
-      cancelAgainErrors.some(e => e.code === 'OPERATION_NOT_FOUND' || e.code === 'OPERATION_ALREADY_TERMINAL'));
+
+    const cancelError = await waitFor(a.inbox, m =>
+      m.type === 'error' && (m.code === 'OPERATION_NOT_FOUND' || m.code === 'OPERATION_ALREADY_TERMINAL'),
+    'Double cancel returns error', 5000);
+    check('Double cancel returns error', !!cancelError);
 
     // ── I2a: Agent disconnect → instance cleaned up → TARGET_NOT_FOUND ──
     // The relay auto-cleans up remote instances when the agent WebSocket

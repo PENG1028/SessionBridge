@@ -27,6 +27,8 @@ import os from 'os';
 import { ExtensionHostManager } from './extension-host-manager';
 import { extensionPoints } from './extension-points';
 import { adapterRegistry } from '../extensions/registry';
+import { OperationRunner } from './operation-runner';
+import type { OperationTransport } from './operation-runner';
 
 export class NodeRuntime {
   readonly config: NodeConfig;
@@ -52,6 +54,8 @@ export class NodeRuntime {
   private _writeToShellByRelayId: ((relayId: string, data: string) => boolean) | null = null;
   /** Per-instance remote shells spawned via relay.shell.spawn */
   private remoteShells: Map<string, ChildProcess> = new Map();
+  /** Unified operation runner for relay.operation.* protocol */
+  readonly operationRunner: OperationRunner;
 
   constructor(configOverrides: Partial<NodeConfig> & { relayUrl?: string } = {}) {
     this.config = resolveConfig(configOverrides);
@@ -68,6 +72,12 @@ export class NodeRuntime {
       (key, value) => { this.addLog(`[config] Applied: ${key}=${JSON.stringify(value)}`); },
       this.relay as any,
     );
+
+    // Operation runner: handles relay.operation.* protocol
+    const transport: OperationTransport = {
+      send: (type, body) => { this.relay.send(type, body); },
+    };
+    this.operationRunner = new OperationRunner(transport);
 
     // Extension host manager (dev mode only)
     if (this.config.devMode) {
@@ -118,6 +128,10 @@ export class NodeRuntime {
           onUpstreamMessage(msg);
         } else if (msg.type === 'relay.shell.spawn') {
           this.spawnRemoteShell(msg.instanceId, msg.dir);
+        } else if (msg.type === 'relay.operation.start'
+          || msg.type === 'relay.operation.input'
+          || msg.type === 'relay.operation.cancel') {
+          this.operationRunner.handleMessage(msg);
         }
       });
       const detected = detectNetwork(this.config.relayPort, !!this.config.relayToken);

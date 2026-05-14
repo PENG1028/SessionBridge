@@ -290,6 +290,30 @@ export class RelayConnection extends EventEmitter {
     this.sendRaw(JSON.stringify(envelope('config.ack', { requestId, applied, rejected })));
   }
 
+  /** Send operation output (scoped to operationId). */
+  sendOperationOutput(operationId: string, stream: string, data: string, seq?: number): void {
+    const body: Record<string, unknown> = { operationId, stream, data };
+    if (seq !== undefined) body.seq = seq;
+    this.sendRaw(JSON.stringify(envelope('agent.operation.output', body)));
+  }
+
+  /** Send operation status update. */
+  sendOperationStatus(operationId: string, status: string, kind?: string, detail?: string): void {
+    const body: Record<string, unknown> = { operationId, status };
+    if (kind) body.kind = kind;
+    if (detail) body.detail = detail;
+    this.sendRaw(JSON.stringify(envelope('agent.operation.status', body)));
+  }
+
+  /** Send operation final result. */
+  sendOperationResult(operationId: string, success: boolean, data?: unknown, error?: string, exitCode?: number): void {
+    const body: Record<string, unknown> = { operationId, success };
+    if (data !== undefined) body.data = data;
+    if (error) body.error = error;
+    if (exitCode !== undefined) body.exitCode = exitCode;
+    this.sendRaw(JSON.stringify(envelope('agent.operation.result', body)));
+  }
+
   private scheduleReconnect(): void {
     if (this.closing || this.reconnectTimer) return;
     this.reconnectTimer = setTimeout(() => {
