@@ -6,6 +6,7 @@
 // Mirrors the relay-side RemoteOperationManager protocol.
 
 import os from 'os';
+import { getSystemState } from './introspection';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -197,6 +198,35 @@ export class OperationRunner {
           operationId: ctx.operationId,
           success: true,
           data: { echoed: text, node: hostname },
+        });
+        return;
+      }
+
+      // system-info: runs on the agent device, returns real system state.
+      // Proves remote execution by surfacing agent hostname/platform, not relay's.
+      if (ctx.pluginId === 'system-info') {
+        const state = getSystemState();
+
+        transport.send('agent.operation.output', {
+          operationId: ctx.operationId,
+          stream: 'structured',
+          seq: 1,
+          data: JSON.stringify(state),
+        });
+
+        transport.send('agent.operation.result', {
+          operationId: ctx.operationId,
+          success: true,
+          data: {
+            platform: state.platform,
+            hostname: state.hostname,
+            arch: state.arch,
+            cpus: state.cpus,
+            memory_total: state.memory.total,
+            memory_free: state.memory.free,
+            uptime: state.uptime,
+            nodeVersion: state.nodeVersion,
+          },
         });
         return;
       }

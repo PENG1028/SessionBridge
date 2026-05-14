@@ -334,7 +334,70 @@ async function main() {
       newIds.filter(id => id.startsWith('inst_')).length === 0);
 
     // ── T9: Agent disconnect → error, no fallback ─────────────
-    console.log('\n── T9: Agent disconnect → error, no local fallback ──');
+    // ── T9: Real plugin: system-info → proves agent-side execution ──
+    console.log('\n── T9: Real plugin system-info → agent returns its own system state ──');
+
+    drain(a.inbox, 'operation.status');
+    drain(a.inbox, 'operation.output');
+    drain(a.inbox, 'operation.result');
+
+    a.ws.send(env('operation.start', {
+      nodeId,
+      kind: 'plugin',
+      pluginId: 'system-info',
+      command: 'get',
+    }));
+
+    const sysOutput = await waitFor(a.inbox, m =>
+      m.type === 'operation.output' && m.stream === 'structured' && (m.data || '').includes('hostname'),
+    'A receives system-info output', 8000);
+    check('A received system-info operation.output', !!sysOutput);
+
+    let sysState = null;
+    try { sysState = JSON.parse(sysOutput?.data || '{}'); } catch {}
+    check('System state has hostname', typeof sysState?.hostname === 'string' && sysState.hostname.length > 0);
+    check('System state has platform', typeof sysState?.platform === 'string');
+    check('System state has arch', typeof sysState?.arch === 'string');
+    check('System state has cpus', typeof sysState?.cpus === 'number' && sysState.cpus > 0);
+
+    // Key proof: the hostname must be THIS machine (agent), not VPS relay
+    const localHostname = (await import('os')).hostname();
+    check(`System hostname matches agent machine (${sysState?.hostname})`,
+      sysState?.hostname === localHostname);
+    console.log(`  Agent hostname: ${sysState?.hostname}, platform: ${sysState?.platform}`);
+
+    const sysResult = await waitFor(a.inbox, m =>
+      m.type === 'operation.result' && m.success === true,
+    'A receives system-info result', 8000);
+    check('A received system-info result', !!sysResult);
+    check('Result data has platform', typeof sysResult?.data?.platform === 'string');
+    check('Result data hostname matches agent', sysResult?.data?.hostname === localHostname);
+    check('Result data has nodeVersion', typeof sysResult?.data?.nodeVersion === 'string');
+
+    // Subscribe replay test for system-info
+    const sysOpId = sysOutput?.operationId || sysResult?.operationId;
+    const c = await connectBrowser('sys-c');
+    conns.push(c);
+    await waitFor(c.inbox, m => m.type === 'welcome', 'sys-c welcome', 5000);
+    drain(c.inbox, 'operation.status');
+    drain(c.inbox, 'operation.output');
+    drain(c.inbox, 'operation.result');
+
+    c.ws.send(env('operation.subscribe', { operationId: sysOpId }));
+
+    const cSysOutput = await waitFor(c.inbox, m =>
+      m.type === 'operation.output' && m.operationId === sysOpId,
+    'sys-c receives system-info output replay', 5000);
+    check('Late joiner received system-info output replay', !!cSysOutput);
+
+    const cSysResult = await waitFor(c.inbox, m =>
+      m.type === 'operation.result' && m.operationId === sysOpId,
+    'sys-c receives system-info result replay', 5000);
+    check('Late joiner received system-info result replay', !!cSysResult);
+    check('Late joiner result hostname matches agent', cSysResult?.data?.hostname === localHostname);
+
+    // ── T10: Agent disconnect → error, no local fallback ──
+    console.log('\n── T10: Agent disconnect → error, no local fallback ──');
 
     const beforeDiscIds = new Set((await listInstances()).map(i => i.id));
 
