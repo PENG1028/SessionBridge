@@ -398,6 +398,7 @@ function PageContent() {
       const nodeId: string = msg.nodeId;
       let tabs: any[] = Array.isArray(msg.tabs) ? msg.tabs : [];
       if (!nodeId) return;
+      console.log(`[UI workbench.tabs] nodeId=${nodeId} tabs=${tabs.length}`);
       // For remote agent nodes (inst_xxx), rebind stale tab instanceIds to
       // the remote instance ID, overriding any local instance saved from
       // previous broken sessions.
