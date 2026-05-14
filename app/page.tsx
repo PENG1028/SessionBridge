@@ -1394,15 +1394,19 @@ function PageContent() {
   // window that can later bind to a runtime instance via the InstancesPanel or
   // explicit "New Runtime" actions. Instance-bound views (openMode:
   // 'instance-bound') without an attached instance show an attach state.
+  const workbenchStateRef = useRef(activeWorkbenchState);
+  workbenchStateRef.current = activeWorkbenchState;
   const handleRequestView = useCallback((paneId: string, tabId: string, viewType: ViewType) => {
     const entry = getViewEntry(viewType);
     const defaultTitle = entry?.meta.title || viewType.charAt(0).toUpperCase() + viewType.slice(1);
-    activeWorkbenchDispatch({ type: 'SET_TAB_VIEW', paneId, tabId, viewType, title: defaultTitle });
+    // Preserve existing instanceId so remote-agent binding isn't lost
+    const state = workbenchStateRef.current;
+    const pane = findPaneInTree(state.root, paneId) || state.bottom;
+    const existingTab = pane?.tabs.find(t => t.id === tabId);
+    activeWorkbenchDispatch({ type: 'SET_TAB_VIEW', paneId, tabId, viewType, title: defaultTitle, instanceId: existingTab?.instanceId });
   }, [activeWorkbenchDispatch]);
 
   // Phase 4F: Bind the active pane's current tab to an instanceId (called by views after explicit create).
-  const workbenchStateRef = useRef(activeWorkbenchState);
-  workbenchStateRef.current = activeWorkbenchState;
   const handleBindCurrentTabInstance = useCallback((instanceId: string) => {
     const state = workbenchStateRef.current;
     const activePane = findPaneInTree(state.root, state.activePaneId);
