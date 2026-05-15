@@ -217,23 +217,29 @@ async function main() {
 
     drain(browserLocal.inbox, 'error');
 
-    // Try shell.spawn with the LOCAL instanceId (what UI would use after remap)
-    browserLocal.ws.send(env('shell.spawn', { instanceId: LOCAL_INSTANCE_ID }));
+    // Use the ACTUAL remapped instanceId the UI received — not LOCAL_INSTANCE_ID
+    // from agent registration. This proves the remapped value works end-to-end.
+    const remappedId = termTab?.instanceId || LOCAL_INSTANCE_ID;
+    const localInsts = (await listInstances()).filter(i => i.source === 'local' && i.label === 'PENGSPC');
+    const localIds = new Set(localInsts.map(i => i.id));
+    check('T6: remappedId is a local PENGSPC instance', localIds.has(remappedId));
+    console.log(`  remappedId (from tab):  ${remappedId}`);
+    console.log(`  LOCAL_INSTANCE_ID:     ${LOCAL_INSTANCE_ID}`);
+    console.log(`  Same? ${remappedId === LOCAL_INSTANCE_ID}`);
+    browserLocal.ws.send(env('shell.spawn', { instanceId: remappedId }));
 
     // Should get agent.instance.spawned or shell.spawned (not INSTANCE_NOT_FOUND)
-    let spawnOk = false;
     let spawnError = null;
     try {
       const spawnResult = await waitFor(browserLocal.inbox, m =>
         (m.type === 'agent.instance.spawned' || m.type === 'shell.spawned' || m.type === 'instance.spawned'),
       'shell.spawn success', 8000);
-      spawnOk = true;
-      check('T6: shell.spawn with local instanceId succeeds', true);
+      check('T6: shell.spawn with remapped instanceId succeeds', true);
     } catch {
       // Check if we got an error instead
       const errors = drain(browserLocal.inbox, 'error');
       spawnError = errors.find(e => e.code === 'INSTANCE_NOT_FOUND');
-      check('T6: shell.spawn with local instanceId succeeds (no INSTANCE_NOT_FOUND)',
+      check('T6: shell.spawn with remapped instanceId succeeds (no INSTANCE_NOT_FOUND)',
         !spawnError);
     }
 
