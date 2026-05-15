@@ -132,25 +132,49 @@ function syncTabsByLabel(nodeId: string, tabs: any[], sourceLabel?: string, send
   const label = sourceLabel || instanceManager.get(nodeId)?.label;
   if (!label) return;
   let matchedLocal = false;
+  let primaryLocalId: string | null = null;
   for (const inst of instanceManager.list()) {
     if (inst.label === label && inst.id !== nodeId) {
-      workbenchTabStore.set(inst.id, tabs);
-      broadcastTabs(inst.id, tabs, sender);
-      if (inst.source === 'local') matchedLocal = true;
+      // Remap tab instanceIds from the remote node's ID to this local
+      // instance's ID. Without this, cross-relay tabs carry VPS-side
+      // instance IDs that don't exist on the local relay, causing
+      // INSTANCE_NOT_FOUND when the UI tries to spawn shells.
+      const remapped = tabs.map((t: any) => ({
+        ...t,
+        instanceId: t.instanceId ? inst.id : t.instanceId,
+      }));
+      workbenchTabStore.set(inst.id, remapped);
+      broadcastTabs(inst.id, remapped, sender);
+      if (inst.source === 'local') {
+        matchedLocal = true;
+        primaryLocalId = inst.id;
+      }
     }
   }
   // __local__ is used by browser NodeBar for the local relay's own node.
   // When we matched a local instance, also sync tabs to __local__ subscribers
   // so the browser sees cross-relay updates.
-  if (matchedLocal) {
-    workbenchTabStore.set('__local__', tabs);
-    broadcastTabs('__local__', tabs, sender);
+  if (matchedLocal && primaryLocalId) {
+    const remapped = tabs.map((t: any) => ({
+      ...t,
+      instanceId: t.instanceId ? primaryLocalId! : t.instanceId,
+    }));
+    workbenchTabStore.set('__local__', remapped);
+    broadcastTabs('__local__', remapped, sender);
   } else if (label && localNodeInfo?.name === label) {
     // No local instance matched, but the label matches the local node's name.
     // Broadcast to __local__ subscribers so the browser sees cross-relay tabs
     // even before opening any terminal on the local node.
-    workbenchTabStore.set('__local__', tabs);
-    broadcastTabs('__local__', tabs, sender);
+    const primaryLocal = instanceManager.list().find(
+      (i: any) => i.source === 'local' && i.label === label,
+    );
+    const localId = primaryLocal?.id;
+    const remapped = tabs.map((t: any) => ({
+      ...t,
+      instanceId: (t.instanceId && localId) ? localId : t.instanceId,
+    }));
+    workbenchTabStore.set('__local__', remapped);
+    broadcastTabs('__local__', remapped, sender);
   }
 }
 
