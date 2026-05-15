@@ -325,6 +325,11 @@ async function main() {
   const role = (roleOpt === 'relay' || roleOpt === 'leaf') ? roleOpt : undefined;
   const isDaemon = process.env.BRIDGE_DAEMON === '1';
 
+  /** True when --name or --name=value was present in argv. */
+  function hasArg(name: string): boolean {
+    return args.some(a => a === `--${name}` || a.startsWith(`--${name}=`));
+  }
+
   // Check daemon collision only in foreground mode
   if (!isDaemon && !hasFlag('daemon-mode')) {
     const { isDaemonRunning, statusDaemon } = await import('./daemon');
@@ -338,20 +343,25 @@ async function main() {
     }
   }
 
-  const node = new NodeRuntime({
+  // Only include CLI overrides when the user explicitly passed the flag.
+  // Absent flags must NOT produce `undefined` values — those would
+  // overwrite the user's persisted config in agent.json.
+  const overrides: Record<string, unknown> = {
     label: arg('label', hostname()),
     ...(role ? { role } : {}),
     workingDirectory: arg('dir', process.cwd()),
     relayPort: parseInt(arg('relay-port', '8080'), 10),
-    relayToken: arg('relay-token', '') || undefined,
-    upstreamRelay: arg('upstream', '') || undefined,
     dashboardPort: parseInt(arg('dashboard-port', '9843'), 10),
-    dashboardToken: arg('dashboard-token', '') || undefined,
-    logFile: arg('log-file', ''),
-    pidFile: arg('pid-file', ''),
     devMode: hasFlag('dev'),
-    extensionPaths: arg('extensions', '').split(',').map(s => s.trim()).filter(Boolean),
-  });
+  };
+  if (hasArg('relay-token'))        overrides.relayToken = arg('relay-token', '') || undefined;
+  if (hasArg('upstream'))           overrides.upstreamRelay = arg('upstream', '') || undefined;
+  if (hasArg('dashboard-token'))    overrides.dashboardToken = arg('dashboard-token', '');
+  if (hasArg('log-file'))           overrides.logFile = arg('log-file', '');
+  if (hasArg('pid-file'))           overrides.pidFile = arg('pid-file', '');
+  if (hasArg('extensions'))         overrides.extensionPaths = arg('extensions', '').split(',').map(s => s.trim()).filter(Boolean);
+
+  const node = new NodeRuntime(overrides as Partial<import("../agent-core/config").NodeConfig>);
 
   // Write PID file if requested
   if (node.config.pidFile) {

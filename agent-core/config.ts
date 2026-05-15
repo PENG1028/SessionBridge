@@ -101,8 +101,16 @@ function loadJsonConfig(): Record<string, unknown> {
 export function resolveConfig(cliOverrides: Partial<NodeConfig> & { relayUrl?: string } = {}): NodeConfig {
   const json = loadJsonConfig();
 
+  // Strip undefined values from CLI overrides so absent flags don't
+  // overwrite config-file values.  ({ dashboardToken: undefined }
+  // would otherwise clobber the persisted token from agent.json.)
+  const cleanOverrides: Partial<NodeConfig> = {};
+  for (const [k, v] of Object.entries(cliOverrides) as [keyof NodeConfig, unknown][]) {
+    if (v !== undefined) (cleanOverrides as Record<string, unknown>)[k] = v;
+  }
+
   // Normalize: old configs may have relayUrl instead of upstreamRelay
-  const upstreamRelay = cliOverrides.upstreamRelay
+  const upstreamRelay = cleanOverrides.upstreamRelay
     || cliOverrides.relayUrl
     || (json.relayUrl as string | undefined)
     || (json.upstreamRelay as string | undefined)
@@ -111,10 +119,10 @@ export function resolveConfig(cliOverrides: Partial<NodeConfig> & { relayUrl?: s
   const merged: NodeConfig = {
     ...DEFAULT_CONFIG,
     ...json as Partial<NodeConfig>,
-    ...cliOverrides,
+    ...cleanOverrides,
     upstreamRelay,
     // Ensure label is at least the hostname
-    label: cliOverrides.label || (json.label as string) || '',
+    label: cleanOverrides.label || (json.label as string) || '',
   };
 
   // Auto-generate persistent nodeId on first start, save back to config
