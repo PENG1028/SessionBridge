@@ -602,10 +602,27 @@ export class SurfaceManager {
 
   // ── Internal helpers ────────────────────────────────────────
 
+  /** Send a message to all browser subscribers observing a given node. */
+  broadcastToNodeSubscribers(
+    nodeId: string,
+    sendFn: SendFn,
+    msg: any,
+  ): void {
+    const subs = this.nodeSubscribers.get(nodeId);
+    if (!subs || subs.size === 0) return;
+    for (const ws of subs) {
+      if (ws.readyState === 1) { // WebSocket.OPEN
+        sendFn(ws, msg);
+      } else {
+        subs.delete(ws);
+      }
+    }
+  }
+
   private broadcastToSubscribers(
     surfaceId: string,
     sendFn: SendFn,
-    msg: string,
+    msg: any,
   ): void {
     const subs = this.subscribers.get(surfaceId);
     if (!subs || subs.size === 0) return;

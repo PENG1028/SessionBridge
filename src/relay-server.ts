@@ -201,6 +201,15 @@ function syncSurfacesByLabel(nodeId: string, surfaceData: Record<string, unknown
         else existingTabs.push(tab);
         workbenchTabStore.set(inst.id, existingTabs);
         broadcastTabs(inst.id, existingTabs);
+        // Notify browser subscribers so UI auto-updates without re-entering node
+        surfaceManager.broadcastToNodeSubscribers(
+          inst.id,
+          send as any,
+          envelope("surface.published", {
+            surfaceId: surface.surfaceId,
+            surface: surfaceManager.toJSON(surface),
+          }),
+        );
       }
     }
   }
@@ -260,18 +269,37 @@ export function onUpstreamMessage(msg: any): void {
         else existingTabs.push(tab);
         workbenchTabStore.set(inst.id, existingTabs);
         broadcastTabs(inst.id, existingTabs);
+        surfaceManager.broadcastToNodeSubscribers(
+          inst.id,
+          send as any,
+          envelope("surface.published", {
+            surfaceId: surface.surfaceId,
+            surface: surfaceManager.toJSON(surface),
+          }),
+        );
       }
     }
   }
   if (msg.type === 'surface.update') {
     const surfaceId = String(msg.surfaceId || '');
     if (!surfaceId) return;
-    surfaceManager.update(surfaceId, {
+    const updated = surfaceManager.update(surfaceId, {
       title: msg.patch?.title,
       replayPolicy: msg.patch?.replayPolicy,
       permissions: msg.patch?.permissions,
       scope: msg.patch?.scope,
     } as any);
+    if (updated) {
+      surfaceManager.broadcastToNodeSubscribers(
+        updated.nodeId,
+        send as any,
+        envelope("surface.updated", {
+          surfaceId,
+          nodeId: updated.nodeId,
+          surface: surfaceManager.toJSON(updated),
+        }),
+      );
+    }
   }
   if (msg.type === 'surface.close') {
     const surfaceId = String(msg.surfaceId || '');
@@ -283,6 +311,11 @@ export function onUpstreamMessage(msg: any): void {
       const filtered = tabs.filter((t: any) => t._surfaceId !== surfaceId && t.id !== surfaceId);
       workbenchTabStore.set(nodeId, filtered);
       broadcastTabs(nodeId, filtered);
+      surfaceManager.broadcastToNodeSubscribers(
+        nodeId,
+        send as any,
+        envelope("surface.closed", { surfaceId, nodeId }),
+      );
     }
   }
 }
