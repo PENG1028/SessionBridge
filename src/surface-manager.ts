@@ -66,6 +66,8 @@ export interface SurfaceDebugEvent {
     | 'runtime.result'
     | 'surface.close'
     | 'surface.import'
+    | 'surface.stale.deleted'
+    | 'surface.stale.instance_missing'
     | 'surface.error';
   surfaceId?: string;
   nodeId?: string;
@@ -271,6 +273,32 @@ export class SurfaceManager {
       if (s.runtimeRef.instanceId === instanceId) results.push(s);
     }
     return results;
+  }
+
+  /** Validate all terminal surfaces: delete any whose runtimeRef.instanceId
+   *  no longer exists (checked via the given predicate). Returns the list of
+   *  deleted surfaceIds so the caller can broadcast surface.closed. */
+  validateSurfaces(instanceExists: (instanceId: string) => boolean): Array<{ surfaceId: string; nodeId: string }> {
+    const deleted: Array<{ surfaceId: string; nodeId: string }> = [];
+    for (const surface of this.surfaces.values()) {
+      if (
+        surface.runtimeRef.kind === 'terminal' &&
+        surface.runtimeRef.instanceId &&
+        !instanceExists(surface.runtimeRef.instanceId)
+      ) {
+        const sid = surface.surfaceId;
+        const nid = surface.nodeId;
+        this.delete(sid);
+        this._record('surface.stale.instance_missing', {
+          surfaceId: sid,
+          nodeId: nid,
+          instanceId: surface.runtimeRef.instanceId,
+          message: 'missing instance for terminal surface',
+        });
+        deleted.push({ surfaceId: sid, nodeId: nid });
+      }
+    }
+    return deleted;
   }
 
   linkOperation(surfaceId: string, operationId: string): void {
@@ -637,6 +665,10 @@ export class SurfaceManager {
 
   getSubscribers(surfaceId: string): Set<WebSocket> | undefined {
     return this.subscribers.get(surfaceId);
+  }
+
+  getNodeSubscribers(nodeId: string): Set<WebSocket> | undefined {
+    return this.nodeSubscribers.get(nodeId);
   }
 
   toJSON(surface: SharedSurface): Record<string, unknown> {

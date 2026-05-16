@@ -339,14 +339,12 @@ export function WorkbenchLayout({ state, dispatch, renderView, onRequestView, on
 
   const onAddTab = useCallback((paneId: string) => {
     const tabId = genTabId();
-    const pane = findPane(state.root, paneId) || state.bottom;
-    const activeTab = pane?.tabs.find(t => t.id === pane.activeTabId);
     dispatch({
       type: 'ADD_TAB',
       paneId,
-      tab: { id: tabId, title: 'New', viewType: 'empty', instanceId: activeTab?.instanceId },
+      tab: { id: tabId, title: 'New', viewType: 'empty' },
     });
-  }, [dispatch, state]);
+  }, [dispatch]);
 
   const handleReorderTabs = useCallback((paneId: string, tabId: string, targetId: string) => {
     dispatch({ type: 'REORDER_TABS', paneId, tabId, targetId });

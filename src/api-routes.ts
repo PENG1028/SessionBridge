@@ -305,7 +305,7 @@ export function registerApiRoutes(
     if (ctx.checkPermission && !ctx.checkPermission(res, 'processManagement', { action: 'create_instance' })) return true;
     readBody(req)
       .then((body) => {
-        let parsed: { dir?: string; label?: string; adapterId?: string };
+        let parsed: { dir?: string; label?: string; adapterId?: string; targetNodeId?: string };
         try {
           parsed = JSON.parse(body);
         } catch {
@@ -313,11 +313,62 @@ export function registerApiRoutes(
           return;
         }
 
-        const { dir, label, adapterId } = parsed;
+        const { dir, label, adapterId, targetNodeId } = parsed;
 
         // Phase 4F: adapterId is required — no silent fallback to default.
         if (!adapterId) {
           json(res, 400, { error: "adapterId is required. Use an explicit adapter (e.g. 'claude-code', 'shell')." });
+          return;
+        }
+
+        const targetNode = targetNodeId ? instanceManager.get(String(targetNodeId)) : undefined;
+        if (targetNode?.source === 'remote') {
+          if (!targetNode.agentConnection || targetNode.agentConnection.readyState !== 1) {
+            json(res, 503, { success: false, error: `Target node ${targetNodeId} is disconnected` });
+            return;
+          }
+          const remoteDir = dir && dir !== '.' ? dir : targetNode.dir;
+          const newInst = instanceManager.create(
+            remoteDir,
+            label || 'Terminal',
+            'remote',
+            adapterId,
+          );
+          newInst.agentConnection = targetNode.agentConnection;
+          newInst.status = 'stopped';
+
+          const identityKey = `${newInst.source}:${newInst.dir}`;
+          const alias = ctx.aliases?.get(identityKey);
+          if (alias) newInst.label = alias;
+
+          ctx.auditLog?.log("instance.created", "api", {
+            dir: newInst.dir,
+            label: newInst.label,
+            adapterId: newInst.adapterId,
+            targetNodeId,
+          }, newInst.id);
+
+          broadcast(
+            envelope("instance.added", {
+              instance: {
+                id: newInst.id,
+                dir: newInst.dir,
+                label: newInst.label,
+                status: newInst.status,
+                adapterId: newInst.adapterId,
+                source: newInst.source,
+              },
+            }),
+          );
+
+          json(res, 201, {
+            success: true,
+            instance: {
+              id: newInst.id,
+              dir: newInst.dir,
+              label: newInst.label,
+            },
+          });
           return;
         }
 

@@ -401,11 +401,12 @@ function PageContent() {
       const nodeId: string = msg.nodeId;
       let tabs: any[] = Array.isArray(msg.tabs) ? msg.tabs : [];
       if (!nodeId) return;
-      // For remote agent nodes (inst_xxx), rebind stale tab instanceIds to
-      // the remote instance ID, overriding any local instance saved from
-      // previous broken sessions.
-      if (nodeId.startsWith('inst_')) {
-        tabs = tabs.map((t: any) => ({ ...t, instanceId: nodeId }));
+      // Detect stale terminal tabs: instanceId === nodeId but no _surfaceId
+      for (const t of tabs) {
+        if (t.viewType === 'terminal' && t.instanceId === nodeId && !t._surfaceId) {
+          t._stale = true;
+          debugLog('stale tab detected (workbench.tabs)', { tabId: t.id, instanceId: t.instanceId, nodeId });
+        }
       }
       setAppState(prev => {
         const currentWs = prev.instanceStates[nodeId];
@@ -420,7 +421,7 @@ function PageContent() {
           return prev;
         }
         // Only update if tabs actually differ — compare full fields:
-        // id, title, viewType, instanceId.  A tab can change from 'empty'
+        // id, title, viewType, instanceId, _stale.  A tab can change from 'empty'
         // to 'terminal' without its id changing, and we must pick that up.
         const tabEq = (a: any, b: any) =>
           a.id === b.id && a.title === b.title && a.viewType === b.viewType && a.instanceId === b.instanceId;
@@ -497,6 +498,12 @@ function PageContent() {
                 currentWs = workbenchReducer(currentWs, { type: 'CLOSE_TAB', paneId: paneAfterAdd.id, tabId: empty.id });
               }
             }
+            // Detect stale terminal tabs: instanceId === nodeId but no _surfaceId
+            for (const t of paneAfterAdd.tabs) {
+              if (t.viewType === 'terminal' && t.instanceId === surface.nodeId && !t._surfaceId && !t._stale) {
+                debugLog('stale tab detected (surface.published)', { tabId: t.id, instanceId: t.instanceId, nodeId: surface.nodeId });
+              }
+            }
           }
           return { ...prev, instanceStates: { ...prev.instanceStates, [surface.nodeId]: currentWs } };
         });
@@ -514,6 +521,7 @@ function PageContent() {
             // the surfaces are lost until the user re-enters the node.
             currentWs = createInitialState(nodeId);
           }
+          const surfaceIds = new Set(surfaces.map(s => s.surfaceId));
           for (const s of surfaces) {
             // Skip if surface tab already exists
             if (collectAllTabs(currentWs).some(t => t._surfaceId === s.surfaceId || t.id === s.surfaceId)) { debugLog('surface.list SKIP: tab already exists', { surfaceId: s.surfaceId }); continue; }
@@ -551,6 +559,34 @@ function PageContent() {
             const shouldActivate = existingPane.tabs.every(t => t.viewType === 'empty');
             currentWs = workbenchReducer(currentWs, { type: 'ADD_TAB', paneId: existingPane.id, tab, activate: shouldActivate });
           }
+          // Detect stale surface references: tabs with _surfaceId pointing to
+          // a surface that no longer exists in the relay's surface list.
+          const activePane2 = findPaneInTree(currentWs.root, currentWs.activePaneId);
+          if (activePane2) {
+            for (const t of activePane2.tabs) {
+              if (t._surfaceId && !surfaceIds.has(t._surfaceId)) {
+                debugLog('stale surface removed (surface.list)', { tabId: t.id, _surfaceId: t._surfaceId, nodeId });
+                currentWs = workbenchReducer(currentWs, {
+                  type: 'SET_TAB_VIEW',
+                  paneId: activePane2.id,
+                  tabId: t.id,
+                  viewType: t.viewType,
+                  title: t.title,
+                  instanceId: t.instanceId,
+                  _surfaceId: undefined,
+                  _operationId: undefined,
+                  _stale: true,
+                } as any);
+              }
+            }
+          }
+          // Detect stale terminal tabs: instanceId === nodeId but no _surfaceId
+          const allTabs = collectAllTabs(currentWs);
+          for (const t of allTabs) {
+            if (t.viewType === 'terminal' && t.instanceId === nodeId && !t._surfaceId && !t._stale) {
+              debugLog('stale tab detected (surface.list)', { tabId: t.id, instanceId: t.instanceId, nodeId });
+            }
+          }
           // Clean up empty placeholder tab (from createInitialState) when
           // real tabs exist. Without this the empty "New" tab persists
           // alongside real surface tabs, causing visual duplication.
@@ -570,14 +606,44 @@ function PageContent() {
     } else if (msg.type === 'surface.closed') {
       const closedId: string = msg.surfaceId;
       if (closedId) {
+        debugLog('RECEIVED surface.closed', { surfaceId: closedId });
         setAppState(prev => {
           const next = { ...prev, instanceStates: { ...prev.instanceStates } };
           for (const [nid, ws] of Object.entries(next.instanceStates)) {
-            const pane = findPaneInTree(ws.root, ws.activePaneId);
-            if (!pane) continue;
-            const tab = pane.tabs.find(t => t._surfaceId === closedId || t.id === closedId);
-            if (tab) {
-              next.instanceStates[nid] = workbenchReducer(ws, { type: 'CLOSE_TAB', paneId: pane.id, tabId: tab.id });
+            // Walk all panes (root + bottom), not just the active one
+            const panes: any[] = [];
+            function collectPanes(node: any) {
+              if (!node) return;
+              if (node.kind === 'pane') panes.push(node);
+              if (node.children) for (const c of node.children) collectPanes(c);
+            }
+            collectPanes(ws.root);
+            if (ws.bottom) collectPanes(ws.bottom);
+            for (const pane of panes) {
+              const tab = pane.tabs.find((t: PaneTab) => t._surfaceId === closedId || t.id === closedId);
+              if (tab) {
+                // If this is the only real tab, strip surface metadata instead of
+                // closing — keeps at least one tab visible and avoids ShellTerminal
+                // trying to connect to a dead operation.
+                const realTabs = pane.tabs.filter((t: PaneTab) => t.viewType !== 'empty');
+                if (realTabs.length <= 1 && tab.viewType !== 'empty') {
+                  debugLog('surface.closed STRIP: last real tab, removing surface metadata', { tabId: tab.id, surfaceId: closedId });
+                  next.instanceStates[nid] = workbenchReducer(ws, {
+                    type: 'SET_TAB_VIEW',
+                    paneId: pane.id,
+                    tabId: tab.id,
+                    viewType: tab.viewType,
+                    title: tab.title,
+                    instanceId: tab.instanceId,
+                    _surfaceId: undefined,
+                    _operationId: undefined,
+                    _stale: true,
+                  } as any);
+                } else {
+                  debugLog('surface.closed CLOSE_TAB', { tabId: tab.id, surfaceId: closedId });
+                  next.instanceStates[nid] = workbenchReducer(ws, { type: 'CLOSE_TAB', paneId: pane.id, tabId: tab.id });
+                }
+              }
             }
           }
           return next;
@@ -1033,12 +1099,26 @@ function PageContent() {
   }, [activeNodeWsUrl, wsUrl, projectInfo, nodeProjectInfo]);
 
   const createNodeInstance = useCallback(async (dir: string, label?: string, adapterId?: string) => {
-    if (activeNodeWsUrl === wsUrl) return createInstance(dir, label, adapterId);
+    const targetNodeId = appStateRef.current.activeInstanceId || undefined;
+    if (activeNodeWsUrl === wsUrl) {
+      try {
+        const res = await fetch(`${wsToHttpUrl(wsUrl)}/api/instances`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dir, label, adapterId, targetNodeId }),
+        });
+        const result = await res.json();
+        if (!res.ok && !result.error) result.error = `${res.status} ${res.statusText}`;
+        return result;
+      } catch {
+        return createInstance(dir, label, adapterId);
+      }
+    }
     try {
       const res = await fetch(`${wsToHttpUrl(activeNodeWsUrl)}/api/instances`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dir, label, adapterId }),
+        body: JSON.stringify({ dir, label, adapterId, targetNodeId }),
       });
       const result = await res.json();
       if (!res.ok && !result.error) result.error = `${res.status} ${res.statusText}`;
@@ -1428,7 +1508,7 @@ function PageContent() {
           return appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: nodeId });
         }
         // Start with empty initial state; server tabs arrive async via workbench.tabs
-        const newLayout = createInitialState(nodeId.startsWith('inst_') ? nodeId : undefined);
+        const newLayout = createInitialState();
         return appReducer(
           { ...prev, instanceStates: { ...prev.instanceStates, [nodeId]: newLayout } },
           { type: 'SET_ACTIVE_INSTANCE', instanceId: nodeId }

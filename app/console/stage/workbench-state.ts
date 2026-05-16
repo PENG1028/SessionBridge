@@ -16,6 +16,9 @@ export interface PaneTab {
   _surfaceId?: string;
   /** RemoteOperation id — for sending input/cancel to the surface's runtime */
   _operationId?: string;
+  /** Set when a terminal tab's instanceId points to the node itself but has no
+   *  valid surface backing. The tab should not render as a usable terminal. */
+  _stale?: boolean;
 }
 
 export interface PaneState {

@@ -884,6 +884,9 @@ async function spawnShellForWs(ws: WebSocket, instanceId?: string): Promise<impo
   if (instanceId) {
     const existing = instanceManager.get(instanceId);
     if (existing) {
+      if (existing.source === 'remote') {
+        i = existing;
+      } else {
       // Use the instance's own adapter — NOT resolveAdapterByCapability('terminal', true).
       // resolveAdapterByCapability returns the FIRST registered adapter with terminal:true,
       // which may be claude-code (also terminal-capable) rather than shell. Using the
@@ -902,6 +905,7 @@ async function spawnShellForWs(ws: WebSocket, instanceId?: string): Promise<impo
         throw Object.assign(new Error(`Instance ${instanceId} is not terminal-capable`), { _reported: true });
       }
       i = existing;
+      }
     } else {
       // Explicit instanceId was provided but not found — must not fallback to local shell.
       // This prevents stale instanceIds (e.g. from localStorage after relay restart) from
@@ -957,6 +961,10 @@ async function spawnShellForWs(ws: WebSocket, instanceId?: string): Promise<impo
   }
 
   // ── Fresh spawn ──────────────────────────────────
+  if (!terminalAdapter) {
+    send(ws, envelope("error", { code: "INVALID_ADAPTER", message: "No local terminal adapter available" }));
+    throw Object.assign(new Error("No local terminal adapter available"), { _reported: true });
+  }
   subscribeShellOutput(i.id, ws);
   i.handle = await terminalAdapter.start({
     workspaceId: i.id,
@@ -1733,7 +1741,27 @@ const serverRequestHandler = async (req: import("http").IncomingMessage, res: im
     req.on("data", (c) => body += c);
     req.on("end", () => {
       try {
-        const { dir, label, adapterId } = JSON.parse(body);
+        const { dir, label, adapterId, targetNodeId } = JSON.parse(body);
+        const targetNode = targetNodeId ? instanceManager.get(String(targetNodeId)) : undefined;
+        if (targetNode?.source === 'remote') {
+          if (!targetNode.agentConnection || targetNode.agentConnection.readyState !== WebSocket.OPEN) {
+            res.writeHead(503, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ success: false, error: `Target node ${targetNodeId} is disconnected` }));
+            return;
+          }
+          const remoteDir = typeof dir === 'string' && dir && dir !== '.'
+            ? dir
+            : targetNode.dir;
+          const remoteAdapterId = adapterId || 'shell';
+          const newInst = instanceManager.create(remoteDir, label || 'Terminal', 'remote', remoteAdapterId);
+          applyAlias(newInst);
+          newInst.agentConnection = targetNode.agentConnection;
+          newInst.status = 'stopped';
+          broadcast(envelope("instance.added", { instance: { id: newInst.id, dir: newInst.dir, label: newInst.label, status: newInst.status, adapterId: newInst.adapterId, source: newInst.source } }));
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: true, instance: { id: newInst.id, dir: newInst.dir, label: newInst.label } }));
+          return;
+        }
         const targetDir = resolve(process.cwd(), dir);
         if (!existsSync(targetDir)) {
           res.writeHead(400); res.end(JSON.stringify({ error: "Directory not found" }));
@@ -2183,6 +2211,25 @@ function setupWssHandlers(): void {
         broadcast(envelope("instance.removed", { instanceId: agentInst.id }));
         notifyBus({ scenarioId: 'agent.disconnected', severity: 'warning', title: `Agent disconnected: ${agentInst.label}` });
         auditLog.log('agent.unregistered', agentInst.label, {}, agentInst.id);
+        // Validate surfaces: delete any terminal surface pointing to the
+        // disconnected instance, broadcast surface.closed to node subscribers.
+        const staleSurfaces = surfaceManager.validateSurfaces(
+          (id) => !!instanceManager.get(id)
+        );
+        for (const { surfaceId, nodeId } of staleSurfaces) {
+          const nodeSubs = surfaceManager.getNodeSubscribers(nodeId);
+          if (nodeSubs) {
+            const closeMsg = envelope("surface.closed", { surfaceId, nodeId });
+            for (const client of nodeSubs) {
+              if (client.readyState === WebSocket.OPEN) send(client, closeMsg);
+            }
+          }
+          // Remove from workbench tab store
+          const tabs = workbenchTabStore.get(nodeId) || [];
+          const filtered = tabs.filter((t: any) => t.id !== surfaceId && t._surfaceId !== surfaceId);
+          workbenchTabStore.set(nodeId, filtered);
+          broadcastTabs(nodeId, filtered);
+        }
       }
       return;
     }
@@ -2908,6 +2955,23 @@ function setupWssHandlers(): void {
         send(ws, envelope("error", { code: "MISSING_SURFACE_ID", message: "surfaceId is required" }));
         return;
       }
+      const existingSurface = surfaceManager.get(surfaceId);
+      if (
+        existingSurface?.runtimeRef.kind === 'terminal' &&
+        existingSurface.runtimeRef.instanceId &&
+        !instanceManager.get(existingSurface.runtimeRef.instanceId)
+      ) {
+        surfaceManager.recordDebugEvent({
+          ts: Date.now(), kind: 'surface.stale.instance_missing',
+          surfaceId, nodeId: existingSurface.nodeId,
+          instanceId: existingSurface.runtimeRef.instanceId,
+          message: 'missing instance for terminal surface (surface.subscribe)',
+        });
+        surfaceManager.delete(surfaceId);
+        send(ws, envelope("surface.closed", { surfaceId, nodeId: existingSurface.nodeId }));
+        send(ws, envelope("error", { code: "SURFACE_STALE", message: `Surface ${surfaceId} points to a missing terminal instance` }));
+        return;
+      }
 
       const surface = surfaceManager.subscribe(surfaceId, ws,
         (w: any, m: any) => send(w, m),
@@ -2931,6 +2995,23 @@ function setupWssHandlers(): void {
       if (!nodeId) {
         send(ws, envelope("error", { code: "MISSING_NODE", message: "nodeId is required" }));
         return;
+      }
+
+      for (const surface of surfaceManager.listByNode(nodeId)) {
+        if (
+          surface.runtimeRef.kind === 'terminal' &&
+          surface.runtimeRef.instanceId &&
+          !instanceManager.get(surface.runtimeRef.instanceId)
+        ) {
+          surfaceManager.recordDebugEvent({
+            ts: Date.now(), kind: 'surface.stale.instance_missing',
+            surfaceId: surface.surfaceId, nodeId,
+            instanceId: surface.runtimeRef.instanceId,
+            message: 'missing instance for terminal surface (surface.subscribeNode)',
+          });
+          surfaceManager.delete(surface.surfaceId);
+          send(ws, envelope("surface.closed", { surfaceId: surface.surfaceId, nodeId }));
+        }
       }
 
       const surfaces = surfaceManager.subscribeNode(nodeId, ws,
