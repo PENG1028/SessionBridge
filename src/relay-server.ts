@@ -180,6 +180,33 @@ function syncTabsByLabel(nodeId: string, tabs: any[], sourceLabel?: string, send
 }
 
 /**
+ * After publishing a surface for a nodeId, sync to any other instances
+ * that share the same label (hostname). Mirrors syncTabsByLabel for surfaces.
+ */
+function syncSurfacesByLabel(nodeId: string, surfaceData: Record<string, unknown>, sourceLabel?: string): void {
+  const label = sourceLabel || instanceManager.get(nodeId)?.label;
+  if (!label || !surfaceData.surfaceId) return;
+  for (const inst of instanceManager.list()) {
+    if (inst.label === label && inst.id !== nodeId) {
+      const surface = surfaceManager.importFromUpstream(
+        surfaceData as any,
+        inst.id,
+      );
+      if (surface) {
+        // Project into workbench.tabs for backward-compat
+        const tab = surfaceManager.toWorkbenchTab(surface);
+        const existingTabs = workbenchTabStore.get(inst.id) || [];
+        const idx = existingTabs.findIndex((t: any) => t.id === tab.id);
+        if (idx >= 0) existingTabs[idx] = tab;
+        else existingTabs.push(tab);
+        workbenchTabStore.set(inst.id, existingTabs);
+        broadcastTabs(inst.id, existingTabs);
+      }
+    }
+  }
+}
+
+/**
  * Handle a workbench message forwarded from the upstream relay.
  * Called by NodeRuntime when the upstream RelayConnection emits 'relayMessage'.
  */
@@ -208,6 +235,54 @@ export function onUpstreamMessage(msg: any): void {
     // local store for a different instance ID via label matching.
     if (tabs.length > 0) {
       syncTabsByLabel(nodeId, tabs, msg._label);
+    }
+  }
+  // ── surface.* cross-relay forwarding ──
+  if (msg.type === 'surface.publish') {
+    const surfaceData = msg.surface;
+    const nodeId = String(msg.nodeId || surfaceData?.nodeId || '');
+    if (!nodeId || !surfaceData?.surfaceId) return;
+    const inst = instanceManager.get(nodeId);
+    if (!inst) {
+      syncSurfacesByLabel(nodeId, surfaceData, msg._label);
+      return;
+    }
+    const existing = surfaceManager.get(surfaceData.surfaceId as string);
+    if (!existing) {
+      surfaceManager.importFromUpstream(surfaceData as any, inst.id);
+      // Project into workbench.tabs for backward-compat discovery
+      const surface = surfaceManager.get(surfaceData.surfaceId as string);
+      if (surface) {
+        const tab = surfaceManager.toWorkbenchTab(surface);
+        const existingTabs = workbenchTabStore.get(inst.id) || [];
+        const idx = existingTabs.findIndex((t: any) => t.id === tab.id);
+        if (idx >= 0) existingTabs[idx] = tab;
+        else existingTabs.push(tab);
+        workbenchTabStore.set(inst.id, existingTabs);
+        broadcastTabs(inst.id, existingTabs);
+      }
+    }
+  }
+  if (msg.type === 'surface.update') {
+    const surfaceId = String(msg.surfaceId || '');
+    if (!surfaceId) return;
+    surfaceManager.update(surfaceId, {
+      title: msg.patch?.title,
+      replayPolicy: msg.patch?.replayPolicy,
+      permissions: msg.patch?.permissions,
+      scope: msg.patch?.scope,
+    } as any);
+  }
+  if (msg.type === 'surface.close') {
+    const surfaceId = String(msg.surfaceId || '');
+    const nodeId = String(msg.nodeId || '');
+    if (!surfaceId) return;
+    surfaceManager.delete(surfaceId);
+    if (nodeId) {
+      const tabs = workbenchTabStore.get(nodeId) || [];
+      const filtered = tabs.filter((t: any) => t._surfaceId !== surfaceId && t.id !== surfaceId);
+      workbenchTabStore.set(nodeId, filtered);
+      broadcastTabs(nodeId, filtered);
     }
   }
 }
@@ -2615,6 +2690,25 @@ function setupWssHandlers(): void {
       workbenchTabStore.set(nodeId, existingTabs);
       broadcastTabs(nodeId, existingTabs, ws);
 
+      // Cross-relay: forward to upstream so other relays see this surface.
+      // Include _label so the receiving relay can remap instanceId by hostname.
+      const nodeInst = instanceManager.get(nodeId);
+      const label = nodeInst?.label;
+      _sendUpstream?.("surface.publish", {
+        nodeId,
+        surface: surfaceToJSON(surface),
+        _label: label,
+      });
+      // Also forward surface to the remote agent's WS if this node belongs
+      // to an agent connection (same pattern as workbench.tabs).
+      if (nodeInst?.source === 'remote' && nodeInst.agentConnection && nodeInst.agentConnection !== ws) {
+        send(nodeInst.agentConnection, envelope("surface.publish", {
+          nodeId,
+          surface: surfaceToJSON(surface),
+          _label: label,
+        }));
+      }
+
       return;
     }
 
@@ -2658,6 +2752,8 @@ function setupWssHandlers(): void {
         nodeId,
         surfaces: surfaces.map(s => surfaceToJSON(s)),
       }));
+      // Notify upstream relay so it forwards surface updates for this node
+      _sendUpstream?.("surface.subscribeNode", { nodeId });
       return;
     }
 
@@ -2665,6 +2761,7 @@ function setupWssHandlers(): void {
       const nodeId = String(msg.nodeId || "");
       if (nodeId) {
         surfaceManager.unsubscribeNode(nodeId, ws);
+        _sendUpstream?.("surface.unsubscribeNode", { nodeId });
       }
       return;
     }
@@ -2706,6 +2803,11 @@ function setupWssHandlers(): void {
         }
       }
 
+      _sendUpstream?.("surface.update", {
+        surfaceId,
+        patch: { title: msg.title, replayPolicy: msg.replayPolicy, permissions: msg.permissions, scope: msg.scope },
+      });
+
       return;
     }
 
@@ -2741,6 +2843,8 @@ function setupWssHandlers(): void {
       const filtered = nodeTabs.filter((t: any) => t.id !== surfaceId && t._surfaceId !== surfaceId);
       workbenchTabStore.set(nodeId, filtered);
       broadcastTabs(nodeId, filtered);
+
+      _sendUpstream?.("surface.close", { surfaceId, nodeId });
 
       return;
     }

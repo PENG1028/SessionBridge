@@ -437,7 +437,9 @@ function PageContent() {
       if (surface?.surfaceId && surface.nodeId) {
         setAppState(prev => {
           let currentWs = prev.instanceStates[surface.nodeId];
-          if (!currentWs) return prev;
+          if (!currentWs) {
+            currentWs = createInitialState(surface.nodeId);
+          }
           // Already tracked by surfaceId
           if (collectAllTabs(currentWs).some(t => t._surfaceId === surface.surfaceId || t.id === surface.surfaceId)) return prev;
           const instId = surface.runtimeRef?.instanceId;
@@ -480,7 +482,12 @@ function PageContent() {
       if (nodeId && surfaces.length > 0) {
         setAppState(prev => {
           let currentWs = prev.instanceStates[nodeId];
-          if (!currentWs) return prev;
+          if (!currentWs) {
+            // surface.list arrived before setAppState committed this nodeId.
+            // Create a minimal state instead of dropping the list — otherwise
+            // the surfaces are lost until the user re-enters the node.
+            currentWs = createInitialState(nodeId);
+          }
           for (const s of surfaces) {
             // Skip if surface tab already exists
             if (collectAllTabs(currentWs).some(t => t._surfaceId === s.surfaceId || t.id === s.surfaceId)) continue;
@@ -1553,19 +1560,47 @@ function PageContent() {
       instanceId,
     });
     // Publish shared surface for cross-device visibility
-    const nodeId = appStateRef.current.activeInstanceId;
-    if (nodeId && activeTab.viewType === 'terminal') {
-      sendMessage('surface.publish', {
-        nodeId,
-        title: activeTab.title || 'Terminal',
-        viewType: 'terminal',
-        scope: 'node',
-        shared: true,
-        runtimeRef: { kind: 'terminal', instanceId },
-        replayPolicy: { mode: 'tail', lines: 5000, bytes: 500000 },
-      });
-    }
+    publishSurfaceForTab(activeTab, instanceId);
   }, [activeWorkbenchDispatch, sendMessage]);
+
+  const publishSurfaceForTab = useCallback((tab: PaneTab, instanceId: string) => {
+    const nodeId = appStateRef.current.activeInstanceId;
+    if (!nodeId || tab.viewType !== 'terminal' || tab._surfaceId) return;
+    sendMessage('surface.publish', {
+      nodeId,
+      title: tab.title || 'Terminal',
+      viewType: 'terminal',
+      scope: 'node',
+      shared: true,
+      runtimeRef: { kind: 'terminal', instanceId },
+      replayPolicy: { mode: 'tail', lines: 5000, bytes: 500000 },
+    });
+  }, [sendMessage]);
+
+  // Ensure a surface is published for an existing terminal tab that already
+  // has an instanceId but no _surfaceId (e.g. restored from localStorage or
+  // synced via workbench.tabs). Without this, other devices cannot discover
+  // the terminal via surface.subscribeNode.
+  const handleEnsureSurfacePublished = useCallback((instanceId: string) => {
+    const state = workbenchStateRef.current;
+    const nodeId = appStateRef.current.activeInstanceId;
+    if (!nodeId) return;
+    // Walk the pane tree to find a tab with this instanceId and no _surfaceId
+    function findTabInPane(pane: any): PaneTab | undefined {
+      if (!pane) return undefined;
+      const tab = pane.tabs?.find((t: PaneTab) => t.instanceId === instanceId && !t._surfaceId);
+      if (tab) return tab;
+      for (const child of pane.children || []) {
+        const found = findTabInPane(child);
+        if (found) return found;
+      }
+      return undefined;
+    }
+    const tab = findTabInPane(state.root) || (state.bottom ? findTabInPane(state.bottom) : undefined);
+    if (tab) {
+      publishSurfaceForTab(tab, instanceId);
+    }
+  }, [sendMessage, publishSurfaceForTab]);
 
   // ── Close tab: kill if not kept ──
   const handleCloseTab = useCallback((_paneId: string, _tabId: string, tab: PaneTab) => {
@@ -1618,6 +1653,7 @@ function PageContent() {
     createInstance: createNodeInstance,
     instances,
     bindCurrentTabInstance: handleBindCurrentTabInstance,
+    ensureSurfacePublished: handleEnsureSurfacePublished,
     activeInstanceId,
     projectCwd: activeNodeProjectInfo?.cwd || '.',
     activateInstance,

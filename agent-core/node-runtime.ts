@@ -124,7 +124,7 @@ export class NodeRuntime {
         setRelayUpstream((type, body) => this.relay.send(type, body));
       }
       this.relay.on('relayMessage', (msg: any) => {
-        if (msg.type?.startsWith('workbench.')) {
+        if (msg.type?.startsWith('workbench.') || msg.type?.startsWith('surface.')) {
           onUpstreamMessage(msg);
         } else if (msg.type === 'relay.shell.spawn') {
           this.spawnRemoteShell(msg.instanceId, msg.dir);

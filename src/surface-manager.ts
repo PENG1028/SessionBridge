@@ -545,6 +545,61 @@ export class SurfaceManager {
     };
   }
 
+  /** Import a surface from an upstream relay with instanceId remapping.
+   *  Uses the same surfaceId so cross-relay update/close messages match.
+   *  Generates a new local operationId for terminal surfaces. */
+  importFromUpstream(
+    surfaceData: {
+      surfaceId: string;
+      nodeId: string;
+      title: string;
+      viewType: string;
+      pluginId?: string;
+      scope: string;
+      shared: boolean;
+      runtimeRef: SharedSurface['runtimeRef'];
+      replayPolicy?: ReplayPolicy;
+      permissions?: SharedSurface['permissions'];
+      createdBy?: string;
+      createdAt?: number;
+    },
+    remappedInstanceId: string,
+  ): SharedSurface | null {
+    // Skip if already exists
+    if (this.surfaces.has(surfaceData.surfaceId)) {
+      return this.surfaces.get(surfaceData.surfaceId)!;
+    }
+    const now = Date.now();
+    const policy = surfaceData.replayPolicy || defaultReplayPolicy(surfaceData.viewType);
+    const remappedRuntimeRef = {
+      ...surfaceData.runtimeRef,
+      instanceId: remappedInstanceId,
+      // operationId from upstream is relay-local; we'll generate a new one
+    };
+    const surface: SharedSurface = {
+      surfaceId: surfaceData.surfaceId,
+      nodeId: surfaceData.nodeId,
+      title: surfaceData.title,
+      viewType: surfaceData.viewType,
+      pluginId: surfaceData.pluginId,
+      scope: (surfaceData.scope as SharedSurface['scope']) || 'node',
+      shared: surfaceData.shared !== false,
+      runtimeRef: remappedRuntimeRef,
+      replayPolicy: policy,
+      permissions: surfaceData.permissions,
+      createdBy: surfaceData.createdBy || 'upstream',
+      createdAt: surfaceData.createdAt || now,
+      updatedAt: now,
+    };
+    this.surfaces.set(surface.surfaceId, surface);
+    // Generate local operationId for terminal surfaces
+    if (surface.runtimeRef.kind === 'terminal') {
+      const localOpId = this.nextOperationId();
+      this.linkOperation(surface.surfaceId, localOpId);
+    }
+    return surface;
+  }
+
   // ── Internal helpers ────────────────────────────────────────
 
   private broadcastToSubscribers(

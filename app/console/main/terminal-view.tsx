@@ -20,10 +20,11 @@ function env(type: string, body: Record<string, unknown> = {}) {
 }
 
 export function TerminalView({ instanceId, _surfaceId, _operationId }: TerminalViewProps) {
-  const { wsUrl, token, createInstance, bindCurrentTabInstance, projectCwd } = useWorkbench();
+  const { wsUrl, token, createInstance, bindCurrentTabInstance, ensureSurfacePublished, projectCwd } = useWorkbench();
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const autoCreated = useRef(false);
+  const surfacePublished = useRef(false);
   const [cwd, setCwd] = useState(() => {
     if (typeof window !== 'undefined' && getRestoreLastPath()) {
       return getLastActiveDir() || projectCwd || '.';
@@ -55,6 +56,16 @@ export function TerminalView({ instanceId, _surfaceId, _operationId }: TerminalV
       }
     })();
   }, [instanceId, createInstance, bindCurrentTabInstance, projectCwd]);
+
+  // Publish surface for tabs that already have an instanceId (e.g. restored
+  // from localStorage or synced via workbench.tabs). Without this, other
+  // devices cannot discover the terminal via surface.subscribeNode.
+  useEffect(() => {
+    if (instanceId && !_surfaceId && !surfacePublished.current) {
+      surfacePublished.current = true;
+      ensureSurfacePublished(instanceId);
+    }
+  }, [instanceId, _surfaceId, ensureSurfacePublished]);
 
   // Sync cwd when projectCwd changes — but only if RESTORE is OFF
   // or there's no saved last-active directory.

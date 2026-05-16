@@ -101,6 +101,7 @@ export interface WorkbenchContextValue {
   instances: any[];
   createInstance: (dir: string, label?: string, adapterId?: string) => Promise<any>;
   bindCurrentTabInstance: (instanceId: string) => void;
+  ensureSurfacePublished: (instanceId: string) => void;
   activeInstanceId: string | null;
   projectCwd: string;
   activateInstance: (id: string) => void;
