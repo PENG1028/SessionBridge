@@ -45,6 +45,12 @@ export function TerminalView({ instanceId, _surfaceId, _operationId }: TerminalV
       try {
         const result = await createInstance(cwdRef.current, 'Terminal', 'shell');
         if (result?.instance?.id) {
+          // Mark surface as published BEFORE bindCurrentTabInstance, which
+          // dispatches SET_TAB_VIEW (setting instanceId) and sends
+          // surface.publish.  Without this, the ensureSurfacePublished
+          // effect below re-fires on the new instanceId and sends a
+          // duplicate surface.publish.
+          surfacePublished.current = true;
           bindCurrentTabInstance(result.instance.id);
         } else {
           setError(result?.error || 'Failed to create terminal instance');
