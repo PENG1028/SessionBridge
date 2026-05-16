@@ -34,6 +34,7 @@ import { configStore } from "./configuration/store";
 import { secretStore } from "./configuration/secret-store";
 import { RemoteOperationManager, OperationError } from "./remote-operation-manager";
 import type { OperationKind, OperationInput } from "./remote-operation-manager";
+import { SurfaceManager } from "./surface-manager";
 
 // ─── Session provider helper — first adapter that provides SessionProvider ──
 function sessionProvider() {
@@ -373,6 +374,25 @@ const shellSubscribers = new Map<string, Set<WebSocket>>();
 const pendingShellSpawns = new Map<string, Promise<unknown>>();
 
 const operationManager = new RemoteOperationManager();
+const surfaceManager = new SurfaceManager();
+
+function surfaceToJSON(s: any): Record<string, unknown> {
+  return {
+    surfaceId: s.surfaceId,
+    nodeId: s.nodeId,
+    title: s.title,
+    viewType: s.viewType,
+    pluginId: s.pluginId,
+    scope: s.scope,
+    shared: s.shared,
+    runtimeRef: s.runtimeRef,
+    replayPolicy: s.replayPolicy,
+    permissions: s.permissions,
+    createdBy: s.createdBy,
+    createdAt: s.createdAt,
+    updatedAt: s.updatedAt,
+  };
+}
 
 function subscribeShellOutput(instanceId: string, ws: WebSocket): void {
   if (!shellSubscribers.has(instanceId)) shellSubscribers.set(instanceId, new Set());
@@ -386,11 +406,24 @@ function subscribeShellOutput(instanceId: string, ws: WebSocket): void {
 
 function broadcastShellOutput(instanceId: string, data: string, stream: string = 'stdout'): void {
   const subs = shellSubscribers.get(instanceId);
-  if (!subs || subs.size === 0) return;
-  const msg = envelope("shell.output", { data, stream });
-  for (const ws of subs) {
-    if (ws.readyState === WebSocket.OPEN) send(ws, msg);
-    else subs.delete(ws);
+  if (subs && subs.size > 0) {
+    const msg = envelope("shell.output", { data, stream });
+    for (const ws of subs) {
+      if (ws.readyState === WebSocket.OPEN) send(ws, msg);
+      else subs.delete(ws);
+    }
+  }
+  // Bridge to surface subscribers: any SharedSurface referencing this instance
+  // gets live output forwarded as runtime.output
+  const surfaces = surfaceManager.findByInstanceId(instanceId);
+  for (const surface of surfaces) {
+    surfaceManager.emitOutput(
+      surface.surfaceId,
+      stream as 'stdout' | 'stderr' | 'structured',
+      data,
+      (w: any, m: any) => send(w, m),
+      (t: any, b: any) => envelope(t, b),
+    );
   }
 }
 
@@ -818,6 +851,16 @@ async function spawnShellForWs(ws: WebSocket, instanceId?: string): Promise<impo
         for (const s of subs) {
           if (s.readyState === WebSocket.OPEN) send(s, msg);
         }
+      }
+      // Bridge to surface subscribers
+      const surfaces = surfaceManager.findByInstanceId(i.id);
+      for (const surface of surfaces) {
+        surfaceManager.emitResult(
+          surface.surfaceId,
+          { success: code === 0, exitCode: code ?? undefined },
+          (w: any, m: any) => send(w, m),
+          (t: any, b: any) => envelope(t, b),
+        );
       }
       i.handle = undefined;
       i.status = "stopped";
@@ -2038,6 +2081,15 @@ function setupWssHandlers(): void {
       if (!operationId) return;
 
       operationManager.emitOutput(operationId, stream, data, send, envelope);
+
+      // Bridge to surface subscribers → runtime.output
+      const linkedSurfaceOut = surfaceManager.findByOperationId(operationId);
+      if (linkedSurfaceOut) {
+        surfaceManager.emitOutput(linkedSurfaceOut.surfaceId, stream, data,
+          (w: any, m: any) => send(w, m),
+          (t: any, b: any) => envelope(t, b),
+        );
+      }
       return;
     }
 
@@ -2047,6 +2099,15 @@ function setupWssHandlers(): void {
       if (!operationId || !status) return;
 
       operationManager.emitStatus(operationId, status, msg.detail, send, envelope);
+
+      // Bridge to surface subscribers → runtime.status
+      const linkedSurfaceSt = surfaceManager.findByOperationId(operationId);
+      if (linkedSurfaceSt) {
+        surfaceManager.emitStatus(linkedSurfaceSt.surfaceId, status as any, msg.detail,
+          (w: any, m: any) => send(w, m),
+          (t: any, b: any) => envelope(t, b),
+        );
+      }
       return;
     }
 
@@ -2060,6 +2121,20 @@ function setupWssHandlers(): void {
         exitCode: typeof msg.exitCode === 'number' ? msg.exitCode : undefined,
         error: msg.error,
       }, send, envelope);
+
+      // Bridge to surface subscribers → runtime.result
+      const linkedSurfaceRes = surfaceManager.findByOperationId(operationId);
+      if (linkedSurfaceRes) {
+        surfaceManager.emitResult(linkedSurfaceRes.surfaceId, {
+          success: !!msg.success,
+          data: msg.data,
+          exitCode: typeof msg.exitCode === 'number' ? msg.exitCode : undefined,
+          error: msg.error,
+        },
+          (w: any, m: any) => send(w, m),
+          (t: any, b: any) => envelope(t, b),
+        );
+      }
       return;
     }
 
@@ -2103,6 +2178,16 @@ function setupWssHandlers(): void {
       const remoteInst = msg.instanceId ? instanceManager.get(msg.instanceId) : null;
       if (remoteInst && remoteInst.source === 'remote') {
         remoteInst.status = 'stopped';
+        // Bridge to surface subscribers before killing the instance
+        const surfaces = surfaceManager.findByInstanceId(remoteInst.id);
+        for (const surface of surfaces) {
+          surfaceManager.emitResult(
+            surface.surfaceId,
+            { success: (msg.exitCode ?? 1) === 0, exitCode: msg.exitCode },
+            (w: any, m: any) => send(w, m),
+            (t: any, b: any) => envelope(t, b),
+          );
+        }
         instanceManager.kill(remoteInst.id);
         broadcast(envelope("instance.removed", { instanceId: remoteInst.id }));
         auditLog.log('instance.exited', remoteInst.label, { exitCode: msg.exitCode }, remoteInst.id);
@@ -2423,6 +2508,207 @@ function setupWssHandlers(): void {
       return;
     }
 
+    // ── SharedSurface protocol ──────────────────────────────
+    // Surface is the source of truth for shared tabs.
+    // workbench.tabs remains as compatibility projection only.
+
+    if (msg.type === "surface.publish") {
+      const nodeId = String(msg.nodeId || "");
+      if (!nodeId) {
+        send(ws, envelope("error", { code: "MISSING_NODE", message: "nodeId is required" }));
+        return;
+      }
+
+      const surface = surfaceManager.create(nodeId, {
+        title: String(msg.title || "Untitled"),
+        viewType: String(msg.viewType || "terminal"),
+        pluginId: msg.pluginId ? String(msg.pluginId) : undefined,
+        scope: msg.scope || "node",
+        shared: msg.shared !== false,
+        runtimeRef: msg.runtimeRef || { kind: "none" },
+        replayPolicy: msg.replayPolicy,
+        permissions: msg.permissions,
+        createdBy: wsToClientToken.get(ws) || "unknown",
+      });
+
+      // If the surface has a runtime, create an operation for it
+      if (surface.runtimeRef.kind !== "none" && surface.runtimeRef.instanceId) {
+        try {
+          const op = operationManager.create(surface.nodeId, "terminal", {
+            pluginId: surface.pluginId,
+            instanceId: surface.runtimeRef.instanceId,
+            createdBy: surface.createdBy,
+          });
+          surfaceManager.linkOperation(surface.surfaceId, op.operationId);
+
+          // Forward to remote agent if applicable
+          const inst = instanceManager.get(surface.runtimeRef.instanceId);
+          if (inst && inst.source === "remote" && inst.agentConnection) {
+            operationManager.forwardToAgent(
+              op, inst,
+              (w: any, m: any) => send(w, m),
+              (t: any, b: any) => envelope(t, b),
+            );
+          }
+        } catch (err) {
+          send(ws, envelope("error", {
+            code: (err as any)?.code || "OPERATION_CREATE_FAILED",
+            message: (err as any)?.message || "Failed to create operation",
+          }));
+        }
+      }
+
+      // Auto-subscribe the publisher
+      surfaceManager.subscribe(surface.surfaceId, ws,
+        (w: any, m: any) => send(w, m),
+        (t: any, b: any) => envelope(t, b),
+      );
+
+      // Return published confirmation with full surface data
+      send(ws, envelope("surface.published", {
+        surfaceId: surface.surfaceId,
+        surface: surfaceToJSON(surface),
+      }));
+
+      // Backward-compat: project into workbench.tabs
+      const tab = surfaceManager.toWorkbenchTab(surface);
+      const existingTabs = workbenchTabStore.get(nodeId) || [];
+      const idx = existingTabs.findIndex((t: any) => t.id === tab.id);
+      if (idx >= 0) existingTabs[idx] = tab;
+      else existingTabs.push(tab);
+      workbenchTabStore.set(nodeId, existingTabs);
+      broadcastTabs(nodeId, existingTabs, ws);
+
+      return;
+    }
+
+    if (msg.type === "surface.subscribe") {
+      const surfaceId = String(msg.surfaceId || "");
+      if (!surfaceId) {
+        send(ws, envelope("error", { code: "MISSING_SURFACE_ID", message: "surfaceId is required" }));
+        return;
+      }
+
+      const surface = surfaceManager.subscribe(surfaceId, ws,
+        (w: any, m: any) => send(w, m),
+        (t: any, b: any) => envelope(t, b),
+      );
+
+      if (!surface) {
+        send(ws, envelope("error", { code: "SURFACE_NOT_FOUND", message: `Surface ${surfaceId} not found` }));
+        return;
+      }
+
+      send(ws, envelope("surface.subscribed", {
+        surfaceId,
+        runtime: surfaceManager.getRuntime(surfaceId),
+      }));
+      return;
+    }
+
+    if (msg.type === "surface.subscribeNode") {
+      const nodeId = String(msg.nodeId || "");
+      if (!nodeId) {
+        send(ws, envelope("error", { code: "MISSING_NODE", message: "nodeId is required" }));
+        return;
+      }
+
+      const surfaces = surfaceManager.subscribeNode(nodeId, ws,
+        (w: any, m: any) => send(w, m),
+        (t: any, b: any) => envelope(t, b),
+      );
+
+      send(ws, envelope("surface.list", {
+        nodeId,
+        surfaces: surfaces.map(s => surfaceToJSON(s)),
+      }));
+      return;
+    }
+
+    if (msg.type === "surface.unsubscribeNode") {
+      const nodeId = String(msg.nodeId || "");
+      if (nodeId) {
+        surfaceManager.unsubscribeNode(nodeId, ws);
+      }
+      return;
+    }
+
+    if (msg.type === "surface.update") {
+      const surfaceId = String(msg.surfaceId || "");
+      if (!surfaceId) return;
+
+      const updated = surfaceManager.update(surfaceId, {
+        title: msg.title,
+        replayPolicy: msg.replayPolicy,
+        permissions: msg.permissions,
+        scope: msg.scope,
+      });
+
+      if (!updated) {
+        send(ws, envelope("error", { code: "SURFACE_NOT_FOUND", message: `Surface ${surfaceId} not found` }));
+        return;
+      }
+
+      // Sync workbench tab
+      const tab = surfaceManager.toWorkbenchTab(updated);
+      const nodeTabs = workbenchTabStore.get(updated.nodeId) || [];
+      const idx = nodeTabs.findIndex((t: any) => t.id === tab.id);
+      if (idx >= 0) nodeTabs[idx] = tab;
+      workbenchTabStore.set(updated.nodeId, nodeTabs);
+      broadcastTabs(updated.nodeId, nodeTabs, ws);
+
+      // Broadcast surface.updated to surface subscribers
+      const surfSubs = surfaceManager.getSubscribers(surfaceId);
+      if (surfSubs) {
+        for (const client of surfSubs) {
+          if (client !== ws && client.readyState === WebSocket.OPEN) {
+            send(client, envelope("surface.updated", {
+              surfaceId,
+              patch: { title: msg.title, replayPolicy: msg.replayPolicy },
+            }));
+          }
+        }
+      }
+
+      return;
+    }
+
+    if (msg.type === "surface.close") {
+      const surfaceId = String(msg.surfaceId || "");
+      if (!surfaceId) return;
+
+      const surface = surfaceManager.get(surfaceId);
+      if (!surface) {
+        send(ws, envelope("error", { code: "SURFACE_NOT_FOUND", message: `Surface ${surfaceId} not found` }));
+        return;
+      }
+
+      const nodeId = surface.nodeId;
+
+      // Snapshot subscribers BEFORE deleting (delete clears the subscriber set)
+      const surfSubs = surfaceManager.getSubscribers(surfaceId);
+      const closeMsg = envelope("surface.closed", { surfaceId });
+
+      surfaceManager.delete(surfaceId);
+
+      // Broadcast surface.closed
+      if (surfSubs) {
+        for (const client of surfSubs) {
+          if (client !== ws && client.readyState === WebSocket.OPEN) {
+            send(client, closeMsg);
+          }
+        }
+      }
+
+      // Remove from workbenchTabStore
+      const nodeTabs = workbenchTabStore.get(nodeId) || [];
+      const filtered = nodeTabs.filter((t: any) => t.id !== surfaceId && t._surfaceId !== surfaceId);
+      workbenchTabStore.set(nodeId, filtered);
+      broadcastTabs(nodeId, filtered);
+
+      return;
+    }
+
     // ── Claude chat commands ────────────────────────────────
     const targetInst = msg.instanceId ? (instanceManager.get(msg.instanceId) || inst()) : inst();
     const prevActive = instanceManager.activeId;
@@ -2578,6 +2864,8 @@ function setupWssHandlers(): void {
     }
     // Cleanup workbench subscribers
     cleanupWorkbenchSubs(ws);
+    // Cleanup surface subscribers
+    surfaceManager.cleanupWs(ws);
 
     // Persist session state
     sessionPersistence.save(instanceManager);

@@ -10,6 +10,8 @@ import { getLastActiveDir, getRestoreLastPath, setLastActiveDir } from '../../li
 
 interface TerminalViewProps {
   instanceId?: string;
+  _surfaceId?: string;
+  _operationId?: string;
 }
 
 /** Envelope helper — same format as ShellTerminal. */
@@ -17,7 +19,7 @@ function env(type: string, body: Record<string, unknown> = {}) {
   return JSON.stringify({ v: 1, ts: Date.now(), type, body });
 }
 
-export function TerminalView({ instanceId }: TerminalViewProps) {
+export function TerminalView({ instanceId, _surfaceId, _operationId }: TerminalViewProps) {
   const { wsUrl, token, createInstance, bindCurrentTabInstance, projectCwd } = useWorkbench();
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -151,7 +153,7 @@ export function TerminalView({ instanceId }: TerminalViewProps) {
       </TitleBar>
 
       <div className="flex-1 flex flex-col min-h-0">
-        <ShellTerminal wsUrl={wsUrl} instanceId={instanceId} token={token} onOpenDirectoryPicker={handleOpenDirectoryPicker} />
+        <ShellTerminal wsUrl={wsUrl} instanceId={instanceId} token={token} _surfaceId={_surfaceId} _operationId={_operationId} onOpenDirectoryPicker={handleOpenDirectoryPicker} />
       </div>
 
       <DirectoryPicker

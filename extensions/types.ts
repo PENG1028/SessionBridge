@@ -769,3 +769,69 @@ export interface ExtensionDiagnostic {
   manifest?: ExtensionManifest;
   activateTime?: number;
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// SharedSurface + RuntimeReplay — cross-device shared surface model
+// ═══════════════════════════════════════════════════════════════════
+
+export type SurfacePermission = 'read' | 'input' | 'cancel' | 'admin';
+
+export type ReplayPolicy =
+  | { mode: 'none' }
+  | { mode: 'latest'; key?: string }
+  | { mode: 'tail'; lines?: number; bytes?: number }
+  | { mode: 'events'; count?: number }
+  | { mode: 'full'; maxBytes?: number };
+
+export interface SharedSurface {
+  surfaceId: string;
+  nodeId: string;
+  title: string;
+  viewType: string;
+  pluginId?: string;
+  scope: 'local' | 'node' | 'network';
+  shared: boolean;
+  runtimeRef: {
+    kind: 'terminal' | 'operation' | 'plugin' | 'snapshot' | 'none';
+    operationId?: string;
+    instanceId?: string;
+    pluginId?: string;
+  };
+  replayPolicy: ReplayPolicy;
+  permissions?: {
+    read?: string[];
+    input?: string[];
+    cancel?: string[];
+    admin?: string[];
+  };
+  createdBy: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface RuntimeOutputChunk {
+  seq: number;
+  stream: 'stdout' | 'stderr' | 'structured';
+  data: string;
+  timestamp: number;
+}
+
+export interface RuntimeEvent {
+  seq: number;
+  event: string;
+  data: unknown;
+  timestamp: number;
+}
+
+export interface RuntimeState {
+  operationId: string;
+  nodeId: string;
+  surfaceId?: string;
+  kind: 'terminal' | 'plugin' | 'operation';
+  status: 'starting' | 'running' | 'completed' | 'failed' | 'cancelled';
+  latest?: unknown;
+  outputBuffer: RuntimeOutputChunk[];
+  eventBuffer: RuntimeEvent[];
+  createdAt: number;
+  updatedAt: number;
+}

@@ -12,6 +12,10 @@ export interface PaneTab {
   viewType: ViewType;
   instanceId?: string;
   pluginId?: string;
+  /** SharedSurface id — set when this tab is backed by a shared surface (surface protocol) */
+  _surfaceId?: string;
+  /** RemoteOperation id — for sending input/cancel to the surface's runtime */
+  _operationId?: string;
 }
 
 export interface PaneState {
@@ -185,7 +189,7 @@ export type WorkbenchAction =
   | { type: 'UNSPLIT_PANE'; paneId: string }
   | { type: 'ADD_TAB'; paneId: string; tab: PaneTab }
   | { type: 'SET_ACTIVE_TAB'; paneId: string; tabId: string }
-  | { type: 'SET_TAB_VIEW'; paneId: string; tabId: string; viewType: ViewType; title: string; instanceId?: string }
+  | { type: 'SET_TAB_VIEW'; paneId: string; tabId: string; viewType: ViewType; title: string; instanceId?: string; _surfaceId?: string; _operationId?: string }
   | { type: 'ADD_EMPTY_PANE' }
   | { type: 'ADD_BOTTOM_PANE'; tab?: PaneTab }
   | { type: 'SET_BOTTOM_HEIGHT'; height: number }
@@ -300,9 +304,13 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       // Update an existing tab's viewType (empty → real view after user picks one)
       const pane = findPane(state.root, action.paneId) || state.bottom;
       if (!pane || pane.kind !== 'pane') return state;
-      const newTabs = pane.tabs.map(t =>
-        t.id === action.tabId ? { ...t, viewType: action.viewType, title: action.title, instanceId: action.instanceId } : t
-      );
+      const newTabs = pane.tabs.map(t => {
+        if (t.id !== action.tabId) return t;
+        const updated = { ...t, viewType: action.viewType, title: action.title, instanceId: action.instanceId };
+        if (action._surfaceId !== undefined) (updated as any)._surfaceId = action._surfaceId;
+        if (action._operationId !== undefined) (updated as any)._operationId = action._operationId;
+        return updated;
+      });
       const updatedPane: PaneState = { ...pane, tabs: newTabs };
       if (pane.zone === 'bottom') {
         return { ...state, bottom: updatedPane };

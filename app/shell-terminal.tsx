@@ -10,6 +10,10 @@ interface ShellTerminalProps {
   wsUrl: string;
   instanceId?: string;
   token?: string;
+  /** SharedSurface id — when set, use surface protocol (subscribe, replay, operation.input) */
+  _surfaceId?: string;
+  /** RemoteOperation id — for sending input/cancel to the surface's runtime */
+  _operationId?: string;
   onOpenDirectoryPicker?: () => void;
 }
 
@@ -21,7 +25,7 @@ function env(type: string, body: Record<string, unknown> = {}) {
 const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_BASE_MS = 1000;
 
-export default function ShellTerminal({ wsUrl, instanceId, token, onOpenDirectoryPicker }: ShellTerminalProps) {
+export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, _operationId, onOpenDirectoryPicker }: ShellTerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -113,6 +117,73 @@ export default function ShellTerminal({ wsUrl, instanceId, token, onOpenDirector
     };
   }
 
+  /** Connect via surface protocol — subscribe to shared surface, get replay + live output. */
+  function connectSurface(term: Terminal, _fitAddon: FitAddon) {
+    if (!mountedRef.current) return;
+    if (!_surfaceId) return;
+
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      reconnectAttemptRef.current = 0;
+      term.writeln('\x1b[36mConnected to shared surface...\x1b[0m');
+      term.focus();
+      const helloBody: Record<string, unknown> = {
+        role: 'browser',
+        features: ['shell'],
+        clientToken: `surface:${_surfaceId}`,
+      };
+      if (token) helloBody.token = token;
+      ws.send(env('hello', helloBody));
+      ws.send(env('surface.subscribe', { surfaceId: _surfaceId }));
+    };
+
+    ws.onmessage = (ev) => {
+      try {
+        const parsed = JSON.parse(ev.data);
+        const body = (parsed.v === 1 && parsed.body) ? parsed.body : parsed;
+        const type = parsed.type || '';
+
+        if (type === 'ping') {
+          ws.send(env('pong'));
+        } else if (type === 'runtime.replay') {
+          const outputs = Array.isArray(body.outputs) ? body.outputs : [];
+          for (const chunk of outputs) {
+            if (chunk.data) term.write(chunk.data);
+          }
+        } else if (type === 'runtime.output') {
+          if (body.data) term.write(body.data);
+        } else if (type === 'runtime.result') {
+          const ok = body.success !== false;
+          term.writeln(ok
+            ? `\r\n\x1b[90m[Operation completed, exit=${body.exitCode ?? '?'}]\x1b[0m`
+            : `\r\n\x1b[91m[Operation failed: ${body.error || 'unknown'}]\x1b[0m`);
+        } else if (type === 'runtime.status') {
+          if (body.status === 'completed' || body.status === 'failed') {
+            // result follows separately
+          }
+        } else if (type === 'error') {
+          term.writeln(`\r\n\x1b[91m[Error] ${body.message || body.code || 'Unknown error'}\x1b[0m`);
+        }
+      } catch {}
+    };
+
+    ws.onerror = () => {
+      term.writeln('\x1b[91m[Surface WebSocket error]\x1b[0m');
+    };
+
+    ws.onclose = () => {
+      if (!mountedRef.current) return;
+      term.writeln('\r\n\x1b[90m[Surface connection closed]\x1b[0m');
+      if (reconnectAttemptRef.current < MAX_RECONNECT_ATTEMPTS) {
+        reconnectAttemptRef.current++;
+        const delay = RECONNECT_BASE_MS * Math.pow(2, reconnectAttemptRef.current - 1);
+        reconnectTimerRef.current = setTimeout(() => connectSurface(term, _fitAddon), delay);
+      }
+    };
+  }
+
   useEffect(() => {
     mountedRef.current = true;
     if (!containerRef.current) return;
@@ -187,7 +258,11 @@ export default function ShellTerminal({ wsUrl, instanceId, token, onOpenDirector
         event.preventDefault();
         const ws = wsRef.current;
         if (ws?.readyState === WebSocket.OPEN) {
-          ws.send(env('shell.input', { data: '\x0c' }));
+          if (_surfaceId && _operationId) {
+            ws.send(env('operation.input', { operationId: _operationId, data: '\x0c' }));
+          } else {
+            ws.send(env('shell.input', { data: '\x0c' }));
+          }
         } else {
           term.clear();
         }
@@ -209,7 +284,11 @@ export default function ShellTerminal({ wsUrl, instanceId, token, onOpenDirector
           .then(text => {
             const ws = wsRef.current;
             if (ws?.readyState === WebSocket.OPEN) {
-              ws.send(env('shell.input', { data: text }));
+              if (_surfaceId && _operationId) {
+                ws.send(env('operation.input', { operationId: _operationId, data: text }));
+              } else {
+                ws.send(env('shell.input', { data: text }));
+              }
             }
           })
           .catch(() => {});
@@ -231,11 +310,16 @@ export default function ShellTerminal({ wsUrl, instanceId, token, onOpenDirector
     term.focus();
 
     // ── Initial WebSocket connection ──
-    connect(term, fitAddon);
+    if (_surfaceId) {
+      connectSurface(term, fitAddon);
+    } else {
+      connect(term, fitAddon);
+    }
 
     // ── Resize observer ──
     const ro = new ResizeObserver(() => {
       fitAddon.fit();
+      if (_surfaceId) return; // surface mode: resize is N/A for shared terminal replay
       const ws = wsRef.current;
       if (ws?.readyState === WebSocket.OPEN) {
         const dims = fitAddon.proposeDimensions();
@@ -250,9 +334,13 @@ export default function ShellTerminal({ wsUrl, instanceId, token, onOpenDirector
     const disposable = term.onData((data) => {
       const ws = wsRef.current;
       if (ws?.readyState === WebSocket.OPEN) {
-        const body: Record<string, unknown> = { data };
-        if (instanceId) body.instanceId = instanceId;
-        ws.send(env("shell.input", body));
+        if (_surfaceId && _operationId) {
+          ws.send(env('operation.input', { operationId: _operationId, data }));
+        } else {
+          const body: Record<string, unknown> = { data };
+          if (instanceId) body.instanceId = instanceId;
+          ws.send(env("shell.input", body));
+        }
       }
     });
 
@@ -269,7 +357,7 @@ export default function ShellTerminal({ wsUrl, instanceId, token, onOpenDirector
       term.dispose();
       termRef.current = null;
     };
-  }, [wsUrl, token, instanceId]);
+  }, [wsUrl, token, instanceId, _surfaceId, _operationId]);
 
   // Re-focus terminal after React re-renders (prevents focus-steal from parent updates)
   // Only when WebSocket is open — avoids stealing focus from other tabs/elements
@@ -307,7 +395,11 @@ export default function ShellTerminal({ wsUrl, instanceId, token, onOpenDirector
         action: () => {
           navigator.clipboard.readText().then(text => {
             if (ws?.readyState === WebSocket.OPEN) {
-              ws.send(env('shell.input', { data: text }));
+              if (_surfaceId && _operationId) {
+                ws.send(env('operation.input', { operationId: _operationId, data: text }));
+              } else {
+                ws.send(env('shell.input', { data: text }));
+              }
             }
           }).catch(() => {});
         },
@@ -318,7 +410,11 @@ export default function ShellTerminal({ wsUrl, instanceId, token, onOpenDirector
         shortcut: '⌘L',
         action: () => {
           if (ws?.readyState === WebSocket.OPEN) {
-            ws.send(env('shell.input', { data: '\x0c' }));
+            if (_surfaceId && _operationId) {
+              ws.send(env('operation.input', { operationId: _operationId, data: '\x0c' }));
+            } else {
+              ws.send(env('shell.input', { data: '\x0c' }));
+            }
           } else {
             term?.clear();
           }
@@ -336,7 +432,7 @@ export default function ShellTerminal({ wsUrl, instanceId, token, onOpenDirector
       },
     ];
     setCtxMenu({ x: e.clientX, y: e.clientY, items });
-  }, [onOpenDirectoryPicker]);
+  }, [onOpenDirectoryPicker, _surfaceId, _operationId]);
 
   return (
     <>

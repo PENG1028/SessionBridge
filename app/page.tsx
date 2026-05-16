@@ -49,7 +49,7 @@ import { KeyHintOverlay } from './console/chrome/key-hint-overlay';
 import { MobileExtraKeys } from './console/chrome/mobile-extra-keys';
 import { LayoutProvider, useLayout, SidebarSlot, MainSlot, FocusProvider, RuntimePolicyProvider, useFocus, useRuntimePolicy, WorkbenchProvider } from './console/workbench';
 import { WorkbenchLayout } from './console/stage/workbench-layout';
-import { appReducer, createAppInitialState, getActiveWorkbenchState, createInitialState, findPane as findPaneInTree, ensureInstanceTab, saveLayoutsToStorage, loadLayoutsFromStorage, restoreInstanceStatesFromStorage, genTabId, collectAllTabs, buildStateFromTabs, type ViewType, type PaneTab, type LayoutNode, type WorkbenchState, type WorkbenchAction, type AppWorkbenchState, type AppWorkbenchAction } from './console/stage/workbench-state';
+import { appReducer, createAppInitialState, getActiveWorkbenchState, createInitialState, findPane as findPaneInTree, ensureInstanceTab, saveLayoutsToStorage, loadLayoutsFromStorage, restoreInstanceStatesFromStorage, genTabId, collectAllTabs, buildStateFromTabs, workbenchReducer, type ViewType, type PaneTab, type LayoutNode, type WorkbenchState, type WorkbenchAction, type AppWorkbenchState, type AppWorkbenchAction } from './console/stage/workbench-state';
 
 // ==========================================
 // Types
@@ -432,6 +432,108 @@ function PageContent() {
           instanceStates: { ...prev.instanceStates, [nodeId]: newWs },
         };
       });
+    } else if (msg.type === 'surface.published') {
+      const surface = msg.surface;
+      if (surface?.surfaceId && surface.nodeId) {
+        setAppState(prev => {
+          let currentWs = prev.instanceStates[surface.nodeId];
+          if (!currentWs) return prev;
+          // Already tracked by surfaceId
+          if (collectAllTabs(currentWs).some(t => t._surfaceId === surface.surfaceId || t.id === surface.surfaceId)) return prev;
+          const instId = surface.runtimeRef?.instanceId;
+          const activePane = findPaneInTree(currentWs.root, currentWs.activePaneId);
+          if (!activePane) return prev;
+          // Merge: if the current tab shares the same instanceId, upgrade it with surface metadata in-place
+          if (instId) {
+            const existingTab = activePane.tabs.find(t => t.instanceId === instId && !t._surfaceId);
+            if (existingTab) {
+              currentWs = workbenchReducer(currentWs, {
+                type: 'SET_TAB_VIEW',
+                paneId: activePane.id,
+                tabId: existingTab.id,
+                viewType: existingTab.viewType,
+                title: surface.title || existingTab.title,
+                instanceId: instId,
+                _surfaceId: surface.surfaceId,
+                _operationId: surface.runtimeRef?.operationId,
+              });
+              return { ...prev, instanceStates: { ...prev.instanceStates, [surface.nodeId]: currentWs } };
+            }
+          }
+          // No existing tab to upgrade — create new one
+          const tab: PaneTab = {
+            id: surface.surfaceId,
+            title: surface.title || 'Shared',
+            viewType: surface.viewType,
+            instanceId: instId,
+            pluginId: surface.pluginId,
+            _surfaceId: surface.surfaceId,
+            _operationId: surface.runtimeRef?.operationId,
+          };
+          currentWs = workbenchReducer(currentWs, { type: 'ADD_TAB', paneId: activePane.id, tab });
+          return { ...prev, instanceStates: { ...prev.instanceStates, [surface.nodeId]: currentWs } };
+        });
+      }
+    } else if (msg.type === 'surface.list') {
+      const nodeId: string = msg.nodeId;
+      const surfaces: any[] = Array.isArray(msg.surfaces) ? msg.surfaces : [];
+      if (nodeId && surfaces.length > 0) {
+        setAppState(prev => {
+          let currentWs = prev.instanceStates[nodeId];
+          if (!currentWs) return prev;
+          for (const s of surfaces) {
+            // Skip if surface tab already exists
+            if (collectAllTabs(currentWs).some(t => t._surfaceId === s.surfaceId || t.id === s.surfaceId)) continue;
+            // Merge: if a localStorage-restored tab shares the same instanceId, upgrade it with surface metadata
+            const instId = s.runtimeRef?.instanceId;
+            const existingPane = findPaneInTree(currentWs.root, currentWs.activePaneId);
+            if (instId && existingPane) {
+              const existingTab = existingPane.tabs.find(t => t.instanceId === instId && !t._surfaceId);
+              if (existingTab) {
+                currentWs = workbenchReducer(currentWs, {
+                  type: 'SET_TAB_VIEW',
+                  paneId: existingPane.id,
+                  tabId: existingTab.id,
+                  viewType: existingTab.viewType,
+                  title: s.title || existingTab.title,
+                  instanceId: instId,
+                  _surfaceId: s.surfaceId,
+                  _operationId: s.runtimeRef?.operationId,
+                });
+                continue;
+              }
+            }
+            if (!existingPane) continue;
+            const tab: PaneTab = {
+              id: s.surfaceId,
+              title: s.title,
+              viewType: s.viewType,
+              instanceId: instId,
+              pluginId: s.pluginId,
+              _surfaceId: s.surfaceId,
+              _operationId: s.runtimeRef?.operationId,
+            };
+            currentWs = workbenchReducer(currentWs, { type: 'ADD_TAB', paneId: existingPane.id, tab });
+          }
+          return { ...prev, instanceStates: { ...prev.instanceStates, [nodeId]: currentWs } };
+        });
+      }
+    } else if (msg.type === 'surface.closed') {
+      const closedId: string = msg.surfaceId;
+      if (closedId) {
+        setAppState(prev => {
+          const next = { ...prev, instanceStates: { ...prev.instanceStates } };
+          for (const [nid, ws] of Object.entries(next.instanceStates)) {
+            const pane = findPaneInTree(ws.root, ws.activePaneId);
+            if (!pane) continue;
+            const tab = pane.tabs.find(t => t._surfaceId === closedId || t.id === closedId);
+            if (tab) {
+              next.instanceStates[nid] = workbenchReducer(ws, { type: 'CLOSE_TAB', paneId: pane.id, tabId: tab.id });
+            }
+          }
+          return next;
+        });
+      }
     }
   }, []);
 
@@ -1226,10 +1328,13 @@ function PageContent() {
     if (currentState.activeInstanceId === nodeId) {
       // Toggle off — back to node view
       sendMessage('workbench.unsubscribe', { nodeId });
+      sendMessage('surface.unsubscribeNode', { nodeId });
       setAppState(prev => appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: null }));
     } else {
       // Subscribe to this node's workbench tabs (server will send workbench.tabs)
       sendMessage('workbench.subscribe', { nodeId });
+      // Subscribe to shared surfaces for live output + replay
+      sendMessage('surface.subscribeNode', { nodeId });
       // Enter this node — create workbench layout if needed
       setAppState(prev => {
         if (prev.instanceStates[nodeId]) {
@@ -1447,7 +1552,20 @@ function PageContent() {
       title: activeTab.title,
       instanceId,
     });
-  }, [activeWorkbenchDispatch]);
+    // Publish shared surface for cross-device visibility
+    const nodeId = appStateRef.current.activeInstanceId;
+    if (nodeId && activeTab.viewType === 'terminal') {
+      sendMessage('surface.publish', {
+        nodeId,
+        title: activeTab.title || 'Terminal',
+        viewType: 'terminal',
+        scope: 'node',
+        shared: true,
+        runtimeRef: { kind: 'terminal', instanceId },
+        replayPolicy: { mode: 'tail', lines: 5000, bytes: 500000 },
+      });
+    }
+  }, [activeWorkbenchDispatch, sendMessage]);
 
   // ── Close tab: kill if not kept ──
   const handleCloseTab = useCallback((_paneId: string, _tabId: string, tab: PaneTab) => {
@@ -1691,7 +1809,7 @@ function PageContent() {
             onReopenKeptTab={handleReopenKeptTab}
             onCloseTab={handleCloseTab}
             persistentTabIds={appState.persistentTabs.map(t => t.id)}
-            renderView={(viewType, instanceId) => {
+            renderView={(viewType, instanceId, tab) => {
               // Generic view resolution: instance-bound views resolve through adapter system,
               // static views use viewType directly as the registry key.
               // No viewType-specific branching — plugins can add views without touching page.tsx.
@@ -1699,7 +1817,7 @@ function PageContent() {
               const resolvedViewId = boundInstance?.adapterId
                 ? getAdapterViewId(boundInstance.adapterId) || viewType
                 : viewType;
-              return <MainSlot viewId={resolvedViewId} instanceId={instanceId} />;
+              return <MainSlot viewId={resolvedViewId} instanceId={instanceId} _surfaceId={tab?._surfaceId} _operationId={tab?._operationId} />;
             }}
           />
           </div>) : (

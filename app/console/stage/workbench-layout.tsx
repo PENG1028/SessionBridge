@@ -9,7 +9,7 @@ import { Terminal, X } from 'lucide-react';
 interface WorkbenchLayoutProps {
   state: WorkbenchState;
   dispatch: (action: WorkbenchAction) => void;
-  renderView: (viewType: ViewType, instanceId?: string) => ReactNode;
+  renderView: (viewType: ViewType, instanceId?: string, tab?: PaneTab) => ReactNode;
   onRequestView?: (paneId: string, tabId: string, viewType: ViewType) => void;
   onContextTab?: (tab: PaneTab, e: React.MouseEvent) => void;
   onReorderTabs?: (paneId: string, tabId: string, targetId: string) => void;
@@ -63,7 +63,7 @@ function LayoutNodeRenderer({
   onCloseTab: (paneId: string, tabId: string) => void;
   onAddTab: (paneId: string) => void;
   onRequestView?: (paneId: string, tabId: string, viewType: ViewType) => void;
-  renderView: (viewType: ViewType, instanceId?: string) => ReactNode;
+  renderView: (viewType: ViewType, instanceId?: string, tab?: PaneTab) => ReactNode;
   onContextTab?: (tab: PaneTab, e: React.MouseEvent) => void;
   onReorderTabs?: (paneId: string, tabId: string, targetId: string) => void;
   closedKeptTabs?: PaneTab[];
@@ -138,7 +138,7 @@ function SplitRenderer({
   onCloseTab: (paneId: string, tabId: string) => void;
   onAddTab: (paneId: string) => void;
   onRequestView?: (paneId: string, tabId: string, viewType: ViewType) => void;
-  renderView: (viewType: ViewType, instanceId?: string) => ReactNode;
+  renderView: (viewType: ViewType, instanceId?: string, tab?: PaneTab) => ReactNode;
   onContextTab?: (tab: PaneTab, e: React.MouseEvent) => void;
   onReorderTabs?: (paneId: string, tabId: string, targetId: string) => void;
   closedKeptTabs?: PaneTab[];
@@ -259,7 +259,7 @@ function BottomDock({
 }: {
   pane: PaneState;
   dispatch: (action: WorkbenchAction) => void;
-  renderView: (viewType: ViewType, instanceId?: string) => ReactNode;
+  renderView: (viewType: ViewType, instanceId?: string, tab?: PaneTab) => ReactNode;
 }) {
   const activeTab = pane.tabs.find(t => t.id === pane.activeTabId) || pane.tabs[0];
 
@@ -313,7 +313,7 @@ function BottomDock({
 
       {/* Content */}
       <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-        {activeTab && renderView(activeTab.viewType, activeTab.instanceId)}
+        {activeTab && renderView(activeTab.viewType, activeTab.instanceId, activeTab)}
       </div>
     </div>
   );
