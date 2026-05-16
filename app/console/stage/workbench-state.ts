@@ -187,7 +187,7 @@ export type WorkbenchAction =
   | { type: 'CLOSE_TAB'; paneId: string; tabId: string }
   | { type: 'SPLIT_PANE'; paneId: string; direction: 'horizontal' | 'vertical'; newInstanceId?: string; viewType?: string }
   | { type: 'UNSPLIT_PANE'; paneId: string }
-  | { type: 'ADD_TAB'; paneId: string; tab: PaneTab }
+  | { type: 'ADD_TAB'; paneId: string; tab: PaneTab; activate?: boolean }
   | { type: 'SET_ACTIVE_TAB'; paneId: string; tabId: string }
   | { type: 'SET_TAB_VIEW'; paneId: string; tabId: string; viewType: ViewType; title: string; instanceId?: string; _surfaceId?: string; _operationId?: string }
   | { type: 'ADD_EMPTY_PANE' }
@@ -277,10 +277,11 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
     case 'ADD_TAB': {
       const pane = findPane(state.root, action.paneId) || state.bottom;
       if (!pane || pane.kind !== 'pane') return state;
+      const shouldActivate = action.activate !== false;
       const updatedPane: PaneState = {
         ...pane,
         tabs: [...pane.tabs, action.tab],
-        activeTabId: action.tab.id,
+        activeTabId: shouldActivate ? action.tab.id : pane.activeTabId,
       };
       if (pane.zone === 'bottom') {
         return { ...state, bottom: updatedPane };

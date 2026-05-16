@@ -6,6 +6,9 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { ContextMenu, type ContextMenuItem } from './console/shell/context-menu';
 
+const DEBUG_SURFACE = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debugSurface');
+function debugLog(...args: any[]) { if (DEBUG_SURFACE) console.log('[debugSurface]', ...args); }
+
 interface ShellTerminalProps {
   wsUrl: string;
   instanceId?: string;
@@ -33,6 +36,7 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, _o
   const reconnectAttemptRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
+  const inputLogFirstRef = useRef(true);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
 
   /** Connect (or reconnect) the WebSocket for this terminal. */
@@ -137,6 +141,7 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, _o
       if (token) helloBody.token = token;
       ws.send(env('hello', helloBody));
       ws.send(env('surface.subscribe', { surfaceId: _surfaceId }));
+      debugLog('ShellTerminal surface.subscribe SENT', { _surfaceId, _operationId });
     };
 
     ws.onmessage = (ev) => {
@@ -149,6 +154,7 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, _o
           ws.send(env('pong'));
         } else if (type === 'runtime.replay') {
           const outputs = Array.isArray(body.outputs) ? body.outputs : [];
+          debugLog('ShellTerminal received runtime.replay', { surfaceId: _surfaceId, outputCount: outputs.length });
           for (const chunk of outputs) {
             if (chunk.data) term.write(chunk.data);
           }
@@ -186,6 +192,7 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, _o
 
   useEffect(() => {
     mountedRef.current = true;
+    inputLogFirstRef.current = true;
     if (!containerRef.current) return;
 
     // Clear stale xterm DOM from Strict Mode double-mount or previous instances
@@ -311,8 +318,10 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, _o
 
     // ── Initial WebSocket connection ──
     if (_surfaceId) {
+      debugLog('ShellTerminal: connecting via SURFACE protocol', { _surfaceId, _operationId, instanceId });
       connectSurface(term, fitAddon);
     } else {
+      debugLog('ShellTerminal: connecting via SHELL protocol', { instanceId });
       connect(term, fitAddon);
     }
 
@@ -335,8 +344,10 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, _o
       const ws = wsRef.current;
       if (ws?.readyState === WebSocket.OPEN) {
         if (_surfaceId && _operationId) {
+          if (inputLogFirstRef.current) { debugLog('ShellTerminal input routing: operation.input (surface path)', { _surfaceId, _operationId }); inputLogFirstRef.current = false; }
           ws.send(env('operation.input', { operationId: _operationId, data }));
         } else {
+          if (inputLogFirstRef.current) { debugLog('ShellTerminal input routing: shell.input (direct path)', { instanceId }); inputLogFirstRef.current = false; }
           const body: Record<string, unknown> = { data };
           if (instanceId) body.instanceId = instanceId;
           ws.send(env("shell.input", body));

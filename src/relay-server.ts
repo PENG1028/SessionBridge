@@ -1843,6 +1843,45 @@ const serverRequestHandler = async (req: import("http").IncomingMessage, res: im
     return;
   }
 
+  // ── API: Surface debug snapshot (diagnostics only, no secrets) ──
+  if (path === "/api/debug/surfaces" && req.method === "GET") {
+    // Only allow localhost access
+    const clientIp = req.socket.remoteAddress || "";
+    const isLocal = clientIp === "127.0.0.1" || clientIp === "::1" || clientIp === "::ffff:127.0.0.1";
+    if (!isLocal) {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error: "Debug endpoint restricted to localhost" }));
+      return;
+    }
+    try {
+      const snapshot = surfaceManager.getDebugSnapshot();
+      const tabs: Record<string, unknown[]> = {};
+      for (const [nodeId, t] of workbenchTabStore) {
+        tabs[nodeId] = t;
+      }
+      const instances = instanceManager.list().map(i => ({
+        id: i.id,
+        label: i.label,
+        source: i.source,
+        status: i.status,
+        hasAgentConnection: i.agentConnection ? true : false,
+      }));
+      const localNodeLabel = instanceManager.list().find(i => i.source === 'local')?.label || 'unknown';
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        ok: true,
+        localNode: localNodeLabel,
+        surfaceDebug: snapshot,
+        workbenchTabs: tabs,
+        instances,
+      }, null, 2));
+    } catch (e: any) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error: e.message }));
+    }
+    return;
+  }
+
   // ── Static files (dashboard proxy removed — all routes handled directly) ── (dashboard proxy removed — all routes handled directly) ──
   const cleanPath = path.replace(/^\//, '');
   const filePath = cleanPath || 'index.html';
@@ -2572,6 +2611,12 @@ function setupWssHandlers(): void {
       // the shell instance directly so it reaches the real PTY.
       const linkedSurface = surfaceManager.findByOperationId(operationId);
       if (linkedSurface && linkedSurface.runtimeRef.kind === 'terminal' && linkedSurface.runtimeRef.instanceId) {
+        surfaceManager.recordDebugEvent({
+          ts: Date.now(), kind: 'runtime.input',
+          surfaceId: linkedSurface.surfaceId, operationId,
+          nodeId: linkedSurface.nodeId, instanceId: linkedSurface.runtimeRef.instanceId,
+          extra: { dataLen: data.length },
+        });
         const inst = instanceManager.get(linkedSurface.runtimeRef.instanceId);
         if (!inst) {
           send(ws, envelope("error", {
@@ -2683,10 +2728,17 @@ function setupWssHandlers(): void {
     // workbench.tabs remains as compatibility projection only.
 
     if (msg.type === "surface.publish") {
+      const senderRole = (ws as any)._agentRole;
+      surfaceManager.recordDebugEvent({
+        ts: Date.now(), kind: 'surface.publish.request',
+        nodeId: String(msg.nodeId || msg.surface?.nodeId || ''),
+        instanceId: msg.runtimeRef?.instanceId || msg.surface?.runtimeRef?.instanceId,
+        clientRole: senderRole || 'browser',
+        extra: { hasSurface: !!msg.surface, viewType: msg.viewType || msg.surface?.viewType },
+      });
       // When forwarded by an agent (cross-relay), import the serialized
       // surface with label remapping instead of creating a fresh one.
       // This mirrors onUpstreamMessage's logic for agent-forwarded surfaces.
-      const senderRole = (ws as any)._agentRole;
       if (senderRole && msg.surface?.surfaceId) {
         const surfaceData = msg.surface;
         let remapNodeId = String(msg.nodeId || surfaceData.nodeId || "");
@@ -2698,6 +2750,7 @@ function setupWssHandlers(): void {
         }
         const inst = instanceManager.get(remapNodeId);
         if (!inst) {
+          surfaceManager.recordDebugEvent({ ts: Date.now(), kind: 'surface.publish.upstream', nodeId: remapNodeId, message: 'no local instance, delegating to syncSurfacesByLabel' });
           syncSurfacesByLabel(remapNodeId, surfaceData, msg._label);
           return;
         }
@@ -2889,6 +2942,10 @@ function setupWssHandlers(): void {
         nodeId,
         surfaces: surfaces.map(s => surfaceToJSON(s)),
       }));
+      surfaceManager.recordDebugEvent({
+        ts: Date.now(), kind: 'surface.list.sent',
+        nodeId, extra: { surfaceCount: surfaces.length },
+      });
       // Notify upstream relay so it forwards surface updates for this node
       _sendUpstream?.("surface.subscribeNode", { nodeId });
       return;

@@ -13,7 +13,7 @@ interface PaneViewProps {
   onCloseTab: (tabId: string) => void;
   onAddTab: () => void;
   onRequestView?: (tabId: string, viewType: ViewType) => void;
-  renderView: (viewType: ViewType, instanceId?: string) => ReactNode;
+  renderView: (viewType: ViewType, instanceId?: string, tab?: PaneTab) => ReactNode;
   onContextTab?: (tab: PaneTab, e: React.MouseEvent) => void;
   onReorderTabs?: (tabId: string, targetId: string) => void;
   closedKeptTabs?: PaneTab[];
@@ -62,7 +62,7 @@ export function PaneView({ pane, isActive, onFocus, onSelectTab, onCloseTab, onA
             {tab.viewType === 'empty' ? (
               <EmptyPane onSelectView={(vt) => onRequestView?.(tab.id, vt)} />
             ) : (
-              renderView(tab.viewType, tab.instanceId)
+              renderView(tab.viewType, tab.instanceId, tab)
             )}
           </div>
         ))}

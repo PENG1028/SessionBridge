@@ -51,6 +51,9 @@ import { LayoutProvider, useLayout, SidebarSlot, MainSlot, FocusProvider, Runtim
 import { WorkbenchLayout } from './console/stage/workbench-layout';
 import { appReducer, createAppInitialState, getActiveWorkbenchState, createInitialState, findPane as findPaneInTree, ensureInstanceTab, saveLayoutsToStorage, loadLayoutsFromStorage, restoreInstanceStatesFromStorage, genTabId, collectAllTabs, buildStateFromTabs, workbenchReducer, type ViewType, type PaneTab, type LayoutNode, type WorkbenchState, type WorkbenchAction, type AppWorkbenchState, type AppWorkbenchAction } from './console/stage/workbench-state';
 
+const DEBUG_SURFACE = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debugSurface');
+function debugLog(...args: any[]) { if (DEBUG_SURFACE) console.log('[debugSurface]', ...args); }
+
 // ==========================================
 // Types
 // ==========================================
@@ -434,14 +437,23 @@ function PageContent() {
       });
     } else if (msg.type === 'surface.published') {
       const surface = msg.surface;
+      debugLog('RECEIVED surface.published', { surfaceId: surface?.surfaceId, nodeId: surface?.nodeId, viewType: surface?.viewType, instanceId: surface?.runtimeRef?.instanceId });
       if (surface?.surfaceId && surface.nodeId) {
+        const instIdForAck = surface.runtimeRef?.instanceId;
+        if (instIdForAck) {
+          for (const key of Array.from(surfacePublishInFlightRef.current)) {
+            if (key.startsWith(`${surface.nodeId}:${instIdForAck}:`)) {
+              surfacePublishInFlightRef.current.delete(key);
+            }
+          }
+        }
         setAppState(prev => {
           let currentWs = prev.instanceStates[surface.nodeId];
           if (!currentWs) {
             currentWs = createInitialState(surface.nodeId);
           }
           // Already tracked by surfaceId
-          if (collectAllTabs(currentWs).some(t => t._surfaceId === surface.surfaceId || t.id === surface.surfaceId)) return prev;
+          if (collectAllTabs(currentWs).some(t => t._surfaceId === surface.surfaceId || t.id === surface.surfaceId)) { debugLog('surface.published SKIP: tab already tracked', { surfaceId: surface.surfaceId }); return prev; }
           const instId = surface.runtimeRef?.instanceId;
           const activePane = findPaneInTree(currentWs.root, currentWs.activePaneId);
           if (!activePane) return prev;
@@ -449,6 +461,7 @@ function PageContent() {
           if (instId) {
             const existingTab = activePane.tabs.find(t => t.instanceId === instId && !t._surfaceId);
             if (existingTab) {
+              debugLog('surface.published MERGE: upgrading existing tab with surface metadata', { tabId: existingTab.id, instanceId: instId, surfaceId: surface.surfaceId });
               currentWs = workbenchReducer(currentWs, {
                 type: 'SET_TAB_VIEW',
                 paneId: activePane.id,
@@ -463,6 +476,7 @@ function PageContent() {
             }
           }
           // No existing tab to upgrade — create new one
+          debugLog('surface.published CREATE: adding new tab', { surfaceId: surface.surfaceId, viewType: surface.viewType, instanceId: instId });
           const tab: PaneTab = {
             id: surface.surfaceId,
             title: surface.title || 'Shared',
@@ -472,7 +486,7 @@ function PageContent() {
             _surfaceId: surface.surfaceId,
             _operationId: surface.runtimeRef?.operationId,
           };
-          currentWs = workbenchReducer(currentWs, { type: 'ADD_TAB', paneId: activePane.id, tab });
+          currentWs = workbenchReducer(currentWs, { type: 'ADD_TAB', paneId: activePane.id, tab, activate: false });
           // Clean up empty placeholder tab when real surface tab was added
           const paneAfterAdd = findPaneInTree(currentWs.root, currentWs.activePaneId);
           if (paneAfterAdd) {
@@ -490,6 +504,7 @@ function PageContent() {
     } else if (msg.type === 'surface.list') {
       const nodeId: string = msg.nodeId;
       const surfaces: any[] = Array.isArray(msg.surfaces) ? msg.surfaces : [];
+      debugLog('RECEIVED surface.list', { nodeId, surfaceCount: surfaces.length });
       if (nodeId && surfaces.length > 0) {
         setAppState(prev => {
           let currentWs = prev.instanceStates[nodeId];
@@ -501,13 +516,14 @@ function PageContent() {
           }
           for (const s of surfaces) {
             // Skip if surface tab already exists
-            if (collectAllTabs(currentWs).some(t => t._surfaceId === s.surfaceId || t.id === s.surfaceId)) continue;
+            if (collectAllTabs(currentWs).some(t => t._surfaceId === s.surfaceId || t.id === s.surfaceId)) { debugLog('surface.list SKIP: tab already exists', { surfaceId: s.surfaceId }); continue; }
             // Merge: if a localStorage-restored tab shares the same instanceId, upgrade it with surface metadata
             const instId = s.runtimeRef?.instanceId;
             const existingPane = findPaneInTree(currentWs.root, currentWs.activePaneId);
             if (instId && existingPane) {
               const existingTab = existingPane.tabs.find(t => t.instanceId === instId && !t._surfaceId);
               if (existingTab) {
+                debugLog('surface.list MERGE: upgrading existing tab with surface metadata', { tabId: existingTab.id, instanceId: instId, surfaceId: s.surfaceId });
                 currentWs = workbenchReducer(currentWs, {
                   type: 'SET_TAB_VIEW',
                   paneId: existingPane.id,
@@ -522,6 +538,7 @@ function PageContent() {
               }
             }
             if (!existingPane) continue;
+            debugLog('surface.list CREATE: adding new tab', { surfaceId: s.surfaceId, viewType: s.viewType, instanceId: instId });
             const tab: PaneTab = {
               id: s.surfaceId,
               title: s.title,
@@ -531,7 +548,8 @@ function PageContent() {
               _surfaceId: s.surfaceId,
               _operationId: s.runtimeRef?.operationId,
             };
-            currentWs = workbenchReducer(currentWs, { type: 'ADD_TAB', paneId: existingPane.id, tab });
+            const shouldActivate = existingPane.tabs.every(t => t.viewType === 'empty');
+            currentWs = workbenchReducer(currentWs, { type: 'ADD_TAB', paneId: existingPane.id, tab, activate: shouldActivate });
           }
           // Clean up empty placeholder tab (from createInitialState) when
           // real tabs exist. Without this the empty "New" tab persists
@@ -662,6 +680,7 @@ function PageContent() {
   // after React commits. This avoids reading the ref before the updater executes
   // in concurrent / batched update scenarios.
   const pendingSyncRef = useRef<{ nodeId: string; tabs: any[] } | null>(null);
+  const surfacePublishInFlightRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (pendingSyncRef.current) {
@@ -1625,29 +1644,15 @@ function PageContent() {
     activeWorkbenchDispatch({ type: 'SET_TAB_VIEW', paneId, tabId, viewType, title: defaultTitle, instanceId: existingTab?.instanceId });
   }, [activeWorkbenchDispatch]);
 
-  // Phase 4F: Bind the active pane's current tab to an instanceId (called by views after explicit create).
-  const handleBindCurrentTabInstance = useCallback((instanceId: string) => {
-    const state = workbenchStateRef.current;
-    const activePane = findPaneInTree(state.root, state.activePaneId);
-    if (!activePane) return;
-    const activeTab = activePane.tabs.find(t => t.id === activePane.activeTabId);
-    if (!activeTab) return;
-    activeWorkbenchDispatch({
-      type: 'SET_TAB_VIEW',
-      paneId: activePane.id,
-      tabId: activeTab.id,
-      viewType: activeTab.viewType,
-      title: activeTab.title,
-      instanceId,
-    });
-    // Publish shared surface for cross-device visibility
-    publishSurfaceForTab(activeTab, instanceId);
-  }, [activeWorkbenchDispatch, sendMessage]);
-
   const publishSurfaceForTab = useCallback((tab: PaneTab, instanceId: string) => {
     const nodeId = appStateRef.current.activeInstanceId;
-    if (!nodeId || tab.viewType !== 'terminal' || tab._surfaceId) return;
-    sendMessage('surface.publish', {
+    if (!nodeId) { debugLog('publishSurfaceForTab SKIP: no activeInstanceId', { tabId: tab.id, instanceId }); return false; }
+    if (tab.viewType !== 'terminal') { debugLog('publishSurfaceForTab SKIP: not terminal', { tabId: tab.id, viewType: tab.viewType }); return false; }
+    if (tab._surfaceId) { debugLog('publishSurfaceForTab SKIP: already has _surfaceId', { tabId: tab.id, _surfaceId: tab._surfaceId }); return false; }
+    const publishKey = `${nodeId}:${instanceId}:${tab.id}`;
+    if (surfacePublishInFlightRef.current.has(publishKey)) { debugLog('publishSurfaceForTab SKIP: already in flight', { publishKey }); return true; }
+    debugLog('publishSurfaceForTab SENDING surface.publish', { nodeId, instanceId, tabId: tab.id });
+    const sent = sendMessage('surface.publish', {
       nodeId,
       title: tab.title || 'Terminal',
       viewType: 'terminal',
@@ -1656,7 +1661,34 @@ function PageContent() {
       runtimeRef: { kind: 'terminal', instanceId },
       replayPolicy: { mode: 'tail', lines: 5000, bytes: 500000 },
     });
+    if (!sent) { debugLog('publishSurfaceForTab FAIL: sendMessage returned false', { nodeId, instanceId, tabId: tab.id }); return false; }
+    surfacePublishInFlightRef.current.add(publishKey);
+    window.setTimeout(() => {
+      surfacePublishInFlightRef.current.delete(publishKey);
+    }, 5000);
+    return true;
   }, [sendMessage]);
+
+  // Phase 4F: Bind the active pane's current tab to an instanceId (called by views after explicit create).
+  const handleBindCurrentTabInstance = useCallback((instanceId: string) => {
+    const state = workbenchStateRef.current;
+    const activePane = findPaneInTree(state.root, state.activePaneId);
+    if (!activePane) { debugLog('bindCurrentTabInstance SKIP: no activePane'); return; }
+    const activeTab = activePane.tabs.find(t => t.id === activePane.activeTabId);
+    if (!activeTab) { debugLog('bindCurrentTabInstance SKIP: no activeTab'); return; }
+    debugLog('bindCurrentTabInstance', { instanceId, tabId: activeTab.id, viewType: activeTab.viewType, title: activeTab.title });
+    activeWorkbenchDispatch({
+      type: 'SET_TAB_VIEW',
+      paneId: activePane.id,
+      tabId: activeTab.id,
+      viewType: activeTab.viewType,
+      title: activeTab.title,
+      instanceId,
+    });
+    // Publish shared surface for cross-device visibility.
+    const published = publishSurfaceForTab(activeTab, instanceId);
+    debugLog('bindCurrentTabInstance publishSurfaceForTab result', { instanceId, published });
+  }, [activeWorkbenchDispatch, publishSurfaceForTab]);
 
   // Ensure a surface is published for an existing terminal tab that already
   // has an instanceId but no _surfaceId (e.g. restored from localStorage or
@@ -1665,7 +1697,7 @@ function PageContent() {
   const handleEnsureSurfacePublished = useCallback((instanceId: string) => {
     const state = workbenchStateRef.current;
     const nodeId = appStateRef.current.activeInstanceId;
-    if (!nodeId) return;
+    if (!nodeId) { debugLog('ensureSurfacePublished SKIP: no activeInstanceId', { instanceId }); return false; }
     // Walk the pane tree to find a tab with this instanceId and no _surfaceId
     function findTabInPane(pane: any): PaneTab | undefined {
       if (!pane) return undefined;
@@ -1679,9 +1711,12 @@ function PageContent() {
     }
     const tab = findTabInPane(state.root) || (state.bottom ? findTabInPane(state.bottom) : undefined);
     if (tab) {
-      publishSurfaceForTab(tab, instanceId);
+      debugLog('ensureSurfacePublished FOUND tab, calling publishSurfaceForTab', { instanceId, tabId: tab.id, tabTitle: tab.title, nodeId });
+      return publishSurfaceForTab(tab, instanceId);
     }
-  }, [sendMessage, publishSurfaceForTab]);
+    debugLog('ensureSurfacePublished SKIP: no matching tab found', { instanceId, nodeId });
+    return false;
+  }, [publishSurfaceForTab]);
 
   // ── Close tab: kill if not kept ──
   const handleCloseTab = useCallback((_paneId: string, _tabId: string, tab: PaneTab) => {

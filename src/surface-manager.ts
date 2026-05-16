@@ -47,6 +47,60 @@ function defaultReplayPolicy(viewType: string): ReplayPolicy {
 export type SendFn = (ws: WebSocket, msg: any) => void;
 export type EnvelopeFn = (type: string, body: Record<string, unknown>) => any;
 
+// ── Debug event ring buffer ───────────────────────────────────
+
+export interface SurfaceDebugEvent {
+  ts: number;
+  kind:
+    | 'surface.publish.request'
+    | 'surface.publish.created'
+    | 'surface.publish.duplicate'
+    | 'surface.publish.upstream'
+    | 'surface.subscribeNode'
+    | 'surface.subscribe'
+    | 'surface.list.sent'
+    | 'runtime.output'
+    | 'runtime.replay'
+    | 'runtime.input'
+    | 'runtime.status'
+    | 'runtime.result'
+    | 'surface.close'
+    | 'surface.import'
+    | 'surface.error';
+  surfaceId?: string;
+  nodeId?: string;
+  instanceId?: string;
+  operationId?: string;
+  clientRole?: string;
+  message?: string;
+  extra?: Record<string, unknown>;
+}
+
+const MAX_DEBUG_EVENTS = 200;
+
+export interface SurfaceDebugSnapshot {
+  surfaces: Array<{
+    surfaceId: string;
+    nodeId: string;
+    title: string;
+    viewType: string;
+    scope: string;
+    shared: boolean;
+    runtimeRef?: {
+      kind: string;
+      instanceId?: string;
+      operationId?: string;
+    };
+    replayPolicy?: unknown;
+    subscriberCount: number;
+    outputBufferSize: number;
+    eventBufferSize: number;
+    createdAt: number;
+    updatedAt: number;
+  }>;
+  events: SurfaceDebugEvent[];
+}
+
 export interface SurfaceCreateOpts {
   title: string;
   viewType: string;
@@ -67,6 +121,51 @@ export class SurfaceManager {
   private nodeSubscribers = new Map<string, Set<WebSocket>>(); // nodeId → subscribers
   private runtimeStates = new Map<string, RuntimeState>();
   private operationToSurface = new Map<string, string>();       // operationId → surfaceId
+  private debugEvents: SurfaceDebugEvent[] = [];
+
+  // ── Debug ring buffer ──────────────────────────────────────
+
+  /** Record a diagnostic event (max 200 entries, FIFO). Public so relay
+   *  handlers can emit events for paths outside the manager (e.g. request
+   *  received before surface creation, duplicate detection). */
+  recordDebugEvent(ev: SurfaceDebugEvent): void {
+    this.debugEvents.push(ev);
+    while (this.debugEvents.length > MAX_DEBUG_EVENTS) {
+      this.debugEvents.shift();
+    }
+  }
+
+  private _record(kind: SurfaceDebugEvent['kind'], extra?: Partial<SurfaceDebugEvent>): void {
+    this.recordDebugEvent({ ts: Date.now(), kind, ...extra });
+  }
+
+  /** Full diagnostic snapshot: all surfaces with runtime stats + event log. */
+  getDebugSnapshot(): SurfaceDebugSnapshot {
+    const surfaces: SurfaceDebugSnapshot['surfaces'] = [];
+    for (const s of this.surfaces.values()) {
+      const rt = this.runtimeStates.get(s.surfaceId);
+      surfaces.push({
+        surfaceId: s.surfaceId,
+        nodeId: s.nodeId,
+        title: s.title,
+        viewType: s.viewType,
+        scope: s.scope,
+        shared: s.shared,
+        runtimeRef: s.runtimeRef.kind === 'none' ? undefined : {
+          kind: s.runtimeRef.kind,
+          instanceId: s.runtimeRef.instanceId,
+          operationId: s.runtimeRef.operationId,
+        },
+        replayPolicy: s.replayPolicy,
+        subscriberCount: this.subscribers.get(s.surfaceId)?.size || 0,
+        outputBufferSize: rt?.outputBuffer?.length || 0,
+        eventBufferSize: rt?.eventBuffer?.length || 0,
+        createdAt: s.createdAt,
+        updatedAt: s.updatedAt,
+      });
+    }
+    return { surfaces, events: [...this.debugEvents] };
+  }
 
   // ── CRUD ─────────────────────────────────────────────────
 
@@ -92,6 +191,12 @@ export class SurfaceManager {
     };
 
     this.surfaces.set(surfaceId, surface);
+
+    this._record('surface.publish.created', {
+      surfaceId, nodeId, instanceId: surface.runtimeRef.instanceId,
+      operationId: surface.runtimeRef.operationId,
+      extra: { viewType: surface.viewType, scope: surface.scope, shared: surface.shared },
+    });
 
     // Initialize RuntimeState for surfaces with runtime
     if (surface.runtimeRef.kind !== 'none') {
@@ -148,6 +253,9 @@ export class SurfaceManager {
     this.surfaces.delete(surfaceId);
     this.subscribers.delete(surfaceId);
     this.runtimeStates.delete(surfaceId);
+
+    this._record('surface.close', { surfaceId, nodeId: surface.nodeId });
+
     return true;
   }
 
@@ -210,6 +318,8 @@ export class SurfaceManager {
     };
     ws.addEventListener('close', cleanup, { once: true });
 
+    this._record('surface.subscribe', { surfaceId, nodeId: surface.nodeId });
+
     // Replay history for late joiner
     this.replayForSubscriber(surface, ws, sendFn, envelopeFn);
 
@@ -236,6 +346,11 @@ export class SurfaceManager {
 
     // Return all surfaces for this node, triggering replay for each
     const surfaces = this.listByNode(nodeId);
+
+    this._record('surface.subscribeNode', {
+      nodeId, extra: { surfaceCount: surfaces.length, sharedCount: surfaces.filter(s => s.shared).length },
+    });
+
     for (const surface of surfaces) {
       if (surface.shared) {
         this.subscribe(surface.surfaceId, ws, sendFn, envelopeFn);
@@ -304,6 +419,11 @@ export class SurfaceManager {
     // Apply replay policy to trim buffer
     this.trimOutputBuffer(surface.replayPolicy, runtime);
 
+    this._record('runtime.output', {
+      surfaceId, nodeId: surface.nodeId, operationId: runtime.operationId,
+      extra: { stream, dataLen: trimmed.length, bufferSize: runtime.outputBuffer.length },
+    });
+
     // Broadcast live to surface subscribers
     this.broadcastToSubscribers(surfaceId, sendFn, envelopeFn('runtime.output', {
       surfaceId,
@@ -326,6 +446,8 @@ export class SurfaceManager {
     runtime.status = status;
     runtime.updatedAt = Date.now();
 
+    this._record('runtime.status', { surfaceId, operationId: runtime.operationId, extra: { status, detail } });
+
     this.broadcastToSubscribers(surfaceId, sendFn, envelopeFn('runtime.status', {
       surfaceId,
       operationId: runtime.operationId,
@@ -346,6 +468,8 @@ export class SurfaceManager {
     runtime.status = result.error ? 'failed' : 'completed';
     runtime.latest = result.data;
     runtime.updatedAt = Date.now();
+
+    this._record('runtime.result', { surfaceId, operationId: runtime.operationId, extra: { success: result.success, exitCode: result.exitCode } });
 
     this.broadcastToSubscribers(surfaceId, sendFn, envelopeFn('runtime.result', {
       surfaceId,
@@ -382,6 +506,11 @@ export class SurfaceManager {
     runtime.eventBuffer.push(evt);
     runtime.updatedAt = Date.now();
 
+    this._record('runtime.output', {
+      surfaceId, nodeId: surface.nodeId, operationId: runtime.operationId,
+      extra: { event, dataType: typeof data },
+    });
+
     // Trim events per replayPolicy
     const policy = surface.replayPolicy;
     if (policy.mode === 'events' && policy.count) {
@@ -410,6 +539,11 @@ export class SurfaceManager {
   ): void {
     const runtime = this.runtimeStates.get(surface.surfaceId);
     if (!runtime) return;
+
+    this._record('runtime.replay', {
+      surfaceId: surface.surfaceId, nodeId: surface.nodeId, operationId: runtime.operationId,
+      extra: { outputCount: runtime.outputBuffer.length, eventCount: runtime.eventBuffer.length, mode: surface.replayPolicy.mode },
+    });
 
     // 1. Send current status
     sendFn(ws, envelopeFn('runtime.status', {
@@ -567,6 +701,7 @@ export class SurfaceManager {
   ): SharedSurface | null {
     // Skip if already exists
     if (this.surfaces.has(surfaceData.surfaceId)) {
+      this._record('surface.publish.duplicate', { surfaceId: surfaceData.surfaceId, nodeId: surfaceData.nodeId });
       return this.surfaces.get(surfaceData.surfaceId)!;
     }
     const now = Date.now();
@@ -592,6 +727,11 @@ export class SurfaceManager {
       updatedAt: now,
     };
     this.surfaces.set(surface.surfaceId, surface);
+    this._record('surface.import', {
+      surfaceId: surface.surfaceId, nodeId: remappedInstanceId,
+      instanceId: surface.runtimeRef.instanceId,
+      extra: { originalNodeId: surfaceData.nodeId, viewType: surface.viewType },
+    });
     // Generate local operationId for terminal surfaces
     if (surface.runtimeRef.kind === 'terminal') {
       const localOpId = this.nextOperationId();

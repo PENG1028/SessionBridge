@@ -96,10 +96,11 @@ export function useSession(
   const sendMessage = useCallback((type: string, body: Record<string, unknown> = {}) => {
     if (!clientRef.current?.isOpen) {
       console.warn(`[sendMessage] WebSocket not open, dropping ${type}`, body);
-      return;
+      return false;
     }
     clientRef.current.send(type, body);
     addMsgLog('system', type);
+    return true;
   }, [addMsgLog]);
 
   const sendResize = useCallback((cols: number, rows: number) => {

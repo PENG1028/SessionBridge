@@ -8,6 +8,9 @@ import { DirectoryPicker } from '../dialogs/directory-picker';
 import { TitleBar } from '../shared/title-bar';
 import { getLastActiveDir, getRestoreLastPath, setLastActiveDir } from '../../lib/path-bookmarks';
 
+const DEBUG_SURFACE = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debugSurface');
+function debugLog(...args: any[]) { if (DEBUG_SURFACE) console.log('[debugSurface]', ...args); }
+
 interface TerminalViewProps {
   instanceId?: string;
   _surfaceId?: string;
@@ -33,29 +36,32 @@ export function TerminalView({ instanceId, _surfaceId, _operationId }: TerminalV
   });
   const [pickerOpen, setPickerOpen] = useState(false);
 
+  // Debug: log mount/render with current props
+  useEffect(() => {
+    debugLog('TerminalView mount/update', { instanceId, _surfaceId, _operationId, autoCreated: autoCreated.current, surfacePublished: surfacePublished.current });
+  });
+
   // Auto-create a new shell instance when no instanceId
   const cwdRef = useRef(cwd);
   cwdRef.current = cwd;
   useEffect(() => {
     if (instanceId || autoCreated.current) return;
     autoCreated.current = true;
+    debugLog('TerminalView auto-creating instance', { cwd: cwdRef.current });
     setCreating(true);
     setError(null);
     (async () => {
       try {
         const result = await createInstance(cwdRef.current, 'Terminal', 'shell');
         if (result?.instance?.id) {
-          // Mark surface as published BEFORE bindCurrentTabInstance, which
-          // dispatches SET_TAB_VIEW (setting instanceId) and sends
-          // surface.publish.  Without this, the ensureSurfacePublished
-          // effect below re-fires on the new instanceId and sends a
-          // duplicate surface.publish.
-          surfacePublished.current = true;
+          debugLog('TerminalView auto-create SUCCESS', { instanceId: result.instance.id });
           bindCurrentTabInstance(result.instance.id);
         } else {
+          debugLog('TerminalView auto-create FAIL', { error: result?.error });
           setError(result?.error || 'Failed to create terminal instance');
         }
       } catch (err) {
+        debugLog('TerminalView auto-create EXCEPTION', { error: String(err) });
         setError(String(err));
       } finally {
         setCreating(false);
@@ -68,8 +74,13 @@ export function TerminalView({ instanceId, _surfaceId, _operationId }: TerminalV
   // devices cannot discover the terminal via surface.subscribeNode.
   useEffect(() => {
     if (instanceId && !_surfaceId && !surfacePublished.current) {
-      surfacePublished.current = true;
-      ensureSurfacePublished(instanceId);
+      debugLog('TerminalView triggering ensureSurfacePublished', { instanceId, _surfaceId });
+      if (ensureSurfacePublished(instanceId)) {
+        debugLog('TerminalView ensureSurfacePublished OK', { instanceId });
+        surfacePublished.current = true;
+      } else {
+        debugLog('TerminalView ensureSurfacePublished returned false', { instanceId });
+      }
     }
   }, [instanceId, _surfaceId, ensureSurfacePublished]);
 
