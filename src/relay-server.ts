@@ -183,13 +183,31 @@ function syncTabsByLabel(nodeId: string, tabs: any[], sourceLabel?: string, send
 }
 
 /**
+ * Find an instance by label, preferring running instances.
+ * When a relay reconnects, it creates a new remote instance; the old one
+ * becomes "stopped". Surfaces must be associated with the running instance
+ * so that browsers viewing that instance can discover them.
+ */
+function findInstanceByLabel(label: string): ReturnType<typeof instanceManager.get> {
+  const all = instanceManager.list();
+  // Prefer running
+  const running = all.find(i => i.label === label && i.status === 'running');
+  if (running) return running;
+  // Fall back to any matching (stopped, etc.)
+  return all.find(i => i.label === label);
+}
+
+/**
  * After publishing a surface for a nodeId, sync to any other instances
  * that share the same label (hostname). Mirrors syncTabsByLabel for surfaces.
  */
 function syncSurfacesByLabel(nodeId: string, surfaceData: Record<string, unknown>, sourceLabel?: string): void {
   const label = sourceLabel || instanceManager.get(nodeId)?.label;
   if (!label || !surfaceData.surfaceId) return;
-  for (const inst of instanceManager.list()) {
+  // Sort: running instances first, so importFromUpstream lands on the active one
+  const sorted = instanceManager.list();
+  sorted.sort((a, b) => (b.status === 'running' ? 1 : 0) - (a.status === 'running' ? 1 : 0));
+  for (const inst of sorted) {
     if (inst.label === label && inst.id !== nodeId) {
       const surface = surfaceManager.importFromUpstream(
         surfaceData as any,
@@ -2658,7 +2676,7 @@ function setupWssHandlers(): void {
         // __local__ is the browser-side ID for the sending relay itself.
         // On the receiving relay, remap to the matching instance by label.
         if ((!instanceManager.get(remapNodeId) || remapNodeId === '__local__') && msg._label) {
-          const match = instanceManager.list().find(i => i.label === msg._label);
+          const match = findInstanceByLabel(msg._label);
           if (match) remapNodeId = match.id;
         }
         const inst = instanceManager.get(remapNodeId);
