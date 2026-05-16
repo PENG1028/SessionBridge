@@ -1357,6 +1357,26 @@ function PageContent() {
     }
   }, [sendMessage]);
 
+  const handleRefreshNode = useCallback(() => {
+    const nodeId = appStateRef.current.activeInstanceId;
+    if (!nodeId) return;
+    sendMessage('surface.subscribeNode', { nodeId });
+    sendMessage('workbench.subscribe', { nodeId });
+  }, [sendMessage]);
+
+  // Periodic surface sync — safety net for cross-relay push notification gaps.
+  // Re-subscribes to the active node's surfaces every 30s so new tabs from
+  // other devices are discovered even if surface.published push was missed.
+  useEffect(() => {
+    const nodeId = appState.activeInstanceId;
+    if (!nodeId) return;
+    const id = setInterval(() => {
+      sendMessage('surface.subscribeNode', { nodeId });
+      sendMessage('workbench.subscribe', { nodeId });
+    }, 30_000);
+    return () => clearInterval(id);
+  }, [appState.activeInstanceId, sendMessage]);
+
   // ── Closed kept tabs for ≡ menu (Phase 4N) ──
   const closedKeptTabs = useMemo(() => {
     const openTabIds = new Set<string>();
@@ -1749,6 +1769,7 @@ function PageContent() {
         wsUrl={wsUrl}
         activeNodeId={appState.activeInstanceId}
         onEnterNode={handleEnterNode}
+        onRefreshNode={handleRefreshNode}
         onOpenConnection={() => setAppState(prev => appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: null }))}
       />
 

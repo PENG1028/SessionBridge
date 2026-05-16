@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, Cpu, Server, X } from 'lucide-react';
+import { Plus, Cpu, Server, X, RefreshCw } from 'lucide-react';
 
 interface PeerInfo {
   id: string;
@@ -21,6 +21,7 @@ interface NodeBarProps {
   activeNodeId: string | null;
   onEnterNode: (nodeId: string) => void;
   onOpenConnection: () => void;
+  onRefreshNode?: () => void;
 }
 
 function nodeIcon(peer: PeerInfo) {
@@ -34,7 +35,7 @@ function statusColor(peer: PeerInfo): string {
   return 'bg-gray-600';
 }
 
-export function NodeBar({ peers, wsUrl, activeNodeId, onEnterNode, onOpenConnection }: NodeBarProps) {
+export function NodeBar({ peers, wsUrl, activeNodeId, onEnterNode, onOpenConnection, onRefreshNode }: NodeBarProps) {
   const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
 
   // Auto-undismiss when a dismissed node becomes active (user entered via NodeNetworkView)
@@ -110,6 +111,15 @@ export function NodeBar({ peers, wsUrl, activeNodeId, onEnterNode, onOpenConnect
         );
       })}
 
+      {onRefreshNode && activeNodeId && (
+        <button
+          onClick={onRefreshNode}
+          className="flex items-center gap-1 px-1.5 py-0.5 text-gray-500 hover:text-gray-200 hover:bg-gray-800/60 rounded transition-colors shrink-0"
+          title="Refresh tabs"
+        >
+          <RefreshCw className="w-3 h-3" />
+        </button>
+      )}
       <button
         onClick={onOpenConnection}
         className="flex items-center gap-1 px-1.5 py-0.5 text-gray-500 hover:text-gray-200 hover:bg-gray-800/60 rounded transition-colors shrink-0"
