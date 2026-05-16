@@ -2426,10 +2426,20 @@ function setupWssHandlers(): void {
       const linkedSurface = surfaceManager.findByOperationId(operationId);
       if (linkedSurface && linkedSurface.runtimeRef.kind === 'terminal' && linkedSurface.runtimeRef.instanceId) {
         const inst = instanceManager.get(linkedSurface.runtimeRef.instanceId);
-        if (inst) {
-          sendStdin(inst, data);
+        if (!inst) {
+          send(ws, envelope("error", {
+            code: "INSTANCE_NOT_FOUND",
+            message: `Terminal surface ${linkedSurface.surfaceId}: instance ${linkedSurface.runtimeRef.instanceId} not found`,
+          }));
           return;
         }
+        if (!sendStdin(inst, data)) {
+          send(ws, envelope("error", {
+            code: "PTY_NOT_AVAILABLE",
+            message: `Terminal surface ${linkedSurface.surfaceId}: PTY not available (agent disconnected or shell not spawned)`,
+          }));
+        }
+        return;
       }
 
       operationManager.forwardInputToAgent(
@@ -2544,24 +2554,37 @@ function setupWssHandlers(): void {
         createdBy: wsToClientToken.get(ws) || "unknown",
       });
 
-      // If the surface has a runtime, create an operation for it
+      // If the surface has a runtime, create an operation for it.
+      // Terminal surfaces use the existing shell PTY (shell.spawn /
+      // relay.shell.spawn) — the operationId exists only for relay-internal
+      // input/replay binding. We must NOT forward relay.operation.start to
+      // the agent because OperationRunner has no terminal handler and would
+      // produce a spurious runtime failure.
       if (surface.runtimeRef.kind !== "none" && surface.runtimeRef.instanceId) {
+        const isTerminal = surface.runtimeRef.kind === "terminal";
         try {
-          const op = operationManager.create(surface.nodeId, "terminal", {
-            pluginId: surface.pluginId,
-            instanceId: surface.runtimeRef.instanceId,
-            createdBy: surface.createdBy,
-          });
-          surfaceManager.linkOperation(surface.surfaceId, op.operationId);
+          if (isTerminal) {
+            // Generate an operationId for input/replay binding without
+            // creating a real operation or forwarding to the agent.
+            const syntheticId = surfaceManager.nextOperationId();
+            surfaceManager.linkOperation(surface.surfaceId, syntheticId);
+          } else {
+            const op = operationManager.create(surface.nodeId, surface.runtimeRef.kind as import("./remote-operation-manager").OperationKind, {
+              pluginId: surface.pluginId,
+              instanceId: surface.runtimeRef.instanceId,
+              createdBy: surface.createdBy,
+            });
+            surfaceManager.linkOperation(surface.surfaceId, op.operationId);
 
-          // Forward to remote agent if applicable
-          const inst = instanceManager.get(surface.runtimeRef.instanceId);
-          if (inst && inst.source === "remote" && inst.agentConnection) {
-            operationManager.forwardToAgent(
-              op, inst,
-              (w: any, m: any) => send(w, m),
-              (t: any, b: any) => envelope(t, b),
-            );
+            // Forward to remote agent if applicable
+            const inst = instanceManager.get(surface.runtimeRef.instanceId);
+            if (inst && inst.source === "remote" && inst.agentConnection) {
+              operationManager.forwardToAgent(
+                op, inst,
+                (w: any, m: any) => send(w, m),
+                (t: any, b: any) => envelope(t, b),
+              );
+            }
           }
         } catch (err) {
           send(ws, envelope("error", {

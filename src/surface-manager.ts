@@ -179,6 +179,14 @@ export class SurfaceManager {
     }
   }
 
+  /** Generate a fresh operationId for input/replay binding without creating
+   *  a full RemoteOperation. Used by terminal surfaces whose real runtime is
+   *  the shell PTY (not an OperationRunner handler). */
+  nextOperationId(): string {
+    return `op_${++this._opCounter}_${Date.now().toString(36)}`;
+  }
+  private _opCounter = 0;
+
   // ── Subscriber management ─────────────────────────────────
 
   subscribe(

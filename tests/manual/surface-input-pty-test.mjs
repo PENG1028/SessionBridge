@@ -126,10 +126,33 @@ async function main() {
   check('T2b: operationId present', !!OPERATION_ID, `operationId=${OPERATION_ID}`);
   console.log();
 
+  // T2c: surface.publish for terminal MUST NOT trigger a phantom
+  // operation failure on the agent. Terminal surfaces use the shell PTY
+  // (shell.spawn / relay.shell.spawn) and do NOT send relay.operation.start
+  // to OperationRunner, which has no terminal handler.
+  console.log('── T2c: No phantom terminal operation failure ──');
+  await delay(3000); // Wait for any spurious operation failure to arrive
+
+  const phantomFailure = A.inbox.find(s => {
+    try {
+      const m = JSON.parse(s);
+      const msg = m.v === 1 && m.body ? { ...m.body, type: m.type } : m;
+      if (msg.type === 'runtime.result' && msg.success === false) return true;
+      if (msg.type === 'runtime.result' && msg.error) return true;
+      if (msg.type === 'error') return true;
+      const text = JSON.stringify(msg);
+      if (text.includes('No handler registered') || text.includes('no handler')) return true;
+    } catch { return false; }
+  });
+  const noFailureText = phantomFailure
+    ? ` (found: ${phantomFailure.slice(0, 200)})`
+    : '';
+  check('T2c: No phantom operation failure after terminal surface.publish', !phantomFailure, noFailureText);
+
   // Drain initial runtime stuff
   drain(A.inbox, 'runtime.status');
   drain(A.inbox, 'runtime.output');
-
+  drain(A.inbox, 'runtime.result');
   // T3: Browser B connects and subscribes to node
   console.log('── T3: Browser B subscribes to node ──');
   const B = await connectBrowser('B');
