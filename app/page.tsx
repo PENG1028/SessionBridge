@@ -473,6 +473,17 @@ function PageContent() {
             _operationId: surface.runtimeRef?.operationId,
           };
           currentWs = workbenchReducer(currentWs, { type: 'ADD_TAB', paneId: activePane.id, tab });
+          // Clean up empty placeholder tab when real surface tab was added
+          const paneAfterAdd = findPaneInTree(currentWs.root, currentWs.activePaneId);
+          if (paneAfterAdd) {
+            const emptyTabs = paneAfterAdd.tabs.filter(t => t.viewType === 'empty');
+            const realTabs = paneAfterAdd.tabs.filter(t => t.viewType !== 'empty');
+            if (realTabs.length > 0 && emptyTabs.length > 0) {
+              for (const empty of emptyTabs) {
+                currentWs = workbenchReducer(currentWs, { type: 'CLOSE_TAB', paneId: paneAfterAdd.id, tabId: empty.id });
+              }
+            }
+          }
           return { ...prev, instanceStates: { ...prev.instanceStates, [surface.nodeId]: currentWs } };
         });
       }
@@ -522,6 +533,19 @@ function PageContent() {
             };
             currentWs = workbenchReducer(currentWs, { type: 'ADD_TAB', paneId: existingPane.id, tab });
           }
+          // Clean up empty placeholder tab (from createInitialState) when
+          // real tabs exist. Without this the empty "New" tab persists
+          // alongside real surface tabs, causing visual duplication.
+          const activePane = findPaneInTree(currentWs.root, currentWs.activePaneId);
+          if (activePane) {
+            const emptyTabs = activePane.tabs.filter(t => t.viewType === 'empty');
+            const realTabs = activePane.tabs.filter(t => t.viewType !== 'empty');
+            if (realTabs.length > 0 && emptyTabs.length > 0) {
+              for (const empty of emptyTabs) {
+                currentWs = workbenchReducer(currentWs, { type: 'CLOSE_TAB', paneId: activePane.id, tabId: empty.id });
+              }
+            }
+          }
           return { ...prev, instanceStates: { ...prev.instanceStates, [nodeId]: currentWs } };
         });
       }
@@ -540,6 +564,43 @@ function PageContent() {
           }
           return next;
         });
+      }
+    } else if (msg.type === 'runtime.replay') {
+      // Relay sends replay to main WS when surface.subscribeNode triggers
+      // subscribe for each surface. Shell terminal handles replay on its own
+      // WebSocket; here we cache the latest output for tab previews.
+      const surfaceId: string = msg.surfaceId;
+      const outputs: any[] = Array.isArray(msg.outputs) ? msg.outputs : [];
+      if (surfaceId && outputs.length > 0) {
+        setAppState(prev => {
+          const next = { ...prev, tabOutputs: { ...prev.tabOutputs, [surfaceId]: outputs } };
+          return next;
+        });
+      }
+    } else if (msg.type === 'runtime.output') {
+      const surfaceId: string = msg.surfaceId;
+      if (surfaceId && msg.data != null) {
+        setAppState(prev => {
+          const existing = prev.tabOutputs?.[surfaceId] || [];
+          const chunk = { stream: msg.stream || 'stdout', data: msg.data, seq: msg.seq };
+          return { ...prev, tabOutputs: { ...prev.tabOutputs, [surfaceId]: [...existing, chunk].slice(-200) } };
+        });
+      }
+    } else if (msg.type === 'runtime.status') {
+      const surfaceId: string = msg.surfaceId;
+      if (surfaceId) {
+        setAppState(prev => ({
+          ...prev,
+          runtimeStatuses: { ...prev.runtimeStatuses, [surfaceId]: msg.status },
+        }));
+      }
+    } else if (msg.type === 'runtime.result') {
+      const surfaceId: string = msg.surfaceId;
+      if (surfaceId) {
+        setAppState(prev => ({
+          ...prev,
+          runtimeResults: { ...prev.runtimeResults, [surfaceId]: msg },
+        }));
       }
     }
   }, []);

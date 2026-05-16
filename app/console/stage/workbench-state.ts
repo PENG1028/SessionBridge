@@ -473,6 +473,12 @@ export interface AppWorkbenchState {
   persistentTabs: PaneTab[];
   /** Node IDs that appear in the NodeBar (not tab-level processes like shell terminals). */
   workbenchInstanceIds: string[];
+  /** Cached runtime replay outputs keyed by surfaceId (for tab previews) */
+  tabOutputs?: Record<string, any[]>;
+  /** Cached runtime statuses keyed by surfaceId */
+  runtimeStatuses?: Record<string, string>;
+  /** Cached runtime results keyed by surfaceId */
+  runtimeResults?: Record<string, any>;
 }
 
 export type AppWorkbenchAction =
