@@ -2419,6 +2419,19 @@ function setupWssHandlers(): void {
       const data = String(msg.data || "");
       if (!operationId) return;
 
+      // Terminal surfaces: route input through the existing shell PTY
+      // (agent.stdin → PTY write), not through OperationRunner echo.
+      // The surface provides shared display + replay; input still targets
+      // the shell instance directly so it reaches the real PTY.
+      const linkedSurface = surfaceManager.findByOperationId(operationId);
+      if (linkedSurface && linkedSurface.runtimeRef.kind === 'terminal' && linkedSurface.runtimeRef.instanceId) {
+        const inst = instanceManager.get(linkedSurface.runtimeRef.instanceId);
+        if (inst) {
+          sendStdin(inst, data);
+          return;
+        }
+      }
+
       operationManager.forwardInputToAgent(
         operationId, data,
         (id) => instanceManager.get(id),
