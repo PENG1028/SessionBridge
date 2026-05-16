@@ -307,7 +307,110 @@ Terminal 操作 (`shell.spawn`) 已部分集成到 RemoteOperation 模型：
 
 ---
 
-## 十、已知缺口
+## 十、SharedSurface 协议 (surface.* + runtime.*)
+
+SharedSurface 是 workbench tab 共享的 source of truth。
+它包装 RemoteOperation，为 browser 提供 surface 粒度的订阅和历史 replay。
+详见 [`docs/SHARED_SURFACE_REPLAY_MODEL.md`](SHARED_SURFACE_REPLAY_MODEL.md)。
+
+### surface.* — 生命周期
+
+| 消息类型 | 方向 | 用途 |
+|---------|------|------|
+| `surface.publish` | Browser → Relay | 创建 shared surface |
+| `surface.published` | Relay → Sender | 确认 + 返回完整 SharedSurface |
+| `surface.subscribe` | Browser → Relay | 订阅单个 surface（触发 runtime replay） |
+| `surface.subscribeNode` | Browser → Relay | 订阅 node 下所有 surfaces |
+| `surface.update` | Browser → Relay | 更新 surface 元数据 |
+| `surface.updated` | Relay → Subscribers | 广播元数据更新 |
+| `surface.close` | Browser → Relay | 关闭 surface |
+| `surface.closed` | Relay → Subscribers | 广播关闭（发送者排除） |
+| `surface.list` | Relay → Subscriber | 返回 node 的 surface 列表 |
+
+### runtime.* — 运行时数据
+
+| 消息类型 | 方向 | 用途 |
+|---------|------|------|
+| `runtime.output` | Relay → Subscribers | Scoped live output |
+| `runtime.status` | Relay → Subscribers | 运行时状态变更 |
+| `runtime.result` | Relay → Subscribers | 运行时完成结果 |
+| `runtime.replay` | Relay → Subscriber | Late joiner 历史回放 |
+
+### surface.publish (terminal 示例)
+
+```json
+{
+  "type": "surface.publish",
+  "body": {
+    "nodeId": "inst_22_xxx",
+    "title": "Shared Terminal",
+    "viewType": "terminal",
+    "scope": "node",
+    "shared": true,
+    "runtimeRef": { "kind": "terminal", "instanceId": "inst_22_xxx" },
+    "replayPolicy": { "mode": "tail", "lines": 5000, "bytes": 500000 }
+  }
+}
+```
+
+### surface.published
+
+```json
+{
+  "type": "surface.published",
+  "body": {
+    "surfaceId": "surf_1_abc123",
+    "surface": {
+      "surfaceId": "surf_1_abc123",
+      "nodeId": "inst_22_xxx",
+      "title": "Shared Terminal",
+      "viewType": "terminal",
+      "runtimeRef": {
+        "kind": "terminal",
+        "instanceId": "inst_22_xxx",
+        "operationId": "op_1_abc123"
+      },
+      "replayPolicy": { "mode": "tail", "lines": 5000, "bytes": 500000 }
+    }
+  }
+}
+```
+
+### runtime.replay
+
+```json
+{
+  "type": "runtime.replay",
+  "body": {
+    "surfaceId": "surf_1_abc123",
+    "operationId": "op_1_abc123",
+    "outputs": [
+      { "seq": 0, "stream": "stdout", "data": "line-1\n" },
+      { "seq": 1, "stream": "stdout", "data": "line-2\n" }
+    ],
+    "status": "running"
+  }
+}
+```
+
+### 错误码
+
+| 错误码 | 触发条件 |
+|--------|---------|
+| `SURFACE_NOT_FOUND` | surface 不存在或已关闭 |
+| `ACCESS_DENIED` | 无所需权限 |
+| `INVALID_REPLAY_POLICY` | replayPolicy 配置无效 |
+| `RUNTIME_NOT_FOUND` | 关联 runtime 不存在 |
+
+### 跨 Relay 转发
+
+surface.publish 从 browser 路径创建后，通过 `_sendUpstream` 转发给上游 relay。
+转发时附带 `_label`（hostname）用于目标 relay 的 instance remapping。
+详见 `SHARED_SURFACE_REPLAY_MODEL.md` §五。
+
+---
+
+## 十一、已知缺口
 
 1. **没有 HTTP API 包装**: operation.start/input/subscribe/cancel 只能通过 WebSocket 触发，没有 `POST /api/operation/start` 等价端点
 2. **没有 CLI 包装**: `bridge operation start --json` 已设计契约但未实现
@@ -317,8 +420,11 @@ Terminal 操作 (`shell.spawn`) 已部分集成到 RemoteOperation 模型：
 
 ---
 
-## 十一、测试
+## 十二、测试
 
 - `tests/integration/real-agent-operation-protocol.test.ts` — 39/39 assertions, 覆盖 mock-echo + system-info + subscribe replay + input + bad target + agent disconnect
 - `tests/integration/remote-routing-invariants.test.mjs` — 路由不变量测试
 - `tests/integration/shared-remote-terminal-session` — terminal session 共享测试
+- `tests/integration/shared-surface-terminal-replay.test.mjs` — SharedSurface MVP 协议测试 (31 tests)
+- `tests/integration/shared-surface-replay-cap.test.mjs` — replay cap 测试 (12 tests)
+- `tests/integration/shared-surface-ui-contract.test.mjs` — UI contract 测试 (48 tests)

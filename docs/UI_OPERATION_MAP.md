@@ -61,13 +61,28 @@
 
 ---
 
-## 五、Workbench Tab 同步
+## 五、Workbench Tab 同步 (SharedSurface — 推荐)
+
+SharedSurface 是 tab 同步的 source of truth。`workbench.tabs` 降级为向后兼容投影。
+详见 [`docs/SHARED_SURFACE_REPLAY_MODEL.md`](SHARED_SURFACE_REPLAY_MODEL.md)。
+
+| 页面位置 | 用户操作 | 调用方式 | API/WS 消息 | 涉及状态 | 预期结果 | 对应测试 |
+|---------|---------|---------|------------|---------|---------|---------|
+| 创建 terminal tab | 自动 | WS send | `surface.publish { nodeId, viewType, runtimeRef, replayPolicy }` | surface (relay 端) | 创建 shared surface + operation, 广播 surface.published | shared-surface-terminal-replay.test.mjs (31/31) |
+| 进入节点 | 自动 | WS send | `surface.subscribeNode { nodeId }` | - | 收到 `surface.list` → `runtime.replay` (历史) → `runtime.output` (live) | shared-surface-terminal-replay.test.mjs |
+| 远程设备创建 tab | 自动接收 | WS onmessage | `surface.published` → dispatch `UPSERT_TAB` | workbench state | 自动添加 tab 到当前 pane | shared-surface-ui-contract.test.mjs (48/48) |
+| Late join 历史回放 | 自动接收 | WS onmessage | `runtime.replay { surfaceId, outputs[] }` | tab outputCache | xterm.js buffer 显示历史输出 | shared-surface-replay-cap.test.mjs (12/12) |
+| Live output | 自动接收 | WS onmessage | `runtime.output { surfaceId, data }` | tab outputCache | 追加到 xterm.js buffer | shared-surface-terminal-replay.test.mjs |
+| Terminal 输入 (shared) | 键盘输入 | WS send | `operation.input { operationId, data }` | - | 发送到关联 operation (而非 shell.input) | shared-surface-ui-contract.test.mjs |
+| 关闭 shared tab | 自动 | WS send | `surface.close { surfaceId }` | surface (relay 端) | 广播 surface.closed 给订阅者 | shared-surface-ui-contract.test.mjs |
+
+### 兼容路径: workbench.tabs (Legacy)
 
 | 页面位置 | 用户操作 | 调用方式 | API/WS 消息 | 涉及状态 | 预期结果 | 对应测试 |
 |---------|---------|---------|------------|---------|---------|---------|
 | 创建/销毁 tab | 自动 | WS send | `workbench.tabs { nodeId, tabs }` | workbenchTabStore (relay 端) | 服务端存储 tabs 并广播 | workbench tab sync (manual test) |
 | 进入节点 | 自动 | WS send | `workbench.subscribe { nodeId }` | - | 收到 `workbench.tabs` 回放 | - |
-| 远程设备创建 tab | 自动接收 | WS onmessage | `workbench.tabs { nodeId, tabs }` | 本地 workbench state | 同步显示远程 tabs | - |
+| 远程设备创建 tab | 自动接收 | WS onmessage | `workbench.tabs { nodeId, tabs }` | 本地 workbench state | 同步显示远程 tabs (无 runtime replay) | - |
 
 ---
 
