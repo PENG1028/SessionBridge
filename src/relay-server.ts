@@ -2086,11 +2086,26 @@ function setupWssHandlers(): void {
       const agentVersion = agentVersionMap.get(ws) || "unknown";
       // TODO: protocol should carry adapterId/capability — the agent must declare what type it is.
       const agentAdapterId = msg.adapterId || 'unknown';
-      const remoteInst = instanceManager.create(dir, label, 'remote', agentAdapterId);
-      applyAlias(remoteInst);
-      remoteInst.agentConnection = ws;
-      remoteInst.agentVersion = agentVersion;
-      remoteInst.status = 'running';
+
+      // Reuse an existing stopped instance with the same label instead of
+      // creating a new one. When a leaf relay reconnects, it should reclaim
+      // its previous instance so surfaces/workbench tabs remain associated.
+      let remoteInst = instanceManager.list().find(
+        i => i.label === label && i.source === 'remote' && i.status === 'stopped'
+      );
+      const isReconnect = !!remoteInst;
+      if (remoteInst) {
+        remoteInst.agentConnection = ws;
+        remoteInst.agentVersion = agentVersion;
+        remoteInst.status = 'running';
+        remoteInst.dir = dir;
+      } else {
+        remoteInst = instanceManager.create(dir, label, 'remote', agentAdapterId);
+        applyAlias(remoteInst);
+        remoteInst.agentConnection = ws;
+        remoteInst.agentVersion = agentVersion;
+        remoteInst.status = 'running';
+      }
       (ws as any)._isAgent = true;
       (ws as any)._agentInstanceId = remoteInst.id;
       (ws as any)._agentLabel = label;
@@ -2100,7 +2115,9 @@ function setupWssHandlers(): void {
       clients.delete(ws);
       send(ws, envelope("agent.registered", { instanceId: remoteInst.id, sessionId: remoteInst.id }));
       const entry = instanceManager.toJSON().find(i => i.id === remoteInst.id);
-      broadcast(envelope("instance.added", { instance: entry }));
+      if (!isReconnect) {
+        broadcast(envelope("instance.added", { instance: entry }));
+      }
       broadcastPeers(); // notify browsers about agent peer
       notifyBus({ scenarioId: 'agent.connected', severity: 'success', title: `Agent connected: ${label}` });
       auditLog.log('agent.registered', label, { version: agentVersion }, remoteInst.id);
