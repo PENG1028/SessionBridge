@@ -106,6 +106,9 @@ export function setRelayConnection(connection: RelayConnection): void {
 // via the NodeRuntime's RelayConnection.
 let _sendUpstream: ((type: string, body: any) => void) | null = null;
 
+// Enable for cross-relay surface sync debugging
+const VERBOSE_SURFACE = process.env.VERBOSE_SURFACE === '1';
+
 export function setRelayUpstream(fn: ((type: string, body: any) => void) | null): void {
   _sendUpstream = fn;
 }
@@ -2683,6 +2686,15 @@ function setupWssHandlers(): void {
           else existingTabs.push(tab);
           workbenchTabStore.set(remapNodeId, existingTabs);
           broadcastTabs(remapNodeId, existingTabs, ws);
+          surfaceManager.broadcastToNodeSubscribers(
+            remapNodeId,
+            send as any,
+            envelope("surface.published", {
+              surfaceId: imported.surfaceId,
+              surface: surfaceToJSON(imported),
+            }),
+          );
+          if (VERBOSE_SURFACE) console.log(`[surface] agent-forwarded surface.published broadcast to node ${remapNodeId} subscribers: ${imported.surfaceId} "${imported.title}"`);
         }
         return;
       }
