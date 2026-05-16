@@ -5,6 +5,7 @@
 
 import WebSocket from 'ws';
 import { EventEmitter } from 'events';
+import { hostname } from 'os';
 import { envelope, parseMsg } from '../extensions/protocol';
 import { VERSION } from '../extensions/version';
 import { CryptoStream } from '../src/crypto-stream';
@@ -129,7 +130,7 @@ export class RelayConnection extends EventEmitter {
           // Now register
           this.sendRaw(JSON.stringify(envelope('agent.register', {
             dir: this.config.workingDirectory,
-            label: this.config.label,
+            label: this.config.label || hostname(),
             role: this._role,
           })));
           break;
