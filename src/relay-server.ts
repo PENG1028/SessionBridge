@@ -2611,6 +2611,42 @@ function setupWssHandlers(): void {
     // workbench.tabs remains as compatibility projection only.
 
     if (msg.type === "surface.publish") {
+      // When forwarded by an agent (cross-relay), import the serialized
+      // surface with label remapping instead of creating a fresh one.
+      // This mirrors onUpstreamMessage's logic for agent-forwarded surfaces.
+      const senderRole = (ws as any)._agentRole;
+      if (senderRole && msg.surface?.surfaceId) {
+        const surfaceData = msg.surface;
+        let remapNodeId = String(msg.nodeId || surfaceData.nodeId || "");
+        const inst = instanceManager.get(remapNodeId);
+        if (!inst) {
+          syncSurfacesByLabel(remapNodeId, surfaceData, msg._label);
+          return;
+        }
+        // Node exists on this relay — import the surface with its original ID
+        const imported = surfaceManager.importFromUpstream(surfaceData, remapNodeId);
+        if (imported) {
+          // Auto-subscribe the agent as publisher so it receives runtime events
+          surfaceManager.subscribe(imported.surfaceId, ws,
+            (w: any, m: any) => send(w, m),
+            (t: any, b: any) => envelope(t, b),
+          );
+          send(ws, envelope("surface.published", {
+            surfaceId: imported.surfaceId,
+            surface: surfaceToJSON(imported),
+          }));
+          // Project into workbench.tabs for backward-compat
+          const tab = surfaceManager.toWorkbenchTab(imported);
+          const existingTabs = workbenchTabStore.get(remapNodeId) || [];
+          const idx = existingTabs.findIndex((t: any) => t.id === tab.id);
+          if (idx >= 0) existingTabs[idx] = tab;
+          else existingTabs.push(tab);
+          workbenchTabStore.set(remapNodeId, existingTabs);
+          broadcastTabs(remapNodeId, existingTabs, ws);
+        }
+        return;
+      }
+
       const nodeId = String(msg.nodeId || "");
       if (!nodeId) {
         send(ws, envelope("error", { code: "MISSING_NODE", message: "nodeId is required" }));
