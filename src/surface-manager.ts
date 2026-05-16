@@ -578,7 +578,7 @@ export class SurfaceManager {
     };
     const surface: SharedSurface = {
       surfaceId: surfaceData.surfaceId,
-      nodeId: surfaceData.nodeId,
+      nodeId: remappedInstanceId,
       title: surfaceData.title,
       viewType: surfaceData.viewType,
       pluginId: surfaceData.pluginId,

@@ -168,6 +168,10 @@ async function main() {
     console.log(`  InstanceId: ${INSTANCE_ID}\n`);
 
     // ── T2: Browser A publishes shared terminal surface ────────
+    // Terminal surfaces use synthetic operationIds — the relay does NOT
+    // forward relay.operation.start to the agent because the shell PTY
+    // already exists (spawned via shell.spawn / relay.shell.spawn).
+    // The operationId exists only for relay-internal input/replay binding.
     console.log('── T2: Browser A publishes shared terminal surface ──');
     const browserA = await connectBrowser(RELAY_WS, 'A');
     await waitFor(browserA.inbox, m => m.type === 'welcome', 'Browser A welcome');
@@ -182,26 +186,27 @@ async function main() {
       replayPolicy: { mode: 'tail', lines: 100, bytes: 100_000 },
     }));
 
-    // Agent should receive relay.operation.start
-    const opStart = await waitFor(agent.inbox, m =>
-      m.type === 'relay.operation.start', 'Agent receives relay.operation.start');
-    const OPERATION_ID = opStart.operationId;
-    check('T2a: Agent received relay.operation.start', !!OPERATION_ID);
-    check('T2b: operation has kind=terminal', opStart.kind === 'terminal');
-
-    // Browser A should receive surface.published
+    // Browser A should receive surface.published with synthetic operationId
     const published = await waitFor(browserA.inbox, m =>
       m.type === 'surface.published', 'Browser A gets surface.published');
     const SURFACE_ID = published.surfaceId;
-    check('T2c: Browser A received surface.published', !!SURFACE_ID);
-    check('T2d: surface has runtimeRef.operationId',
-      published.surface?.runtimeRef?.operationId === OPERATION_ID);
-    check('T2e: surface viewType is terminal',
+    const OPERATION_ID = published.surface?.runtimeRef?.operationId;
+    check('T2a: Browser A received surface.published', !!SURFACE_ID);
+    check('T2b: surface has runtimeRef.operationId (synthetic, no relay.operation.start)',
+      typeof OPERATION_ID === 'string' && OPERATION_ID.length > 0);
+    check('T2c: surface viewType is terminal',
       published.surface?.viewType === 'terminal');
-    check('T2f: surface replayPolicy mode is tail',
+    check('T2d: surface replayPolicy mode is tail',
       published.surface?.replayPolicy?.mode === 'tail');
+    // Verify agent did NOT receive relay.operation.start
+    const agentInboxTypes = agent.inbox.map(s => {
+      try { const m = JSON.parse(s); const msg = m.v === 1 && m.body ? { ...m.body, type: m.type } : m; return msg.type; }
+      catch { return '?'; }
+    });
+    check('T2e: agent did NOT receive relay.operation.start',
+      !agentInboxTypes.includes('relay.operation.start'));
     console.log(`  SurfaceId: ${SURFACE_ID}`);
-    console.log(`  OperationId: ${OPERATION_ID}\n`);
+    console.log(`  OperationId: ${OPERATION_ID} (synthetic)\n`);
 
     // Drain any initial runtime.status
     drain(browserA.inbox, 'runtime.status');

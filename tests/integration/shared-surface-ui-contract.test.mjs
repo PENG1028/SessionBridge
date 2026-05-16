@@ -164,7 +164,7 @@ async function main() {
       replayPolicy: { mode: 'tail', lines: 5000, bytes: 500_000 },
     }));
 
-    await waitFor(agent.inbox, m => m.type === 'relay.operation.start', 'Agent gets op start');
+    // Terminal surfaces use synthetic operationId — no relay.operation.start to agent
     const published = await waitFor(browserA.inbox, m => m.type === 'surface.published', 'A gets published');
 
     const surface = published.surface || {};
