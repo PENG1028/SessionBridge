@@ -6,6 +6,7 @@
 import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { randomBytes } from 'crypto';
+import { hostname } from 'os';
 import type { PermissionConfig } from './permissions';
 
 export interface NodeConfig {
@@ -72,7 +73,7 @@ export interface NodeConfig {
 }
 
 const DEFAULT_CONFIG: NodeConfig = {
-  label: '',
+  label: hostname(),
   role: 'auto',
   workingDirectory: process.cwd(),
   relayPort: 8080,
@@ -122,7 +123,7 @@ export function resolveConfig(cliOverrides: Partial<NodeConfig> & { relayUrl?: s
     ...cleanOverrides,
     upstreamRelay,
     // Ensure label is at least the hostname
-    label: cleanOverrides.label || (json.label as string) || '',
+    label: cleanOverrides.label || (json.label as string) || hostname(),
   };
 
   // Auto-generate persistent nodeId on first start, save back to config

@@ -2618,6 +2618,12 @@ function setupWssHandlers(): void {
       if (senderRole && msg.surface?.surfaceId) {
         const surfaceData = msg.surface;
         let remapNodeId = String(msg.nodeId || surfaceData.nodeId || "");
+        // __local__ is the browser-side ID for the sending relay itself.
+        // On the receiving relay, remap to the matching instance by label.
+        if ((!instanceManager.get(remapNodeId) || remapNodeId === '__local__') && msg._label) {
+          const match = instanceManager.list().find(i => i.label === msg._label);
+          if (match) remapNodeId = match.id;
+        }
         const inst = instanceManager.get(remapNodeId);
         if (!inst) {
           syncSurfacesByLabel(remapNodeId, surfaceData, msg._label);
@@ -2729,7 +2735,13 @@ function setupWssHandlers(): void {
       // Cross-relay: forward to upstream so other relays see this surface.
       // Include _label so the receiving relay can remap instanceId by hostname.
       const nodeInst = instanceManager.get(nodeId);
-      const label = nodeInst?.label;
+      let label = nodeInst?.label;
+      if (!nodeInst && nodeId === '__local__') {
+        // __local__ is the browser-side ID for the local relay itself.
+        // Use the primary local instance's label for cross-relay forwarding.
+        const pri = instanceManager.list().find(i => i.source === 'local');
+        label = pri?.label || localNodeInfo?.name;
+      }
       _sendUpstream?.("surface.publish", {
         nodeId,
         surface: surfaceToJSON(surface),
