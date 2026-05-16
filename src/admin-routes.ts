@@ -69,6 +69,8 @@ export interface AdminRouteContext {
   notifications?: NotificationModel;
   /** Relay connection (for ad-hoc shell relay integration) */
   relayConnection: RelayConnection | null;
+  /** Wire upstream forwarding function (called after connect/disconnect) */
+  setRelayUpstream: (fn: ((type: string, body: any) => void) | null) => void;
   /** Relay port number */
   relayPort: number;
   /** Upstream relay URL (if configured) */
@@ -770,6 +772,7 @@ export async function registerAdminRoutes(
           if (disconnect || !relayUrl) {
             ctx.addLog('[connect] Disconnecting from upstream...');
             await relay.disconnectUpstream();
+            ctx.setRelayUpstream(null);
             persistUpstreamRelay(''); // clear persisted config
             json(res, 200, { ok: true, relayUrl: '', message: 'Disconnected' });
           } else {
@@ -781,10 +784,12 @@ export async function registerAdminRoutes(
               const reason = relay.lastError || `status=${relay.status}`;
               ctx.addLog(`[connect] Failed to register upstream: ${reason}`);
               await relay.disconnectUpstream();
+              ctx.setRelayUpstream(null);
               persistUpstreamRelay('');
               json(res, 502, { ok: false, relayUrl: '', status: relay.status, error: `Upstream not reachable or did not register (${reason})` });
               return true;
             }
+            ctx.setRelayUpstream((type, body) => relay.send(type, body));
             persistUpstreamRelay(relayUrl); // persist for auto-connect on restart
             json(res, 200, { ok: true, relayUrl, status: relay.status, instanceId: relay.instanceId, message: 'Connected' });
           }

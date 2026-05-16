@@ -335,5 +335,7 @@ export class RelayConnection extends EventEmitter {
       this.ws.close();
       this.ws = null;
     }
+    this._instanceId = '';
+    this._status = 'idle';
   }
 }

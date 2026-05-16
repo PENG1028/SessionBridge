@@ -106,7 +106,7 @@ export function setRelayConnection(connection: RelayConnection): void {
 // via the NodeRuntime's RelayConnection.
 let _sendUpstream: ((type: string, body: any) => void) | null = null;
 
-export function setRelayUpstream(fn: (type: string, body: any) => void): void {
+export function setRelayUpstream(fn: ((type: string, body: any) => void) | null): void {
   _sendUpstream = fn;
 }
 
@@ -1204,6 +1204,7 @@ const serverRequestHandler = async (req: import("http").IncomingMessage, res: im
     extensionHost: null,
     logs: adminLogs,
     addLog: addAdminLog,
+    setRelayUpstream: (fn) => { _sendUpstream = fn; },
   })) return;
 
   const url = new URL(req.url!, `http://${req.headers.host}`);
@@ -2588,9 +2589,9 @@ function setupWssHandlers(): void {
       let label = nodeInst?.label;
       if (!nodeInst && nodeId === '__local__') {
         // __local__ is the browser-side ID for the local relay itself.
-        // Use the primary local instance's label for cross-relay forwarding.
-        const pri = instanceManager.list().find(i => i.source === 'local');
-        label = pri?.label || localNodeInfo?.name;
+        // Use localNodeInfo.name first — it matches the label the upstream
+        // sees when this relay registers as a remote agent.
+        label = localNodeInfo?.name || instanceManager.list().find(i => i.source === 'local')?.label;
       }
       // Forward to remote agent's WebSocket if this node belongs to
       // an agent connection (VPS—leaf cross-relay sync direction).
@@ -2738,9 +2739,9 @@ function setupWssHandlers(): void {
       let label = nodeInst?.label;
       if (!nodeInst && nodeId === '__local__') {
         // __local__ is the browser-side ID for the local relay itself.
-        // Use the primary local instance's label for cross-relay forwarding.
-        const pri = instanceManager.list().find(i => i.source === 'local');
-        label = pri?.label || localNodeInfo?.name;
+        // Use localNodeInfo.name first — it matches the label the upstream
+        // sees when this relay registers as a remote agent.
+        label = localNodeInfo?.name || instanceManager.list().find(i => i.source === 'local')?.label;
       }
       _sendUpstream?.("surface.publish", {
         nodeId,
