@@ -2666,19 +2666,36 @@ function setupWssHandlers(): void {
           syncSurfacesByLabel(remapNodeId, surfaceData, msg._label);
           return;
         }
-        // Node exists on this relay — import the surface with its original ID
+        // Node exists on this relay — import the surface with its original ID.
+        // If the surface already exists locally (e.g. we created it and the
+        // agent is echoing back), only sync workbench tabs — don't broadcast
+        // surface.published again, which would create duplicate tabs in the UI.
+        const alreadyExisted = surfaceManager.get(surfaceData.surfaceId as string);
         const imported = surfaceManager.importFromUpstream(surfaceData, remapNodeId);
         if (imported) {
-          // Auto-subscribe the agent as publisher so it receives runtime events
-          surfaceManager.subscribe(imported.surfaceId, ws,
-            (w: any, m: any) => send(w, m),
-            (t: any, b: any) => envelope(t, b),
-          );
-          send(ws, envelope("surface.published", {
-            surfaceId: imported.surfaceId,
-            surface: surfaceToJSON(imported),
-          }));
-          // Project into workbench.tabs for backward-compat
+          if (!alreadyExisted) {
+            // First time seeing this surface — full broadcast
+            surfaceManager.subscribe(imported.surfaceId, ws,
+              (w: any, m: any) => send(w, m),
+              (t: any, b: any) => envelope(t, b),
+            );
+            send(ws, envelope("surface.published", {
+              surfaceId: imported.surfaceId,
+              surface: surfaceToJSON(imported),
+            }));
+            surfaceManager.broadcastToNodeSubscribers(
+              remapNodeId,
+              send as any,
+              envelope("surface.published", {
+                surfaceId: imported.surfaceId,
+                surface: surfaceToJSON(imported),
+              }),
+            );
+            if (VERBOSE_SURFACE) console.log(`[surface] agent-forwarded NEW surface ${imported.surfaceId} "${imported.title}" → node ${remapNodeId}`);
+          } else {
+            if (VERBOSE_SURFACE) console.log(`[surface] agent-forwarded EXISTING surface ${imported.surfaceId} — tabs only`);
+          }
+          // Always sync workbench tabs (deduped)
           const tab = surfaceManager.toWorkbenchTab(imported);
           const existingTabs = workbenchTabStore.get(remapNodeId) || [];
           const idx = existingTabs.findIndex((t: any) => t.id === tab.id);
@@ -2686,15 +2703,6 @@ function setupWssHandlers(): void {
           else existingTabs.push(tab);
           workbenchTabStore.set(remapNodeId, existingTabs);
           broadcastTabs(remapNodeId, existingTabs, ws);
-          surfaceManager.broadcastToNodeSubscribers(
-            remapNodeId,
-            send as any,
-            envelope("surface.published", {
-              surfaceId: imported.surfaceId,
-              surface: surfaceToJSON(imported),
-            }),
-          );
-          if (VERBOSE_SURFACE) console.log(`[surface] agent-forwarded surface.published broadcast to node ${remapNodeId} subscribers: ${imported.surfaceId} "${imported.title}"`);
         }
         return;
       }
