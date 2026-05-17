@@ -11,7 +11,6 @@ import { basename, isAbsolute, resolve, join, dirname } from "path";
 import os from "os";
 
 import type { InstanceManager, InstanceData } from "./instance-manager";
-import type { SurfaceManager } from "./surface-manager";
 import type { ConfigManager } from "./config";
 import type { RelayConfigManager } from "../agent-core/config-sync";
 import { envelope } from "../extensions/protocol";
@@ -62,13 +61,23 @@ export interface ApiContext {
   /** In-memory alias store (backed by JSON file) */
   aliases?: AliasStore;
   /** Surface manager — for atomically creating surfaces alongside instances. */
-  surfaceManager?: import('./surface-manager').SurfaceManager;
-  /** Surface persistence — for immediately saving after API-created surfaces. */
-  surfacePersistence?: import('./surface-persistence').SurfacePersistence;
-  /** Workbench tab store — for projecting API-created surfaces into workbench.tabs sync. */
-  workbenchTabStore?: Map<string, any[]>;
-  /** Broadcast tabs to node subscribers (excludes sender). */
-  broadcastTabs?: (nodeId: string, tabs: any[], sender?: any) => void;
+  surfaceManager?: {
+    create(nodeId: string, opts: Record<string, unknown>): any;
+    toJSON(surface: any): Record<string, unknown>;
+    toWorkbenchTab(surface: any): any;
+    nextOperationId(): string;
+    linkOperation(surfaceId: string, operationId: string): void;
+    setKeep(surfaceId: string, keep: boolean): void;
+    broadcastToNodeSubscribers(nodeId: string, sendFn: (ws: any, msg: any) => void, msg: any): void;
+  };
+  /** Workbench store — for projecting API-created surfaces into workbench.tabs sync. */
+  workbenchStore?: {
+    get(nodeId: string): any[] | undefined;
+    set(nodeId: string, tabs: any[]): void;
+    delete(nodeId: string): void;
+    broadcast(nodeId: string, tabs: any[], sender?: any): void;
+    hasSubscribers(nodeId: string): boolean;
+  };
 }
 
 // ─── Helpers ───────────────────────────────────────────────────
@@ -376,18 +385,17 @@ export function registerApiRoutes(
             ctx.surfaceManager.linkOperation(surface.surfaceId, operationId);
             if (!keep) ctx.surfaceManager.setKeep(surface.surfaceId, false);
             createdSurface = ctx.surfaceManager.toJSON(surface);
-            ctx.surfacePersistence?.save(ctx.surfaceManager);
 
-            // Cross-browser sync: project into workbenchTabStore + broadcast
-            if (targetNodeId && ctx.workbenchTabStore && ctx.broadcastTabs) {
+            // Cross-browser sync: project into workbench tabs + broadcast
+            if (targetNodeId && ctx.workbenchStore) {
               const tab = ctx.surfaceManager.toWorkbenchTab(surface);
               const nodeIdStr = String(targetNodeId);
-              const nodeTabs = ctx.workbenchTabStore.get(nodeIdStr) || [];
+              const nodeTabs = ctx.workbenchStore.get(nodeIdStr) || [];
               const ti = nodeTabs.findIndex((t: any) => t.id === tab.id);
               if (ti >= 0) nodeTabs[ti] = tab;
               else nodeTabs.push(tab);
-              ctx.workbenchTabStore.set(nodeIdStr, nodeTabs);
-              ctx.broadcastTabs(nodeIdStr, nodeTabs);
+              ctx.workbenchStore.set(nodeIdStr, nodeTabs);
+              ctx.workbenchStore.broadcast(nodeIdStr, nodeTabs);
               // Push surface.published to node subscribers for live discovery
               ctx.surfaceManager.broadcastToNodeSubscribers(
                 nodeIdStr,
@@ -489,18 +497,17 @@ export function registerApiRoutes(
           ctx.surfaceManager.linkOperation(surface.surfaceId, operationId);
           if (!keep) ctx.surfaceManager.setKeep(surface.surfaceId, false);
           createdSurface = ctx.surfaceManager.toJSON(surface);
-          ctx.surfacePersistence?.save(ctx.surfaceManager);
 
-          // Cross-browser sync: project into workbenchTabStore + broadcast
-          if (ctx.workbenchTabStore && ctx.broadcastTabs) {
+          // Cross-browser sync: project into workbench tabs + broadcast
+          if (ctx.workbenchStore) {
             const tab = ctx.surfaceManager.toWorkbenchTab(surface);
             const nodeIdStr = String(ownerNodeId);
-            const nodeTabs = ctx.workbenchTabStore.get(nodeIdStr) || [];
+            const nodeTabs = ctx.workbenchStore.get(nodeIdStr) || [];
             const ti = nodeTabs.findIndex((t: any) => t.id === tab.id);
             if (ti >= 0) nodeTabs[ti] = tab;
             else nodeTabs.push(tab);
-            ctx.workbenchTabStore.set(nodeIdStr, nodeTabs);
-            ctx.broadcastTabs(nodeIdStr, nodeTabs);
+            ctx.workbenchStore.set(nodeIdStr, nodeTabs);
+            ctx.workbenchStore.broadcast(nodeIdStr, nodeTabs);
             // Push surface.published to node subscribers for live discovery
             ctx.surfaceManager.broadcastToNodeSubscribers(
               nodeIdStr,
