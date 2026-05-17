@@ -2316,6 +2316,13 @@ function setupWssHandlers(): void {
 
       const remoteInst = instanceManager.get(msg.instanceId);
       if (!remoteInst) {
+        // Cross-relay: instance may be a PC-local terminal referenced by a surface.
+        // Route output to shell subscribers if any surface tracks this instanceId.
+        const surfaces = surfaceManager.findByInstanceId(msg.instanceId);
+        if (surfaces.length > 0) {
+          broadcastShellOutput(msg.instanceId, (line || '').slice(0, 65536), "stdout");
+          return;
+        }
         send(ws, envelope("error", { code: "NOT_FOUND", message: `Instance ${msg.instanceId} not found`, replyTo: msg._raw?.id }));
         return;
       }
@@ -2362,6 +2369,12 @@ function setupWssHandlers(): void {
 
       const remoteInst = instanceManager.get(msg.instanceId);
       if (!remoteInst) {
+        // Cross-relay: instance may be a PC-local terminal referenced by a surface.
+        const surfaces = surfaceManager.findByInstanceId(msg.instanceId);
+        if (surfaces.length > 0) {
+          broadcastShellOutput(msg.instanceId, (data || '').slice(0, 65536), "stderr");
+          return;
+        }
         send(ws, envelope("error", { code: "NOT_FOUND", message: `Instance ${msg.instanceId} not found` }));
         return;
       }
@@ -2528,6 +2541,28 @@ function setupWssHandlers(): void {
         instanceManager.kill(remoteInst.id);
         broadcast(envelope("instance.removed", { instanceId: remoteInst.id }));
         auditLog.log('instance.exited', remoteInst.label, { exitCode: msg.exitCode }, remoteInst.id);
+      } else if (msg.instanceId) {
+        // Cross-relay: instance may be a PC-local terminal. Clean up
+        // shell subscribers and bridge exit to surface subscribers.
+        const surfaces = surfaceManager.findByInstanceId(msg.instanceId);
+        if (surfaces.length > 0) {
+          const subs = shellSubscribers.get(msg.instanceId);
+          if (subs) {
+            const exitMsg = envelope("shell.exit", { code: msg.exitCode ?? 0 });
+            for (const s of subs) {
+              if (s.readyState === WebSocket.OPEN) send(s, exitMsg);
+            }
+            shellSubscribers.delete(msg.instanceId);
+          }
+          for (const surface of surfaces) {
+            surfaceManager.emitResult(
+              surface.surfaceId,
+              { success: (msg.exitCode ?? 1) === 0, exitCode: msg.exitCode },
+              (w: any, m: any) => send(w, m),
+              (t: any, b: any) => envelope(t, b),
+            );
+          }
+        }
       }
       return;
     }
@@ -2770,6 +2805,22 @@ function setupWssHandlers(): void {
         });
         const inst = instanceManager.get(linkedSurface.runtimeRef.instanceId);
         if (!inst) {
+          // Cross-relay: instance may be on a connected agent. Try forwarding
+          // agent.stdin to the agent that owns the surface's node.
+          const nodeInst = linkedSurface.nodeId ? instanceManager.get(linkedSurface.nodeId) : null;
+          if (nodeInst?.source === 'remote' && nodeInst.agentConnection?.readyState === WebSocket.OPEN) {
+            surfaceManager.recordDebugEvent({
+              ts: Date.now(), kind: 'runtime.input.cross_relay',
+              surfaceId: linkedSurface.surfaceId, operationId,
+              nodeId: linkedSurface.nodeId, instanceId: linkedSurface.runtimeRef.instanceId,
+              extra: { dataLen: data.length },
+            });
+            send(nodeInst.agentConnection, envelope("agent.stdin", {
+              instanceId: linkedSurface.runtimeRef.instanceId,
+              data,
+            }));
+            return;
+          }
           send(ws, envelope("error", {
             code: "INSTANCE_NOT_FOUND",
             message: `Terminal surface ${linkedSurface.surfaceId}: instance ${linkedSurface.runtimeRef.instanceId} not found`,
@@ -3129,6 +3180,22 @@ function setupWssHandlers(): void {
               send(ws, envelope("error", { code: "INTERNAL_ERROR", message: `Shell spawn failed: ${err}` }));
             }
           });
+        } else if (surface.nodeId) {
+          // Cross-relay: instance is on a connected agent, not locally.
+          // Forward relay.shell.spawn to the agent so it spawns the PTY.
+          const nodeInst = instanceManager.get(surface.nodeId);
+          if (nodeInst?.source === 'remote' && nodeInst.agentConnection?.readyState === WebSocket.OPEN) {
+            surfaceManager.recordDebugEvent({
+              ts: Date.now(), kind: 'surface.subscribe.cross_relay',
+              surfaceId, nodeId: surface.nodeId,
+              instanceId: surface.runtimeRef.instanceId,
+              message: 'forwarding shell spawn to connected agent (cross-relay)',
+            });
+            subscribeShellOutput(surface.runtimeRef.instanceId, ws);
+            send(nodeInst.agentConnection, envelope("relay.shell.spawn", {
+              instanceId: surface.runtimeRef.instanceId,
+            }));
+          }
         }
       }
       return;

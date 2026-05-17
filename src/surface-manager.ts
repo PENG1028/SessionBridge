@@ -62,12 +62,14 @@ export interface SurfaceDebugEvent {
     | 'runtime.output'
     | 'runtime.replay'
     | 'runtime.input'
+    | 'runtime.input.cross_relay'
     | 'runtime.status'
     | 'runtime.result'
     | 'surface.close'
     | 'surface.import'
     | 'surface.stale.deleted'
     | 'surface.stale.instance_missing'
+    | 'surface.subscribe.cross_relay'
     | 'surface.remap.nodeId'
     | 'surface.error';
   surfaceId?: string;
