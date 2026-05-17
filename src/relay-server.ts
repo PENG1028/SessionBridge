@@ -2987,6 +2987,17 @@ function setupWssHandlers(): void {
         surface: surfaceToJSON(surface),
       }));
 
+      // Broadcast to node subscribers so browsers that called
+      // surface.subscribeNode see new surfaces without refresh.
+      surfaceManager.broadcastToNodeSubscribers(
+        nodeId,
+        send as any,
+        envelope("surface.published", {
+          surfaceId: surface.surfaceId,
+          surface: surfaceToJSON(surface),
+        }),
+      );
+
       // Backward-compat: project into workbench.tabs
       const tab = surfaceManager.toWorkbenchTab(surface);
       const existingTabs = workbenchTabStore.get(nodeId) || [];
