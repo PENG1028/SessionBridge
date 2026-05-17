@@ -368,6 +368,14 @@ export class NodeRuntime {
         }
         return;
       }
+      // If relayInstanceId is set but not in remoteShells, the remote
+      // shell has exited or not yet spawned. Do NOT fall through to the
+      // main agent shell — that would route cross-relay terminal input
+      // to the wrong destination.
+      if (relayInstanceId) {
+        this.addLog(`[node] stdin dropped: no remote shell for instance ${relayInstanceId}`);
+        return;
+      }
       // Auto-spawn shell on first stdin if not already running
       if (!this.shellProc) {
         this.addLog('[node] Auto-spawning shell on stdin');

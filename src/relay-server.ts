@@ -2525,6 +2525,7 @@ function setupWssHandlers(): void {
 
     // ── Agent kills a sub-instance ───────────────────────
     if (msg.type === "agent.instance.exit") {
+      if (!(ws as any)._isAgent) return;
       const remoteInst = msg.instanceId ? instanceManager.get(msg.instanceId) : null;
       if (remoteInst && remoteInst.source === 'remote') {
         remoteInst.status = 'stopped';
@@ -2561,6 +2562,13 @@ function setupWssHandlers(): void {
               (w: any, m: any) => send(w, m),
               (t: any, b: any) => envelope(t, b),
             );
+            // Clean up workbench tab and persist
+            const tabs = workbenchTabStore.get(surface.nodeId) || [];
+            const filtered = tabs.filter((t: any) => t._surfaceId !== surface.surfaceId && t.id !== surface.surfaceId);
+            workbenchTabStore.set(surface.nodeId, filtered);
+            broadcastTabs(surface.nodeId, filtered);
+            surfaceManager.delete(surface.surfaceId);
+            surfacePersistence.save(surfaceManager);
           }
         }
       }
@@ -2797,12 +2805,6 @@ function setupWssHandlers(): void {
       // the shell instance directly so it reaches the real PTY.
       const linkedSurface = surfaceManager.findByOperationId(operationId);
       if (linkedSurface && linkedSurface.runtimeRef.kind === 'terminal' && linkedSurface.runtimeRef.instanceId) {
-        surfaceManager.recordDebugEvent({
-          ts: Date.now(), kind: 'runtime.input',
-          surfaceId: linkedSurface.surfaceId, operationId,
-          nodeId: linkedSurface.nodeId, instanceId: linkedSurface.runtimeRef.instanceId,
-          extra: { dataLen: data.length },
-        });
         const inst = instanceManager.get(linkedSurface.runtimeRef.instanceId);
         if (!inst) {
           // Cross-relay: instance may be on a connected agent. Try forwarding
@@ -2827,6 +2829,12 @@ function setupWssHandlers(): void {
           }));
           return;
         }
+        surfaceManager.recordDebugEvent({
+          ts: Date.now(), kind: 'runtime.input',
+          surfaceId: linkedSurface.surfaceId, operationId,
+          nodeId: linkedSurface.nodeId, instanceId: linkedSurface.runtimeRef.instanceId,
+          extra: { dataLen: data.length },
+        });
         if (!sendStdin(inst, data)) {
           send(ws, envelope("error", {
             code: "PTY_NOT_AVAILABLE",
@@ -3183,15 +3191,20 @@ function setupWssHandlers(): void {
         } else if (surface.nodeId) {
           // Cross-relay: instance is on a connected agent, not locally.
           // Forward relay.shell.spawn to the agent so it spawns the PTY.
+          // Note: we do NOT call subscribeShellOutput() here because
+          // broadcastShellOutput already bridges agent.stdout -> surface
+          // subscribers via emitOutput, avoiding duplicate output.
           const nodeInst = instanceManager.get(surface.nodeId);
           if (nodeInst?.source === 'remote' && nodeInst.agentConnection?.readyState === WebSocket.OPEN) {
+            // Reset runtime status to 'running' (was 'completed' from prior exit)
+            const rt = surfaceManager.getRuntime(surfaceId);
+            if (rt) rt.status = 'running';
             surfaceManager.recordDebugEvent({
               ts: Date.now(), kind: 'surface.subscribe.cross_relay',
               surfaceId, nodeId: surface.nodeId,
               instanceId: surface.runtimeRef.instanceId,
               message: 'forwarding shell spawn to connected agent (cross-relay)',
             });
-            subscribeShellOutput(surface.runtimeRef.instanceId, ws);
             send(nodeInst.agentConnection, envelope("relay.shell.spawn", {
               instanceId: surface.runtimeRef.instanceId,
             }));

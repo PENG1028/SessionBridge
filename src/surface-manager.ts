@@ -292,6 +292,16 @@ export class SurfaceManager {
       ) {
         const sid = surface.surfaceId;
         const nid = surface.nodeId;
+        // Keep=true surfaces survive as orphaned — agent may reconnect
+        if (this.isKept(sid)) {
+          this.setOrphaned(sid);
+          this._record('surface.stale.instance_missing', {
+            surfaceId: sid, nodeId: nid,
+            instanceId: surface.runtimeRef.instanceId,
+            message: 'missing instance for kept terminal surface (orphaned)',
+          });
+          continue;
+        }
         this.delete(sid);
         this._record('surface.stale.instance_missing', {
           surfaceId: sid,
