@@ -1010,6 +1010,37 @@ async function spawnShellForWs(ws: WebSocket, instanceId?: string): Promise<impo
           (w: any, m: any) => send(w, m),
           (t: any, b: any) => envelope(t, b),
         );
+        // Auto-cleanup: when the shell process exits, unkeep and delete the
+        // surface so dead terminal tabs don't persist. Cross-relay (remote
+        // agent surfaces) are excluded — inventory clears those.
+        surfaceManager.setKeep(surface.surfaceId, false);
+        surfaceManager.recordDebugEvent({
+          ts: Date.now(), kind: 'surface.close',
+          surfaceId: surface.surfaceId, nodeId: surface.nodeId,
+          instanceId: i.id,
+          message: `shell exited (code=${code}) — auto-closing surface`,
+        });
+        surfaceManager.delete(surface.surfaceId);
+        // Broadcast surface.closed to node subscribers
+        const nodeSubs = surfaceManager.getNodeSubscribers(surface.nodeId);
+        if (nodeSubs) {
+          const closeMsg = envelope("surface.closed", {
+            surfaceId: surface.surfaceId, nodeId: surface.nodeId,
+            reason: 'shell_exit',
+          });
+          for (const client of nodeSubs) {
+            if (client.readyState === WebSocket.OPEN) send(client, closeMsg);
+          }
+        }
+        // Clean up workbench tab store
+        const tabs = workbenchTabStore.get(surface.nodeId) || [];
+        const filtered = tabs.filter((t: any) =>
+          t.id !== surface.surfaceId && t._surfaceId !== surface.surfaceId
+        );
+        if (filtered.length !== tabs.length) {
+          workbenchTabStore.set(surface.nodeId, filtered);
+          broadcastTabs(surface.nodeId, filtered);
+        }
       }
       i.handle = undefined;
       i.status = "stopped";
