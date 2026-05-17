@@ -3043,14 +3043,18 @@ function setupWssHandlers(): void {
           message: 'missing instance for terminal surface (surface.subscribe)',
         });
         if (surfaceManager.isKept(surfaceId)) {
+          // Keep=true → persist surface, mark orphaned. Continue to
+          // subscribe so the client can still use the surface tab.
+          // Agent inventory will re-validate when the agent reconnects.
           surfaceManager.setOrphaned(surfaceId);
+          surfacePersistence.save(surfaceManager);
         } else {
           surfaceManager.delete(surfaceId);
           surfacePersistence.save(surfaceManager);
           send(ws, envelope("surface.closed", { surfaceId, nodeId: existingSurface.nodeId }));
           send(ws, envelope("error", { code: "SURFACE_STALE", message: `Surface ${surfaceId} points to a missing terminal instance` }));
+          return;
         }
-        return;
       }
 
       const surface = surfaceManager.subscribe(surfaceId, ws,

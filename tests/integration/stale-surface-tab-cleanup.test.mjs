@@ -184,21 +184,21 @@ async function main() {
 
     browserB.ws.send(env('surface.subscribe', { surfaceId: GHOST_SURFACE_ID }));
 
-    // Should receive surface.closed + SURFACE_STALE error
-    const closedMsg = await waitFor(browserB.inbox, m =>
-      m.type === 'surface.closed', 'B gets surface.closed for stale surface');
-    check('T1c: B received surface.closed for stale surface',
-      !!closedMsg && closedMsg.surfaceId === GHOST_SURFACE_ID);
+    // Since surface.publish now defaults keep=true, the stale surface is
+    // orphaned rather than deleted. The subscriber gets surface.subscribed
+    // and the surface persists.
+    const subscribedMsg = await waitFor(browserB.inbox, m =>
+      m.type === 'surface.subscribed', 'B gets surface.subscribed for stale (kept) surface');
+    check('T1c: B received surface.subscribed for stale kept surface',
+      !!subscribedMsg && subscribedMsg.surfaceId === GHOST_SURFACE_ID);
+    check('T1d: Stale kept surface is orphaned, not deleted', !!subscribedMsg);
 
-    const staleErr = await waitFor(browserB.inbox, m =>
-      m.type === 'error' && m.code === 'SURFACE_STALE', 'B gets SURFACE_STALE error');
-    check('T1d: B received SURFACE_STALE error', !!staleErr);
-
-    // Re-subscribe should return SURFACE_NOT_FOUND (surface already deleted)
+    // Re-subscribe: surface still exists (orphaned, not deleted)
     browserB.ws.send(env('surface.subscribe', { surfaceId: GHOST_SURFACE_ID }));
-    const notFound = await waitFor(browserB.inbox, m =>
-      m.type === 'error' && m.code === 'SURFACE_NOT_FOUND', 'SURFACE_NOT_FOUND after deletion');
-    check('T1e: Surface not found after stale cleanup', !!notFound);
+    const subscribed2 = await waitFor(browserB.inbox, m =>
+      m.type === 'surface.subscribed', 'Re-subscribe still returns surface.subscribed');
+    check('T1e: Re-subscribe succeeds — surface persists as orphaned',
+      !!subscribed2 && subscribed2.surfaceId === GHOST_SURFACE_ID);
 
     console.log('');
 
@@ -243,20 +243,22 @@ async function main() {
 
     browserC.ws.send(env('surface.subscribeNode', { nodeId: INSTANCE_ID }));
 
-    // Ghost surface should trigger surface.closed
-    const ghost2Closed = await waitFor(browserC.inbox, m =>
-      m.type === 'surface.closed' && m.surfaceId === GHOST2_SURFACE_ID,
-      'C gets surface.closed for second ghost surface');
-    check('T2c: C received surface.closed for ghost surface', !!ghost2Closed);
-
-    // surface.list should only have the valid surface
+    // Ghost surface is kept → orphaned, not deleted. Appears in list.
+    // It should NOT trigger surface.closed (the surface persists).
+    // Instead, it appears in surface.list as an orphaned surface.
     const surfaceList = await waitFor(browserC.inbox, m =>
       m.type === 'surface.list', 'C gets surface.list');
     const listedSurfaces = surfaceList.surfaces || [];
     const listedIds = listedSurfaces.map(s => s.surfaceId);
-    check('T2d: surface.list does NOT include ghost surface', !listedIds.includes(GHOST2_SURFACE_ID));
-    check('T2e: surface.list DOES include valid surface', listedIds.includes(VALID_SURFACE_ID));
-    check('T2f: surface.list has exactly 1 surface', listedSurfaces.length === 1);
+    const ghost2InList = listedSurfaces.find(s => s.surfaceId === GHOST2_SURFACE_ID);
+    check('T2c: Ghost surface not deleted — appears in surface.list',
+      !!ghost2InList);
+    check('T2d: Ghost surface is orphaned in surface.list',
+      ghost2InList?.orphaned === true);
+    check('T2e: surface.list DOES include valid surface',
+      listedIds.includes(VALID_SURFACE_ID));
+    check('T2f: surface.list has exactly 3 surfaces (valid + 2 ghost/orphaned)',
+      listedSurfaces.length === 3);
 
     console.log(`  surface.list has ${listedSurfaces.length} surface(s): ${listedIds.join(', ')}\n`);
 
@@ -268,8 +270,8 @@ async function main() {
 
     const debugData = await debugResp.json();
     const debugSurfaceIds = (debugData.surfaceDebug?.surfaces || []).map(s => s.surfaceId);
-    check('T3b: Debug snapshot does NOT contain ghost surfaces',
-      !debugSurfaceIds.includes(GHOST_SURFACE_ID) && !debugSurfaceIds.includes(GHOST2_SURFACE_ID));
+    check('T3b: Debug snapshot CONTAINS ghost surfaces (orphaned, not deleted)',
+      debugSurfaceIds.includes(GHOST_SURFACE_ID) && debugSurfaceIds.includes(GHOST2_SURFACE_ID));
     check('T3c: Debug snapshot DOES contain valid surface',
       debugSurfaceIds.includes(VALID_SURFACE_ID));
 
