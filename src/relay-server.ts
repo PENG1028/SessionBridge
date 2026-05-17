@@ -3285,13 +3285,24 @@ function setupWssHandlers(): void {
         (t: any, b: any) => envelope(t, b),
       );
 
+      // Filter: exclude terminal surfaces whose runtime instance is missing.
+      // Kept surfaces waiting for agent reconnect are preserved server-side
+      // but not sent to the client — otherwise the tab reappears with
+      // "instance not found" error on every keystroke.
+      const filteredSurfaces = surfaces.filter(s => {
+        if (s.runtimeRef.kind === 'terminal' && s.runtimeRef.instanceId) {
+          return !!instanceManager.get(s.runtimeRef.instanceId);
+        }
+        return true;
+      });
+
       send(ws, envelope("surface.list", {
         nodeId,
-        surfaces: surfaces.map(s => surfaceToJSON(s)),
+        surfaces: filteredSurfaces.map(s => surfaceToJSON(s)),
       }));
       surfaceManager.recordDebugEvent({
         ts: Date.now(), kind: 'surface.list.sent',
-        nodeId, extra: { surfaceCount: surfaces.length },
+        nodeId, extra: { surfaceCount: filteredSurfaces.length, filteredTotal: surfaces.length },
       });
       // Notify upstream relay so it forwards surface updates for this node
       _sendUpstream?.("surface.subscribeNode", { nodeId });

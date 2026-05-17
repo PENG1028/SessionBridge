@@ -756,6 +756,22 @@ function PageContent() {
   }, [appState.instanceStates, sendMessage]);
 
   const activeWorkbenchDispatch = useCallback((action: WorkbenchAction) => {
+    // When closing a tab backed by a surface, tell the server to clean up
+    // the surface so it doesn't persist and reappear on next page load.
+    if (action.type === 'CLOSE_TAB') {
+      const curState = appStateRef.current;
+      const activeId = curState.activeInstanceId;
+      if (activeId && curState.instanceStates[activeId]) {
+        const ws = curState.instanceStates[activeId];
+        const pane = findPaneInTree(ws.root, action.paneId) || ws.bottom;
+        if (pane && pane.kind === 'pane') {
+          const tab = pane.tabs.find(t => t.id === action.tabId);
+          if (tab?._surfaceId) {
+            sendMessage?.('surface.close', { surfaceId: tab._surfaceId });
+          }
+        }
+      }
+    }
     setAppState(prev => {
       const activeId = prev.activeInstanceId;
       if (activeId && prev.instanceStates[activeId]) {
@@ -770,7 +786,7 @@ function PageContent() {
       }
       return appReducer(prev, { type: 'GLOBAL_ACTION', action });
     });
-  }, []);
+  }, [sendMessage]);
   const activeWorkbenchState = useMemo(() => getActiveWorkbenchState(appState), [appState]);
   const appStateRef = useRef(appState);
   appStateRef.current = appState;

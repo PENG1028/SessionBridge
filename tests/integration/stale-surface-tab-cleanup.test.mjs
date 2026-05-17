@@ -243,22 +243,19 @@ async function main() {
 
     browserC.ws.send(env('surface.subscribeNode', { nodeId: INSTANCE_ID }));
 
-    // Ghost surface is kept → orphaned, not deleted. Appears in list.
-    // It should NOT trigger surface.closed (the surface persists).
-    // Instead, it appears in surface.list as an orphaned surface.
+    // Ghost surface is kept but has no instance → filtered out of surface.list.
+    // The surface persists server-side for potential agent reconnect, but the
+    // client doesn't get dead tabs with "instance not found" errors.
     const surfaceList = await waitFor(browserC.inbox, m =>
       m.type === 'surface.list', 'C gets surface.list');
     const listedSurfaces = surfaceList.surfaces || [];
     const listedIds = listedSurfaces.map(s => s.surfaceId);
-    const ghost2InList = listedSurfaces.find(s => s.surfaceId === GHOST2_SURFACE_ID);
-    check('T2c: Ghost surface not deleted — appears in surface.list',
-      !!ghost2InList);
-    check('T2d: Ghost surface is orphaned in surface.list',
-      ghost2InList?.orphaned === true);
-    check('T2e: surface.list DOES include valid surface',
+    check('T2c: Ghost surface not in surface.list (instance missing)',
+      !listedIds.includes(GHOST_SURFACE_ID) && !listedIds.includes(GHOST2_SURFACE_ID));
+    check('T2d: surface.list DOES include valid surface',
       listedIds.includes(VALID_SURFACE_ID));
-    check('T2f: surface.list has exactly 3 surfaces (valid + 2 ghost/orphaned)',
-      listedSurfaces.length === 3);
+    check('T2e: surface.list has exactly 1 surface (ghosts filtered)',
+      listedSurfaces.length === 1);
 
     console.log(`  surface.list has ${listedSurfaces.length} surface(s): ${listedIds.join(', ')}\n`);
 
