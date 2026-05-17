@@ -2928,6 +2928,11 @@ function setupWssHandlers(): void {
         createdBy: wsToClientToken.get(ws) || "unknown",
       });
 
+      // Default keep=true for all shared surfaces so they survive stale
+      // validation (e.g. after relay restart when runtime instances haven't
+      // reconnected yet). Users can explicitly unkeep via surface.unkeep.
+      surfaceManager.setKeep(surface.surfaceId, true);
+
       // If the surface has a runtime, create an operation for it.
       // Terminal surfaces use the existing shell PTY (shell.spawn /
       // relay.shell.spawn) — the operationId exists only for relay-internal
