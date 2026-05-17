@@ -68,6 +68,7 @@ export interface SurfaceDebugEvent {
     | 'surface.import'
     | 'surface.stale.deleted'
     | 'surface.stale.instance_missing'
+    | 'surface.remap.nodeId'
     | 'surface.error';
   surfaceId?: string;
   nodeId?: string;
@@ -671,6 +672,121 @@ export class SurfaceManager {
     return this.nodeSubscribers.get(nodeId);
   }
 
+  // ── Persistence helpers ──────────────────────────────────
+
+  /** Iterate all surfaces (for persistence snapshots). */
+  listAll(): SharedSurface[] {
+    return Array.from(this.surfaces.values());
+  }
+
+  /** Expose all runtime states keyed by surfaceId (for persistence snapshots). */
+  listAllRuntimeStates(): Map<string, RuntimeState> {
+    return new Map(this.runtimeStates);
+  }
+
+  /** Bulk-restore surfaces + runtime state from a persistence snapshot.
+   *  All restored surfaces are marked `orphaned: true`. */
+  restore(snapshot: Array<{
+    surfaceId: string;
+    nodeId: string;
+    title: string;
+    viewType: string;
+    scope: string;
+    shared: boolean;
+    runtimeRef: { kind: string; instanceId?: string; operationId?: string; pluginId?: string };
+    replayPolicy: import('../extensions/types').ReplayPolicy;
+    createdBy: string;
+    createdAt: number;
+    updatedAt: number;
+    keep: boolean;
+    orphaned: boolean;
+    outputBuffer: import('../extensions/types').RuntimeOutputChunk[];
+    eventBuffer: import('../extensions/types').RuntimeEvent[];
+    runtimeStatus: string;
+  }>): void {
+    for (const data of snapshot) {
+      // Skip if already loaded (e.g. from a prior restore call)
+      if (this.surfaces.has(data.surfaceId)) continue;
+
+      const now = Date.now();
+      const surface: SharedSurface = {
+        surfaceId: data.surfaceId,
+        nodeId: data.nodeId,
+        title: data.title,
+        viewType: data.viewType,
+        scope: data.scope as SharedSurface['scope'],
+        shared: data.shared,
+        runtimeRef: {
+          kind: data.runtimeRef.kind as SharedSurface['runtimeRef']['kind'],
+          instanceId: data.runtimeRef.instanceId,
+          operationId: data.runtimeRef.operationId,
+          pluginId: data.runtimeRef.pluginId,
+        },
+        replayPolicy: data.replayPolicy,
+        createdBy: data.createdBy,
+        createdAt: data.createdAt,
+        updatedAt: now,
+        keep: data.keep,
+        orphaned: true, // runtime process died with relay
+      };
+      this.surfaces.set(surface.surfaceId, surface);
+
+      // Restore runtime state with trimmed replay buffers
+      if (surface.runtimeRef.kind !== 'none') {
+        const runtimeState: RuntimeState = {
+          operationId: surface.runtimeRef.operationId || data.surfaceId,
+          nodeId: surface.nodeId,
+          surfaceId: surface.surfaceId,
+          kind: surface.runtimeRef.kind === 'terminal' ? 'terminal' :
+                surface.runtimeRef.kind === 'plugin' || surface.runtimeRef.kind === 'snapshot' ? 'plugin' : 'operation',
+          status: 'completed' as RuntimeState['status'], // restored processes are not running
+          outputBuffer: data.outputBuffer || [],
+          eventBuffer: data.eventBuffer || [],
+          createdAt: data.createdAt,
+          updatedAt: now,
+        };
+        this.runtimeStates.set(surface.surfaceId, runtimeState);
+      }
+
+      // Restore operation→surface mapping
+      if (data.runtimeRef.operationId) {
+        this.operationToSurface.set(data.runtimeRef.operationId, surface.surfaceId);
+      }
+    }
+  }
+
+  /** Mark a surface as orphaned (runtime unknown / not confirmed). */
+  setOrphaned(surfaceId: string): void {
+    const s = this.surfaces.get(surfaceId);
+    if (s) { s.orphaned = true; s.updatedAt = Date.now(); }
+  }
+
+  /** Clear the orphaned flag (runtime confirmed alive by agent inventory). */
+  clearOrphaned(surfaceId: string): void {
+    const s = this.surfaces.get(surfaceId);
+    if (s) { s.orphaned = false; s.updatedAt = Date.now(); }
+  }
+
+  /** Set the server-side keep flag. */
+  setKeep(surfaceId: string, keep: boolean): void {
+    const s = this.surfaces.get(surfaceId);
+    if (s) { s.keep = keep; s.updatedAt = Date.now(); }
+  }
+
+  /** Check whether a surface is kept. */
+  isKept(surfaceId: string): boolean {
+    return this.surfaces.get(surfaceId)?.keep === true;
+  }
+
+  /** Return all kept surfaces for a node (even orphaned ones). */
+  listKeptByNode(nodeId: string): SharedSurface[] {
+    const results: SharedSurface[] = [];
+    for (const s of this.surfaces.values()) {
+      if (s.nodeId === nodeId && s.keep) results.push(s);
+    }
+    return results;
+  }
+
   toJSON(surface: SharedSurface): Record<string, unknown> {
     return {
       surfaceId: surface.surfaceId,
@@ -686,6 +802,8 @@ export class SurfaceManager {
       createdBy: surface.createdBy,
       createdAt: surface.createdAt,
       updatedAt: surface.updatedAt,
+      keep: surface.keep ?? false,
+      orphaned: surface.orphaned ?? false,
     };
   }
 

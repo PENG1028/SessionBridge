@@ -52,7 +52,7 @@ export class SessionPersistence {
    *                 on each successful save when provided.
    */
   constructor(workDir: string, eventBus?: RelayEventBus) {
-    this.filePath = join(workDir, '.sessionbridge', 'sessions.json');
+    this.filePath = join(process.env.BRIDGE_DIR || workDir, '.sessionbridge', 'sessions.json');
     this.eventBus = eventBus;
   }
 

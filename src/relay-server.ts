@@ -35,6 +35,7 @@ import { secretStore } from "./configuration/secret-store";
 import { RemoteOperationManager, OperationError } from "./remote-operation-manager";
 import type { OperationKind, OperationInput } from "./remote-operation-manager";
 import { SurfaceManager } from "./surface-manager";
+import { SurfacePersistence } from "./surface-persistence";
 
 // ─── Session provider helper — first adapter that provides SessionProvider ──
 function sessionProvider() {
@@ -327,6 +328,7 @@ export function onUpstreamMessage(msg: any): void {
     const nodeId = String(msg.nodeId || '');
     if (!surfaceId) return;
     surfaceManager.delete(surfaceId);
+    surfacePersistence.save(surfaceManager);
     if (nodeId) {
       const tabs = workbenchTabStore.get(nodeId) || [];
       const filtered = tabs.filter((t: any) => t._surfaceId !== surfaceId && t.id !== surfaceId);
@@ -351,6 +353,7 @@ const auditLog = new AuditLogger(process.cwd());
 const pendingExternalRequests = new Map<string, WebSocket>();
 const PENDING_TIMEOUT_MS = 30_000;
 const sessionPersistence = new SessionPersistence(process.cwd(), eventBus);
+const surfacePersistence = new SurfacePersistence(process.cwd());
 const permissions = new PermissionModel();
 
 // ─── Workbench tab sync ────────────────────────────────────
@@ -520,6 +523,8 @@ function surfaceToJSON(s: any): Record<string, unknown> {
     createdBy: s.createdBy,
     createdAt: s.createdAt,
     updatedAt: s.updatedAt,
+    keep: s.keep ?? false,
+    orphaned: s.orphaned ?? false,
   };
 }
 
@@ -1248,7 +1253,7 @@ const serverRequestHandler = async (req: import("http").IncomingMessage, res: im
   }
 
   // Delegate to structured API routes first
-  if (registerApiRoutes(req, res, { instanceManager, broadcast, auditLog, checkPermission: checkHttpPermission, configManager: appConfig, relayConfig: relayConfigManager, configRegistry, configStore, secretStore, workDir: process.cwd(), aliases: aliasStore })) return;
+  if (registerApiRoutes(req, res, { instanceManager, surfaceManager, surfacePersistence, broadcast, auditLog, checkPermission: checkHttpPermission, configManager: appConfig, relayConfig: relayConfigManager, configRegistry, configStore, secretStore, workDir: process.cwd(), aliases: aliasStore })) return;
 
   // Delegate to admin routes (migrated from dashboard server)
   if (await registerAdminRoutes(req, res, {
@@ -1735,60 +1740,6 @@ const serverRequestHandler = async (req: import("http").IncomingMessage, res: im
     return;
   }
 
-  // ── API: Create instance ─────────────────────────────
-  if (path === "/api/instances" && req.method === "POST") {
-    let body = "";
-    req.on("data", (c) => body += c);
-    req.on("end", () => {
-      try {
-        const { dir, label, adapterId, targetNodeId } = JSON.parse(body);
-        const targetNode = targetNodeId ? instanceManager.get(String(targetNodeId)) : undefined;
-        if (targetNode?.source === 'remote') {
-          if (!targetNode.agentConnection || targetNode.agentConnection.readyState !== WebSocket.OPEN) {
-            res.writeHead(503, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ success: false, error: `Target node ${targetNodeId} is disconnected` }));
-            return;
-          }
-          const remoteDir = typeof dir === 'string' && dir && dir !== '.'
-            ? dir
-            : targetNode.dir;
-          const remoteAdapterId = adapterId || 'shell';
-          const newInst = instanceManager.create(remoteDir, label || 'Terminal', 'remote', remoteAdapterId);
-          applyAlias(newInst);
-          newInst.agentConnection = targetNode.agentConnection;
-          newInst.status = 'stopped';
-          broadcast(envelope("instance.added", { instance: { id: newInst.id, dir: newInst.dir, label: newInst.label, status: newInst.status, adapterId: newInst.adapterId, source: newInst.source } }));
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ success: true, instance: { id: newInst.id, dir: newInst.dir, label: newInst.label } }));
-          return;
-        }
-        const targetDir = resolve(process.cwd(), dir);
-        if (!existsSync(targetDir)) {
-          res.writeHead(400); res.end(JSON.stringify({ error: "Directory not found" }));
-          return;
-        }
-        const newInst = instanceManager.create(targetDir, label, undefined, adapterId);
-        applyAlias(newInst);
-        // Raw terminal adapters (terminal:true, structuredEvents:false) are
-        // spawned by ShellTerminal via shell.spawn — pre-spawning here causes
-        // a race where two PTYs compete for the same handle, silently dropping
-        // or misrouting user input.
-        const _instAdapter = adapterId ? adapterRegistry.get(adapterId) : undefined;
-        const _instCaps = _instAdapter?.getCapabilities();
-        const _isRawTerminal = _instCaps && _instCaps.terminal && !_instCaps.structuredEvents;
-        if (!_isRawTerminal) {
-          spawnInstance(newInst.id);
-        }
-        broadcast(envelope("instance.added", { instance: { id: newInst.id, dir: newInst.dir, label: newInst.label, status: newInst.status, adapterId: newInst.adapterId, source: newInst.source } }));
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ success: true, instance: { id: newInst.id, dir: newInst.dir, label: newInst.label } }));
-      } catch (err) {
-        res.writeHead(500); res.end(JSON.stringify({ error: String(err) }));
-      }
-    });
-    return;
-  }
-
   // ── API: Delete (kill) instance ──────────────────────
   if (path.startsWith("/api/instances/") && req.method === "DELETE") {
     const instId = path.replace("/api/instances/", "");
@@ -2198,6 +2149,123 @@ function setupWssHandlers(): void {
         notifyBus({ scenarioId: 'update.available', severity, title: `Agent "${label}" version mismatch`, detail: mismatch.message });
         // Also notify the agent directly
         send(ws, envelope("system.notification", { type: severity, title: `Agent "${label}" version mismatch`, detail: mismatch.message, scenarioId: 'update.available' }));
+      }
+      // Request agent inventory so relay can reconcile surfaces
+      send(ws, envelope("agent.inventory.request", { nodeId: remoteInst.id }));
+      return;
+    }
+
+    if (msg.type === "agent.inventory.report") {
+      const reported = msg.body || msg;
+      const agentNodeId = reported.nodeId || String(msg.nodeId || '');
+      const reportedProcesses: Array<{ instanceId: string; kind: string; title?: string; command?: string; pid?: number; cwd?: string; createdAt: number }> = reported.processes || [];
+      const reportedOperations: Array<{ operationId: string; kind: string; command?: string; instanceId?: string; createdAt: number }> = reported.activeOperations || [];
+
+      // Reconciliation: match reported processes against existing surfaces
+      const reportedInstanceIds = new Set(reportedProcesses.map(p => p.instanceId));
+      let createdCount = 0;
+      let clearedOrphanCount = 0;
+      let deletedCount = 0;
+      let remappedCount = 0;
+
+      for (const proc of reportedProcesses) {
+        const existingSurfaces = surfaceManager.findByInstanceId(proc.instanceId);
+        if (existingSurfaces.length === 0) {
+          // No surface for this process → synthesize one under the agent's node
+          const nodeId = agentNodeId;
+          const synthSurface = surfaceManager.create(nodeId, {
+            title: proc.title || 'Terminal',
+            viewType: proc.kind === 'terminal' ? 'terminal' : 'plugin',
+            scope: 'node',
+            shared: true,
+            runtimeRef: { kind: (proc.kind as any) || 'terminal', instanceId: proc.instanceId },
+            replayPolicy: { mode: 'tail', lines: 5000, bytes: 500_000 },
+          });
+          surfaceManager.clearOrphaned(synthSurface.surfaceId);
+          surfaceManager.setKeep(synthSurface.surfaceId, true);
+          const tabs = workbenchTabStore.get(nodeId) || [];
+          tabs.push(surfaceManager.toWorkbenchTab(synthSurface));
+          workbenchTabStore.set(nodeId, tabs);
+          surfaceManager.recordDebugEvent({
+            ts: Date.now(), kind: 'surface.publish.created',
+            surfaceId: synthSurface.surfaceId, nodeId, instanceId: proc.instanceId,
+            message: 'synthesized surface from agent inventory report',
+          });
+          createdCount++;
+        } else {
+          // Surface exists → clear orphaned flag and remap nodeId
+          for (const s of existingSurfaces) {
+            if (s.orphaned) {
+              surfaceManager.clearOrphaned(s.surfaceId);
+              clearedOrphanCount++;
+            }
+            // After relay restart, surfaces.json restores surfaces with old
+            // nodeIds. When the agent reconnects and reports inventory, remap
+            // the surface to the current agent instance id so that
+            // subscribeNode(currentId) finds these surfaces.
+            if (s.nodeId !== agentNodeId) {
+              const oldNodeId = s.nodeId;
+              const oldTabs = workbenchTabStore.get(oldNodeId) || [];
+              const newTabs = workbenchTabStore.get(agentNodeId) || [];
+              for (const t of oldTabs) {
+                if (t._surfaceId === s.surfaceId || t.id === s.surfaceId) {
+                  newTabs.push(t);
+                }
+              }
+              workbenchTabStore.set(agentNodeId, newTabs);
+              workbenchTabStore.delete(oldNodeId);
+              s.nodeId = agentNodeId;
+              remappedCount++;
+              surfaceManager.recordDebugEvent({
+                ts: Date.now(), kind: 'surface.remap.nodeId',
+                surfaceId: s.surfaceId, nodeId: agentNodeId,
+                extra: { oldNodeId },
+                message: 'remapped surface nodeId to reconnected agent instance',
+              });
+            }
+          }
+        }
+      }
+
+      // Delete surfaces for processes not in the inventory (unless kept)
+      for (const surface of surfaceManager.listAll()) {
+        if (surface.runtimeRef.kind === 'none') continue;
+        const instId = surface.runtimeRef.instanceId;
+        if (!instId) continue;
+        // Only consider surfaces that belong to this agent (label match)
+        const surfaceInst = instanceManager.get(surface.nodeId);
+        const agentInst = instanceManager.get(agentNodeId);
+        if (!surfaceInst || !agentInst || surfaceInst.label !== agentInst.label) continue;
+        if (!reportedInstanceIds.has(instId)) {
+          if (surfaceManager.isKept(surface.surfaceId)) {
+            surfaceManager.setOrphaned(surface.surfaceId);
+          } else {
+            surfaceManager.delete(surface.surfaceId);
+            // Broadcast close
+            const nodeSubs = surfaceManager.getNodeSubscribers(surface.nodeId);
+            if (nodeSubs) {
+              const closeMsg = envelope("surface.closed", { surfaceId: surface.surfaceId, nodeId: surface.nodeId });
+              for (const client of nodeSubs) {
+                if (client.readyState === WebSocket.OPEN) send(client, closeMsg);
+              }
+            }
+            deletedCount++;
+          }
+        }
+      }
+
+      if (createdCount > 0 || clearedOrphanCount > 0 || deletedCount > 0 || remappedCount > 0) {
+        surfacePersistence.save(surfaceManager);
+      }
+      send(ws, envelope("agent.inventory.ack", {
+        nodeId: agentNodeId,
+        createdSurfaces: createdCount,
+        clearedOrphaned: clearedOrphanCount,
+        deletedStale: deletedCount,
+        remapped: remappedCount,
+      }));
+      if (createdCount > 0 || clearedOrphanCount > 0 || deletedCount > 0 || remappedCount > 0) {
+        console.log(`[inventory] ${agentNodeId}: +${createdCount} created, ${clearedOrphanCount} cleared, -${deletedCount} deleted, ~${remappedCount} remapped`);
       }
       return;
     }
@@ -2906,6 +2974,8 @@ function setupWssHandlers(): void {
         (t: any, b: any) => envelope(t, b),
       );
 
+      surfacePersistence.save(surfaceManager);
+
       // Return published confirmation with full surface data
       send(ws, envelope("surface.published", {
         surfaceId: surface.surfaceId,
@@ -2967,9 +3037,14 @@ function setupWssHandlers(): void {
           instanceId: existingSurface.runtimeRef.instanceId,
           message: 'missing instance for terminal surface (surface.subscribe)',
         });
-        surfaceManager.delete(surfaceId);
-        send(ws, envelope("surface.closed", { surfaceId, nodeId: existingSurface.nodeId }));
-        send(ws, envelope("error", { code: "SURFACE_STALE", message: `Surface ${surfaceId} points to a missing terminal instance` }));
+        if (surfaceManager.isKept(surfaceId)) {
+          surfaceManager.setOrphaned(surfaceId);
+        } else {
+          surfaceManager.delete(surfaceId);
+          surfacePersistence.save(surfaceManager);
+          send(ws, envelope("surface.closed", { surfaceId, nodeId: existingSurface.nodeId }));
+          send(ws, envelope("error", { code: "SURFACE_STALE", message: `Surface ${surfaceId} points to a missing terminal instance` }));
+        }
         return;
       }
 
@@ -3009,10 +3084,52 @@ function setupWssHandlers(): void {
             instanceId: surface.runtimeRef.instanceId,
             message: 'missing instance for terminal surface (surface.subscribeNode)',
           });
-          surfaceManager.delete(surface.surfaceId);
-          send(ws, envelope("surface.closed", { surfaceId: surface.surfaceId, nodeId }));
+          if (surfaceManager.isKept(surface.surfaceId)) {
+            // Keep=true → persist surface, mark orphaned. Agent inventory
+            // will re-validate when the agent reconnects.
+            surfaceManager.setOrphaned(surface.surfaceId);
+          } else {
+            surfaceManager.delete(surface.surfaceId);
+            send(ws, envelope("surface.closed", { surfaceId: surface.surfaceId, nodeId }));
+          }
         }
       }
+
+      // Synthesis: create surfaces for running instances that lack one
+      for (const inst of instanceManager.list()) {
+        if (inst.status !== 'running') continue;
+        if (inst.source !== 'local') continue; // remote instances rely on agent inventory (Phase 3)
+        if (inst.label !== nodeId && inst.id !== nodeId) {
+          // Check if this instance is on the same node (label match)
+          const nodeInst = instanceManager.get(nodeId);
+          if (!nodeInst || nodeInst.label !== inst.label) continue;
+        }
+        const existing = surfaceManager.findByInstanceId(inst.id);
+        if (existing.length === 0) {
+          const synthSurface = surfaceManager.create(nodeId || inst.id, {
+            title: inst.label || 'Terminal',
+            viewType: 'terminal',
+            scope: 'node',
+            shared: true,
+            runtimeRef: { kind: 'terminal', instanceId: inst.id },
+            replayPolicy: { mode: 'tail', lines: 5000, bytes: 500_000 },
+          });
+          surfaceManager.setOrphaned(synthSurface.surfaceId);
+          surfaceManager.setKeep(synthSurface.surfaceId, true);
+          // Insert into workbenchTabStore for backward compat
+          const tabs = workbenchTabStore.get(nodeId || inst.id) || [];
+          tabs.push(surfaceManager.toWorkbenchTab(synthSurface));
+          workbenchTabStore.set(nodeId || inst.id, tabs);
+          surfaceManager.recordDebugEvent({
+            ts: Date.now(), kind: 'surface.publish.created',
+            surfaceId: synthSurface.surfaceId, nodeId: nodeId || inst.id,
+            instanceId: inst.id,
+            message: 'synthesized surface for running instance without surface',
+          });
+        }
+      }
+
+      surfacePersistence.save(surfaceManager);
 
       const surfaces = surfaceManager.subscribeNode(nodeId, ws,
         (w: any, m: any) => send(w, m),
@@ -3103,6 +3220,7 @@ function setupWssHandlers(): void {
       const closeMsg = envelope("surface.closed", { surfaceId });
 
       surfaceManager.delete(surfaceId);
+      surfacePersistence.save(surfaceManager);
 
       // Broadcast surface.closed
       if (surfSubs) {
@@ -3121,6 +3239,45 @@ function setupWssHandlers(): void {
 
       _sendUpstream?.("surface.close", { surfaceId, nodeId });
 
+      return;
+    }
+
+    if (msg.type === "surface.keep") {
+      const surfaceId = String(msg.surfaceId || "");
+      if (!surfaceId) return;
+      const surface = surfaceManager.get(surfaceId);
+      if (!surface) {
+        send(ws, envelope("error", { code: "SURFACE_NOT_FOUND", message: `Surface ${surfaceId} not found` }));
+        return;
+      }
+      surfaceManager.setKeep(surfaceId, true);
+      surfacePersistence.save(surfaceManager);
+      // Sync to workbenchTabStore
+      const tabs = workbenchTabStore.get(surface.nodeId) || [];
+      const tab = surfaceManager.toWorkbenchTab(surface);
+      const idx = tabs.findIndex((t: any) => t.id === tab.id);
+      if (idx >= 0) tabs[idx] = { ...tabs[idx], _keep: true };
+      workbenchTabStore.set(surface.nodeId, tabs);
+      send(ws, envelope("surface.kept", { surfaceId, keep: true }));
+      return;
+    }
+
+    if (msg.type === "surface.unkeep") {
+      const surfaceId = String(msg.surfaceId || "");
+      if (!surfaceId) return;
+      const surface = surfaceManager.get(surfaceId);
+      if (!surface) {
+        send(ws, envelope("error", { code: "SURFACE_NOT_FOUND", message: `Surface ${surfaceId} not found` }));
+        return;
+      }
+      surfaceManager.setKeep(surfaceId, false);
+      surfacePersistence.save(surfaceManager);
+      const tabs = workbenchTabStore.get(surface.nodeId) || [];
+      const tab = surfaceManager.toWorkbenchTab(surface);
+      const idx = tabs.findIndex((t: any) => t.id === tab.id);
+      if (idx >= 0) tabs[idx] = { ...tabs[idx], _keep: false };
+      workbenchTabStore.set(surface.nodeId, tabs);
+      send(ws, envelope("surface.kept", { surfaceId, keep: false }));
       return;
     }
 
@@ -3284,6 +3441,7 @@ function setupWssHandlers(): void {
 
     // Persist session state
     sessionPersistence.save(instanceManager);
+    surfacePersistence.save(surfaceManager);
   });
   });
 }
@@ -3297,6 +3455,7 @@ function shutdown(signal: string) {
 
   // Persist session before stopping
   sessionPersistence.flush(instanceManager);
+  surfacePersistence.flush(surfaceManager);
   auditLog.log('server.shutdown', 'system', { signal, instanceCount: instanceManager.count });
 
   // Stop all adapter handles (shell + claude)
@@ -3478,6 +3637,22 @@ export class NodeRelayServer {
         if (match) instanceManager.setActive(match.id);
       }
     }
+    // Restore surfaces from previous run (all marked orphaned until agent confirms)
+    const surfaceSnapshot = surfacePersistence.restore();
+    if (surfaceSnapshot) {
+      surfaceManager.restore(surfaceSnapshot.surfaces);
+      // Rebuild workbenchTabStore projections for restored surfaces
+      for (const s of surfaceManager.listAll()) {
+        const tabs = workbenchTabStore.get(s.nodeId) || [];
+        const tab = surfaceManager.toWorkbenchTab(s);
+        const idx = tabs.findIndex((t: any) => t.id === tab.id);
+        if (idx >= 0) tabs[idx] = tab;
+        else tabs.push(tab);
+        workbenchTabStore.set(s.nodeId, tabs);
+      }
+      console.log(`[relay] Restored ${surfaceSnapshot.surfaces.length} surface(s)`);
+    }
+
     // Start listening
     return new Promise((resolve, reject) => {
       httpServer!.listen(this._port, this._bind, () => {
@@ -3501,6 +3676,7 @@ export class NodeRelayServer {
   async stop(): Promise<void> {
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     sessionPersistence.flush(instanceManager);
+    surfacePersistence.flush(surfaceManager);
     auditLog.log('server.shutdown', 'system', { instanceCount: instanceManager.count });
     for (const inst of instanceManager.list()) {
       if (inst.handle) { inst.handle.stop().catch(() => {}); }

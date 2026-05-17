@@ -19,6 +19,10 @@ export interface PaneTab {
   /** Set when a terminal tab's instanceId points to the node itself but has no
    *  valid surface backing. The tab should not render as a usable terminal. */
   _stale?: boolean;
+  /** Server-side keep flag — surface persists even when no browser subscribes. */
+  _keep?: boolean;
+  /** Runtime process lost (relay restart) but surface preserved via keep/persistence. */
+  _orphaned?: boolean;
 }
 
 export interface PaneState {

@@ -807,6 +807,11 @@ export interface SharedSurface {
   createdBy: string;
   createdAt: number;
   updatedAt: number;
+  /** Server-side keep — surface persists even when no browser subscribes. */
+  keep?: boolean;
+  /** True when surface was restored from disk but its runtime process
+   *  has not been confirmed alive by an agent inventory report. */
+  orphaned?: boolean;
 }
 
 export interface RuntimeOutputChunk {

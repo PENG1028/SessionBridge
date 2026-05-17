@@ -216,6 +216,54 @@ export class NodeRuntime {
     this.addLog('[node] Relay connection initiated');
   }
 
+  /** Collect inventory of all alive processes and operations on this agent.
+   *  Used by the agent inventory protocol (Phase 3) so the relay can reconcile
+   *  surfaces with actual running processes. */
+  collectAliveProcesses(): {
+    nodeId: string;
+    processes: Array<{ instanceId: string; kind: string; title?: string; command?: string; pid?: number; cwd?: string; createdAt: number }>;
+    activeOperations: Array<{ operationId: string; kind: string; command?: string; instanceId?: string; createdAt: number }>;
+  } {
+    const nodeId = this.config.nodeId || os.hostname();
+    const processes: Array<{ instanceId: string; kind: string; title?: string; command?: string; pid?: number; cwd?: string; createdAt: number }> = [];
+
+    // Main shell
+    if (this.shellProc && !this.shellProc.killed) {
+      processes.push({
+        instanceId: nodeId,
+        kind: 'terminal',
+        title: 'Shell',
+        command: process.platform === 'win32' ? 'powershell.exe' : 'bash',
+        pid: this.shellProc.pid,
+        cwd: this.config.workingDirectory,
+        createdAt: this.startTime,
+      });
+    }
+
+    // Per-instance remote shells
+    for (const [instId, proc] of this.remoteShells) {
+      if (!proc.killed) {
+        processes.push({
+          instanceId: instId,
+          kind: 'terminal',
+          title: `Shell (${instId})`,
+          pid: proc.pid,
+          createdAt: Date.now(), // remote shells don't track start time individually
+        });
+      }
+    }
+
+    const activeOperations = this.operationRunner.listActive().map(op => ({
+      operationId: op.operationId,
+      kind: op.kind,
+      command: op.command,
+      instanceId: op.instanceId,
+      createdAt: op.createdAt,
+    }));
+
+    return { nodeId, processes, activeOperations };
+  }
+
   async shutdown(): Promise<void> {
     this.addLog('[node] Shutting down...');
     this.killShell();
@@ -375,6 +423,13 @@ export class NodeRuntime {
       const hasToken = !!this.config.relayToken;
       const result = detectNetwork(this.config.relayPort, hasToken);
       (this.relay as any).sendRaw(JSON.stringify(envelope('node.external.inspected', { requestId, result })));
+    });
+
+    // Agent inventory: relay requests process list → report back
+    this.relay.on('inventoryRequest', () => {
+      const inventory = this.collectAliveProcesses();
+      (this.relay as any).sendInventory(inventory);
+      this.addLog(`[inventory] Reported ${inventory.processes.length} process(es), ${inventory.activeOperations.length} operation(s)`);
     });
 
     // External access: toggle dashboard bind on/off

@@ -11,6 +11,7 @@ import { basename, isAbsolute, resolve, join, dirname } from "path";
 import os from "os";
 
 import type { InstanceManager, InstanceData } from "./instance-manager";
+import type { SurfaceManager } from "./surface-manager";
 import type { ConfigManager } from "./config";
 import type { RelayConfigManager } from "../agent-core/config-sync";
 import { envelope } from "../extensions/protocol";
@@ -60,6 +61,10 @@ export interface ApiContext {
   workDir?: string;
   /** In-memory alias store (backed by JSON file) */
   aliases?: AliasStore;
+  /** Surface manager — for atomically creating surfaces alongside instances. */
+  surfaceManager?: import('./surface-manager').SurfaceManager;
+  /** Surface persistence — for immediately saving after API-created surfaces. */
+  surfacePersistence?: import('./surface-persistence').SurfacePersistence;
 }
 
 // ─── Helpers ───────────────────────────────────────────────────
@@ -305,7 +310,7 @@ export function registerApiRoutes(
     if (ctx.checkPermission && !ctx.checkPermission(res, 'processManagement', { action: 'create_instance' })) return true;
     readBody(req)
       .then((body) => {
-        let parsed: { dir?: string; label?: string; adapterId?: string; targetNodeId?: string };
+        let parsed: { dir?: string; label?: string; adapterId?: string; targetNodeId?: string; keep?: boolean };
         try {
           parsed = JSON.parse(body);
         } catch {
@@ -341,6 +346,25 @@ export function registerApiRoutes(
           const alias = ctx.aliases?.get(identityKey);
           if (alias) newInst.label = alias;
 
+          // Atomic surface creation (Phase 4)
+          // surface.nodeId = targetNodeId (device/owner node)
+          // surface.runtimeRef.instanceId = newInst.id (specific terminal process)
+          let createdSurface: { surfaceId: string } | undefined;
+          if (ctx.surfaceManager) {
+            const keep = parsed.keep === true;
+            const surface = ctx.surfaceManager.create(String(targetNodeId), {
+              title: newInst.label || 'Terminal',
+              viewType: 'terminal',
+              scope: 'node',
+              shared: true,
+              runtimeRef: { kind: 'terminal', instanceId: newInst.id },
+              replayPolicy: { mode: 'tail', lines: 5000, bytes: 500_000 },
+            });
+            if (keep) ctx.surfaceManager.setKeep(surface.surfaceId, true);
+            createdSurface = { surfaceId: surface.surfaceId };
+            ctx.surfacePersistence?.save(ctx.surfaceManager);
+          }
+
           ctx.auditLog?.log("instance.created", "api", {
             dir: newInst.dir,
             label: newInst.label,
@@ -368,6 +392,7 @@ export function registerApiRoutes(
               dir: newInst.dir,
               label: newInst.label,
             },
+            ...(createdSurface ? { surface: createdSurface } : {}),
           });
           return;
         }
@@ -397,6 +422,26 @@ export function registerApiRoutes(
           if (alias) newInst.label = alias;
         }
 
+        // Atomic surface creation (Phase 4)
+        // surface.nodeId = targetNodeId or newInst.id (device/owner node)
+        // surface.runtimeRef.instanceId = newInst.id (specific terminal process)
+        let createdSurface: { surfaceId: string } | undefined;
+        if (ctx.surfaceManager) {
+          const keep = parsed.keep === true;
+          const ownerNodeId = targetNodeId || newInst.id;
+          const surface = ctx.surfaceManager.create(ownerNodeId, {
+            title: newInst.label || 'Terminal',
+            viewType: 'terminal',
+            scope: 'node',
+            shared: true,
+            runtimeRef: { kind: 'terminal', instanceId: newInst.id },
+            replayPolicy: { mode: 'tail', lines: 5000, bytes: 500_000 },
+          });
+          if (keep) ctx.surfaceManager.setKeep(surface.surfaceId, true);
+          createdSurface = { surfaceId: surface.surfaceId };
+          ctx.surfacePersistence?.save(ctx.surfaceManager);
+        }
+
         // Audit
         ctx.auditLog?.log("instance.created", "api", { dir: newInst.dir, label: newInst.label, adapterId: newInst.adapterId }, newInst.id);
 
@@ -423,6 +468,7 @@ export function registerApiRoutes(
             status: newInst.status,
             adapterId: newInst.adapterId,
           },
+          ...(createdSurface ? { surface: createdSurface } : {}),
         });
       })
       .catch(() => {

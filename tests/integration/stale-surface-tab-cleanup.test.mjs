@@ -119,7 +119,7 @@ async function main() {
       '--label', 'stale-test-node',
     ], {
       cwd: ROOT,
-      env: { ...process.env, BRIDGE_CONFIG: configPath },
+      env: { ...process.env, BRIDGE_DIR: WORK_DIR, BRIDGE_CONFIG: configPath },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 

@@ -52,6 +52,11 @@ export class OperationRunner {
     this.handlers.set(kind, handler);
   }
 
+  /** Return all currently tracked operations (for agent inventory). */
+  listActive(): OperationContext[] {
+    return Array.from(this.operations.values());
+  }
+
   // ── Message dispatch (call from relayMessage handler) ──────
 
   handleMessage(msg: any): boolean {

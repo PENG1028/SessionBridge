@@ -25,6 +25,8 @@ export interface RelayConnectionEvents {
   close: () => void;
   /** Catch-all for messages not handled by the switch (e.g. workbench.*). */
   relayMessage: (msg: any) => void;
+  /** Agent inventory request from relay. */
+  inventoryRequest: () => void;
 }
 
 export class RelayConnection extends EventEmitter {
@@ -181,6 +183,10 @@ export class RelayConnection extends EventEmitter {
           this.emit('error', msg.code || '', msg.message || '');
           break;
 
+        case 'agent.inventory.request':
+          this.emit('inventoryRequest');
+          break;
+
         default:
           this.emit('relayMessage', msg);
           break;
@@ -313,6 +319,15 @@ export class RelayConnection extends EventEmitter {
     if (error) body.error = error;
     if (exitCode !== undefined) body.exitCode = exitCode;
     this.sendRaw(JSON.stringify(envelope('agent.operation.result', body)));
+  }
+
+  /** Send agent process inventory to relay. */
+  sendInventory(inventory: {
+    nodeId: string;
+    processes: Array<{ instanceId: string; kind: string; title?: string; command?: string; pid?: number; cwd?: string; createdAt: number }>;
+    activeOperations: Array<{ operationId: string; kind: string; command?: string; instanceId?: string; createdAt: number }>;
+  }): void {
+    this.sendRaw(JSON.stringify(envelope('agent.inventory.report', inventory)));
   }
 
   private scheduleReconnect(): void {
