@@ -136,10 +136,11 @@ function instanceToJSON(inst: InstanceData): Record<string, unknown> {
     checkpointCount: inst.checkpointManager.totalCheckpoints(),
     agentVersion: inst.agentVersion ?? null,
     createdAt: inst.createdAt,
-    instanceKind: inst.instanceKind,
+    instanceRole: inst.instanceRole,
+    runtimeKind: inst.runtimeKind,
+    pluginId: inst.pluginId,
     adapterState: inst.adapterState,
     parentNodeId: typeof inst.adapterState.parentNodeId === 'string' ? inst.adapterState.parentNodeId : undefined,
-    runtimeKind: typeof inst.adapterState.runtimeKind === 'string' ? inst.adapterState.runtimeKind : undefined,
   };
 }
 
@@ -349,8 +350,9 @@ export function registerApiRoutes(
           );
           newInst.agentConnection = targetNode.agentConnection;
           newInst.status = 'stopped';
+          newInst.instanceRole = 'runtime';
+          newInst.runtimeKind = 'terminal';
           newInst.adapterState.parentNodeId = String(targetNodeId);
-          newInst.adapterState.runtimeKind = 'terminal';
 
           const identityKey = `${newInst.source}:${newInst.dir}`;
           const alias = ctx.aliases?.get(identityKey);
@@ -415,7 +417,7 @@ export function registerApiRoutes(
                 adapterId: newInst.adapterId,
                 source: newInst.source,
                 parentNodeId: newInst.adapterState.parentNodeId,
-                runtimeKind: newInst.adapterState.runtimeKind,
+                runtimeKind: newInst.runtimeKind,
               },
             }),
           );
@@ -429,7 +431,7 @@ export function registerApiRoutes(
             status: newInst.status,
             adapterId: newInst.adapterId,
             parentNodeId: newInst.adapterState.parentNodeId,
-            runtimeKind: newInst.adapterState.runtimeKind,
+            runtimeKind: newInst.runtimeKind,
           },
           ...(createdSurface ? { surface: createdSurface } : {}),
         });
@@ -454,8 +456,11 @@ export function registerApiRoutes(
           adapterId,
         );
         if (targetNodeId) {
+          newInst.instanceRole = 'runtime';
+          newInst.runtimeKind = 'terminal';
           newInst.adapterState.parentNodeId = String(targetNodeId);
-          newInst.adapterState.runtimeKind = 'terminal';
+        } else {
+          newInst.instanceRole = 'node';
         }
 
         // Apply alias from the alias store (if one exists for this source:dir)
@@ -522,7 +527,7 @@ export function registerApiRoutes(
               adapterId: newInst.adapterId,
               source: newInst.source,
               parentNodeId: newInst.adapterState.parentNodeId,
-              runtimeKind: newInst.adapterState.runtimeKind,
+              runtimeKind: newInst.runtimeKind,
             },
           }),
         );
@@ -536,7 +541,7 @@ export function registerApiRoutes(
             status: newInst.status,
             adapterId: newInst.adapterId,
             parentNodeId: newInst.adapterState.parentNodeId,
-            runtimeKind: newInst.adapterState.runtimeKind,
+            runtimeKind: newInst.runtimeKind,
           },
           ...(createdSurface ? { surface: createdSurface } : {}),
         });

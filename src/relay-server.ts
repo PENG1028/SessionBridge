@@ -701,11 +701,10 @@ function collectPeers(): { peers: Record<string, unknown>[]; links: { source: st
   }
   // Also collect agents (agents are removed from clients set but have _isAgent)
   for (const inst of instanceManager.list()) {
-    // Runtime children (terminal/plugin processes created under a device node)
-    // are not device nodes. They are exposed through SharedSurface tabs, not
-    // the peer/node list. Without this guard a PENGSPC terminal child labeled
-    // "Terminal" appears as a separate node and can steal the active node.
-    if (inst.instanceKind === 'terminal' || inst.instanceKind === 'plugin') continue;
+    // Runtime sub-instances (terminal, plugin, etc.) are not device nodes.
+    // They are exposed through SharedSurface tabs, not the peer/node list.
+    // Only instanceRole === 'node' (or legacy undefined) can appear in peer.list.
+    if (inst.instanceRole === 'runtime') continue;
     if (typeof inst.adapterState.parentNodeId === 'string') continue;
     if (inst.agentConnection && !clients.has(inst.agentConnection)) {
       const ws2 = inst.agentConnection;
@@ -932,7 +931,8 @@ async function spawnShellForWs(ws: WebSocket, instanceId?: string): Promise<impo
       throw Object.assign(new Error('No terminal-capable adapter available for shell.spawn'), { _reported: true });
     }
     i = instanceManager.create(process.cwd(), os.hostname(), "local", terminalAdapter.id);
-    i.instanceKind = 'terminal';
+    i.instanceRole = 'runtime';
+    i.runtimeKind = 'terminal';
   }
 
   // Apply alias from the alias store (if one exists for this instance)
@@ -2471,11 +2471,11 @@ function setupWssHandlers(): void {
       applyAlias(remoteInst);
       remoteInst.agentConnection = ws;
       remoteInst.status = 'running';
-      // Mark as terminal runtime so it never appears in peer.list / NodeBar.
-      // The agent's device node is the parent — this instance is a sub-runtime.
-      remoteInst.instanceKind = 'terminal';
+      // Mark as runtime so it never appears in peer.list / NodeBar.
+      // Only instanceRole='node' (or legacy undefined) can be a peer.
+      remoteInst.instanceRole = 'runtime';
+      remoteInst.runtimeKind = 'terminal';
       remoteInst.adapterState.parentNodeId = (ws as any)._agentInstanceId || '';
-      remoteInst.adapterState.runtimeKind = 'terminal';
       // Atomic surface creation so cross-device browsers can discover this terminal
       const agentNodeId = (ws as any)._agentInstanceId as string | undefined;
       if (agentNodeId && surfaceManager) {

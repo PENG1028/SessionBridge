@@ -79,9 +79,20 @@ export interface InstanceData {
   // Metadata
   createdAt: number;
   adapterId?: string;  // which adapter owns this instance
-  /** Discriminates device-node instances from terminal/plugin runtime sub-instances.
-   *  undefined = legacy device node (backward compat). */
-  instanceKind?: 'device' | 'terminal' | 'plugin';
+  /** Top-level role discriminator.
+   *  'node'    = device/agent/relay — appears in peer.list/NodeBar.
+   *  'runtime' = sub-process under a node — never in peer.list/NodeBar.
+   *  undefined = legacy device node (backward compat, treated as 'node'). */
+  instanceRole?: 'node' | 'runtime';
+
+  /** Open-ended runtime type. Only meaningful when instanceRole='runtime'.
+   *  Built-in: 'terminal', 'plugin'.
+   *  Third-party / plugin: 'k8s.pod', 'docker.container', 'my-plugin.worker', etc.
+   *  Never used for peer.list / NodeBar gating — that is instanceRole's job. */
+  runtimeKind?: string;
+
+  /** For runtime instances, the id of the plugin that owns this runtime (if any). */
+  pluginId?: string;
   agentVersion?: string; // agent version reported during registration (remote only)
 
   // Operation state machine
@@ -99,8 +110,17 @@ export class InstanceManager {
 
   constructor(private eventBus?: RelayEventBus) {}
 
-  /** Create a new instance and register it */
-  create(dir: string, label?: string, source?: InstanceSource, adapterId?: string): InstanceData {
+  /** Create a new instance and register it.
+   *  @param opts.instanceRole  'node' for device nodes, 'runtime' for sub-processes
+   *  @param opts.parentNodeId  Required when instanceRole='runtime'
+   *  @param opts.runtimeKind   Open-ended type tag (e.g. 'terminal', 'k8s.pod')
+   *  @param opts.pluginId      Owning plugin id (for plugin-spawned runtimes) */
+  create(dir: string, label?: string, source?: InstanceSource, adapterId?: string, opts?: {
+    instanceRole?: 'node' | 'runtime';
+    parentNodeId?: string;
+    runtimeKind?: string;
+    pluginId?: string;
+  }): InstanceData {
     // TODO(Phase 4F): Require explicit adapterId. The fallback below is only
     // for internal callers (shell.spawn, remote agent registration) that
     // resolve the adapter themselves before calling create(). The REST API
@@ -132,7 +152,13 @@ export class InstanceManager {
       createdAt: Date.now(),
       currentOperation: null,
       operationHistory: [],
+      instanceRole: opts?.instanceRole,
+      runtimeKind: opts?.runtimeKind,
+      pluginId: opts?.pluginId,
     };
+    if (opts?.parentNodeId) {
+      instance.adapterState.parentNodeId = opts.parentNodeId;
+    }
     this.instances.set(id, instance);
     return instance;
   }
@@ -318,8 +344,9 @@ export class InstanceManager {
       currentOperation: inst.currentOperation,
       operationCount: inst.operationHistory.length,
       parentNodeId: typeof inst.adapterState.parentNodeId === 'string' ? inst.adapterState.parentNodeId : undefined,
-      runtimeKind: typeof inst.adapterState.runtimeKind === 'string' ? inst.adapterState.runtimeKind : undefined,
-      instanceKind: inst.instanceKind,
+      instanceRole: inst.instanceRole,
+      runtimeKind: inst.runtimeKind,
+      pluginId: inst.pluginId,
     }));
   }
 }

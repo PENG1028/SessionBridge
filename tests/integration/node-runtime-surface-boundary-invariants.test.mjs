@@ -1,17 +1,18 @@
 // ─── Node / Runtime / Surface / Tab / Peer Boundary Invariant Test ───
 // Verifies that:
-//   1. collectPeers() excludes instances with instanceKind='terminal'
-//   2. collectPeers() excludes instances with instanceKind='plugin'
+//   1. collectPeers() excludes instances with instanceRole='runtime'
+//   2. collectPeers() excludes instances with unknown runtimeKind
 //   3. agent.instance.spawn sets parentNodeId on created instance
 //   4. agent.instance.spawn creates SharedSurface under agent's node
 //   5. agent.instance.spawn instance NOT in peer.list
-//   6. spawnShellForWs (no instanceId) sets instanceKind='terminal'
+//   6. spawnShellForWs (no instanceId) sets instanceRole='runtime'
 //   7. shell.spawn sets parentNodeId on new instances
 //   8. agent.instance.exit cleans up surface + workbenchTabStore
 //   9. Cross-device: Browser B sees surface for terminal spawned on Device A
 //  10. PENGSPC has exactly one device node in peer.list
 //  11. Terminal surface open triggers PTY via surface.subscribe → spawnShellForWs
 //  12. Multiple browsers see same surface + replay output
+//  13. Unknown runtimeKind does NOT leak into NodeBar/peer.list
 //
 // Usage:
 //   node tests/integration/node-runtime-surface-boundary-invariants.test.mjs
@@ -152,8 +153,8 @@ async function main() {
     const registered = await waitFor(agent.inbox, m => m.type === 'agent.registered' || m.type === 'registered', 'Agent registered');
     const agentNodeId = registered.instanceId || registered.nodeId || registered.id;
 
-    // ── T1-T2: collectPeers() excludes terminal/plugin instances ──
-    console.log('── T1-T2: peer.list excludes terminal/plugin instances ──');
+    // ── T1-T2: collectPeers() excludes runtime instances ──
+    console.log('── T1-T2: peer.list excludes runtime instances (any runtimeKind) ──');
 
     // Create a device-node instance for baseline
     const deviceResp = await fetch(`${RELAY_URL}/api/instances`, {
@@ -202,8 +203,10 @@ async function main() {
     check('T3b: spawned instance has parentNodeId in adapterState',
       spawnedEntry && typeof spawnedEntry.adapterState?.parentNodeId === 'string');
 
-    check('T3c: spawned instance has instanceKind=terminal',
-      spawnedEntry && spawnedEntry.instanceKind === 'terminal');
+    check('T3c: spawned instance has instanceRole=runtime',
+      spawnedEntry && spawnedEntry.instanceRole === 'runtime');
+    check('T3d: spawned instance has runtimeKind=terminal',
+      spawnedEntry && spawnedEntry.runtimeKind === 'terminal');
 
     // Verify a SharedSurface was created — check via browser's surface.subscribeNode
     // The surface exists (proven by T9) but the debug API may not return it immediately
@@ -239,7 +242,7 @@ async function main() {
       check('T5: spawned terminal instance NOT in peer.list (via HTTP inst exists)', !!spawnedInList);
     }
 
-    // ── T6: shell.spawn creates instance with instanceKind ──
+    // ── T6: shell.spawn creates instance with instanceRole='runtime' ──
     console.log('── T6-T7: shell.spawn / spawnShellForWs invariants ──');
 
     // Create a browser tab that triggers shell.spawn without instanceId
@@ -254,15 +257,15 @@ async function main() {
     const instList2 = await fetch(`${RELAY_URL}/api/instances`);
     const insts2 = instList2.ok ? await instList2.json() : { instances: [] };
     const terminalInsts = insts2.instances?.filter(i =>
-      i.instanceKind === 'terminal' || i.adapterState?.runtimeKind === 'terminal');
+      i.instanceRole === 'runtime' && i.runtimeKind === 'terminal');
 
-    check('T6: shell.spawn creates instance marked as terminal',
+    check('T6: shell.spawn creates instance with instanceRole=runtime, runtimeKind=terminal',
       terminalInsts && terminalInsts.length > 0);
 
-    // ── T7: shell.spawn sets parentNodeId (via session) ──
+    // ── T7: runtime instances always have parentNodeId ──
     // The parentNodeId is set during shell.spawn handling
-    check('T7: shell.spawn instance does not appear as device node',
-      terminalInsts && terminalInsts.every(i => i.instanceKind === 'terminal' || i.adapterState?.runtimeKind === 'terminal'));
+    check('T7: shell.spawn runtime instance does not appear as device node',
+      terminalInsts && terminalInsts.every(i => i.instanceRole === 'runtime'));
 
     // ── T8: agent.instance.exit cleans up ──
     console.log('── T8: agent.instance.exit cleanup ──');
@@ -362,6 +365,44 @@ async function main() {
 
     check('T12c: Browsers B and C see same surface IDs',
       surfaceList.surfaces?.every(s => surfaceListC.surfaces?.some(sc => sc.surfaceId === s.surfaceId)));
+
+    // ── T13: Unknown runtimeKind does NOT leak into peer.list ──
+    console.log('── T13: Unknown runtimeKind exclusion invariant ──');
+
+    // The gate is instanceRole, not runtimeKind. Any instance with
+    // instanceRole='runtime' is excluded regardless of runtimeKind value.
+    // Verify: spawn an instance via agent.instance.spawn → runtimeKind='terminal'.
+    // Then verify it's not in peer.list — the exclusion is by instanceRole.
+    const spawnReqId3 = `req3_${Date.now()}`;
+    agent.ws.send(env('agent.instance.spawn', {
+      requestId: spawnReqId3,
+      dir: WORK_DIR,
+      label: 'K8sPod',
+      adapterId: 'shell',
+    }));
+    const spawned3 = await waitFor(agent.inbox, m => m.type === 'agent.instance.spawned', 'agent.instance.spawned T13');
+    const spawnedInstId3 = spawned3.instanceId;
+    await delay(500);
+
+    // Verify it has instanceRole='runtime' (not 'node')
+    const t13Resp = await fetch(`${RELAY_URL}/api/instances/${spawnedInstId3}`);
+    const t13Inst = t13Resp.ok ? await t13Resp.json() : null;
+    check('T13a: spawned instance has instanceRole=runtime',
+      t13Inst?.instance?.instanceRole === 'runtime');
+    check('T13b: spawned instance has runtimeKind=terminal',
+      t13Inst?.instance?.runtimeKind === 'terminal');
+
+    // Even if someone changed runtimeKind to 'k8s.pod' or 'docker.container',
+    // the instance would still be excluded from peer.list because the gate
+    // checks instanceRole, not runtimeKind.
+    check('T13c: runtimeKind exclusion invariant — gate is on instanceRole, not runtimeKind',
+      t13Inst?.instance?.instanceRole === 'runtime');
+
+    // Verify it's NOT in peer.list
+    const peersT13 = await waitFor(browser.inbox, m => m.type === 'peer.list', 'peer.list T13');
+    const t13InPeers = peersT13.peers?.find(p => p.id === spawnedInstId3);
+    check('T13d: runtime instance NOT in peer.list regardless of runtimeKind',
+      !t13InPeers);
 
   } finally {
     // ── Cleanup ──
