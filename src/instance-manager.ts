@@ -79,6 +79,9 @@ export interface InstanceData {
   // Metadata
   createdAt: number;
   adapterId?: string;  // which adapter owns this instance
+  /** Discriminates device-node instances from terminal/plugin runtime sub-instances.
+   *  undefined = legacy device node (backward compat). */
+  instanceKind?: 'device' | 'terminal' | 'plugin';
   agentVersion?: string; // agent version reported during registration (remote only)
 
   // Operation state machine
@@ -314,6 +317,9 @@ export class InstanceManager {
       createdAt: inst.createdAt,
       currentOperation: inst.currentOperation,
       operationCount: inst.operationHistory.length,
+      parentNodeId: typeof inst.adapterState.parentNodeId === 'string' ? inst.adapterState.parentNodeId : undefined,
+      runtimeKind: typeof inst.adapterState.runtimeKind === 'string' ? inst.adapterState.runtimeKind : undefined,
+      instanceKind: inst.instanceKind,
     }));
   }
 }

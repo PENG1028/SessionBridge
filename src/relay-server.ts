@@ -705,6 +705,7 @@ function collectPeers(): { peers: Record<string, unknown>[]; links: { source: st
     // are not device nodes. They are exposed through SharedSurface tabs, not
     // the peer/node list. Without this guard a PENGSPC terminal child labeled
     // "Terminal" appears as a separate node and can steal the active node.
+    if (inst.instanceKind === 'terminal' || inst.instanceKind === 'plugin') continue;
     if (typeof inst.adapterState.parentNodeId === 'string') continue;
     if (inst.agentConnection && !clients.has(inst.agentConnection)) {
       const ws2 = inst.agentConnection;
@@ -931,6 +932,7 @@ async function spawnShellForWs(ws: WebSocket, instanceId?: string): Promise<impo
       throw Object.assign(new Error('No terminal-capable adapter available for shell.spawn'), { _reported: true });
     }
     i = instanceManager.create(process.cwd(), os.hostname(), "local", terminalAdapter.id);
+    i.instanceKind = 'terminal';
   }
 
   // Apply alias from the alias store (if one exists for this instance)
@@ -2469,6 +2471,35 @@ function setupWssHandlers(): void {
       applyAlias(remoteInst);
       remoteInst.agentConnection = ws;
       remoteInst.status = 'running';
+      // Mark as terminal runtime so it never appears in peer.list / NodeBar.
+      // The agent's device node is the parent — this instance is a sub-runtime.
+      remoteInst.instanceKind = 'terminal';
+      remoteInst.adapterState.parentNodeId = (ws as any)._agentInstanceId || '';
+      remoteInst.adapterState.runtimeKind = 'terminal';
+      // Atomic surface creation so cross-device browsers can discover this terminal
+      const agentNodeId = (ws as any)._agentInstanceId as string | undefined;
+      if (agentNodeId && surfaceManager) {
+        const surface = surfaceManager.create(agentNodeId, {
+          title: label,
+          viewType: 'terminal',
+          scope: 'node',
+          shared: true,
+          runtimeRef: { kind: 'terminal', instanceId: remoteInst.id },
+          replayPolicy: { mode: 'tail', lines: 5000, bytes: 500_000 },
+        });
+        surfaceManager.setKeep(surface.surfaceId, true);
+        const tab = surfaceManager.toWorkbenchTab(surface);
+        const nodeTabs = workbenchTabStore.get(agentNodeId) || [];
+        const ti = nodeTabs.findIndex((t: any) => t.id === tab.id);
+        if (ti >= 0) nodeTabs[ti] = tab; else nodeTabs.push(tab);
+        workbenchTabStore.set(agentNodeId, nodeTabs);
+        broadcastTabs(agentNodeId, nodeTabs);
+        surfaceManager.broadcastToNodeSubscribers(
+          agentNodeId,
+          (w: any, m: any) => { try { w.send(typeof m === 'string' ? m : JSON.stringify(m)); } catch {} },
+          envelope("surface.published", { surfaceId: surface.surfaceId, surface: surfaceManager.toJSON(surface) }),
+        );
+      }
       send(ws, envelope("agent.instance.spawned", {
         requestId: msg.requestId,
         instanceId: remoteInst.id,

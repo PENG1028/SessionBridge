@@ -136,6 +136,10 @@ function instanceToJSON(inst: InstanceData): Record<string, unknown> {
     checkpointCount: inst.checkpointManager.totalCheckpoints(),
     agentVersion: inst.agentVersion ?? null,
     createdAt: inst.createdAt,
+    instanceKind: inst.instanceKind,
+    adapterState: inst.adapterState,
+    parentNodeId: typeof inst.adapterState.parentNodeId === 'string' ? inst.adapterState.parentNodeId : undefined,
+    runtimeKind: typeof inst.adapterState.runtimeKind === 'string' ? inst.adapterState.runtimeKind : undefined,
   };
 }
 

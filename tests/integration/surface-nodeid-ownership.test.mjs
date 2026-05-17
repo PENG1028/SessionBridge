@@ -256,6 +256,32 @@ async function main() {
     console.log(`  term2 instanceId: ${t2.instance?.id}`);
     console.log('');
 
+    console.log('── G2: Terminal runtime children are not node peers ──');
+    const browserG2 = await connectBrowser(RELAY_WS, 'G2');
+    const peerListG2 = await waitFor(browserG2.inbox, m => m.type === 'peer.list', 'G2 peer.list');
+    const agentPeersG2 = (peerListG2.peers || []).filter(p => p.type === 'agent');
+    check('G2a: Peer list contains OWNER-NODE device',
+      agentPeersG2.some(p => p.id === AGENT_NODE_ID && p.name === 'OWNER-NODE'));
+    check('G2b: Peer list does not contain Terminal-1 runtime as a node',
+      !agentPeersG2.some(p => p.id === t1.instance?.id || p.name === 'Terminal-1'));
+    check('G2c: Peer list does not contain Terminal-2 runtime as a node',
+      !agentPeersG2.some(p => p.id === t2.instance?.id || p.name === 'Terminal-2'));
+    browserG2.ws.close();
+    console.log('');
+
+    console.log('── G3: surface.subscribe spawns/reconnects terminal PTY ──');
+    const browserG3 = await connectBrowser(RELAY_WS, 'G3');
+    await waitFor(browserG3.inbox, m => m.type === 'welcome', 'G3 welcome');
+    browserG3.ws.send(env('surface.subscribe', { surfaceId: SURF_ID_1 }));
+    await waitFor(browserG3.inbox, m => m.type === 'surface.subscribed' && m.surfaceId === SURF_ID_1, 'G3 surface.subscribed');
+    const shellSpawnG3 = await waitFor(agent.inbox, m =>
+      m.type === 'relay.shell.spawn' && m.instanceId === t1.instance?.id,
+      'G3 relay.shell.spawn');
+    check('G3a: Agent receives relay.shell.spawn for terminal surface runtime',
+      shellSpawnG3?.instanceId === t1.instance?.id);
+    browserG3.ws.close();
+    console.log('');
+
     // ═══════════════════════════════════════════════════════════
     // TEST H: Relay restart → surfaces still visible under AGENT_NODE_ID
     // ═══════════════════════════════════════════════════════════

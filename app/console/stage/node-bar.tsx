@@ -63,7 +63,9 @@ export function NodeBar({ peers, wsUrl, activeNodeId, onEnterNode, onOpenConnect
     connectedAt: Date.now(),
   };
 
-  // Show only agent nodes (not browser connections — they appear in VIEW section)
+  // Show only agent nodes (not browser connections — they appear in VIEW section).
+  // Invariant: terminal/plugin runtime sub-instances are excluded by collectPeers()
+  // via the instanceKind discriminator — they never reach this filter.
   const reportedLocalPeer = peers.find(p => p.id === '__local__' || p.isLocal);
   const remotePeers = peers.filter(p => p.id !== '__local__' && !p.isLocal && p.type === 'agent' && p.networkType !== 'loopback');
   const allEntries: PeerInfo[] = reportedLocalPeer ? [reportedLocalPeer, ...remotePeers] : remotePeers;
