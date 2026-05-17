@@ -65,6 +65,10 @@ export interface ApiContext {
   surfaceManager?: import('./surface-manager').SurfaceManager;
   /** Surface persistence — for immediately saving after API-created surfaces. */
   surfacePersistence?: import('./surface-persistence').SurfacePersistence;
+  /** Workbench tab store — for projecting API-created surfaces into workbench.tabs sync. */
+  workbenchTabStore?: Map<string, any[]>;
+  /** Broadcast tabs to node subscribers (excludes sender). */
+  broadcastTabs?: (nodeId: string, tabs: any[], sender?: any) => void;
 }
 
 // ─── Helpers ───────────────────────────────────────────────────
@@ -341,6 +345,8 @@ export function registerApiRoutes(
           );
           newInst.agentConnection = targetNode.agentConnection;
           newInst.status = 'stopped';
+          newInst.adapterState.parentNodeId = String(targetNodeId);
+          newInst.adapterState.runtimeKind = 'terminal';
 
           const identityKey = `${newInst.source}:${newInst.dir}`;
           const alias = ctx.aliases?.get(identityKey);
@@ -365,6 +371,27 @@ export function registerApiRoutes(
             if (!keep) ctx.surfaceManager.setKeep(surface.surfaceId, false);
             createdSurface = ctx.surfaceManager.toJSON(surface);
             ctx.surfacePersistence?.save(ctx.surfaceManager);
+
+            // Cross-browser sync: project into workbenchTabStore + broadcast
+            if (targetNodeId && ctx.workbenchTabStore && ctx.broadcastTabs) {
+              const tab = ctx.surfaceManager.toWorkbenchTab(surface);
+              const nodeIdStr = String(targetNodeId);
+              const nodeTabs = ctx.workbenchTabStore.get(nodeIdStr) || [];
+              const ti = nodeTabs.findIndex((t: any) => t.id === tab.id);
+              if (ti >= 0) nodeTabs[ti] = tab;
+              else nodeTabs.push(tab);
+              ctx.workbenchTabStore.set(nodeIdStr, nodeTabs);
+              ctx.broadcastTabs(nodeIdStr, nodeTabs);
+              // Push surface.published to node subscribers for live discovery
+              ctx.surfaceManager.broadcastToNodeSubscribers(
+                nodeIdStr,
+                (ws: any, msg: any) => { try { ws.send(typeof msg === 'string' ? msg : JSON.stringify(msg)); } catch {} },
+                envelope("surface.published", {
+                  surfaceId: surface.surfaceId,
+                  surface: createdSurface,
+                }),
+              );
+            }
           }
 
           ctx.auditLog?.log("instance.created", "api", {
@@ -383,6 +410,8 @@ export function registerApiRoutes(
                 status: newInst.status,
                 adapterId: newInst.adapterId,
                 source: newInst.source,
+                parentNodeId: newInst.adapterState.parentNodeId,
+                runtimeKind: newInst.adapterState.runtimeKind,
               },
             }),
           );
@@ -390,12 +419,16 @@ export function registerApiRoutes(
           json(res, 201, {
             success: true,
             instance: {
-              id: newInst.id,
-              dir: newInst.dir,
-              label: newInst.label,
-            },
-            ...(createdSurface ? { surface: createdSurface } : {}),
-          });
+            id: newInst.id,
+            dir: newInst.dir,
+            label: newInst.label,
+            status: newInst.status,
+            adapterId: newInst.adapterId,
+            parentNodeId: newInst.adapterState.parentNodeId,
+            runtimeKind: newInst.adapterState.runtimeKind,
+          },
+          ...(createdSurface ? { surface: createdSurface } : {}),
+        });
           return;
         }
 
@@ -416,6 +449,10 @@ export function registerApiRoutes(
           "local",
           adapterId,
         );
+        if (targetNodeId) {
+          newInst.adapterState.parentNodeId = String(targetNodeId);
+          newInst.adapterState.runtimeKind = 'terminal';
+        }
 
         // Apply alias from the alias store (if one exists for this source:dir)
         {
@@ -444,6 +481,27 @@ export function registerApiRoutes(
           if (!keep) ctx.surfaceManager.setKeep(surface.surfaceId, false);
           createdSurface = ctx.surfaceManager.toJSON(surface);
           ctx.surfacePersistence?.save(ctx.surfaceManager);
+
+          // Cross-browser sync: project into workbenchTabStore + broadcast
+          if (ctx.workbenchTabStore && ctx.broadcastTabs) {
+            const tab = ctx.surfaceManager.toWorkbenchTab(surface);
+            const nodeIdStr = String(ownerNodeId);
+            const nodeTabs = ctx.workbenchTabStore.get(nodeIdStr) || [];
+            const ti = nodeTabs.findIndex((t: any) => t.id === tab.id);
+            if (ti >= 0) nodeTabs[ti] = tab;
+            else nodeTabs.push(tab);
+            ctx.workbenchTabStore.set(nodeIdStr, nodeTabs);
+            ctx.broadcastTabs(nodeIdStr, nodeTabs);
+            // Push surface.published to node subscribers for live discovery
+            ctx.surfaceManager.broadcastToNodeSubscribers(
+              nodeIdStr,
+              (ws: any, msg: any) => { try { ws.send(typeof msg === 'string' ? msg : JSON.stringify(msg)); } catch {} },
+              envelope("surface.published", {
+                surfaceId: surface.surfaceId,
+                surface: createdSurface,
+              }),
+            );
+          }
         }
 
         // Audit
@@ -459,6 +517,8 @@ export function registerApiRoutes(
               status: newInst.status,
               adapterId: newInst.adapterId,
               source: newInst.source,
+              parentNodeId: newInst.adapterState.parentNodeId,
+              runtimeKind: newInst.adapterState.runtimeKind,
             },
           }),
         );
@@ -471,6 +531,8 @@ export function registerApiRoutes(
             label: newInst.label,
             status: newInst.status,
             adapterId: newInst.adapterId,
+            parentNodeId: newInst.adapterState.parentNodeId,
+            runtimeKind: newInst.adapterState.runtimeKind,
           },
           ...(createdSurface ? { surface: createdSurface } : {}),
         });

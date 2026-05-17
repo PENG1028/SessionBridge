@@ -701,6 +701,11 @@ function collectPeers(): { peers: Record<string, unknown>[]; links: { source: st
   }
   // Also collect agents (agents are removed from clients set but have _isAgent)
   for (const inst of instanceManager.list()) {
+    // Runtime children (terminal/plugin processes created under a device node)
+    // are not device nodes. They are exposed through SharedSurface tabs, not
+    // the peer/node list. Without this guard a PENGSPC terminal child labeled
+    // "Terminal" appears as a separate node and can steal the active node.
+    if (typeof inst.adapterState.parentNodeId === 'string') continue;
     if (inst.agentConnection && !clients.has(inst.agentConnection)) {
       const ws2 = inst.agentConnection;
       const rawIP = (ws2 as any)._socket?.remoteAddress || '127.0.0.1';
@@ -1253,7 +1258,7 @@ const serverRequestHandler = async (req: import("http").IncomingMessage, res: im
   }
 
   // Delegate to structured API routes first
-  if (registerApiRoutes(req, res, { instanceManager, surfaceManager, surfacePersistence, broadcast, auditLog, checkPermission: checkHttpPermission, configManager: appConfig, relayConfig: relayConfigManager, configRegistry, configStore, secretStore, workDir: process.cwd(), aliases: aliasStore })) return;
+  if (registerApiRoutes(req, res, { instanceManager, surfaceManager, surfacePersistence, broadcast, auditLog, checkPermission: checkHttpPermission, configManager: appConfig, relayConfig: relayConfigManager, configRegistry, configStore, secretStore, workDir: process.cwd(), aliases: aliasStore, workbenchTabStore, broadcastTabs })) return;
 
   // Delegate to admin routes (migrated from dashboard server)
   if (await registerAdminRoutes(req, res, {
@@ -3082,6 +3087,13 @@ function setupWssHandlers(): void {
         surfaceId,
         runtime: surfaceManager.getRuntime(surfaceId),
       }));
+      if (surface.runtimeRef.kind === 'terminal' && surface.runtimeRef.instanceId) {
+        spawnShellForWs(ws, surface.runtimeRef.instanceId).catch((err) => {
+          if (!(err as any)._reported) {
+            send(ws, envelope("error", { code: "INTERNAL_ERROR", message: `Shell spawn failed: ${err}` }));
+          }
+        });
+      }
       return;
     }
 
