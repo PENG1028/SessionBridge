@@ -3119,11 +3119,17 @@ function setupWssHandlers(): void {
         runtime: surfaceManager.getRuntime(surfaceId),
       }));
       if (surface.runtimeRef.kind === 'terminal' && surface.runtimeRef.instanceId) {
-        spawnShellForWs(ws, surface.runtimeRef.instanceId).catch((err) => {
-          if (!(err as any)._reported) {
-            send(ws, envelope("error", { code: "INTERNAL_ERROR", message: `Shell spawn failed: ${err}` }));
-          }
-        });
+        // Skip spawn if the terminal instance was already found stale above
+        // (kept surface whose agent disconnected). The shell will be re-spawned
+        // when agent inventory re-validates on reconnect.
+        const inst = instanceManager.get(surface.runtimeRef.instanceId);
+        if (inst) {
+          spawnShellForWs(ws, surface.runtimeRef.instanceId).catch((err) => {
+            if (!(err as any)._reported) {
+              send(ws, envelope("error", { code: "INTERNAL_ERROR", message: `Shell spawn failed: ${err}` }));
+            }
+          });
+        }
       }
       return;
     }
