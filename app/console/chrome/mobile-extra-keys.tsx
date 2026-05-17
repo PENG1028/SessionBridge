@@ -1,16 +1,14 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 interface MobileExtraKeysProps {
-  activeInstanceId: string | null;
-  statusBarHidden?: boolean;
-  /** Reuses the main app's WebSocket connection instead of creating a new one. */
-  sendShellInput?: (data: string, instanceId: string) => void;
+  enabled: boolean;
+  onSend: (data: string) => void;
 }
 
 type KeyDef =
-  | { id: string; label: string; send: string; wide?: boolean }
+  | { id: string; label: string; send: string }
   | { id: string; label: string; toggle: true; toggleKey: 'ctrl' | 'alt' };
 
 const ROW1: KeyDef[] = [
@@ -22,10 +20,10 @@ const ROW1: KeyDef[] = [
 ];
 
 const ROW2: KeyDef[] = [
-  { id: 'left', label: '←', send: '\x1b[D' },
-  { id: 'down', label: '↓', send: '\x1b[B' },
-  { id: 'up', label: '↑', send: '\x1b[A' },
-  { id: 'right', label: '→', send: '\x1b[C' },
+  { id: 'left', label: 'Left', send: '\x1b[D' },
+  { id: 'down', label: 'Down', send: '\x1b[B' },
+  { id: 'up', label: 'Up', send: '\x1b[A' },
+  { id: 'right', label: 'Right', send: '\x1b[C' },
 ];
 
 function ctrlSeq(key: string): string {
@@ -40,38 +38,55 @@ function isTouchDevice(): boolean {
   return navigator.maxTouchPoints > 0 || 'ontouchstart' in window;
 }
 
-export function MobileExtraKeys({ activeInstanceId, statusBarHidden, sendShellInput }: MobileExtraKeysProps) {
-  const [shown, setShown] = useState(false);
+function keyboardOverlap(): number {
+  if (typeof window === 'undefined') return 0;
+  const vp = window.visualViewport;
+  if (!vp) return 0;
+  const keyboardTop = vp.offsetTop + vp.height;
+  return Math.max(0, window.innerHeight - keyboardTop);
+}
+
+export function MobileExtraKeys({ enabled, onSend }: MobileExtraKeysProps) {
+  const [touchDevice, setTouchDevice] = useState(false);
   const [ctrlOn, setCtrlOn] = useState(false);
   const [altOn, setAltOn] = useState(false);
-  const [kbOffset, setKbOffset] = useState(0);
+  const [bottomOffset, setBottomOffset] = useState(0);
   const ctrlTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const altTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Touchscreen detection
   useEffect(() => {
-    setShown(isTouchDevice());
+    setTouchDevice(isTouchDevice());
   }, []);
 
-  // visualViewport tracking for iOS keyboard
   useEffect(() => {
-    const vp = window.visualViewport;
-    if (!vp) return;
-
-    const sync = () => {
-      setKbOffset(Math.max(0, window.innerHeight - vp.height));
-    };
-
+    const sync = () => setBottomOffset(keyboardOverlap());
     sync();
-    vp.addEventListener('resize', sync);
-    vp.addEventListener('scroll', sync);
+
+    const vp = window.visualViewport;
+    window.addEventListener('resize', sync);
+    window.addEventListener('scroll', sync, { passive: true });
+    window.addEventListener('focusin', sync);
+    window.addEventListener('focusout', sync);
+    vp?.addEventListener('resize', sync);
+    vp?.addEventListener('scroll', sync);
+
     return () => {
-      vp.removeEventListener('resize', sync);
-      vp.removeEventListener('scroll', sync);
+      window.removeEventListener('resize', sync);
+      window.removeEventListener('scroll', sync);
+      window.removeEventListener('focusin', sync);
+      window.removeEventListener('focusout', sync);
+      vp?.removeEventListener('resize', sync);
+      vp?.removeEventListener('scroll', sync);
     };
   }, []);
 
-  // Auto-release toggles after 5s
+  useEffect(() => {
+    if (!enabled) {
+      setCtrlOn(false);
+      setAltOn(false);
+    }
+  }, [enabled]);
+
   useEffect(() => {
     if (ctrlOn) {
       if (ctrlTimerRef.current) clearTimeout(ctrlTimerRef.current);
@@ -92,11 +107,6 @@ export function MobileExtraKeys({ activeInstanceId, statusBarHidden, sendShellIn
     };
   }, [altOn]);
 
-  const send = useCallback((data: string) => {
-    if (!activeInstanceId || !sendShellInput) return;
-    sendShellInput(data, activeInstanceId);
-  }, [activeInstanceId, sendShellInput]);
-
   const handleKey = useCallback((k: KeyDef) => {
     if ('toggle' in k && k.toggle) {
       if (k.toggleKey === 'ctrl') setCtrlOn(on => !on);
@@ -104,50 +114,51 @@ export function MobileExtraKeys({ activeInstanceId, statusBarHidden, sendShellIn
       return;
     }
 
-    const key = k as KeyDef & { send: string };
+    const key = k as Extract<KeyDef, { send: string }>;
     let data = key.send;
-
     if (ctrlOn && data.length === 1) {
       data = ctrlSeq(data);
       setCtrlOn(false);
     }
-
     if (altOn) {
       data = '\x1b' + data;
       setAltOn(false);
     }
+    onSend(data);
+  }, [altOn, ctrlOn, onSend]);
 
-    send(data);
-  }, [ctrlOn, altOn, send]);
+  if (!touchDevice || !enabled) return null;
 
-  if (!shown) return null;
-
-  const btnBase = 'flex items-center justify-center min-w-[2.5rem] h-8 px-2.5 rounded text-xs font-mono border select-none active:scale-95 transition-colors';
+  const btnBase = 'flex items-center justify-center min-w-11 h-9 px-3 rounded text-xs font-mono border select-none active:scale-95 transition-colors touch-manipulation';
+  const bottom = Math.max(0, bottomOffset);
 
   return (
     <div
-      className="md:hidden flex flex-col gap-0.5 px-1.5 py-1 bg-[#0d0d0d]/98 border-t border-gray-800 z-40"
+      className="md:hidden flex flex-col gap-1 px-2 py-1.5 bg-[#0d0d0d]/98 border-t border-gray-800 z-40 shadow-[0_-8px_24px_rgba(0,0,0,0.35)]"
       style={{
         position: 'fixed',
         left: 0,
         right: 0,
-        bottom: kbOffset > 0 ? `${kbOffset}px` : statusBarHidden ? '0px' : '28px',
+        bottom: `${bottom}px`,
+        paddingBottom: 'calc(0.375rem + env(safe-area-inset-bottom))',
       }}
+      onPointerDown={(e) => e.preventDefault()}
+      onTouchStart={(e) => e.preventDefault()}
     >
-      {/* Row 1: Tab Ctrl Alt Esc / */}
-      <div className="flex items-center gap-1.5 justify-center">
+      <div className="flex items-center gap-2 justify-center">
         {ROW1.map(k => {
           const isOn = ('toggle' in k && k.toggle && k.toggleKey === 'ctrl' && ctrlOn)
             || ('toggle' in k && k.toggle && k.toggleKey === 'alt' && altOn);
           return (
             <button
               key={k.id}
-              onTouchStart={(e) => { e.preventDefault(); handleKey(k); }}
-              onMouseDown={(e) => { e.preventDefault(); handleKey(k); }}
+              type="button"
+              aria-pressed={isOn || undefined}
+              onPointerDown={(e) => { e.preventDefault(); handleKey(k); }}
               className={`${btnBase} ${
                 isOn
                   ? 'bg-blue-600/25 text-blue-300 border-blue-500/40'
-                  : 'bg-gray-800/80 text-gray-300 border-gray-700 hover:bg-gray-700/80'
+                  : 'bg-gray-800/80 text-gray-300 border-gray-700'
               }`}
             >
               {k.label}
@@ -156,14 +167,13 @@ export function MobileExtraKeys({ activeInstanceId, statusBarHidden, sendShellIn
         })}
       </div>
 
-      {/* Row 2: Arrow keys */}
-      <div className="flex items-center gap-1.5 justify-center">
+      <div className="flex items-center gap-2 justify-center">
         {ROW2.map(k => (
           <button
             key={k.id}
-            onTouchStart={(e) => { e.preventDefault(); handleKey(k); }}
-            onMouseDown={(e) => { e.preventDefault(); handleKey(k); }}
-            className={`${btnBase} bg-gray-800/80 text-gray-300 border-gray-700 hover:bg-gray-700/80`}
+            type="button"
+            onPointerDown={(e) => { e.preventDefault(); handleKey(k); }}
+            className={`${btnBase} bg-gray-800/80 text-gray-300 border-gray-700`}
           >
             {k.label}
           </button>

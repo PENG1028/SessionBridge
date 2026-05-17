@@ -5,6 +5,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { ContextMenu, type ContextMenuItem } from './console/shell/context-menu';
+import { MobileExtraKeys } from './console/chrome/mobile-extra-keys';
 
 const DEBUG_SURFACE = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debugSurface');
 function debugLog(...args: any[]) { if (DEBUG_SURFACE) console.log('[debugSurface]', ...args); }
@@ -28,6 +29,11 @@ function env(type: string, body: Record<string, unknown> = {}) {
 const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_BASE_MS = 1000;
 
+function isTouchDevice(): boolean {
+  if (typeof window === 'undefined') return false;
+  return navigator.maxTouchPoints > 0 || 'ontouchstart' in window;
+}
+
 export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, _operationId, onOpenDirectoryPicker }: ShellTerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -38,6 +44,29 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, _o
   const mountedRef = useRef(true);
   const inputLogFirstRef = useRef(true);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
+  const [terminalFocused, setTerminalFocused] = useState(false);
+
+  const sendTerminalData = useCallback((data: string) => {
+    const ws = wsRef.current;
+    if (ws?.readyState !== WebSocket.OPEN) return;
+
+    if (_surfaceId && _operationId) {
+      if (inputLogFirstRef.current) {
+        debugLog('ShellTerminal input routing: operation.input (surface path)', { _surfaceId, _operationId });
+        inputLogFirstRef.current = false;
+      }
+      ws.send(env('operation.input', { operationId: _operationId, data }));
+      return;
+    }
+
+    if (inputLogFirstRef.current) {
+      debugLog('ShellTerminal input routing: shell.input (direct path)', { instanceId });
+      inputLogFirstRef.current = false;
+    }
+    const body: Record<string, unknown> = { data };
+    if (instanceId) body.instanceId = instanceId;
+    ws.send(env('shell.input', body));
+  }, [_operationId, _surfaceId, instanceId]);
 
   /** Connect (or reconnect) the WebSocket for this terminal. */
   function connect(term: Terminal, fitAddon: FitAddon) {
@@ -58,7 +87,7 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, _o
     ws.onopen = () => {
       reconnectAttemptRef.current = 0; // reset on successful connect
       term.writeln('\x1b[36mWebSocket connected, spawning shell...\x1b[0m');
-      term.focus();
+      if (!isTouchDevice()) term.focus();
       // Hello + spawn shell
       // Use stable clientToken so the relay preserves the shell across page
       // refreshes (60s grace period). Derived from instanceId for stability.
@@ -132,7 +161,7 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, _o
     ws.onopen = () => {
       reconnectAttemptRef.current = 0;
       term.writeln('\x1b[36mConnected to shared surface...\x1b[0m');
-      term.focus();
+      if (!isTouchDevice()) term.focus();
       const helloBody: Record<string, unknown> = {
         role: 'browser',
         features: ['shell'],
@@ -269,13 +298,8 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, _o
       // Ctrl+L: clear terminal (send form-feed to shell)
       if (ctrlKey && key === 'l') {
         event.preventDefault();
-        const ws = wsRef.current;
-        if (ws?.readyState === WebSocket.OPEN) {
-          if (_surfaceId && _operationId) {
-            ws.send(env('operation.input', { operationId: _operationId, data: '\x0c' }));
-          } else {
-            ws.send(env('shell.input', { data: '\x0c' }));
-          }
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          sendTerminalData('\x0c');
         } else {
           term.clear();
         }
@@ -295,14 +319,7 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, _o
         event.preventDefault();
         navigator.clipboard.readText()
           .then(text => {
-            const ws = wsRef.current;
-            if (ws?.readyState === WebSocket.OPEN) {
-              if (_surfaceId && _operationId) {
-                ws.send(env('operation.input', { operationId: _operationId, data: text }));
-              } else {
-                ws.send(env('shell.input', { data: text }));
-              }
-            }
+            sendTerminalData(text);
           })
           .catch(() => {});
         return false;
@@ -319,8 +336,7 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, _o
     termRef.current = term;
     fitRef.current = fitAddon;
 
-    // Auto-focus on click so typing works immediately
-    term.focus();
+    if (!isTouchDevice()) term.focus();
 
     // ── Initial WebSocket connection ──
     if (_surfaceId) {
@@ -346,24 +362,23 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, _o
     ro.observe(containerRef.current);
 
     // ── User input → WS ──
-    const disposable = term.onData((data) => {
-      const ws = wsRef.current;
-      if (ws?.readyState === WebSocket.OPEN) {
-        if (_surfaceId && _operationId) {
-          if (inputLogFirstRef.current) { debugLog('ShellTerminal input routing: operation.input (surface path)', { _surfaceId, _operationId }); inputLogFirstRef.current = false; }
-          ws.send(env('operation.input', { operationId: _operationId, data }));
-        } else {
-          if (inputLogFirstRef.current) { debugLog('ShellTerminal input routing: shell.input (direct path)', { instanceId }); inputLogFirstRef.current = false; }
-          const body: Record<string, unknown> = { data };
-          if (instanceId) body.instanceId = instanceId;
-          ws.send(env("shell.input", body));
-        }
-      }
-    });
+    const disposable = term.onData(sendTerminalData);
+    const focusRoot = containerRef.current;
+    const handleFocusIn = () => setTerminalFocused(true);
+    const handleFocusOut = () => {
+      window.setTimeout(() => {
+        if (focusRoot?.contains(document.activeElement)) return;
+        setTerminalFocused(false);
+      }, 0);
+    };
+    focusRoot?.addEventListener('focusin', handleFocusIn);
+    focusRoot?.addEventListener('focusout', handleFocusOut);
 
     return () => {
       mountedRef.current = false;
       disposable.dispose();
+      focusRoot?.removeEventListener('focusin', handleFocusIn);
+      focusRoot?.removeEventListener('focusout', handleFocusOut);
       ro.disconnect();
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);
@@ -374,12 +389,12 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, _o
       term.dispose();
       termRef.current = null;
     };
-  }, [wsUrl, token, instanceId, _surfaceId, _operationId]);
+  }, [wsUrl, token, instanceId, _surfaceId, _operationId, sendTerminalData]);
 
   // Re-focus terminal after React re-renders (prevents focus-steal from parent updates)
   // Only when WebSocket is open — avoids stealing focus from other tabs/elements
   useLayoutEffect(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
+    if (!isTouchDevice() && wsRef.current?.readyState === WebSocket.OPEN) {
       requestAnimationFrame(() => { termRef.current?.focus(); });
     }
   });
@@ -411,13 +426,7 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, _o
         shortcut: '⌘V',
         action: () => {
           navigator.clipboard.readText().then(text => {
-            if (ws?.readyState === WebSocket.OPEN) {
-              if (_surfaceId && _operationId) {
-                ws.send(env('operation.input', { operationId: _operationId, data: text }));
-              } else {
-                ws.send(env('shell.input', { data: text }));
-              }
-            }
+            if (ws?.readyState === WebSocket.OPEN) sendTerminalData(text);
           }).catch(() => {});
         },
       },
@@ -427,11 +436,7 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, _o
         shortcut: '⌘L',
         action: () => {
           if (ws?.readyState === WebSocket.OPEN) {
-            if (_surfaceId && _operationId) {
-              ws.send(env('operation.input', { operationId: _operationId, data: '\x0c' }));
-            } else {
-              ws.send(env('shell.input', { data: '\x0c' }));
-            }
+            sendTerminalData('\x0c');
           } else {
             term?.clear();
           }
@@ -449,7 +454,7 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, _o
       },
     ];
     setCtxMenu({ x: e.clientX, y: e.clientY, items });
-  }, [onOpenDirectoryPicker, _surfaceId, _operationId]);
+  }, [onOpenDirectoryPicker, sendTerminalData]);
 
   return (
     <>
@@ -463,6 +468,7 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, _o
       {ctxMenu && (
         <ContextMenu items={ctxMenu.items} x={ctxMenu.x} y={ctxMenu.y} onClose={() => setCtxMenu(null)} />
       )}
+      <MobileExtraKeys enabled={terminalFocused} onSend={sendTerminalData} />
     </>
   );
 }

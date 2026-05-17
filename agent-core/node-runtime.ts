@@ -559,12 +559,22 @@ export class NodeRuntime {
       this.addLog(`[node] Remote shell spawn blocked: ${permCheck.reason}`);
       return;
     }
-    const [cmd, ...args] = process.platform === 'win32'
+    let [cmd, ...args] = process.platform === 'win32'
       ? ['powershell.exe', '-NoLogo', '-NoExit']
       : ['bash', '--login'];
+    // On Windows, resolve full path to powershell.exe since Node's PATH may not include System32
+    if (process.platform === 'win32') {
+      const systemRoot = process.env.SystemRoot || 'C:\\Windows';
+      const psPath = `${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
+      try { require('fs').accessSync(psPath); cmd = psPath; } catch { /* fallback to bare name */ }
+    }
     const proc = spawn(cmd, args, {
       cwd: dir || this.config.workingDirectory,
       stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    proc.on('error', (err) => {
+      this.addLog(`[node] Remote shell for instance ${instanceId} failed to spawn: ${err.message}`);
+      this.relay.sendInstanceExit(instanceId, -1);
     });
     this.addLog(`[node] Remote shell spawned for instance ${instanceId}: ${cmd} (pid ${proc.pid})`);
     this.remoteShells.set(instanceId, proc);

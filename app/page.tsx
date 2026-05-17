@@ -46,7 +46,6 @@ import { getLastActiveDir, setLastActiveDir, getRestoreLastPath, addPathBookmark
 import { NodeBar } from './console/stage/node-bar';
 import { NodeNetworkView } from './console/sidebar/node-network-view';
 import { KeyHintOverlay } from './console/chrome/key-hint-overlay';
-import { MobileExtraKeys } from './console/chrome/mobile-extra-keys';
 import { LayoutProvider, useLayout, SidebarSlot, MainSlot, FocusProvider, RuntimePolicyProvider, useFocus, useRuntimePolicy, WorkbenchProvider } from './console/workbench';
 import { WorkbenchLayout } from './console/stage/workbench-layout';
 import { appReducer, createAppInitialState, getActiveWorkbenchState, createInitialState, findPane as findPaneInTree, ensureInstanceTab, saveLayoutsToStorage, loadLayoutsFromStorage, restoreInstanceStatesFromStorage, genTabId, collectAllTabs, buildStateFromTabs, workbenchReducer, type ViewType, type PaneTab, type LayoutNode, type WorkbenchState, type WorkbenchAction, type AppWorkbenchState, type AppWorkbenchAction } from './console/stage/workbench-state';
@@ -689,7 +688,7 @@ function PageContent() {
     }
   }, []);
 
-  const { connStatus, msgLog, sendInput, sendShellInput, sendCommand, serverBlocks, sessions, activeSessionId, activateSession, spawnSession, isWorkspace, queueStatus, instances, activeInstanceId, activateInstance, createInstance, killInstance, extensionPointsData, sendMessage } = useSession(wsUrl, token ?? undefined, undefined, undefined, undefined, onSystemNotify, dismiss, handleSystemMessage);
+  const { connStatus, msgLog, sendInput, sendCommand, serverBlocks, sessions, activeSessionId, activateSession, spawnSession, isWorkspace, queueStatus, instances, activeInstanceId, activateInstance, createInstance, killInstance, extensionPointsData, sendMessage } = useSession(wsUrl, token ?? undefined, undefined, undefined, undefined, onSystemNotify, dismiss, handleSystemMessage);
 
   // ── 30s grace before showing disconnect banner ──
   const [showBanner, setShowBanner] = useState(false);
@@ -1954,8 +1953,6 @@ function PageContent() {
         onRefreshNode={handleRefreshNode}
         onOpenConnection={() => setAppState(prev => appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: null }))}
       />
-
-      <MobileExtraKeys activeInstanceId={appState.activeInstanceId} statusBarHidden={!showStatusBar} sendShellInput={sendShellInput} />
 
       <div className="flex flex-1 overflow-hidden">
         <SidebarSlot open={effectiveLeftOpen}>
