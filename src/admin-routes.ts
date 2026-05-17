@@ -322,9 +322,7 @@ export async function registerAdminRoutes(
         }
         // Local access → skip setup, go straight to app
         if (isLocal) {
-          const OUT_DIR = join(process.cwd(), 'out');
-          const consoleIndex = join(OUT_DIR, 'index.html');
-          res.writeHead(302, { 'Location': existsSync(consoleIndex) ? '/' : 'http://localhost:3000' });
+          res.writeHead(302, { 'Location': '/' });
           res.end();
           return true;
         }
@@ -384,9 +382,7 @@ export async function registerAdminRoutes(
       case '/login': {
         // Local access → skip login, go straight to app
         if (isLocal) {
-          const OUT_DIR = join(process.cwd(), 'out');
-          const consoleIndex = join(OUT_DIR, 'index.html');
-          res.writeHead(302, { 'Location': existsSync(consoleIndex) ? '/' : 'http://localhost:3000' });
+          res.writeHead(302, { 'Location': '/' });
           res.end();
           return true;
         }
@@ -537,8 +533,8 @@ export async function registerAdminRoutes(
           res.end(readFileSync(consoleIndex));
         } else if (isLocal) {
           // Dev mode — redirect to Next.js dev server
-          res.writeHead(302, { 'Location': 'http://localhost:3000' });
-          res.end();
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+          res.end(dashboardHtml(ctx.nodeLabel));
         } else {
           res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
           res.end(dashboardHtml(ctx.nodeLabel));

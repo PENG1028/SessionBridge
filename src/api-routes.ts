@@ -365,10 +365,6 @@ export function registerApiRoutes(
             if (keep) ctx.surfaceManager.setKeep(surface.surfaceId, true);
             createdSurface = ctx.surfaceManager.toJSON(surface);
             ctx.surfacePersistence?.save(ctx.surfaceManager);
-            ctx.broadcast(envelope("surface.published", {
-              surfaceId: surface.surfaceId,
-              surface: createdSurface,
-            }));
           }
 
           ctx.auditLog?.log("instance.created", "api", {
@@ -448,10 +444,6 @@ export function registerApiRoutes(
           if (keep) ctx.surfaceManager.setKeep(surface.surfaceId, true);
           createdSurface = ctx.surfaceManager.toJSON(surface);
           ctx.surfacePersistence?.save(ctx.surfaceManager);
-          ctx.broadcast(envelope("surface.published", {
-            surfaceId: surface.surfaceId,
-            surface: createdSurface,
-          }));
         }
 
         // Audit
