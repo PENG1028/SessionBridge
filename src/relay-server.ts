@@ -34,8 +34,8 @@ import { configStore } from "./configuration/store";
 import { secretStore } from "./configuration/secret-store";
 import { RemoteOperationManager, OperationError } from "./remote-operation-manager";
 import type { OperationKind, OperationInput } from "./remote-operation-manager";
-import { SurfaceManager } from "./surface-manager";
-import { SurfacePersistence } from "./surface-persistence";
+import { createStateBus, getStateBus } from "./state-bridge";
+import { StateRelaySurfaceManager, StateRelayWorkbenchStore, StateRelayShellRouter } from "./state-bridge/relay-integration";
 
 // ─── Session provider helper — first adapter that provides SessionProvider ──
 function sessionProvider() {
@@ -115,20 +115,6 @@ export function setRelayUpstream(fn: ((type: string, body: any) => void) | null)
 }
 
 /**
- * Broadcast tabs to subscribers, optionally excluding a sender.
- * Shared helper for onUpstreamMessage and the workbench.tabs handler.
- */
-function broadcastTabs(nodeId: string, tabs: any[], sender?: WebSocket): void {
-  const subs = workbenchSubscribers.get(nodeId);
-  if (!subs) return;
-  for (const client of subs) {
-    if (client !== sender && client.readyState === WebSocket.OPEN) {
-      send(client, envelope("workbench.tabs", { nodeId, tabs }));
-    }
-  }
-}
-
-/**
  * After storing tabs for a nodeId, also sync to any other instances
  * that share the same label (hostname). This bridges cross-relay sync
  * where the same physical node has different instance IDs on each relay.
@@ -148,8 +134,8 @@ function syncTabsByLabel(nodeId: string, tabs: any[], sourceLabel?: string, send
         ...t,
         instanceId: t.instanceId ? inst.id : t.instanceId,
       }));
-      workbenchTabStore.set(inst.id, remapped);
-      broadcastTabs(inst.id, remapped, sender);
+      stateWorkbenchStore.set(inst.id, remapped);
+      stateWorkbenchStore.broadcast(inst.id, remapped, sender);
       if (inst.source === 'local') {
         matchedLocal = true;
         primaryLocalId = inst.id;
@@ -164,8 +150,8 @@ function syncTabsByLabel(nodeId: string, tabs: any[], sourceLabel?: string, send
       ...t,
       instanceId: t.instanceId ? primaryLocalId! : t.instanceId,
     }));
-    workbenchTabStore.set('__local__', remapped);
-    broadcastTabs('__local__', remapped, sender);
+    stateWorkbenchStore.set('__local__', remapped);
+    stateWorkbenchStore.broadcast('__local__', remapped, sender);
   } else if (label && localNodeInfo?.name === label) {
     // No local instance matched, but the label matches the local node's name.
     // Broadcast to __local__ subscribers so the browser sees cross-relay tabs
@@ -178,8 +164,8 @@ function syncTabsByLabel(nodeId: string, tabs: any[], sourceLabel?: string, send
       ...t,
       instanceId: (t.instanceId && localId) ? localId : t.instanceId,
     }));
-    workbenchTabStore.set('__local__', remapped);
-    broadcastTabs('__local__', remapped, sender);
+    stateWorkbenchStore.set('__local__', remapped);
+    stateWorkbenchStore.broadcast('__local__', remapped, sender);
   }
 }
 
@@ -217,12 +203,12 @@ function syncSurfacesByLabel(nodeId: string, surfaceData: Record<string, unknown
       if (surface) {
         // Project into workbench.tabs for backward-compat
         const tab = surfaceManager.toWorkbenchTab(surface);
-        const existingTabs = workbenchTabStore.get(inst.id) || [];
+        const existingTabs = stateWorkbenchStore.get(inst.id) || [];
         const idx = existingTabs.findIndex((t: any) => t.id === tab.id);
         if (idx >= 0) existingTabs[idx] = tab;
         else existingTabs.push(tab);
-        workbenchTabStore.set(inst.id, existingTabs);
-        broadcastTabs(inst.id, existingTabs);
+        stateWorkbenchStore.set(inst.id, existingTabs);
+        stateWorkbenchStore.broadcast(inst.id, existingTabs);
         // Notify browser subscribers so UI auto-updates without re-entering node
         surfaceManager.broadcastToNodeSubscribers(
           inst.id,
@@ -254,11 +240,11 @@ export function onUpstreamMessage(msg: any): void {
       // Only broadcast if tabs actually changed — prevents echoing
       // a node's own tabs back to its subscribers when the upstream
       // relay broadcasts to this node's agent connection.
-      const existing = workbenchTabStore.get(nodeId);
+      const existing = stateWorkbenchStore.get(nodeId);
       const changed = !existing || JSON.stringify(existing) !== JSON.stringify(tabs);
       if (changed) {
-        workbenchTabStore.set(nodeId, tabs);
-        broadcastTabs(nodeId, tabs);
+        stateWorkbenchStore.set(nodeId, tabs);
+        stateWorkbenchStore.broadcast(nodeId, tabs);
       }
     }
     // Cross-relay label normalization: only when tabs carry content.
@@ -285,12 +271,12 @@ export function onUpstreamMessage(msg: any): void {
       const surface = surfaceManager.get(surfaceData.surfaceId as string);
       if (surface) {
         const tab = surfaceManager.toWorkbenchTab(surface);
-        const existingTabs = workbenchTabStore.get(inst.id) || [];
+        const existingTabs = stateWorkbenchStore.get(inst.id) || [];
         const idx = existingTabs.findIndex((t: any) => t.id === tab.id);
         if (idx >= 0) existingTabs[idx] = tab;
         else existingTabs.push(tab);
-        workbenchTabStore.set(inst.id, existingTabs);
-        broadcastTabs(inst.id, existingTabs);
+        stateWorkbenchStore.set(inst.id, existingTabs);
+        stateWorkbenchStore.broadcast(inst.id, existingTabs);
         surfaceManager.broadcastToNodeSubscribers(
           inst.id,
           send as any,
@@ -328,12 +314,12 @@ export function onUpstreamMessage(msg: any): void {
     const nodeId = String(msg.nodeId || '');
     if (!surfaceId) return;
     surfaceManager.delete(surfaceId);
-    surfacePersistence.save(surfaceManager);
+    stateBus.flush();
     if (nodeId) {
-      const tabs = workbenchTabStore.get(nodeId) || [];
+      const tabs = stateWorkbenchStore.get(nodeId) || [];
       const filtered = tabs.filter((t: any) => t._surfaceId !== surfaceId && t.id !== surfaceId);
-      workbenchTabStore.set(nodeId, filtered);
-      broadcastTabs(nodeId, filtered);
+      stateWorkbenchStore.set(nodeId, filtered);
+      stateWorkbenchStore.broadcast(nodeId, filtered);
       surfaceManager.broadcastToNodeSubscribers(
         nodeId,
         send as any,
@@ -353,19 +339,13 @@ const auditLog = new AuditLogger(process.cwd());
 const pendingExternalRequests = new Map<string, WebSocket>();
 const PENDING_TIMEOUT_MS = 30_000;
 const sessionPersistence = new SessionPersistence(process.cwd(), eventBus);
-const surfacePersistence = new SurfacePersistence(process.cwd());
 const permissions = new PermissionModel();
 
 // ─── Workbench tab sync ────────────────────────────────────
-// Server-side workbench tab store + subscriber tracking for cross-device sync.
-const workbenchTabStore = new Map<string, any[]>();
-const workbenchSubscribers = new Map<string, Set<WebSocket>>();
-
+// Delegate to StateRelayWorkbenchStore (created after surfaceManager init).
+// Legacy workbenchTabStore/workbenchSubscribers removed — use stateWorkbenchStore.
 function cleanupWorkbenchSubs(ws: WebSocket): void {
-  for (const [nodeId, subs] of workbenchSubscribers) {
-    subs.delete(ws);
-    if (subs.size === 0) workbenchSubscribers.delete(nodeId);
-  }
+  if (typeof stateWorkbenchStore !== 'undefined') stateWorkbenchStore.cleanupWs(ws);
 }
 
 // ─── Admin routes state (merged from old dashboard server) ────
@@ -500,65 +480,33 @@ const shellWsMap = new Map<WebSocket, Set<string>>();
 const agentVersionMap = new Map<WebSocket, string>();
 // Shell write-lock: instanceId → owning WebSocket
 const shellLockMap = new Map<string, WebSocket>();
-/** Shell output subscribers: instanceId → set of WebSockets receiving shell.output */
-const shellSubscribers = new Map<string, Set<WebSocket>>();
+/** Shell output routing delegated to StateRelayShellRouter (created below). */
+let stateShellRouter: StateRelayShellRouter;
 /** Guard: instanceId → in-flight spawn promise, prevents double-spawn from shell.input handler */
 const pendingShellSpawns = new Map<string, Promise<unknown>>();
 
 const operationManager = new RemoteOperationManager();
-const surfaceManager = new SurfaceManager();
 
-function surfaceToJSON(s: any): Record<string, unknown> {
-  return {
-    surfaceId: s.surfaceId,
-    nodeId: s.nodeId,
-    title: s.title,
-    viewType: s.viewType,
-    pluginId: s.pluginId,
-    scope: s.scope,
-    shared: s.shared,
-    runtimeRef: s.runtimeRef,
-    replayPolicy: s.replayPolicy,
-    permissions: s.permissions,
-    createdBy: s.createdBy,
-    createdAt: s.createdAt,
-    updatedAt: s.updatedAt,
-    keep: s.keep ?? false,
-    orphaned: s.orphaned ?? false,
-  };
-}
+// ─── StateBridge adapters ───────────────────────────────────
+// Initialize StateBus first, then create the three relay adapters.
+// StateBus auto-restores persisted entries from disk on construction.
+const stateBus = createStateBus(process.env.BRIDGE_DIR || process.cwd());
+stateBus.setNodeId('relay', ['relay']);
+const stateSurfaceManager = new StateRelaySurfaceManager(stateBus);
+const stateWorkbenchStore = new StateRelayWorkbenchStore(stateBus);
+stateShellRouter = new StateRelayShellRouter(stateBus);
+// Keep the old name so existing code compiles against the new adapter.
+// All surfaceManager.* calls resolve to StateRelaySurfaceManager methods.
+const surfaceManager = stateSurfaceManager;
+
+// subscribeShellOutput and broadcastShellOutput delegated to stateShellRouter
 
 function subscribeShellOutput(instanceId: string, ws: WebSocket): void {
-  if (!shellSubscribers.has(instanceId)) shellSubscribers.set(instanceId, new Set());
-  shellSubscribers.get(instanceId)!.add(ws);
-  // Clean subscriber ref when the WS disconnects
-  ws.addEventListener('close', () => {
-    const subs = shellSubscribers.get(instanceId);
-    if (subs) { subs.delete(ws); if (subs.size === 0) shellSubscribers.delete(instanceId); }
-  }, { once: true });
+  stateShellRouter.subscribe(instanceId, ws);
 }
 
 function broadcastShellOutput(instanceId: string, data: string, stream: string = 'stdout'): void {
-  const subs = shellSubscribers.get(instanceId);
-  if (subs && subs.size > 0) {
-    const msg = envelope("shell.output", { data, stream });
-    for (const ws of subs) {
-      if (ws.readyState === WebSocket.OPEN) send(ws, msg);
-      else subs.delete(ws);
-    }
-  }
-  // Bridge to surface subscribers: any SharedSurface referencing this instance
-  // gets live output forwarded as runtime.output
-  const surfaces = surfaceManager.findByInstanceId(instanceId);
-  for (const surface of surfaces) {
-    surfaceManager.emitOutput(
-      surface.surfaceId,
-      stream as 'stdout' | 'stderr' | 'structured',
-      data,
-      (w: any, m: any) => send(w, m),
-      (t: any, b: any) => envelope(t, b),
-    );
-  }
+  stateShellRouter.broadcast(instanceId, data, stream, stateSurfaceManager);
 }
 
 // Session persistence: clientToken → session data for reconnect recovery
@@ -993,23 +941,11 @@ async function spawnShellForWs(ws: WebSocket, instanceId?: string): Promise<impo
       }
     },
     onExit: (code: number | null) => {
-      // Notify all subscribers
-      const subs = shellSubscribers.get(i.id);
-      if (subs) {
-        const msg = envelope("shell.exit", { code });
-        for (const s of subs) {
-          if (s.readyState === WebSocket.OPEN) send(s, msg);
-        }
-      }
-      // Bridge to surface subscribers
+      // Delegate shell subscriber notification + surface emitResult to router
+      stateShellRouter.broadcastExit(i.id, code, stateSurfaceManager);
+      // Surface cleanup (beyond emitResult already handled above)
       const surfaces = surfaceManager.findByInstanceId(i.id);
       for (const surface of surfaces) {
-        surfaceManager.emitResult(
-          surface.surfaceId,
-          { success: code === 0, exitCode: code ?? undefined },
-          (w: any, m: any) => send(w, m),
-          (t: any, b: any) => envelope(t, b),
-        );
         // Auto-cleanup: when the shell process exits, unkeep and delete the
         // surface so dead terminal tabs don't persist. Cross-relay (remote
         // agent surfaces) are excluded — inventory clears those.
@@ -1033,13 +969,13 @@ async function spawnShellForWs(ws: WebSocket, instanceId?: string): Promise<impo
           }
         }
         // Clean up workbench tab store
-        const tabs = workbenchTabStore.get(surface.nodeId) || [];
+        const tabs = stateWorkbenchStore.get(surface.nodeId) || [];
         const filtered = tabs.filter((t: any) =>
           t.id !== surface.surfaceId && t._surfaceId !== surface.surfaceId
         );
         if (filtered.length !== tabs.length) {
-          workbenchTabStore.set(surface.nodeId, filtered);
-          broadcastTabs(surface.nodeId, filtered);
+          stateWorkbenchStore.set(surface.nodeId, filtered);
+          stateWorkbenchStore.broadcast(surface.nodeId, filtered);
         }
       }
       i.handle = undefined;
@@ -1291,7 +1227,7 @@ const serverRequestHandler = async (req: import("http").IncomingMessage, res: im
   }
 
   // Delegate to structured API routes first
-  if (registerApiRoutes(req, res, { instanceManager, surfaceManager, surfacePersistence, broadcast: broadcastToBrowsers, auditLog, checkPermission: checkHttpPermission, configManager: appConfig, relayConfig: relayConfigManager, configRegistry, configStore, secretStore, workDir: process.cwd(), aliases: aliasStore, workbenchTabStore, broadcastTabs })) return;
+  if (registerApiRoutes(req, res, { instanceManager, surfaceManager, broadcast: broadcastToBrowsers, auditLog, checkPermission: checkHttpPermission, configManager: appConfig, relayConfig: relayConfigManager, configRegistry, configStore, secretStore, workDir: process.cwd(), aliases: aliasStore, workbenchStore: stateWorkbenchStore })) return;
 
   // Delegate to admin routes (migrated from dashboard server)
   if (await registerAdminRoutes(req, res, {
@@ -1873,8 +1809,9 @@ const serverRequestHandler = async (req: import("http").IncomingMessage, res: im
     try {
       const snapshot = surfaceManager.getDebugSnapshot();
       const tabs: Record<string, unknown[]> = {};
-      for (const [nodeId, t] of workbenchTabStore) {
-        tabs[nodeId] = t;
+      for (const inst of instanceManager.list()) {
+        const nodeTabs = stateWorkbenchStore.get(inst.id);
+        if (nodeTabs) tabs[inst.id] = nodeTabs;
       }
       const instances = instanceManager.list().map(i => ({
         id: i.id,
@@ -2223,9 +2160,9 @@ function setupWssHandlers(): void {
           });
           surfaceManager.clearOrphaned(synthSurface.surfaceId);
           surfaceManager.setKeep(synthSurface.surfaceId, true);
-          const tabs = workbenchTabStore.get(nodeId) || [];
+          const tabs = stateWorkbenchStore.get(nodeId) || [];
           tabs.push(surfaceManager.toWorkbenchTab(synthSurface));
-          workbenchTabStore.set(nodeId, tabs);
+          stateWorkbenchStore.set(nodeId, tabs);
           surfaceManager.recordDebugEvent({
             ts: Date.now(), kind: 'surface.publish.created',
             surfaceId: synthSurface.surfaceId, nodeId, instanceId: proc.instanceId,
@@ -2245,15 +2182,15 @@ function setupWssHandlers(): void {
             // subscribeNode(currentId) finds these surfaces.
             if (s.nodeId !== agentNodeId) {
               const oldNodeId = s.nodeId;
-              const oldTabs = workbenchTabStore.get(oldNodeId) || [];
-              const newTabs = workbenchTabStore.get(agentNodeId) || [];
+              const oldTabs = stateWorkbenchStore.get(oldNodeId) || [];
+              const newTabs = stateWorkbenchStore.get(agentNodeId) || [];
               for (const t of oldTabs) {
                 if (t._surfaceId === s.surfaceId || t.id === s.surfaceId) {
                   newTabs.push(t);
                 }
               }
-              workbenchTabStore.set(agentNodeId, newTabs);
-              workbenchTabStore.delete(oldNodeId);
+              stateWorkbenchStore.set(agentNodeId, newTabs);
+              stateWorkbenchStore.delete(oldNodeId);
               s.nodeId = agentNodeId;
               remappedCount++;
               surfaceManager.recordDebugEvent({
@@ -2295,7 +2232,7 @@ function setupWssHandlers(): void {
       }
 
       if (createdCount > 0 || clearedOrphanCount > 0 || deletedCount > 0 || remappedCount > 0) {
-        surfacePersistence.save(surfaceManager);
+        stateBus.flush();
       }
       send(ws, envelope("agent.inventory.ack", {
         nodeId: agentNodeId,
@@ -2337,10 +2274,10 @@ function setupWssHandlers(): void {
               if (client.readyState === WebSocket.OPEN) send(client, closeMsg);
             }
           }
-          const tabs = workbenchTabStore.get(nodeId) || [];
+          const tabs = stateWorkbenchStore.get(nodeId) || [];
           const filtered = tabs.filter((t: any) => t.id !== surfaceId && t._surfaceId !== surfaceId);
-          workbenchTabStore.set(nodeId, filtered);
-          broadcastTabs(nodeId, filtered);
+          stateWorkbenchStore.set(nodeId, filtered);
+          stateWorkbenchStore.broadcast(nodeId, filtered);
         }
       }
       return;
@@ -2539,11 +2476,11 @@ function setupWssHandlers(): void {
         });
         surfaceManager.setKeep(surface.surfaceId, true);
         const tab = surfaceManager.toWorkbenchTab(surface);
-        const nodeTabs = workbenchTabStore.get(agentNodeId) || [];
+        const nodeTabs = stateWorkbenchStore.get(agentNodeId) || [];
         const ti = nodeTabs.findIndex((t: any) => t.id === tab.id);
         if (ti >= 0) nodeTabs[ti] = tab; else nodeTabs.push(tab);
-        workbenchTabStore.set(agentNodeId, nodeTabs);
-        broadcastTabs(agentNodeId, nodeTabs);
+        stateWorkbenchStore.set(agentNodeId, nodeTabs);
+        stateWorkbenchStore.broadcast(agentNodeId, nodeTabs);
         surfaceManager.broadcastToNodeSubscribers(
           agentNodeId,
           (w: any, m: any) => { try { w.send(typeof m === 'string' ? m : JSON.stringify(m)); } catch {} },
@@ -2580,32 +2517,20 @@ function setupWssHandlers(): void {
         broadcastToBrowsers(envelope("instance.removed", { instanceId: remoteInst.id }));
         auditLog.log('instance.exited', remoteInst.label, { exitCode: msg.exitCode }, remoteInst.id);
       } else if (msg.instanceId) {
-        // Cross-relay: instance may be a PC-local terminal. Clean up
-        // shell subscribers and bridge exit to surface subscribers.
+        // Cross-relay: instance may be a PC-local terminal.
+        // Use stateShellRouter to broadcast exit + emitResult to surfaces.
+        stateShellRouter.broadcastExit(msg.instanceId, msg.exitCode ?? 0, stateSurfaceManager);
+        // Surface cleanup (beyond emitResult already handled above)
         const surfaces = surfaceManager.findByInstanceId(msg.instanceId);
         if (surfaces.length > 0) {
-          const subs = shellSubscribers.get(msg.instanceId);
-          if (subs) {
-            const exitMsg = envelope("shell.exit", { code: msg.exitCode ?? 0 });
-            for (const s of subs) {
-              if (s.readyState === WebSocket.OPEN) send(s, exitMsg);
-            }
-            shellSubscribers.delete(msg.instanceId);
-          }
           for (const surface of surfaces) {
-            surfaceManager.emitResult(
-              surface.surfaceId,
-              { success: (msg.exitCode ?? 1) === 0, exitCode: msg.exitCode },
-              (w: any, m: any) => send(w, m),
-              (t: any, b: any) => envelope(t, b),
-            );
-            // Clean up workbench tab and persist
-            const tabs = workbenchTabStore.get(surface.nodeId) || [];
+            // Clean up workbench tab
+            const tabs = stateWorkbenchStore.get(surface.nodeId) || [];
             const filtered = tabs.filter((t: any) => t._surfaceId !== surface.surfaceId && t.id !== surface.surfaceId);
-            workbenchTabStore.set(surface.nodeId, filtered);
-            broadcastTabs(surface.nodeId, filtered);
+            stateWorkbenchStore.set(surface.nodeId, filtered);
+            stateWorkbenchStore.broadcast(surface.nodeId, filtered);
             surfaceManager.delete(surface.surfaceId);
-            surfacePersistence.save(surfaceManager);
+            stateBus.flush();
           }
         }
       }
@@ -2915,27 +2840,23 @@ function setupWssHandlers(): void {
     if (msg.type === "workbench.subscribe") {
       const nodeId = String(msg.nodeId || '');
       if (!nodeId) return;
-      if (!workbenchSubscribers.has(nodeId)) workbenchSubscribers.set(nodeId, new Set());
-      workbenchSubscribers.get(nodeId)!.add(ws);
+      const wasEmpty = !stateWorkbenchStore.hasSubscribers(nodeId);
+      stateWorkbenchStore.subscribe(nodeId, ws);
       // Send current tab state immediately
-      const tabs = workbenchTabStore.get(nodeId) || [];
+      const tabs = stateWorkbenchStore.get(nodeId) || [];
       send(ws, envelope("workbench.tabs", { nodeId, tabs }));
-      // Notify upstream relay so it also subscribes this node's agent WS
-      _sendUpstream?.("workbench.subscribe", { nodeId });
+      // Notify upstream relay on first subscriber
+      if (wasEmpty) _sendUpstream?.("workbench.subscribe", { nodeId });
       return;
     }
 
     if (msg.type === "workbench.unsubscribe") {
       const nodeId = String(msg.nodeId || '');
       if (!nodeId) return;
-      const subs = workbenchSubscribers.get(nodeId);
-      if (subs) {
-        subs.delete(ws);
-        if (subs.size === 0) {
-          workbenchSubscribers.delete(nodeId);
-          // Last local subscriber left — unsubscribe upstream
-          _sendUpstream?.("workbench.unsubscribe", { nodeId });
-        }
+      stateWorkbenchStore.unsubscribe(nodeId, ws);
+      // Last local subscriber left — unsubscribe upstream
+      if (!stateWorkbenchStore.hasSubscribers(nodeId)) {
+        _sendUpstream?.("workbench.unsubscribe", { nodeId });
       }
       return;
     }
@@ -2944,9 +2865,9 @@ function setupWssHandlers(): void {
       const nodeId = String(msg.nodeId || '');
       const tabs = Array.isArray(msg.tabs) ? msg.tabs : [];
       if (!nodeId) return;
-      workbenchTabStore.set(nodeId, tabs);
+      stateWorkbenchStore.set(nodeId, tabs);
       // Broadcast to all OTHER subscribers
-      broadcastTabs(nodeId, tabs, ws);
+      stateWorkbenchStore.broadcast(nodeId, tabs, ws);
       const nodeInst = instanceManager.get(nodeId);
       // Include label so the receiving relay can map to its own instance IDs.
       let label = nodeInst?.label;
@@ -2980,8 +2901,7 @@ function setupWssHandlers(): void {
         ts: Date.now(), kind: 'surface.publish.request',
         nodeId: String(msg.nodeId || msg.surface?.nodeId || ''),
         instanceId: msg.runtimeRef?.instanceId || msg.surface?.runtimeRef?.instanceId,
-        clientRole: senderRole || 'browser',
-        extra: { hasSurface: !!msg.surface, viewType: msg.viewType || msg.surface?.viewType },
+        extra: { clientRole: senderRole || 'browser', hasSurface: !!msg.surface, viewType: msg.viewType || msg.surface?.viewType },
       });
       // When forwarded by an agent (cross-relay), import the serialized
       // surface with label remapping instead of creating a fresh one.
@@ -3016,14 +2936,14 @@ function setupWssHandlers(): void {
             );
             send(ws, envelope("surface.published", {
               surfaceId: imported.surfaceId,
-              surface: surfaceToJSON(imported),
+              surface: stateSurfaceManager.toJSON(imported),
             }));
             surfaceManager.broadcastToNodeSubscribers(
               remapNodeId,
               send as any,
               envelope("surface.published", {
                 surfaceId: imported.surfaceId,
-                surface: surfaceToJSON(imported),
+                surface: stateSurfaceManager.toJSON(imported),
               }),
             );
             if (VERBOSE_SURFACE) console.log(`[surface] agent-forwarded NEW surface ${imported.surfaceId} "${imported.title}" → node ${remapNodeId}`);
@@ -3032,12 +2952,12 @@ function setupWssHandlers(): void {
           }
           // Always sync workbench tabs (deduped)
           const tab = surfaceManager.toWorkbenchTab(imported);
-          const existingTabs = workbenchTabStore.get(remapNodeId) || [];
+          const existingTabs = stateWorkbenchStore.get(remapNodeId) || [];
           const idx = existingTabs.findIndex((t: any) => t.id === tab.id);
           if (idx >= 0) existingTabs[idx] = tab;
           else existingTabs.push(tab);
-          workbenchTabStore.set(remapNodeId, existingTabs);
-          broadcastTabs(remapNodeId, existingTabs, ws);
+          stateWorkbenchStore.set(remapNodeId, existingTabs);
+          stateWorkbenchStore.broadcast(remapNodeId, existingTabs, ws);
         }
         return;
       }
@@ -3111,12 +3031,12 @@ function setupWssHandlers(): void {
         (t: any, b: any) => envelope(t, b),
       );
 
-      surfacePersistence.save(surfaceManager);
+      stateBus.flush();
 
       // Return published confirmation with full surface data
       send(ws, envelope("surface.published", {
         surfaceId: surface.surfaceId,
-        surface: surfaceToJSON(surface),
+        surface: stateSurfaceManager.toJSON(surface),
       }));
 
       // Broadcast to node subscribers so browsers that called
@@ -3126,18 +3046,18 @@ function setupWssHandlers(): void {
         send as any,
         envelope("surface.published", {
           surfaceId: surface.surfaceId,
-          surface: surfaceToJSON(surface),
+          surface: stateSurfaceManager.toJSON(surface),
         }),
       );
 
       // Backward-compat: project into workbench.tabs
       const tab = surfaceManager.toWorkbenchTab(surface);
-      const existingTabs = workbenchTabStore.get(nodeId) || [];
+      const existingTabs = stateWorkbenchStore.get(nodeId) || [];
       const idx = existingTabs.findIndex((t: any) => t.id === tab.id);
       if (idx >= 0) existingTabs[idx] = tab;
       else existingTabs.push(tab);
-      workbenchTabStore.set(nodeId, existingTabs);
-      broadcastTabs(nodeId, existingTabs, ws);
+      stateWorkbenchStore.set(nodeId, existingTabs);
+      stateWorkbenchStore.broadcast(nodeId, existingTabs, ws);
 
       // Cross-relay: forward to upstream so other relays see this surface.
       // Include _label so the receiving relay can remap instanceId by hostname.
@@ -3151,7 +3071,7 @@ function setupWssHandlers(): void {
       }
       _sendUpstream?.("surface.publish", {
         nodeId,
-        surface: surfaceToJSON(surface),
+        surface: stateSurfaceManager.toJSON(surface),
         _label: label,
       });
       // Also forward surface to the remote agent's WS if this node belongs
@@ -3159,7 +3079,7 @@ function setupWssHandlers(): void {
       if (nodeInst?.source === 'remote' && nodeInst.agentConnection && nodeInst.agentConnection !== ws) {
         send(nodeInst.agentConnection, envelope("surface.publish", {
           nodeId,
-          surface: surfaceToJSON(surface),
+          surface: stateSurfaceManager.toJSON(surface),
           _label: label,
         }));
       }
@@ -3190,10 +3110,10 @@ function setupWssHandlers(): void {
           // subscribe so the peer can still use the surface tab.
           // Agent inventory will re-validate when the agent reconnects.
           surfaceManager.setOrphaned(surfaceId);
-          surfacePersistence.save(surfaceManager);
+          stateBus.flush();
         } else {
           surfaceManager.delete(surfaceId);
-          surfacePersistence.save(surfaceManager);
+          stateBus.flush();
           send(ws, envelope("surface.closed", { surfaceId, nodeId: existingSurface.nodeId }));
           send(ws, envelope("error", { code: "SURFACE_STALE", message: `Surface ${surfaceId} points to a missing terminal instance` }));
           return;
@@ -3317,9 +3237,9 @@ function setupWssHandlers(): void {
           surfaceManager.setOrphaned(synthSurface.surfaceId);
           surfaceManager.setKeep(synthSurface.surfaceId, true);
           // Insert into workbenchTabStore for backward compat
-          const tabs = workbenchTabStore.get(nodeId || inst.id) || [];
+          const tabs = stateWorkbenchStore.get(nodeId || inst.id) || [];
           tabs.push(surfaceManager.toWorkbenchTab(synthSurface));
-          workbenchTabStore.set(nodeId || inst.id, tabs);
+          stateWorkbenchStore.set(nodeId || inst.id, tabs);
           surfaceManager.recordDebugEvent({
             ts: Date.now(), kind: 'surface.publish.created',
             surfaceId: synthSurface.surfaceId, nodeId: nodeId || inst.id,
@@ -3329,7 +3249,7 @@ function setupWssHandlers(): void {
         }
       }
 
-      surfacePersistence.save(surfaceManager);
+      stateBus.flush();
 
       const surfaces = surfaceManager.subscribeNode(nodeId, ws,
         (w: any, m: any) => send(w, m),
@@ -3356,7 +3276,7 @@ function setupWssHandlers(): void {
 
       send(ws, envelope("surface.list", {
         nodeId,
-        surfaces: filteredSurfaces.map(s => surfaceToJSON(s)),
+        surfaces: filteredSurfaces.map(s => stateSurfaceManager.toJSON(s)),
       }));
       surfaceManager.recordDebugEvent({
         ts: Date.now(), kind: 'surface.list.sent',
@@ -3394,11 +3314,11 @@ function setupWssHandlers(): void {
 
       // Sync workbench tab
       const tab = surfaceManager.toWorkbenchTab(updated);
-      const nodeTabs = workbenchTabStore.get(updated.nodeId) || [];
+      const nodeTabs = stateWorkbenchStore.get(updated.nodeId) || [];
       const idx = nodeTabs.findIndex((t: any) => t.id === tab.id);
       if (idx >= 0) nodeTabs[idx] = tab;
-      workbenchTabStore.set(updated.nodeId, nodeTabs);
-      broadcastTabs(updated.nodeId, nodeTabs, ws);
+      stateWorkbenchStore.set(updated.nodeId, nodeTabs);
+      stateWorkbenchStore.broadcast(updated.nodeId, nodeTabs, ws);
 
       // Broadcast surface.updated to surface subscribers
       const surfSubs = surfaceManager.getSubscribers(surfaceId);
@@ -3438,7 +3358,7 @@ function setupWssHandlers(): void {
       const closeMsg = envelope("surface.closed", { surfaceId });
 
       surfaceManager.delete(surfaceId);
-      surfacePersistence.save(surfaceManager);
+      stateBus.flush();
 
       // Broadcast surface.closed
       if (surfSubs) {
@@ -3450,10 +3370,10 @@ function setupWssHandlers(): void {
       }
 
       // Remove from workbenchTabStore
-      const nodeTabs = workbenchTabStore.get(nodeId) || [];
+      const nodeTabs = stateWorkbenchStore.get(nodeId) || [];
       const filtered = nodeTabs.filter((t: any) => t.id !== surfaceId && t._surfaceId !== surfaceId);
-      workbenchTabStore.set(nodeId, filtered);
-      broadcastTabs(nodeId, filtered);
+      stateWorkbenchStore.set(nodeId, filtered);
+      stateWorkbenchStore.broadcast(nodeId, filtered);
 
       _sendUpstream?.("surface.close", { surfaceId, nodeId });
 
@@ -3469,13 +3389,13 @@ function setupWssHandlers(): void {
         return;
       }
       surfaceManager.setKeep(surfaceId, true);
-      surfacePersistence.save(surfaceManager);
+      stateBus.flush();
       // Sync to workbenchTabStore
-      const tabs = workbenchTabStore.get(surface.nodeId) || [];
+      const tabs = stateWorkbenchStore.get(surface.nodeId) || [];
       const tab = surfaceManager.toWorkbenchTab(surface);
       const idx = tabs.findIndex((t: any) => t.id === tab.id);
       if (idx >= 0) tabs[idx] = { ...tabs[idx], _keep: true };
-      workbenchTabStore.set(surface.nodeId, tabs);
+      stateWorkbenchStore.set(surface.nodeId, tabs);
       send(ws, envelope("surface.kept", { surfaceId, keep: true }));
       return;
     }
@@ -3489,12 +3409,12 @@ function setupWssHandlers(): void {
         return;
       }
       surfaceManager.setKeep(surfaceId, false);
-      surfacePersistence.save(surfaceManager);
-      const tabs = workbenchTabStore.get(surface.nodeId) || [];
+      stateBus.flush();
+      const tabs = stateWorkbenchStore.get(surface.nodeId) || [];
       const tab = surfaceManager.toWorkbenchTab(surface);
       const idx = tabs.findIndex((t: any) => t.id === tab.id);
       if (idx >= 0) tabs[idx] = { ...tabs[idx], _keep: false };
-      workbenchTabStore.set(surface.nodeId, tabs);
+      stateWorkbenchStore.set(surface.nodeId, tabs);
       send(ws, envelope("surface.kept", { surfaceId, keep: false }));
       return;
     }
@@ -3656,10 +3576,12 @@ function setupWssHandlers(): void {
     cleanupWorkbenchSubs(ws);
     // Cleanup surface subscribers
     surfaceManager.cleanupWs(ws);
+    // Cleanup shell output subscribers
+    stateShellRouter.cleanupWs(ws);
 
     // Persist session state
     sessionPersistence.save(instanceManager);
-    surfacePersistence.save(surfaceManager);
+    stateBus.flush();
   });
   });
 }
@@ -3673,7 +3595,7 @@ function shutdown(signal: string) {
 
   // Persist session before stopping
   sessionPersistence.flush(instanceManager);
-  surfacePersistence.flush(surfaceManager);
+  stateBus.flush();
   auditLog.log('server.shutdown', 'system', { signal, instanceCount: instanceManager.count });
 
   // Stop all adapter handles (shell + claude)
@@ -3855,37 +3777,37 @@ export class NodeRelayServer {
         if (match) instanceManager.setActive(match.id);
       }
     }
-    // Restore surfaces from previous run (all marked orphaned until agent confirms)
-    const surfaceSnapshot = surfacePersistence.restore();
-    if (surfaceSnapshot) {
-      surfaceManager.restore(surfaceSnapshot.surfaces);
-      // Rebuild workbenchTabStore projections for restored surfaces
-      for (const s of surfaceManager.listAll()) {
-        const tabs = workbenchTabStore.get(s.nodeId) || [];
-        const tab = surfaceManager.toWorkbenchTab(s);
+    // Restore surfaces from StateBus (auto-restored from disk on createStateBus).
+    // All restored surfaces are marked orphaned until agent confirms.
+    {
+      const allSurfaces = stateSurfaceManager.listAll();
+      // Rebuild workbench tab projections for restored surfaces
+      for (const s of allSurfaces) {
+        const tabs = stateWorkbenchStore.get(s.nodeId) || [];
+        const tab = stateSurfaceManager.toWorkbenchTab(s);
         const idx = tabs.findIndex((t: any) => t.id === tab.id);
         if (idx >= 0) tabs[idx] = tab;
         else tabs.push(tab);
-        workbenchTabStore.set(s.nodeId, tabs);
+        stateWorkbenchStore.set(s.nodeId, tabs);
       }
       // Clean up stale terminal surfaces whose runtime process died with the relay.
       // Remote agent surfaces (source:'remote') and upstream surfaces are preserved —
       // agent inventory will revalidate on reconnect.
       let staleCount = 0;
-      for (const s of surfaceManager.listAll()) {
+      for (const s of allSurfaces) {
         if (s.runtimeRef.kind !== 'terminal' || !s.runtimeRef.instanceId) continue;
         if (s.runtimeRef.instanceId === s.nodeId) continue;
         if (instanceManager.get(s.runtimeRef.instanceId)) continue;
         if (typeof s.nodeId === 'string' && s.nodeId.startsWith('upstream:')) continue;
         const nodeInst = instanceManager.get(s.nodeId);
         if (nodeInst?.source === 'remote') continue;
-        surfaceManager.delete(s.surfaceId);
-        const tabs = workbenchTabStore.get(s.nodeId) || [];
+        stateSurfaceManager.delete(s.surfaceId);
+        const tabs = stateWorkbenchStore.get(s.nodeId) || [];
         const filtered = tabs.filter((t: any) => t.id !== s.surfaceId && t._surfaceId !== s.surfaceId);
-        if (filtered.length !== tabs.length) workbenchTabStore.set(s.nodeId, filtered);
+        if (filtered.length !== tabs.length) stateWorkbenchStore.set(s.nodeId, filtered);
         staleCount++;
       }
-      console.log(`[relay] Restored ${surfaceSnapshot.surfaces.length} surface(s)${staleCount > 0 ? `, cleaned ${staleCount} stale terminal(s)` : ''}`);
+      console.log(`[relay] Restored ${allSurfaces.length} surface(s)${staleCount > 0 ? `, cleaned ${staleCount} stale terminal(s)` : ''}`);
     }
 
     // Start listening
@@ -3911,7 +3833,7 @@ export class NodeRelayServer {
   async stop(): Promise<void> {
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     sessionPersistence.flush(instanceManager);
-    surfacePersistence.flush(surfaceManager);
+    stateBus.flush();
     auditLog.log('server.shutdown', 'system', { instanceCount: instanceManager.count });
     for (const inst of instanceManager.list()) {
       if (inst.handle) { inst.handle.stop().catch(() => {}); }
