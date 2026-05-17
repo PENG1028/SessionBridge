@@ -567,6 +567,20 @@ export class StateRelayWorkbenchStore {
     });
   }
 
+  broadcast(nodeId: string, tabs: any[], sender?: WebSocket): void {
+    const subs = this.subscribers.get(nodeId);
+    if (!subs) return;
+    for (const ws of subs) {
+      if (ws !== sender && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'workbench.tabs',
+          nodeId,
+          tabs,
+        }));
+      }
+    }
+  }
+
   delete(nodeId: string): void {
     this.tabs.delete(nodeId);
     this.bus.delete(workbenchKey(nodeId));
@@ -593,25 +607,21 @@ export class StateRelayWorkbenchStore {
     return subs !== undefined && subs.size > 0;
   }
 
-  broadcast(nodeId: string, tabs: any[], sender?: WebSocket): void {
-    const subs = this.subscribers.get(nodeId);
-    if (!subs) return;
-    for (const ws of subs) {
-      if (ws !== sender && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          type: 'workbench.tabs',
-          nodeId,
-          tabs,
-        }));
-      }
-    }
-  }
-
   cleanupWs(ws: WebSocket): void {
     for (const [nid, subs] of this.subscribers) {
       subs.delete(ws);
       if (subs.size === 0) this.subscribers.delete(nid);
     }
+  }
+
+  /** Diagnostic: return subscriber count per nodeId. */
+  getSubscriberInfo(): Record<string, { count: number; label: string }> {
+    const info: Record<string, { count: number; label: string }> = {};
+    for (const [nid, subs] of this.subscribers) {
+      const live = [...subs].filter(ws => ws.readyState === WebSocket.OPEN).length;
+      if (live > 0 || subs.size > 0) info[nid] = { count: subs.size, label: '' };
+    }
+    return info;
   }
 }
 

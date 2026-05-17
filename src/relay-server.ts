@@ -1908,7 +1908,201 @@ const serverRequestHandler = async (req: import("http").IncomingMessage, res: im
     return;
   }
 
-  // ── Static files (dashboard proxy removed — all routes handled directly) ── (dashboard proxy removed — all routes handled directly) ──
+  // ── StateBus diagnostic endpoint ─────────────────────────────
+  if (path === "/api/debug/statebus" && req.method === "GET") {
+    const clientIp = req.socket.remoteAddress || "";
+    const isLocal = clientIp === "127.0.0.1" || clientIp === "::1" || clientIp === "::ffff:127.0.0.1";
+    if (!isLocal) {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error: "Debug endpoint restricted to localhost" }));
+      return;
+    }
+    try {
+      // Collect instances
+      const instances = instanceManager.list().map(i => ({
+        id: i.id, label: i.label, source: i.source, status: i.status,
+      }));
+
+      // Workbench tabs per nodeId
+      const workbenchTabs: Record<string, unknown[]> = {};
+      for (const inst of instanceManager.list()) {
+        const tabs = stateWorkbenchStore.get(inst.id);
+        if (tabs && tabs.length > 0) workbenchTabs[inst.id] = tabs;
+      }
+      const localTabs = stateWorkbenchStore.get('__local__');
+      if (localTabs && localTabs.length > 0) workbenchTabs['__local__'] = localTabs;
+
+      // Subscribers per nodeId
+      const workbenchSubscribers = stateWorkbenchStore.getSubscriberInfo();
+
+      // Surfaces grouped by nodeId
+      const allSurfaces = stateSurfaceManager.listAll();
+      const byNode: Record<string, unknown[]> = {};
+      for (const s of allSurfaces) {
+        if (!byNode[s.nodeId]) byNode[s.nodeId] = [];
+        byNode[s.nodeId].push(stateSurfaceManager.toJSON(s));
+      }
+
+      // StateBus summary
+      const allEntries = stateBus.list('**');
+      const nsCounts: Record<string, number> = {};
+      for (const e of allEntries) {
+        const ns = e.key.split('/')[2] || 'other';
+        nsCounts[ns] = (nsCounts[ns] || 0) + 1;
+      }
+
+      // Peers
+      const peers = instanceManager.list().filter(i => i.source !== 'local').map(i => ({
+        id: i.id, label: i.label, source: i.source, status: i.status,
+      }));
+      peers.push({ id: '__local__', label: localNodeInfo?.name || 'local', source: 'local', status: 'running' });
+
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        ok: true,
+        localNodeInfo: { id: '__local__', name: localNodeInfo?.name || 'unknown', uptime: process.uptime() },
+        instances,
+        surfaces: { total: allSurfaces.length, byNode },
+        stateBus: { totalEntries: allEntries.length, byNamespace: nsCounts },
+        workbenchTabs,
+        workbenchSubscribers,
+        peers,
+      }, null, 2));
+    } catch (e: any) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error: e.message }));
+    }
+    return;
+  }
+
+  // ── StateBus HTML diagnostic page ──────────────────────────
+  if (path === "/debug/statebus") {
+    const clientIp = req.socket.remoteAddress || "";
+    const isLocal = clientIp === "127.0.0.1" || clientIp === "::1" || clientIp === "::ffff:127.0.0.1";
+    if (!isLocal) {
+      res.writeHead(403, { "Content-Type": "text/plain" });
+      res.end("Debug page restricted to localhost");
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(`<!DOCTYPE html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StateBus 诊断 — sessionBridge</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; }
+h1 { font-size: 1.5rem; margin-bottom: 8px; color: #58a6ff; }
+h2 { font-size: 1.2rem; margin: 20px 0 8px; padding-bottom: 4px; border-bottom: 1px solid #30363d; color: #f0f6fc; }
+.card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+.summary-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+.stat { background: #1c2128; border-radius: 6px; padding: 10px; text-align: center; }
+.stat-value { font-size: 1.8rem; font-weight: 700; color: #58a6ff; }
+.stat-label { font-size: 0.8rem; color: #8b949e; margin-top: 2px; }
+table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #21262d; }
+th { color: #8b949e; font-weight: 500; }
+td { font-family: 'SFMono-Regular', Consolas, monospace; }
+tr:hover td { background: #1c2128; }
+.mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 0.8rem; }
+.error-msg { color: #f85149; padding: 12px; background: #1c2128; border-radius: 6px; margin: 8px 0; }
+.empty { color: #8b949e; font-style: italic; padding: 8px; }
+.refresh { padding: 6px 16px; background: #1f6feb; border: none; border-radius: 6px; color: #fff; cursor: pointer; font-size: 0.85rem; }
+.refresh:hover { background: #388bfd; }
+.badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 0.75rem; margin-left: 4px; }
+.badge-local { background: #1b7e3d; color: #fff; }
+.badge-remote { background: #1f6feb; color: #fff; }
+.nav a { color: #58a6ff; text-decoration: none; margin-right: 16px; }
+details { margin: 4px 0; }
+summary { cursor: pointer; color: #58a6ff; padding: 4px 0; }
+.raw-json { background: #1c2128; padding: 8px; border-radius: 6px; font-size: 0.75rem; white-space: pre-wrap; overflow-x: auto; max-height: 400px; overflow-y: auto; }
+</style></head><body>
+<div class="nav">
+  <a href="/">← 首页</a>
+  <a href="/api/debug/statebus" target="_blank">Raw JSON</a>
+  <a href="/api/debug/surfaces" target="_blank">Surfaces</a>
+</div>
+<h1>StateBus 诊断</h1>
+<p style="color:#8b949e;margin-bottom:12px;">节点 / 标签页 / Surface 同步</p>
+<button class="refresh" onclick="location.reload()">刷新</button>
+<div id="root"><div class="card" style="text-align:center;padding:40px;color:#8b949e;">加载中...</div></div>
+<script>
+async function main() {
+  try {
+    const resp = await fetch('/api/debug/statebus');
+    const d = await resp.json();
+    if (!d.ok) { document.getElementById('root').innerHTML = '<div class="error-msg">' + d.error + '</div>'; return; }
+
+    let html = '<div class="summary-grid">';
+    html += '<div class="stat"><div class="stat-value">' + (d.instances||[]).length + '</div><div class="stat-label">实例</div></div>';
+    html += '<div class="stat"><div class="stat-value">' + Object.keys(d.workbenchTabs||{}).length + '</div><div class="stat-label">有标签页的节点</div></div>';
+    html += '<div class="stat"><div class="stat-value">' + (d.surfaces?.total||0) + '</div><div class="stat-label">Surface 总数</div></div>';
+    html += '<div class="stat"><div class="stat-value">' + (d.peers||[]).length + '</div><div class="stat-label">Peer</div></div>';
+    html += '<div class="stat"><div class="stat-value">' + Object.keys(d.workbenchSubscribers||{}).length + '</div><div class="stat-label">标签页订阅节点</div></div>';
+    html += '<div class="stat"><div class="stat-value">' + (d.stateBus?.totalEntries||0) + '</div><div class="stat-label">StateBus 条目</div></div>';
+    html += '</div>';
+
+    html += '<h2>节点</h2><div class="card">';
+    if (!d.instances||!d.instances.length) { html += '<div class="empty">无</div>'; }
+    else {
+      html += '<table><tr><th>ID</th><th>标签</th><th>来源</th><th>状态</th><th>标签页</th><th>Surfaces</th></tr>';
+      for (const inst of d.instances) {
+        const tabCount = (d.workbenchTabs[inst.id]||[]).length;
+        const surfCount = (d.surfaces?.byNode?.[inst.id]||[]).length;
+        const srcBadge = inst.source==='local'?'badge-local':'badge-remote';
+        html += '<tr><td>' + esc(inst.id.slice(0,12)) + '</td><td>' + esc(inst.label) + '</td>'
+          + '<td><span class="badge ' + srcBadge + '">' + esc(inst.source) + '</span></td>'
+          + '<td>' + esc(inst.status) + '</td><td>' + tabCount + '</td><td>' + surfCount + '</td></tr>';
+      }
+      html += '</table>';
+    }
+    html += '</div>';
+
+    html += '<h2>__local__</h2><div class="card">';
+    if (d.localNodeInfo) {
+      html += '<table><tr><th>属性</th><th>值</th></tr>';
+      for (const [k,v] of Object.entries(d.localNodeInfo)) html += '<tr><td>' + esc(k) + '</td><td>' + esc(String(v)) + '</td></tr>';
+      html += '</table>';
+    }
+    const localTabs = d.workbenchTabs['__local__'];
+    if (localTabs && localTabs.length) {
+      html += '<h3>标签页 (' + localTabs.length + ')</h3><table><tr><th>ID</th><th>标题</th><th>viewType</th><th>instanceId</th><th>_surfaceId</th></tr>';
+      for (const t of localTabs) html += '<tr><td>' + esc(t.id||'') + '</td><td>' + esc(t.title||'') + '</td><td>' + esc(t.viewType||'') + '</td><td>' + esc(t.instanceId||'') + '</td><td>' + esc(t._surfaceId||'') + '</td></tr>';
+      html += '</table>';
+    } else { html += '<div class="empty">无标签页</div>'; }
+    html += '</div>';
+
+    html += '<h2>Surfaces</h2><div class="card">';
+    if (d.surfaces?.byNode) {
+      for (const [nid, surfs] of Object.entries(d.surfaces.byNode)) {
+        html += '<h3>' + esc(nid) + ' (' + (surfs||[]).length + ')</h3>';
+        if (surfs && surfs.length) {
+          html += '<table><tr><th>ID</th><th>标题</th><th>viewType</th><th>instanceId</th></tr>';
+          for (const s of surfs) html += '<tr><td>' + esc(s.surfaceId||'') + '</td><td>' + esc(s.title||'') + '</td><td>' + esc(s.viewType||'') + '</td><td>' + esc(s.runtimeRef?.instanceId||'') + '</td></tr>';
+          html += '</table>';
+        }
+      }
+    }
+    html += '</div>';
+
+    html += '<h2>StateBus 条目数</h2><div class="card"><table><tr><th>命名空间</th><th>条目数</th></tr>';
+    if (d.stateBus?.byNamespace) {
+      for (const [ns, count] of Object.entries(d.stateBus.byNamespace)) html += '<tr><td>' + esc(ns) + '</td><td>' + count + '</td></tr>';
+    }
+    html += '</table></div>';
+
+    html += '<details><summary>Raw JSON</summary><div class="raw-json">' + esc(JSON.stringify(d, null, 2)) + '</div></details>';
+    document.getElementById('root').innerHTML = html;
+  } catch(e) { document.getElementById('root').innerHTML = '<div class="error-msg">Error: ' + esc(e.message) + '</div>'; }
+}
+function esc(s) { if (s===null||s===undefined) return ''; return String(s).replace(/[&<>]/g, function(m) { return { '&':'&amp;','<':'&lt;','>':'&gt;' }[m]||m; }); }
+main();
+</script></body></html>`);
+    return;
+  }
+
+  // ── Static files ──────────────────────────────────────
   const cleanPath = path.replace(/^\//, '');
   const filePath = cleanPath || 'index.html';
   const diskPath = join(OUT_DIR, filePath);
