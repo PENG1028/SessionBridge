@@ -2025,78 +2025,123 @@ summary { cursor: pointer; color: #58a6ff; padding: 4px 0; }
 </div>
 <h1>StateBus 诊断</h1>
 <p style="color:#8b949e;margin-bottom:12px;">节点 / 标签页 / Surface 同步</p>
-<button class="refresh" onclick="location.reload()">刷新</button>
+<div class="toolbar">
+  <button class="refresh" onclick="location.reload()">↻ 刷新</button>
+  <span class="filter-group">
+    <button class="filter-btn active" data-filter="all" onclick="setFilter('all')">全部</button>
+    <button class="filter-btn" data-filter="active" onclick="setFilter('active')">仅活跃</button>
+  </span>
+</div>
 <div id="root"><div class="card" style="text-align:center;padding:40px;color:#8b949e;">加载中...</div></div>
+<style>
+.toolbar { display:flex; align-items:center; gap:12px; margin-bottom:16px; flex-wrap:wrap; }
+.filter-group { display:flex; gap:4px; }
+.filter-btn { padding:6px 14px; border:1px solid #30363d; background:#0d1117; color:#c9d1d9; cursor:pointer; font-size:13px; border-radius:4px; }
+.filter-btn:hover { background:#161b22; }
+.filter-btn.active { background:#1f6feb; color:#fff; border-color:#1f6feb; }
+</style>
 <script>
+let _cachedData = null;
+let _filter = 'all';
+
+function setFilter(f) {
+  _filter = f;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.toggle('active', b.dataset.filter === f));
+  if (_cachedData) render(_cachedData);
+}
+
+function isRunning(inst) { return inst && inst.status === 'running'; }
+function activeNodeIds(instances) {
+  const s = new Set();
+  s.add('__local__');
+  if (instances) { for (const inst of instances) { if (isRunning(inst)) s.add(inst.id); } }
+  return s;
+}
+
+function esc(s) { if (s===null||s===undefined) return ''; return String(s).replace(/[&<>]/g, function(m) { return { '&':'&amp;','<':'&lt;','>':'&gt;' }[m]||m; }); }
+
+function render(d) {
+  const activeOnly = _filter === 'active';
+  const activeIds = activeOnly ? activeNodeIds(d.instances) : null;
+
+  let html = '<div class="summary-grid">';
+  const totalInst = (d.instances||[]).length;
+  const runningInst = activeOnly ? (d.instances||[]).filter(isRunning).length : totalInst;
+  const totalTabNodes = Object.keys(d.workbenchTabs||{}).length;
+  const activeTabNodes = activeOnly ? Object.keys(d.workbenchTabs||{}).filter(k => activeIds.has(k)).length : totalTabNodes;
+  html += '<div class="stat"><div class="stat-value">' + (activeOnly ? runningInst + '/' + totalInst : totalInst) + '</div><div class="stat-label">实例</div></div>';
+  html += '<div class="stat"><div class="stat-value">' + (activeOnly ? activeTabNodes + '/' + totalTabNodes : totalTabNodes) + '</div><div class="stat-label">有标签页的节点</div></div>';
+  html += '<div class="stat"><div class="stat-value">' + (d.surfaces?.total||0) + '</div><div class="stat-label">Surface 总数</div></div>';
+  html += '<div class="stat"><div class="stat-value">' + (d.peers||[]).length + '</div><div class="stat-label">Peer</div></div>';
+  html += '<div class="stat"><div class="stat-value">' + Object.keys(d.workbenchSubscribers||{}).length + '</div><div class="stat-label">标签页订阅节点</div></div>';
+  html += '<div class="stat"><div class="stat-value">' + (d.stateBus?.totalEntries||0) + '</div><div class="stat-label">StateBus 条目</div></div>';
+  html += '</div>';
+
+  html += '<h2>节点</h2><div class="card">';
+  if (!d.instances||!d.instances.length) { html += '<div class="empty">无</div>'; }
+  else {
+    html += '<table><tr><th>ID</th><th>标签</th><th>来源</th><th>状态</th><th>标签页</th><th>Surfaces</th></tr>';
+    for (const inst of d.instances) {
+      if (activeOnly && !activeIds.has(inst.id)) continue;
+      const tabCount = (d.workbenchTabs[inst.id]||[]).length;
+      const surfCount = (d.surfaces?.byNode?.[inst.id]||[]).length;
+      const srcBadge = inst.source==='local'?'badge-local':'badge-remote';
+      const statusColor = inst.status === 'running' ? '' : ' style="color:#8b949e;"';
+      html += '<tr' + statusColor + '><td>' + esc(inst.id.slice(0,12)) + '</td><td>' + esc(inst.label) + '</td>'
+        + '<td><span class="badge ' + srcBadge + '">' + esc(inst.source) + '</span></td>'
+        + '<td>' + esc(inst.status) + '</td><td>' + tabCount + '</td><td>' + surfCount + '</td></tr>';
+    }
+    html += '</table>';
+  }
+  html += '</div>';
+
+  html += '<h2>__local__</h2><div class="card">';
+  if (d.localNodeInfo) {
+    html += '<table><tr><th>属性</th><th>值</th></tr>';
+    for (const [k,v] of Object.entries(d.localNodeInfo)) html += '<tr><td>' + esc(k) + '</td><td>' + esc(String(v)) + '</td></tr>';
+    html += '</table>';
+  }
+  const localTabs = d.workbenchTabs['__local__'];
+  if (localTabs && localTabs.length) {
+    html += '<h3>标签页 (' + localTabs.length + ')</h3><table><tr><th>ID</th><th>标题</th><th>viewType</th><th>instanceId</th><th>_surfaceId</th></tr>';
+    for (const t of localTabs) html += '<tr><td>' + esc(t.id||'') + '</td><td>' + esc(t.title||'') + '</td><td>' + esc(t.viewType||'') + '</td><td>' + esc(t.instanceId||'') + '</td><td>' + esc(t._surfaceId||'') + '</td></tr>';
+    html += '</table>';
+  } else { html += '<div class="empty">无标签页</div>'; }
+  html += '</div>';
+
+  html += '<h2>Surfaces</h2><div class="card">';
+  if (d.surfaces?.byNode) {
+    for (const [nid, surfs] of Object.entries(d.surfaces.byNode)) {
+      if (activeOnly && !activeIds.has(nid)) continue;
+      html += '<h3>' + esc(nid) + ' (' + (surfs||[]).length + ')</h3>';
+      if (surfs && surfs.length) {
+        html += '<table><tr><th>ID</th><th>标题</th><th>viewType</th><th>instanceId</th></tr>';
+        for (const s of surfs) html += '<tr><td>' + esc(s.surfaceId||'') + '</td><td>' + esc(s.title||'') + '</td><td>' + esc(s.viewType||'') + '</td><td>' + esc(s.runtimeRef?.instanceId||'') + '</td></tr>';
+        html += '</table>';
+      }
+    }
+  }
+  html += '</div>';
+
+  html += '<h2>StateBus 条目数</h2><div class="card"><table><tr><th>命名空间</th><th>条目数</th></tr>';
+  if (d.stateBus?.byNamespace) {
+    for (const [ns, count] of Object.entries(d.stateBus.byNamespace)) html += '<tr><td>' + esc(ns) + '</td><td>' + count + '</td></tr>';
+  }
+  html += '</table></div>';
+
+  html += '<details><summary>Raw JSON</summary><div class="raw-json">' + esc(JSON.stringify(d, null, 2)) + '</div></details>';
+  document.getElementById('root').innerHTML = html;
+}
+
 async function main() {
   try {
     const resp = await fetch('/api/debug/statebus');
     const d = await resp.json();
     if (!d.ok) { document.getElementById('root').innerHTML = '<div class="error-msg">' + d.error + '</div>'; return; }
-
-    let html = '<div class="summary-grid">';
-    html += '<div class="stat"><div class="stat-value">' + (d.instances||[]).length + '</div><div class="stat-label">实例</div></div>';
-    html += '<div class="stat"><div class="stat-value">' + Object.keys(d.workbenchTabs||{}).length + '</div><div class="stat-label">有标签页的节点</div></div>';
-    html += '<div class="stat"><div class="stat-value">' + (d.surfaces?.total||0) + '</div><div class="stat-label">Surface 总数</div></div>';
-    html += '<div class="stat"><div class="stat-value">' + (d.peers||[]).length + '</div><div class="stat-label">Peer</div></div>';
-    html += '<div class="stat"><div class="stat-value">' + Object.keys(d.workbenchSubscribers||{}).length + '</div><div class="stat-label">标签页订阅节点</div></div>';
-    html += '<div class="stat"><div class="stat-value">' + (d.stateBus?.totalEntries||0) + '</div><div class="stat-label">StateBus 条目</div></div>';
-    html += '</div>';
-
-    html += '<h2>节点</h2><div class="card">';
-    if (!d.instances||!d.instances.length) { html += '<div class="empty">无</div>'; }
-    else {
-      html += '<table><tr><th>ID</th><th>标签</th><th>来源</th><th>状态</th><th>标签页</th><th>Surfaces</th></tr>';
-      for (const inst of d.instances) {
-        const tabCount = (d.workbenchTabs[inst.id]||[]).length;
-        const surfCount = (d.surfaces?.byNode?.[inst.id]||[]).length;
-        const srcBadge = inst.source==='local'?'badge-local':'badge-remote';
-        html += '<tr><td>' + esc(inst.id.slice(0,12)) + '</td><td>' + esc(inst.label) + '</td>'
-          + '<td><span class="badge ' + srcBadge + '">' + esc(inst.source) + '</span></td>'
-          + '<td>' + esc(inst.status) + '</td><td>' + tabCount + '</td><td>' + surfCount + '</td></tr>';
-      }
-      html += '</table>';
-    }
-    html += '</div>';
-
-    html += '<h2>__local__</h2><div class="card">';
-    if (d.localNodeInfo) {
-      html += '<table><tr><th>属性</th><th>值</th></tr>';
-      for (const [k,v] of Object.entries(d.localNodeInfo)) html += '<tr><td>' + esc(k) + '</td><td>' + esc(String(v)) + '</td></tr>';
-      html += '</table>';
-    }
-    const localTabs = d.workbenchTabs['__local__'];
-    if (localTabs && localTabs.length) {
-      html += '<h3>标签页 (' + localTabs.length + ')</h3><table><tr><th>ID</th><th>标题</th><th>viewType</th><th>instanceId</th><th>_surfaceId</th></tr>';
-      for (const t of localTabs) html += '<tr><td>' + esc(t.id||'') + '</td><td>' + esc(t.title||'') + '</td><td>' + esc(t.viewType||'') + '</td><td>' + esc(t.instanceId||'') + '</td><td>' + esc(t._surfaceId||'') + '</td></tr>';
-      html += '</table>';
-    } else { html += '<div class="empty">无标签页</div>'; }
-    html += '</div>';
-
-    html += '<h2>Surfaces</h2><div class="card">';
-    if (d.surfaces?.byNode) {
-      for (const [nid, surfs] of Object.entries(d.surfaces.byNode)) {
-        html += '<h3>' + esc(nid) + ' (' + (surfs||[]).length + ')</h3>';
-        if (surfs && surfs.length) {
-          html += '<table><tr><th>ID</th><th>标题</th><th>viewType</th><th>instanceId</th></tr>';
-          for (const s of surfs) html += '<tr><td>' + esc(s.surfaceId||'') + '</td><td>' + esc(s.title||'') + '</td><td>' + esc(s.viewType||'') + '</td><td>' + esc(s.runtimeRef?.instanceId||'') + '</td></tr>';
-          html += '</table>';
-        }
-      }
-    }
-    html += '</div>';
-
-    html += '<h2>StateBus 条目数</h2><div class="card"><table><tr><th>命名空间</th><th>条目数</th></tr>';
-    if (d.stateBus?.byNamespace) {
-      for (const [ns, count] of Object.entries(d.stateBus.byNamespace)) html += '<tr><td>' + esc(ns) + '</td><td>' + count + '</td></tr>';
-    }
-    html += '</table></div>';
-
-    html += '<details><summary>Raw JSON</summary><div class="raw-json">' + esc(JSON.stringify(d, null, 2)) + '</div></details>';
-    document.getElementById('root').innerHTML = html;
+    _cachedData = d;
+    render(d);
   } catch(e) { document.getElementById('root').innerHTML = '<div class="error-msg">Error: ' + esc(e.message) + '</div>'; }
 }
-function esc(s) { if (s===null||s===undefined) return ''; return String(s).replace(/[&<>]/g, function(m) { return { '&':'&amp;','<':'&lt;','>':'&gt;' }[m]||m; }); }
 main();
 </script></body></html>`);
     return;
