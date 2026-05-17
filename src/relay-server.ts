@@ -3289,8 +3289,11 @@ function setupWssHandlers(): void {
       // Kept surfaces waiting for agent reconnect are preserved server-side
       // but not sent to the client — otherwise the tab reappears with
       // "instance not found" error on every keystroke.
+      // Exception: if instanceId === nodeId, this is a node-level shell surface
+      // (the relay node's own terminal), not a runtime sub-instance.
       const filteredSurfaces = surfaces.filter(s => {
         if (s.runtimeRef.kind === 'terminal' && s.runtimeRef.instanceId) {
+          if (s.runtimeRef.instanceId === s.nodeId) return true;
           return !!instanceManager.get(s.runtimeRef.instanceId);
         }
         return true;
