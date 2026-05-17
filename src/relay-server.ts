@@ -2319,12 +2319,17 @@ function setupWssHandlers(): void {
         broadcastToBrowsers(envelope("instance.removed", { instanceId: agentInst.id }));
         notifyBus({ scenarioId: 'agent.disconnected', severity: 'warning', title: `Agent disconnected: ${agentInst.label}` });
         auditLog.log('agent.unregistered', agentInst.label, {}, agentInst.id);
-        // Validate surfaces: delete any terminal surface pointing to the
-        // disconnected instance, broadcast surface.closed to node subscribers.
-        const staleSurfaces = surfaceManager.validateSurfaces(
-          (id) => !!instanceManager.get(id)
-        );
-        for (const { surfaceId, nodeId } of staleSurfaces) {
+        // Delete ALL terminal surfaces owned by this node — on clean unregister
+        // the agent is shutting down, no process survives. This also handles
+        // surfaces whose runtimeRef.instanceId === nodeId (common in tests).
+        const nodeSurfaceIds: Array<{ surfaceId: string; nodeId: string }> = [];
+        for (const s of surfaceManager.listByNode(agentInst.id)) {
+          if (s.runtimeRef.kind === 'terminal') {
+            surfaceManager.delete(s.surfaceId);
+            nodeSurfaceIds.push({ surfaceId: s.surfaceId, nodeId: s.nodeId });
+          }
+        }
+        for (const { surfaceId, nodeId } of nodeSurfaceIds) {
           const nodeSubs = surfaceManager.getNodeSubscribers(nodeId);
           if (nodeSubs) {
             const closeMsg = envelope("surface.closed", { surfaceId, nodeId });
@@ -2332,7 +2337,6 @@ function setupWssHandlers(): void {
               if (client.readyState === WebSocket.OPEN) send(client, closeMsg);
             }
           }
-          // Remove from workbench tab store
           const tabs = workbenchTabStore.get(nodeId) || [];
           const filtered = tabs.filter((t: any) => t.id !== surfaceId && t._surfaceId !== surfaceId);
           workbenchTabStore.set(nodeId, filtered);
@@ -3864,7 +3868,24 @@ export class NodeRelayServer {
         else tabs.push(tab);
         workbenchTabStore.set(s.nodeId, tabs);
       }
-      console.log(`[relay] Restored ${surfaceSnapshot.surfaces.length} surface(s)`);
+      // Clean up stale terminal surfaces whose runtime process died with the relay.
+      // Remote agent surfaces (source:'remote') and upstream surfaces are preserved —
+      // agent inventory will revalidate on reconnect.
+      let staleCount = 0;
+      for (const s of surfaceManager.listAll()) {
+        if (s.runtimeRef.kind !== 'terminal' || !s.runtimeRef.instanceId) continue;
+        if (s.runtimeRef.instanceId === s.nodeId) continue;
+        if (instanceManager.get(s.runtimeRef.instanceId)) continue;
+        if (typeof s.nodeId === 'string' && s.nodeId.startsWith('upstream:')) continue;
+        const nodeInst = instanceManager.get(s.nodeId);
+        if (nodeInst?.source === 'remote') continue;
+        surfaceManager.delete(s.surfaceId);
+        const tabs = workbenchTabStore.get(s.nodeId) || [];
+        const filtered = tabs.filter((t: any) => t.id !== s.surfaceId && t._surfaceId !== s.surfaceId);
+        if (filtered.length !== tabs.length) workbenchTabStore.set(s.nodeId, filtered);
+        staleCount++;
+      }
+      console.log(`[relay] Restored ${surfaceSnapshot.surfaces.length} surface(s)${staleCount > 0 ? `, cleaned ${staleCount} stale terminal(s)` : ''}`);
     }
 
     // Start listening

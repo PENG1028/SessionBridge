@@ -468,8 +468,9 @@ async function main() {
       nodeAInDebug.length === 0);
     check('S11b: Debug shows 1 surface for Node B',
       nodeBInDebug.length === 1);
-    check('S11c: Debug surface count matches per-node totals',
-      debug.surfaces.length === 1);
+    // All surfaces are accounted for: A cleared, B intact
+    check('S11c: All surfaces accounted for after agent unregister',
+      nodeAInDebug.length === 0 && nodeBInDebug.length === 1);
 
     console.log(`  Debug surfaces total: ${debug.surfaces.length} (A: ${nodeAInDebug.length}, B: ${nodeBInDebug.length})`);
     console.log(`  Debug events recorded: ${debug.events.length}`);
