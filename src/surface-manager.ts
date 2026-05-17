@@ -191,6 +191,7 @@ export class SurfaceManager {
       createdBy: opts.createdBy || 'unknown',
       createdAt: now,
       updatedAt: now,
+      keep: true,
     };
 
     this.surfaces.set(surfaceId, surface);
@@ -875,6 +876,7 @@ export class SurfaceManager {
       createdBy: surfaceData.createdBy || 'upstream',
       createdAt: surfaceData.createdAt || now,
       updatedAt: now,
+      keep: true,
     };
     this.surfaces.set(surface.surfaceId, surface);
     this._record('surface.import', {

@@ -351,7 +351,7 @@ export function registerApiRoutes(
           // surface.runtimeRef.instanceId = newInst.id (specific terminal process)
           let createdSurface: Record<string, unknown> | undefined;
           if (ctx.surfaceManager) {
-            const keep = parsed.keep === true;
+            const keep = parsed.keep !== false;
             const surface = ctx.surfaceManager.create(String(targetNodeId), {
               title: newInst.label || 'Terminal',
               viewType: 'terminal',
@@ -362,7 +362,7 @@ export function registerApiRoutes(
             });
             const operationId = ctx.surfaceManager.nextOperationId();
             ctx.surfaceManager.linkOperation(surface.surfaceId, operationId);
-            if (keep) ctx.surfaceManager.setKeep(surface.surfaceId, true);
+            if (!keep) ctx.surfaceManager.setKeep(surface.surfaceId, false);
             createdSurface = ctx.surfaceManager.toJSON(surface);
             ctx.surfacePersistence?.save(ctx.surfaceManager);
           }
@@ -429,7 +429,7 @@ export function registerApiRoutes(
         // surface.runtimeRef.instanceId = newInst.id (specific terminal process)
         let createdSurface: Record<string, unknown> | undefined;
         if (ctx.surfaceManager) {
-          const keep = parsed.keep === true;
+          const keep = parsed.keep !== false;
           const ownerNodeId = targetNodeId || newInst.id;
           const surface = ctx.surfaceManager.create(ownerNodeId, {
             title: newInst.label || 'Terminal',
@@ -441,7 +441,7 @@ export function registerApiRoutes(
           });
           const operationId = ctx.surfaceManager.nextOperationId();
           ctx.surfaceManager.linkOperation(surface.surfaceId, operationId);
-          if (keep) ctx.surfaceManager.setKeep(surface.surfaceId, true);
+          if (!keep) ctx.surfaceManager.setKeep(surface.surfaceId, false);
           createdSurface = ctx.surfaceManager.toJSON(surface);
           ctx.surfacePersistence?.save(ctx.surfaceManager);
         }

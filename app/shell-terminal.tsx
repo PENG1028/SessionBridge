@@ -140,15 +140,11 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, _o
       };
       if (token) helloBody.token = token;
       ws.send(env('hello', helloBody));
-      if (instanceId) {
-        ws.send(env('shell.spawn', { instanceId }));
-        const dims = _fitAddon.proposeDimensions();
-        if (dims) {
-          ws.send(env("shell.resize", { instanceId, cols: dims.cols, rows: dims.rows }));
-        }
-      }
+      // Surface connections do not send shell.spawn — the shell is already
+      // running on the node that created the surface. We only subscribe to
+      // the surface to receive runtime.replay + runtime.output.
       ws.send(env('surface.subscribe', { surfaceId: _surfaceId }));
-      debugLog('ShellTerminal surface.subscribe SENT', { _surfaceId, _operationId });
+      debugLog('ShellTerminal surface.subscribe SENT', { _surfaceId, _operationId, instanceId });
     };
 
     ws.onmessage = (ev) => {
@@ -159,6 +155,9 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, _o
 
         if (type === 'ping') {
           ws.send(env('pong'));
+        } else if (type === 'surface.subscribed') {
+          term.writeln(`\x1b[32mSurface ready — ${body.surfaceId}\x1b[0m`);
+          debugLog('ShellTerminal surface.subscribed', { surfaceId: body.surfaceId, runtime: body.runtime });
         } else if (type === 'runtime.replay') {
           const outputs = Array.isArray(body.outputs) ? body.outputs : [];
           debugLog('ShellTerminal received runtime.replay', { surfaceId: _surfaceId, outputCount: outputs.length });
