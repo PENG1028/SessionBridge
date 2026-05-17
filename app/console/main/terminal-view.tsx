@@ -54,8 +54,8 @@ export function TerminalView({ instanceId, _surfaceId, _operationId }: TerminalV
       try {
         const result = await createInstance(cwdRef.current, 'Terminal', 'shell');
         if (result?.instance?.id) {
-          debugLog('TerminalView auto-create SUCCESS', { instanceId: result.instance.id });
-          bindCurrentTabInstance(result.instance.id);
+          debugLog('TerminalView auto-create SUCCESS', { instanceId: result.instance.id, surfaceId: result.surface?.surfaceId });
+          bindCurrentTabInstance(result.instance.id, result.surface);
         } else {
           debugLog('TerminalView auto-create FAIL', { error: result?.error });
           setError(result?.error || 'Failed to create terminal instance');

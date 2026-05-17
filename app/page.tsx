@@ -1750,13 +1750,13 @@ function PageContent() {
   }, [sendMessage]);
 
   // Phase 4F: Bind the active pane's current tab to an instanceId (called by views after explicit create).
-  const handleBindCurrentTabInstance = useCallback((instanceId: string) => {
+  const handleBindCurrentTabInstance = useCallback((instanceId: string, surface?: any) => {
     const state = workbenchStateRef.current;
     const activePane = findPaneInTree(state.root, state.activePaneId);
     if (!activePane) { debugLog('bindCurrentTabInstance SKIP: no activePane'); return; }
     const activeTab = activePane.tabs.find(t => t.id === activePane.activeTabId);
     if (!activeTab) { debugLog('bindCurrentTabInstance SKIP: no activeTab'); return; }
-    debugLog('bindCurrentTabInstance', { instanceId, tabId: activeTab.id, viewType: activeTab.viewType, title: activeTab.title });
+    debugLog('bindCurrentTabInstance', { instanceId, tabId: activeTab.id, viewType: activeTab.viewType, title: activeTab.title, surfaceId: surface?.surfaceId });
     activeWorkbenchDispatch({
       type: 'SET_TAB_VIEW',
       paneId: activePane.id,
@@ -1764,7 +1764,13 @@ function PageContent() {
       viewType: activeTab.viewType,
       title: activeTab.title,
       instanceId,
+      _surfaceId: surface?.surfaceId,
+      _operationId: surface?.runtimeRef?.operationId,
     });
+    if (surface?.surfaceId) {
+      debugLog('bindCurrentTabInstance SKIP publish: API returned surface', { instanceId, surfaceId: surface.surfaceId });
+      return;
+    }
     // Publish shared surface for cross-device visibility.
     const published = publishSurfaceForTab(activeTab, instanceId);
     debugLog('bindCurrentTabInstance publishSurfaceForTab result', { instanceId, published });

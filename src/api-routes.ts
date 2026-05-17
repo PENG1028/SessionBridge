@@ -349,7 +349,7 @@ export function registerApiRoutes(
           // Atomic surface creation (Phase 4)
           // surface.nodeId = targetNodeId (device/owner node)
           // surface.runtimeRef.instanceId = newInst.id (specific terminal process)
-          let createdSurface: { surfaceId: string } | undefined;
+          let createdSurface: Record<string, unknown> | undefined;
           if (ctx.surfaceManager) {
             const keep = parsed.keep === true;
             const surface = ctx.surfaceManager.create(String(targetNodeId), {
@@ -360,9 +360,15 @@ export function registerApiRoutes(
               runtimeRef: { kind: 'terminal', instanceId: newInst.id },
               replayPolicy: { mode: 'tail', lines: 5000, bytes: 500_000 },
             });
+            const operationId = ctx.surfaceManager.nextOperationId();
+            ctx.surfaceManager.linkOperation(surface.surfaceId, operationId);
             if (keep) ctx.surfaceManager.setKeep(surface.surfaceId, true);
-            createdSurface = { surfaceId: surface.surfaceId };
+            createdSurface = ctx.surfaceManager.toJSON(surface);
             ctx.surfacePersistence?.save(ctx.surfaceManager);
+            ctx.broadcast(envelope("surface.published", {
+              surfaceId: surface.surfaceId,
+              surface: createdSurface,
+            }));
           }
 
           ctx.auditLog?.log("instance.created", "api", {
@@ -425,7 +431,7 @@ export function registerApiRoutes(
         // Atomic surface creation (Phase 4)
         // surface.nodeId = targetNodeId or newInst.id (device/owner node)
         // surface.runtimeRef.instanceId = newInst.id (specific terminal process)
-        let createdSurface: { surfaceId: string } | undefined;
+        let createdSurface: Record<string, unknown> | undefined;
         if (ctx.surfaceManager) {
           const keep = parsed.keep === true;
           const ownerNodeId = targetNodeId || newInst.id;
@@ -437,9 +443,15 @@ export function registerApiRoutes(
             runtimeRef: { kind: 'terminal', instanceId: newInst.id },
             replayPolicy: { mode: 'tail', lines: 5000, bytes: 500_000 },
           });
+          const operationId = ctx.surfaceManager.nextOperationId();
+          ctx.surfaceManager.linkOperation(surface.surfaceId, operationId);
           if (keep) ctx.surfaceManager.setKeep(surface.surfaceId, true);
-          createdSurface = { surfaceId: surface.surfaceId };
+          createdSurface = ctx.surfaceManager.toJSON(surface);
           ctx.surfacePersistence?.save(ctx.surfaceManager);
+          ctx.broadcast(envelope("surface.published", {
+            surfaceId: surface.surfaceId,
+            surface: createdSurface,
+          }));
         }
 
         // Audit

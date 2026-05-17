@@ -140,6 +140,13 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, _o
       };
       if (token) helloBody.token = token;
       ws.send(env('hello', helloBody));
+      if (instanceId) {
+        ws.send(env('shell.spawn', { instanceId }));
+        const dims = _fitAddon.proposeDimensions();
+        if (dims) {
+          ws.send(env("shell.resize", { instanceId, cols: dims.cols, rows: dims.rows }));
+        }
+      }
       ws.send(env('surface.subscribe', { surfaceId: _surfaceId }));
       debugLog('ShellTerminal surface.subscribe SENT', { _surfaceId, _operationId });
     };

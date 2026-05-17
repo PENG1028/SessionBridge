@@ -100,7 +100,7 @@ export interface WorkbenchContextValue {
   // Instance management (Phase 4F: explicit instance creation, no auto-bind)
   instances: any[];
   createInstance: (dir: string, label?: string, adapterId?: string) => Promise<any>;
-  bindCurrentTabInstance: (instanceId: string) => void;
+  bindCurrentTabInstance: (instanceId: string, surface?: any) => void;
   ensureSurfacePublished: (instanceId: string) => boolean;
   activeInstanceId: string | null;
   projectCwd: string;
