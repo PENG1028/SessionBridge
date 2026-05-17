@@ -70,6 +70,7 @@ export interface SurfaceDebugEvent {
     | 'surface.stale.deleted'
     | 'surface.stale.instance_missing'
     | 'surface.subscribe.cross_relay'
+    | 'surface.subscribe.dead_local'
     | 'surface.remap.nodeId'
     | 'surface.error';
   surfaceId?: string;
@@ -780,7 +781,7 @@ export class SurfaceManager {
     if (s) { s.orphaned = false; s.updatedAt = Date.now(); }
   }
 
-  /** Set the server-side keep flag. */
+  /** Set the keep flag (surface survives disconnection). */
   setKeep(surfaceId: string, keep: boolean): void {
     const s = this.surfaces.get(surfaceId);
     if (s) { s.keep = keep; s.updatedAt = Date.now(); }
@@ -906,7 +907,7 @@ export class SurfaceManager {
 
   // ── Internal helpers ────────────────────────────────────────
 
-  /** Send a message to all browser subscribers observing a given node. */
+  /** Send a message to all subscribers observing a given node's surfaces. */
   broadcastToNodeSubscribers(
     nodeId: string,
     sendFn: SendFn,

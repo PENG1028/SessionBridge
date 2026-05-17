@@ -409,11 +409,11 @@ function notifyBus(params: {
   duration?: number;
 }): string {
   const id = `ntf_${++ntfCounter}_${Date.now().toString(36)}`;
-  broadcast(envelope("system.notification", { id, ...params, timestamp: Date.now() }));
+  broadcastToBrowsers(envelope("system.notification", { id, ...params, timestamp: Date.now() }));
   return id;
 }
 function dismissNotify(id: string): void {
-  broadcast(envelope("system.notification_dismiss", { id }));
+  broadcastToBrowsers(envelope("system.notification_dismiss", { id }));
 }
 
 const defaultAdapterId = getDefaultAdapterId();
@@ -493,14 +493,14 @@ function flushBuffer(ws: WebSocket) {
   for (const data of i.outputBuffer) send(ws, envelope("instance.output", { data }));
 }
 
-// ─── WS Clients ──────────────────────────────────────────────────
-const clients = new Set<WebSocket>();
+// ─── Browser WebSocket Connections ──────────────────────────────
+const browsers = new Set<WebSocket>();
 const authenticatedSockets = new Set<WebSocket>();
 const shellWsMap = new Map<WebSocket, Set<string>>();
 const agentVersionMap = new Map<WebSocket, string>();
-// Shell write-lock: instanceId → owning browser WebSocket
+// Shell write-lock: instanceId → owning WebSocket
 const shellLockMap = new Map<string, WebSocket>();
-/** Shell output subscribers: instanceId → set of browser WebSockets receiving shell.output */
+/** Shell output subscribers: instanceId → set of WebSockets receiving shell.output */
 const shellSubscribers = new Map<string, Set<WebSocket>>();
 /** Guard: instanceId → in-flight spawn promise, prevents double-spawn from shell.input handler */
 const pendingShellSpawns = new Map<string, Promise<unknown>>();
@@ -603,8 +603,8 @@ function send(ws: WebSocket, msg: unknown) {
   }
 }
 
-function broadcast(msg: unknown) {
-  for (const ws of clients) send(ws, msg);
+function broadcastToBrowsers(msg: unknown) {
+  for (const ws of browsers) send(ws, msg);
 }
 
 // ─── Peer Discovery ──────────────────────────────────────────
@@ -663,7 +663,7 @@ function collectPeers(): { peers: Record<string, unknown>[]; links: { source: st
   }];
   // Group browser connections by IP — same device = one VIEW node regardless of tab count
   const browserByIP = new Map<string, { count: number; connectedAt: number; label: string }>();
-  for (const ws of clients) {
+  for (const ws of browsers) {
     if (!(ws as any)._isAgent) {
       const label = (ws as any)._browserLabel;
       if (!label) continue;
@@ -699,14 +699,14 @@ function collectPeers(): { peers: Record<string, unknown>[]; links: { source: st
       tabCount: group.count,
     });
   }
-  // Also collect agents (agents are removed from clients set but have _isAgent)
+  // Also collect agents (agents are removed from browsers set but have _isAgent)
   for (const inst of instanceManager.list()) {
     // Runtime sub-instances (terminal, plugin, etc.) are not device nodes.
     // They are exposed through SharedSurface tabs, not the peer/node list.
     // Only instanceRole === 'node' (or legacy undefined) can appear in peer.list.
     if (inst.instanceRole === 'runtime') continue;
     if (typeof inst.adapterState.parentNodeId === 'string') continue;
-    if (inst.agentConnection && !clients.has(inst.agentConnection)) {
+    if (inst.agentConnection && !browsers.has(inst.agentConnection)) {
       const ws2 = inst.agentConnection;
       const rawIP = (ws2 as any)._socket?.remoteAddress || '127.0.0.1';
       const ip = rawIP.replace(/^::ffff:/, '');
@@ -754,7 +754,7 @@ function collectPeers(): { peers: Record<string, unknown>[]; links: { source: st
 
 function broadcastPeers(): void {
   const { peers, links } = collectPeers();
-  for (const ws of clients) {
+  for (const ws of browsers) {
     if ((ws as any)._isAgent) {
       send(ws, envelope("peer.list", { peers, links }));
     } else {
@@ -782,7 +782,7 @@ function sendPeers(ws: WebSocket): void {
 
 function sendBlock(block: Record<string, unknown>) {
   const msg = envelope("instance.block", { ...block, ts: Date.now() });
-  broadcast(msg);
+  broadcastToBrowsers(msg);
   if (block.blockType !== 'user') {
     bufferBlock(msg);
   }
@@ -805,7 +805,7 @@ async function spawnInstance(instanceId?: string) {
   // Permission check
   const permResult = permissions.check('processManagement', { action: 'spawn', instanceId: i.id, adapterId: i.adapterId });
   if (!permResult.allowed) {
-    broadcast(envelope("instance.block", { blockType: "error", text: `Spawn denied: ${permResult.reason}` }));
+    broadcastToBrowsers(envelope("instance.block", { blockType: "error", text: `Spawn denied: ${permResult.reason}` }));
     return;
   }
 
@@ -825,7 +825,7 @@ async function spawnInstance(instanceId?: string) {
   const adapter = resolveAdapter(i.adapterId) || adapterRegistry.get(getDefaultAdapterId())!;
   const adapterName = adapter.displayName;
 
-  broadcast(envelope("instance.block", { blockType: "status", text: `Spawning ${adapterName} instance...` }));
+  broadcastToBrowsers(envelope("instance.block", { blockType: "status", text: `Spawning ${adapterName} instance...` }));
 
   // Delegate to adapter.start() — adapter owns process lifecycle
   i.handle = await adapter.start({
@@ -836,7 +836,7 @@ async function spawnInstance(instanceId?: string) {
     config: { model: i.model },
     onBlock: (block: Record<string, unknown>) => {
       const msg = envelope("instance.block", { ...block, ts: Date.now() });
-      broadcast(msg);
+      broadcastToBrowsers(msg);
       if (block.blockType !== 'user') {
         i.blockBuffer.push(msg);
         if (i.blockBuffer.length > 2000) i.blockBuffer.shift();
@@ -846,7 +846,7 @@ async function spawnInstance(instanceId?: string) {
       if (!adapter.getCapabilities().structuredEvents) {
         broadcastShellOutput(i.id, data, "stdout");
       } else {
-        broadcast(envelope("instance.output", { data }));
+        broadcastToBrowsers(envelope("instance.output", { data }));
       }
       i.outputBuffer.push(data);
       if (i.outputBuffer.length > 2000) i.outputBuffer.shift();
@@ -1070,13 +1070,13 @@ function sendControlRequest(subtype: string, data: Record<string, unknown>, inst
       request: { subtype, ...data },
     }) + "\n";
     send(i.agentConnection, envelope("agent.stdin", { instanceId: i.id, data: msg }));
-    broadcast(envelope("instance.control_sent", { subtype, ...data, requestId }));
+    broadcastToBrowsers(envelope("instance.control_sent", { subtype, ...data, requestId }));
     return true;
   }
   // Prefer adapter handle for local instances
   if (i.handle) {
     i.handle.sendCommand(subtype, data).catch(() => {});
-    broadcast(envelope("instance.control_sent", { subtype, ...data }));
+    broadcastToBrowsers(envelope("instance.control_sent", { subtype, ...data }));
     return true;
   }
   if (!i.process?.stdin?.writable) return false;
@@ -1087,21 +1087,21 @@ function sendControlRequest(subtype: string, data: Record<string, unknown>, inst
     request: { subtype, ...data },
   }) + "\n";
   i.process.stdin.write(msg);
-  broadcast(envelope("instance.control_sent", { subtype, ...data, requestId }));
+  broadcastToBrowsers(envelope("instance.control_sent", { subtype, ...data, requestId }));
   return true;
 }
 
 function setPermissionMode(mode: "default" | "acceptEdits" | "plan") {
   currentPermissionMode = mode;
   sendControlRequest("set_permission_mode", { mode });
-  broadcast(envelope("system.mode_changed", { mode, effort: currentEffortLevel }));
+  broadcastToBrowsers(envelope("system.mode_changed", { mode, effort: currentEffortLevel }));
 }
 
 function setThinkingLevel(level: "low" | "medium" | "high") {
   currentEffortLevel = level;
   const tokens = level === "low" ? 0 : 31999;
   sendControlRequest("set_max_thinking_tokens", { maxThinkingTokens: tokens });
-  broadcast(envelope("system.mode_changed", { mode: currentPermissionMode, effort: level }));
+  broadcastToBrowsers(envelope("system.mode_changed", { mode: currentPermissionMode, effort: level }));
 }
 
 // ─── Message Queue (sequential processing, source-locked) ──────────
@@ -1137,7 +1137,7 @@ function processQueueForInstance(i: import("./instance-manager").InstanceData) {
   const source = pipeIdx > 0 ? entry.slice(0, pipeIdx) : "terminal";
   const text = pipeIdx > 0 ? entry.slice(pipeIdx + 1) : entry;
 
-  broadcast(envelope("queue.status", {
+  broadcastToBrowsers(envelope("queue.status", {
     processing: true,
     source,
     queueDepth: i.pendingQueue.length,
@@ -1170,7 +1170,7 @@ function processQueue() {
 function enqueueInput(text: string, source: string = "terminal") {
   const i = inst();
   if (i.isProcessing && i.queueLock && i.queueLock !== source && !text.startsWith("/")) {
-    broadcast(envelope("system.queue_blocked", {
+    broadcastToBrowsers(envelope("system.queue_blocked", {
       message: `Cannot send — ${i.queueLock} is currently processing. Wait or interrupt first.`,
       blockedSource: source,
       activeSource: i.queueLock,
@@ -1181,7 +1181,7 @@ function enqueueInput(text: string, source: string = "terminal") {
   if (!i.queueLock) i.queueLock = source;
   i.pendingQueue.push(`${source}|${text}`);
 
-  broadcast(envelope("queue.status", {
+  broadcastToBrowsers(envelope("queue.status", {
     processing: i.isProcessing,
     source: i.queueLock,
     queueDepth: i.pendingQueue.length,
@@ -1194,7 +1194,7 @@ function releaseQueueForInstance(i: import("./instance-manager").InstanceData) {
   i.pendingQueue.length = 0;
   i.queueLock = null;
   i.isProcessing = false;
-  broadcast(envelope("queue.status", {
+  broadcastToBrowsers(envelope("queue.status", {
     processing: false,
     source: null,
     queueDepth: 0,
@@ -1214,13 +1214,13 @@ function parserDepsFor(i: import("./instance-manager").InstanceData): StreamPars
   return {
     sendBlock: (block: Record<string, unknown>) => {
       const msg = envelope("instance.block", { ...block, ts: Date.now() });
-      broadcast(msg);
+      broadcastToBrowsers(msg);
       if (block.blockType !== 'user') {
         i.blockBuffer.push(msg);
         if (i.blockBuffer.length > MAX_BLOCKS) i.blockBuffer.shift();
       }
     },
-    broadcast: (msg: unknown) => broadcast(msg),
+    broadcast: (msg: unknown) => broadcastToBrowsers(msg),
     bufferOutput: (data: string) => {
       bufferOutputFor(i, data);
     },
@@ -1260,7 +1260,7 @@ const serverRequestHandler = async (req: import("http").IncomingMessage, res: im
   }
 
   // Delegate to structured API routes first
-  if (registerApiRoutes(req, res, { instanceManager, surfaceManager, surfacePersistence, broadcast, auditLog, checkPermission: checkHttpPermission, configManager: appConfig, relayConfig: relayConfigManager, configRegistry, configStore, secretStore, workDir: process.cwd(), aliases: aliasStore, workbenchTabStore, broadcastTabs })) return;
+  if (registerApiRoutes(req, res, { instanceManager, surfaceManager, surfacePersistence, broadcast: broadcastToBrowsers, auditLog, checkPermission: checkHttpPermission, configManager: appConfig, relayConfig: relayConfigManager, configRegistry, configStore, secretStore, workDir: process.cwd(), aliases: aliasStore, workbenchTabStore, broadcastTabs })) return;
 
   // Delegate to admin routes (migrated from dashboard server)
   if (await registerAdminRoutes(req, res, {
@@ -1727,7 +1727,7 @@ const serverRequestHandler = async (req: import("http").IncomingMessage, res: im
         instanceManager.setActive(newInst.id);
         ROOT_DIR = targetDir;
         spawnInstance(newInst.id);
-        broadcast(envelope("instance.added", { instance: { id: newInst.id, dir: newInst.dir, label: newInst.label, status: newInst.status, adapterId: newInst.adapterId, source: newInst.source } }));
+        broadcastToBrowsers(envelope("instance.added", { instance: { id: newInst.id, dir: newInst.dir, label: newInst.label, status: newInst.status, adapterId: newInst.adapterId, source: newInst.source } }));
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ success: true, cwd: targetDir, instanceId: newInst.id }));
       } catch (err) {
@@ -1757,7 +1757,7 @@ const serverRequestHandler = async (req: import("http").IncomingMessage, res: im
     }
     killInstance(instId);
     instanceManager.kill(instId);
-    broadcast(envelope("instance.removed", { instanceId: instId }));
+    broadcastToBrowsers(envelope("instance.removed", { instanceId: instId }));
     if (instanceManager.activeId === instId || !instanceManager.getActive()) {
       const remaining = instanceManager.list();
       if (remaining.length > 0) {
@@ -1782,7 +1782,7 @@ const serverRequestHandler = async (req: import("http").IncomingMessage, res: im
     }
     instanceManager.setActive(instId);
     ROOT_DIR = target.dir;
-    broadcast(envelope("instance.switched", { instanceId: instId }));
+    broadcastToBrowsers(envelope("instance.switched", { instanceId: instId }));
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ success: true, instanceId: instId }));
     return;
@@ -1947,13 +1947,13 @@ function heartbeatPing() {
 function setupWssHandlers(): void {
   wss!.on("connection", (ws: WebSocket) => {
   heartbeatMap.set(ws, true);
-  clients.add(ws);
+  browsers.add(ws);
 
   ws.on("pong", () => {
     heartbeatMap.set(ws, true);
   });
 
-  // Don't start Claude until we know the client's intent
+  // Don't start Claude until we know the peer's intent
 
   ws.on("message", (raw: Buffer) => {
     // ── Crypto: decrypt before processing ────────────────────
@@ -2042,16 +2042,16 @@ function setupWssHandlers(): void {
       }
       send(ws, envelope("welcome", welcomeBody));
 
-      // Tag peer info and broadcast to all connected clients
+      // Tag peer info and broadcast to all connected peers
       if (role === "browser") {
         (ws as any)._browserLabel = msg.label || `Browser-${Date.now().toString(36).slice(-4)}`;
         (ws as any)._browserId = msg.clientToken || `browser_${Date.now()}`;
         (ws as any)._connectedAt = Date.now();
         sendPeers(ws);          // send peer list to the new connection
-        broadcastPeers();       // notify other clients (VIEW card appears)
+        broadcastPeers();       // notify other peers (VIEW card appears)
       }
 
-      // Complete crypto handshake if client provided ephemeral key
+      // Complete crypto handshake if peer provided ephemeral key
       if (cryptoSession && msg.ephemeralKey) {
         cryptoSession.handshake(
           String(msg.ephemeralKey),
@@ -2137,11 +2137,13 @@ function setupWssHandlers(): void {
       (ws as any)._agentRole = msg.role || 'leaf';
       (ws as any)._viaRelayId = msg.viaRelayId || undefined;
       (ws as any)._connectedAt = Date.now();
-      clients.delete(ws);
+      // Not a browser — this is an agent node. Agents are tracked separately
+      // via their instance in instanceManager, not in the browsers set.
+      browsers.delete(ws);
       send(ws, envelope("agent.registered", { instanceId: remoteInst.id, sessionId: remoteInst.id }));
       const entry = instanceManager.toJSON().find(i => i.id === remoteInst.id);
       if (!isReconnect) {
-        broadcast(envelope("instance.added", { instance: entry }));
+        broadcastToBrowsers(envelope("instance.added", { instance: entry }));
       }
       broadcastPeers(); // notify browsers about agent peer
       notifyBus({ scenarioId: 'agent.connected', severity: 'success', title: `Agent connected: ${label}` });
@@ -2283,7 +2285,7 @@ function setupWssHandlers(): void {
         agentInst.agentConnection = null;
         agentInst.status = 'stopped';
         instanceManager.kill(agentInst.id);
-        broadcast(envelope("instance.removed", { instanceId: agentInst.id }));
+        broadcastToBrowsers(envelope("instance.removed", { instanceId: agentInst.id }));
         notifyBus({ scenarioId: 'agent.disconnected', severity: 'warning', title: `Agent disconnected: ${agentInst.label}` });
         auditLog.log('agent.unregistered', agentInst.label, {}, agentInst.id);
         // Validate surfaces: delete any terminal surface pointing to the
@@ -2384,7 +2386,7 @@ function setupWssHandlers(): void {
         // Raw shell stderr → shell subscribers only
         broadcastShellOutput(remoteInst.id, data.slice(0, 65536), "stderr");
       } else {
-        broadcast(envelope("instance.output", { data: data.slice(0, 65536) }));
+        broadcastToBrowsers(envelope("instance.output", { data: data.slice(0, 65536) }));
       }
       remoteInst.outputBuffer.push(data);
       remoteInst.outputSize += data.length;
@@ -2518,7 +2520,7 @@ function setupWssHandlers(): void {
         instanceId: remoteInst.id,
       }));
       const entry = instanceManager.toJSON().find(i => i.id === remoteInst.id);
-      broadcast(envelope("instance.added", { instance: entry }));
+      broadcastToBrowsers(envelope("instance.added", { instance: entry }));
       auditLog.log('instance.spawned', label, { dir, requestId: msg.requestId }, remoteInst.id);
       return;
     }
@@ -2540,7 +2542,7 @@ function setupWssHandlers(): void {
           );
         }
         instanceManager.kill(remoteInst.id);
-        broadcast(envelope("instance.removed", { instanceId: remoteInst.id }));
+        broadcastToBrowsers(envelope("instance.removed", { instanceId: remoteInst.id }));
         auditLog.log('instance.exited', remoteInst.label, { exitCode: msg.exitCode }, remoteInst.id);
       } else if (msg.instanceId) {
         // Cross-relay: instance may be a PC-local terminal. Clean up
@@ -2659,7 +2661,7 @@ function setupWssHandlers(): void {
     // ── Shell terminal ────────────────────────────────────
     if (msg.type === "shell.spawn" || msg.type === "shell_spawn") {
       spawnShellForWs(ws, msg.instanceId).then((shellInst) => {
-        // Track shell in client session for reconnect recovery
+        // Track shell in browser session for reconnect recovery
         const clientToken = wsToClientToken.get(ws);
         if (clientToken) {
           const session = clientSessionMap.get(clientToken);
@@ -2699,7 +2701,7 @@ function setupWssHandlers(): void {
       if (!i) return;
 
       // No shell lock — ptty handles interleaved input naturally.
-      // shell.lock / shell.unlock are still available for clients that want
+      // shell.lock / shell.unlock are still available for peers that want
       // explicit coordination, but are not enforced on the input path.
 
       if (i.source === 'remote') {
@@ -2729,7 +2731,7 @@ function setupWssHandlers(): void {
         send(ws, envelope("shell.lock_status", { instanceId: instId, locked: true, owner: "another-browser" }));
       } else {
         shellLockMap.set(instId, ws);
-        broadcast(envelope("shell.lock_status", { instanceId: instId, locked: true }));
+        broadcastToBrowsers(envelope("shell.lock_status", { instanceId: instId, locked: true }));
       }
       return;
     }
@@ -2737,7 +2739,7 @@ function setupWssHandlers(): void {
       const instId = msg.instanceId || inst().id;
       if (shellLockMap.get(instId) === ws) {
         shellLockMap.delete(instId);
-        broadcast(envelope("shell.lock_status", { instanceId: instId, locked: false }));
+        broadcastToBrowsers(envelope("shell.lock_status", { instanceId: instId, locked: false }));
       }
       return;
     }
@@ -3150,7 +3152,7 @@ function setupWssHandlers(): void {
         });
         if (surfaceManager.isKept(surfaceId)) {
           // Keep=true → persist surface, mark orphaned. Continue to
-          // subscribe so the client can still use the surface tab.
+          // subscribe so the peer can still use the surface tab.
           // Agent inventory will re-validate when the agent reconnects.
           surfaceManager.setOrphaned(surfaceId);
           surfacePersistence.save(surfaceManager);
@@ -3207,6 +3209,20 @@ function setupWssHandlers(): void {
             });
             send(nodeInst.agentConnection, envelope("relay.shell.spawn", {
               instanceId: surface.runtimeRef.instanceId,
+            }));
+          } else {
+            // Surface is kept but the instance is dead and there's no remote
+            // agent to re-spawn it. Send surface.closed so the client removes
+            // the dead tab; the orphaned surface stays server-side (keep=true).
+            surfaceManager.recordDebugEvent({
+              ts: Date.now(), kind: 'surface.subscribe.dead_local',
+              surfaceId, nodeId: surface.nodeId,
+              instanceId: surface.runtimeRef.instanceId,
+              message: 'kept surface with dead local instance — sending surface.closed',
+            });
+            send(ws, envelope("surface.closed", {
+              surfaceId, nodeId: surface.nodeId,
+              reason: 'instance_gone',
             }));
           }
         }
@@ -3287,13 +3303,17 @@ function setupWssHandlers(): void {
 
       // Filter: exclude terminal surfaces whose runtime instance is missing.
       // Kept surfaces waiting for agent reconnect are preserved server-side
-      // but not sent to the client — otherwise the tab reappears with
+      // but not sent to the subscriber — otherwise the tab reappears with
       // "instance not found" error on every keystroke.
-      // Exception: if instanceId === nodeId, this is a node-level shell surface
-      // (the relay node's own terminal), not a runtime sub-instance.
       const filteredSurfaces = surfaces.filter(s => {
         if (s.runtimeRef.kind === 'terminal' && s.runtimeRef.instanceId) {
+          // Node-level shell surface (relay node's own terminal)
           if (s.runtimeRef.instanceId === s.nodeId) return true;
+          // Cross-relay surface: node belongs to a connected remote agent or upstream relay
+          const nodeInst = instanceManager.get(s.nodeId);
+          if (nodeInst?.source === 'remote') return true;
+          if (typeof s.nodeId === 'string' && s.nodeId.startsWith('upstream:')) return true;
+          // Local instance: must exist in instanceManager
           return !!instanceManager.get(s.runtimeRef.instanceId);
         }
         return true;
@@ -3508,7 +3528,7 @@ function setupWssHandlers(): void {
               sendBlock({ blockType: "error", text: `Update failed: ${updateErr.message}` });
             } else {
               sendBlock({ blockType: "status", text: `Update installed. Restart the server to apply.` });
-              broadcast(envelope("system.notification", {
+              broadcastToBrowsers(envelope("system.notification", {
                 severity: "success", title: "Update ready",
                 detail: "Restart the server to apply the update.",
                 scenarioId: "update", duration: 0,
@@ -3552,16 +3572,16 @@ function setupWssHandlers(): void {
   });
 
   ws.on("close", () => {
-    clients.delete(ws);
+    browsers.delete(ws);
     authenticatedSockets.delete(ws);
     agentVersionMap.delete(ws);
     cryptoStreams.delete(ws);
-    broadcastPeers(); // notify remaining clients about peer change
+    broadcastPeers(); // notify remaining peers about peer change
     // Release shell write-locks held by this WS
     for (const [instId, owner] of shellLockMap) {
       if (owner === ws) {
         shellLockMap.delete(instId);
-        broadcast(envelope("shell.lock_status", { instanceId: instId, locked: false }));
+        broadcastToBrowsers(envelope("shell.lock_status", { instanceId: instId, locked: false }));
       }
     }
     // Session persistence: disconnect doesn't kill shells.
@@ -3589,7 +3609,7 @@ function setupWssHandlers(): void {
           inst.agentConnection = null;
           inst.status = 'stopped';
           instanceManager.kill(inst.id);
-          broadcast(envelope("instance.removed", { instanceId: inst.id }));
+          broadcastToBrowsers(envelope("instance.removed", { instanceId: inst.id }));
           broadcastPeers(); // agent peer removed
           auditLog.log('agent.auto_unregistered', inst.label, {}, inst.id);
           instanceManager.cancelOperation(inst.id);
@@ -3613,8 +3633,8 @@ function setupWssHandlers(): void {
 function shutdown(signal: string) {
   console.log(`\n  [${signal}] Shutting down gracefully...`);
 
-  // Notify clients
-  broadcast(envelope("system.shutdown", { message: "Server is shutting down..." }));
+  // Notify peers
+  broadcastToBrowsers(envelope("system.shutdown", { message: "Server is shutting down..." }));
 
   // Persist session before stopping
   sessionPersistence.flush(instanceManager);
@@ -3699,7 +3719,7 @@ export async function startRelayServer(port?: number): Promise<{ close: () => vo
           console.log(`  ${data.updateUrl}`);
           console.log(`  Run "bridge update" to upgrade.\n`);
           // Notify connected browsers
-          broadcast(envelope("update.available", {
+          broadcastToBrowsers(envelope("update.available", {
             current: data.current,
             latest: data.latest,
             url: data.updateUrl,
