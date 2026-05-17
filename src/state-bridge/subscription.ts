@@ -48,6 +48,12 @@ export class SubscriptionManager {
     }
   }
 
+  /** Check if a pattern matches a key directly (no subscriptions needed). */
+  test(pattern: string, key: string): boolean {
+    const keySegs = this.segment(key);
+    return this.matchGlob(pattern, keySegs);
+  }
+
   /** Find all callbacks that match a given key. */
   match(key: string): Subscriber[] {
     const keySegs = this.segment(key);

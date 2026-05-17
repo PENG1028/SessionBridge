@@ -16,6 +16,7 @@ import type { RelayConfigManager } from "../agent-core/config-sync";
 import { envelope } from "../extensions/protocol";
 import { adapterRegistry, getDefaultAdapterId } from "../extensions/registry";
 import type { PermissionCategory } from "../extensions/types";
+import { getStateBus } from "./state-bridge";
 
 // ─── Types ─────────────────────────────────────────────────────
 
@@ -386,6 +387,9 @@ export function registerApiRoutes(
             if (!keep) ctx.surfaceManager.setKeep(surface.surfaceId, false);
             createdSurface = ctx.surfaceManager.toJSON(surface);
 
+            // Force immediate persistence so surfaces survive relay restart
+            getStateBus().flush();
+
             // Cross-browser sync: project into workbench tabs + broadcast
             if (targetNodeId && ctx.workbenchStore) {
               const tab = ctx.surfaceManager.toWorkbenchTab(surface);
@@ -497,6 +501,9 @@ export function registerApiRoutes(
           ctx.surfaceManager.linkOperation(surface.surfaceId, operationId);
           if (!keep) ctx.surfaceManager.setKeep(surface.surfaceId, false);
           createdSurface = ctx.surfaceManager.toJSON(surface);
+
+          // Force immediate persistence so surfaces survive relay restart
+          getStateBus().flush();
 
           // Cross-browser sync: project into workbench tabs + broadcast
           if (ctx.workbenchStore) {

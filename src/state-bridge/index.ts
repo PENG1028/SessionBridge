@@ -375,8 +375,9 @@ export class StateBus {
   private listForPattern(pattern: string): StateEntry[] {
     const results: StateEntry[] = [];
     for (const entry of this.entries.values()) {
-      const subs = this.subs.match(entry.key);
-      if (subs.length > 0) results.push(entry);
+      if (this.subs.test(pattern, entry.key)) {
+        results.push(entry);
+      }
     }
     return results;
   }

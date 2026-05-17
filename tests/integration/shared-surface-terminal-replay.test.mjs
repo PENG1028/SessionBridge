@@ -132,7 +132,6 @@ async function main() {
       env: { ...process.env, BRIDGE_CONFIG: configPath },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-
     let started = false;
     const startTime = Date.now();
     while (Date.now() - startTime < 30000) {

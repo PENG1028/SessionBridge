@@ -277,15 +277,15 @@ async function main() {
     // Force flush before checking
     await delay(800); // wait for debounce
 
-    // relay uses process.cwd() for persistence, so file is in project root
-    const surfacesPath = join(WORK_DIR, '.sessionbridge', 'surfaces.json');
-    check('E1: surfaces.json exists', existsSync(surfacesPath));
-    if (existsSync(surfacesPath)) {
-      const raw = readFileSync(surfacesPath, 'utf-8');
+    // StateBridge uses StateStorage which writes to state.json (version 2, entries key)
+    const statePath = join(WORK_DIR, '.sessionbridge', 'state.json');
+    check('E1: state.json exists', existsSync(statePath));
+    if (existsSync(statePath)) {
+      const raw = readFileSync(statePath, 'utf-8');
       const parsed = JSON.parse(raw);
-      check('E2: surfaces.json has version=1', parsed.version === 1);
-      check('E3: surfaces.json has surfaces array', Array.isArray(parsed.surfaces));
-      console.log(`  surfaces.json: ${parsed.surfaces.length} surface(s)`);
+      check('E2: state.json has version=2', parsed.version === 2);
+      check('E3: state.json has entries array', Array.isArray(parsed.entries));
+      console.log(`  state.json: ${parsed.entries.length} entries(s)`);
     }
 
     const preCount = (await debugSurfaces(RELAY_URL)).surfaces.length;
@@ -404,7 +404,7 @@ async function main() {
     console.log('── Cleanup ──');
     if (bridgeProcess) { bridgeProcess.kill(); await delay(300); }
     try { rmSync(WORK_DIR, { recursive: true, force: true }); } catch {}
-    try { rmSync(join(WORK_DIR, '.sessionbridge', 'surfaces.json'), { force: true }); } catch {}
+    try { rmSync(join(WORK_DIR, '.sessionbridge', 'state.json'), { force: true }); } catch {}
     console.log('  Done.');
   }
 

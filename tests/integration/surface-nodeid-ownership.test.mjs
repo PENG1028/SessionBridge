@@ -168,7 +168,9 @@ async function main() {
           keep: true,
         }),
       });
-      return { ok: resp.ok, ...(await resp.json()) };
+      const json = await resp.json();
+      console.log(`  POST /api/instances ${label}: HTTP ${resp.status}, ok=${resp.ok}, success=${json.success}`);
+      return { ok: resp.ok, ...json };
     };
 
     const t1 = await createTerm('Terminal-1');
@@ -289,8 +291,8 @@ async function main() {
 
     await delay(800); // wait for debounced save
 
-    const surfacesPath = join(WORK_DIR, '.sessionbridge', 'surfaces.json');
-    check('H1: surfaces.json exists before restart', existsSync(surfacesPath));
+    const statePath = join(WORK_DIR, '.sessionbridge', 'state.json');
+    check('H1: state.json exists before restart', existsSync(statePath));
 
     const preRestart = (await debugSurfaces(RELAY_URL)).surfaces;
     const preCount = preRestart.filter(s => s.nodeId === AGENT_NODE_ID).length;
@@ -304,19 +306,32 @@ async function main() {
     console.log('  Relay restarted.');
     await delay(1000);
 
-    // Reconnect browser and subscribe under AGENT_NODE_ID
-    const browserH = await connectBrowser(RELAY_WS, 'H');
-    await waitFor(browserH.inbox, m => m.type === 'welcome', 'H welcome');
-    browserH.ws.send(env('surface.subscribeNode', { nodeId: AGENT_NODE_ID }));
-    const listH = await waitFor(browserH.inbox, m => m.type === 'surface.list', 'H surface.list');
-
-    const restoredCount = (listH.surfaces || []).filter(s => s.nodeId === AGENT_NODE_ID).length;
-    check('H3: After restart, surfaces visible under AGENT_NODE_ID', restoredCount >= 2);
+    // Reconnect browser and verify surfaces via debug endpoint.
+    // surface.subscribeNode filters out surfaces whose runtime instances
+    // died on restart — they're only visible again after agent inventory
+    // reconnects (test I below).
+    const debugH = await debugSurfaces(RELAY_URL);
+    console.log(`  Debug surfaces found: ${debugH.surfaces.length}`);
+    // Diagnostic: what does state.json contain?
+    try {
+      const raw = readFileSync(statePath, 'utf-8');
+      const parsed = JSON.parse(raw);
+      console.log(`  state.json entries: ${parsed.entries ? parsed.entries.length : 0}`);
+      if (parsed.entries) {
+        parsed.entries.forEach(function(e) { console.log('    key: ' + e.key); });
+      }
+    } catch (e) {
+      console.log(`  state.json read error: ${e.message}`);
+    }
+    console.log('  Debug surfaces:');
+    debugH.surfaces.forEach(function(s) { console.log('    surface: ' + s.surfaceId + ' nodeId=' + s.nodeId); });
+    const postRestart = debugH.surfaces.filter(s => s.nodeId === AGENT_NODE_ID).length;
+    check('H3: After restart, surfaces persisted in StateBus under AGENT_NODE_ID', postRestart >= 2);
     check('H4: Restored Surface-1 still under AGENT_NODE_ID',
-      (listH.surfaces || []).some(s => s.surfaceId === SURF_ID_1 && s.nodeId === AGENT_NODE_ID));
+      debugH.surfaces.some(s => s.surfaceId === SURF_ID_1 && s.nodeId === AGENT_NODE_ID));
     check('H5: Restored Surface-2 still under AGENT_NODE_ID',
-      (listH.surfaces || []).some(s => s.surfaceId === SURF_ID_2 && s.nodeId === AGENT_NODE_ID));
-    console.log(`  Restored surfaces under AGENT_NODE_ID: ${restoredCount}`);
+      debugH.surfaces.some(s => s.surfaceId === SURF_ID_2 && s.nodeId === AGENT_NODE_ID));
+    console.log(`  Restored surfaces under AGENT_NODE_ID: ${postRestart}`);
     console.log('');
 
     // ═══════════════════════════════════════════════════════════
@@ -388,7 +403,7 @@ async function main() {
     console.log('── Cleanup ──');
     if (bridgeProcess) { bridgeProcess.kill(); await delay(300); }
     try { rmSync(WORK_DIR, { recursive: true, force: true }); } catch {}
-    try { rmSync(join(WORK_DIR, '.sessionbridge', 'surfaces.json'), { force: true }); } catch {}
+    try { rmSync(join(WORK_DIR, '.sessionbridge', 'state.json'), { force: true }); } catch {}
     console.log('  Done.');
   }
 

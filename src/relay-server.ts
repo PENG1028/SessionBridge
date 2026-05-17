@@ -35,6 +35,7 @@ import { secretStore } from "./configuration/secret-store";
 import { RemoteOperationManager, OperationError } from "./remote-operation-manager";
 import type { OperationKind, OperationInput } from "./remote-operation-manager";
 import { createStateBus, getStateBus } from "./state-bridge";
+import { stateKey } from "./state-bridge/types";
 import { StateRelaySurfaceManager, StateRelayWorkbenchStore, StateRelayShellRouter } from "./state-bridge/relay-integration";
 
 // ─── Session provider helper — first adapter that provides SessionProvider ──
@@ -194,6 +195,8 @@ function syncSurfacesByLabel(nodeId: string, surfaceData: Record<string, unknown
   // Sort: running instances first, so importFromUpstream lands on the active one
   const sorted = instanceManager.list();
   sorted.sort((a, b) => (b.status === 'running' ? 1 : 0) - (a.status === 'running' ? 1 : 0));
+  let matchedLocal = false;
+  let primaryLocalId: string | null = null;
   for (const inst of sorted) {
     if (inst.label === label && inst.id !== nodeId) {
       const surface = surfaceManager.importFromUpstream(
@@ -201,6 +204,10 @@ function syncSurfacesByLabel(nodeId: string, surfaceData: Record<string, unknown
         inst.id,
       );
       if (surface) {
+        if (inst.source === 'local') {
+          matchedLocal = true;
+          primaryLocalId = inst.id;
+        }
         // Project into workbench.tabs for backward-compat
         const tab = surfaceManager.toWorkbenchTab(surface);
         const existingTabs = stateWorkbenchStore.get(inst.id) || [];
@@ -219,6 +226,52 @@ function syncSurfacesByLabel(nodeId: string, surfaceData: Record<string, unknown
           }),
         );
       }
+    }
+  }
+  // Also sync to __local__ so the browser sees surfaces when entering the
+  // local relay node (which uses the virtual '__local__' ID, not the real
+  // instance ID). Mirrors syncTabsByLabel's __local__ fallback.
+  if (matchedLocal && primaryLocalId) {
+    const surfaceData2 = surfaceData as Record<string, unknown>;
+    const existing = surfaceManager.get(String(surfaceData2.surfaceId || ''));
+    if (existing) {
+      const tab = surfaceManager.toWorkbenchTab(existing);
+      const localTabs = stateWorkbenchStore.get('__local__') || [];
+      const ti = localTabs.findIndex((t: any) => t.id === tab.id);
+      if (ti >= 0) localTabs[ti] = tab;
+      else localTabs.push(tab);
+      stateWorkbenchStore.set('__local__', localTabs);
+      stateWorkbenchStore.broadcast('__local__', localTabs);
+      surfaceManager.broadcastToNodeSubscribers(
+        '__local__',
+        send as any,
+        envelope("surface.published", {
+          surfaceId: existing.surfaceId,
+          surface: surfaceManager.toJSON(existing),
+        }),
+      );
+    }
+  } else if (label && localNodeInfo?.name === label) {
+    // Label matches the local node's hostname — sync to __local__ so the
+    // browser sees surfaces even before opening any terminal on the local node.
+    const surfaceData2 = surfaceData as Record<string, unknown>;
+    const existing = surfaceManager.get(String(surfaceData2.surfaceId || ''));
+    if (existing) {
+      const tab = surfaceManager.toWorkbenchTab(existing);
+      const localTabs = stateWorkbenchStore.get('__local__') || [];
+      const ti = localTabs.findIndex((t: any) => t.id === tab.id);
+      if (ti >= 0) localTabs[ti] = tab;
+      else localTabs.push(tab);
+      stateWorkbenchStore.set('__local__', localTabs);
+      stateWorkbenchStore.broadcast('__local__', localTabs);
+      surfaceManager.broadcastToNodeSubscribers(
+        '__local__',
+        send as any,
+        envelope("surface.published", {
+          surfaceId: existing.surfaceId,
+          surface: surfaceManager.toJSON(existing),
+        }),
+      );
     }
   }
 }
@@ -285,6 +338,25 @@ export function onUpstreamMessage(msg: any): void {
             surface: surfaceManager.toJSON(surface),
           }),
         );
+        // If the imported instance is the local relay's own instance, also
+        // sync to __local__ so the browser sees surfaces when entering the
+        // local relay node via the synthetic '__local__' ID.
+        if (inst.source === 'local' || (msg._label && localNodeInfo?.name === msg._label)) {
+          const localTabs = stateWorkbenchStore.get('__local__') || [];
+          const ti = localTabs.findIndex((t: any) => t.id === tab.id);
+          if (ti >= 0) localTabs[ti] = tab;
+          else localTabs.push(tab);
+          stateWorkbenchStore.set('__local__', localTabs);
+          stateWorkbenchStore.broadcast('__local__', localTabs);
+          surfaceManager.broadcastToNodeSubscribers(
+            '__local__',
+            send as any,
+            envelope("surface.published", {
+              surfaceId: surface.surfaceId,
+              surface: surfaceManager.toJSON(surface),
+            }),
+          );
+        }
       }
     }
   }
@@ -2191,7 +2263,21 @@ function setupWssHandlers(): void {
               }
               stateWorkbenchStore.set(agentNodeId, newTabs);
               stateWorkbenchStore.delete(oldNodeId);
-              s.nodeId = agentNodeId;
+              // Persist nodeId change to StateBus entries
+              const globalKey = stateKey('global', `surfaces/${s.surfaceId}`);
+              const nodeKey = stateKey('node', `${oldNodeId}/surfaces/${s.surfaceId}`);
+              const newNodeKey = stateKey('node', `${agentNodeId}/surfaces/${s.surfaceId}`);
+              const entry = stateBus.getEntry(globalKey);
+              if (entry) {
+                const updatedValue = { ...entry.value as any, nodeId: agentNodeId, updatedAt: Date.now() };
+                stateBus.set(globalKey, updatedValue);
+                // Move node-keyed entry from old nodeId to new
+                const oldNodeEntry = stateBus.getEntry(nodeKey);
+                if (oldNodeEntry) {
+                  stateBus.delete(nodeKey);
+                }
+                stateBus.set(newNodeKey, updatedValue);
+              }
               remappedCount++;
               surfaceManager.recordDebugEvent({
                 ts: Date.now(), kind: 'surface.remap.nodeId',
@@ -2953,11 +3039,28 @@ function setupWssHandlers(): void {
           // Always sync workbench tabs (deduped)
           const tab = surfaceManager.toWorkbenchTab(imported);
           const existingTabs = stateWorkbenchStore.get(remapNodeId) || [];
-          const idx = existingTabs.findIndex((t: any) => t.id === tab.id);
-          if (idx >= 0) existingTabs[idx] = tab;
+          const tIdx = existingTabs.findIndex((t: any) => t.id === tab.id);
+          if (tIdx >= 0) existingTabs[tIdx] = tab;
           else existingTabs.push(tab);
           stateWorkbenchStore.set(remapNodeId, existingTabs);
           stateWorkbenchStore.broadcast(remapNodeId, existingTabs, ws);
+          // Also sync to __local__ if the remapped instance is the local relay
+          if (inst && (inst.source === 'local' || (msg._label && localNodeInfo?.name === msg._label))) {
+            const localTabs = stateWorkbenchStore.get('__local__') || [];
+            const lIdx = localTabs.findIndex((t: any) => t.id === tab.id);
+            if (lIdx >= 0) localTabs[lIdx] = tab;
+            else localTabs.push(tab);
+            stateWorkbenchStore.set('__local__', localTabs);
+            stateWorkbenchStore.broadcast('__local__', localTabs, ws);
+            surfaceManager.broadcastToNodeSubscribers(
+              '__local__',
+              send as any,
+              envelope("surface.published", {
+                surfaceId: imported.surfaceId,
+                surface: stateSurfaceManager.toJSON(imported),
+              }),
+            );
+          }
         }
         return;
       }
@@ -3033,10 +3136,12 @@ function setupWssHandlers(): void {
 
       stateBus.flush();
 
-      // Return published confirmation with full surface data
+      // Return published confirmation with full surface data.
+      // Re-read from store so linkOperation updates are reflected.
+      const publishedSurface = surfaceManager.get(surface.surfaceId) || surface;
       send(ws, envelope("surface.published", {
         surfaceId: surface.surfaceId,
-        surface: stateSurfaceManager.toJSON(surface),
+        surface: stateSurfaceManager.toJSON(publishedSurface),
       }));
 
       // Broadcast to node subscribers so browsers that called
@@ -3793,6 +3898,8 @@ export class NodeRelayServer {
       // Clean up stale terminal surfaces whose runtime process died with the relay.
       // Remote agent surfaces (source:'remote') and upstream surfaces are preserved —
       // agent inventory will revalidate on reconnect.
+      // Kept surfaces are marked orphaned instead of deleted so inventory reconnect
+      // can reclaim them.
       let staleCount = 0;
       for (const s of allSurfaces) {
         if (s.runtimeRef.kind !== 'terminal' || !s.runtimeRef.instanceId) continue;
@@ -3801,12 +3908,19 @@ export class NodeRelayServer {
         if (typeof s.nodeId === 'string' && s.nodeId.startsWith('upstream:')) continue;
         const nodeInst = instanceManager.get(s.nodeId);
         if (nodeInst?.source === 'remote') continue;
-        stateSurfaceManager.delete(s.surfaceId);
-        const tabs = stateWorkbenchStore.get(s.nodeId) || [];
-        const filtered = tabs.filter((t: any) => t.id !== s.surfaceId && t._surfaceId !== s.surfaceId);
-        if (filtered.length !== tabs.length) stateWorkbenchStore.set(s.nodeId, filtered);
+        // Surface is stale (no local instance, no remote agent) — if kept, orphan
+        // for inventory reconnect; otherwise delete.
+        if (s.keep) {
+          stateSurfaceManager.setOrphaned(s.surfaceId);
+        } else {
+          stateSurfaceManager.delete(s.surfaceId);
+          const tabs = stateWorkbenchStore.get(s.nodeId) || [];
+          const filtered = tabs.filter((t: any) => t.id !== s.surfaceId && t._surfaceId !== s.surfaceId);
+          if (filtered.length !== tabs.length) stateWorkbenchStore.set(s.nodeId, filtered);
+        }
         staleCount++;
       }
+      if (staleCount > 0) stateBus.flush();
       console.log(`[relay] Restored ${allSurfaces.length} surface(s)${staleCount > 0 ? `, cleaned ${staleCount} stale terminal(s)` : ''}`);
     }
 

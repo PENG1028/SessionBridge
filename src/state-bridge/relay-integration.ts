@@ -41,7 +41,7 @@ function shellExitKey(nodeId: string, instanceId: string): StateKey {
 }
 
 function nodeSurfacesGlob(nodeId: string): string {
-  return `node:${nodeId}/surfaces/*`;
+  return `node/${nodeId}/surfaces/*`;
 }
 
 // ─── Helpers ────────────────────────────────────────────────
@@ -142,8 +142,11 @@ export class StateRelaySurfaceManager {
   /** Get runtime state for a surface (simple status-only wrapper). */
   getRuntime(surfaceId: string): { status: string; operationId: string } | undefined {
     const rt = this.runtimeStates.get(surfaceId);
-    if (!rt) return undefined;
-    return { status: rt.status, operationId: rt.operationId };
+    if (rt) return { status: rt.status, operationId: rt.operationId };
+    // Fallback: derive from surface data when no explicit runtime was initialized
+    const surface = this.get(surfaceId);
+    if (!surface) return undefined;
+    return { status: surface.orphaned ? 'orphaned' : 'idle', operationId: surface.runtimeRef?.operationId || '' };
   }
 
   /** Initialize runtime state for a surface. Called after create(). */
@@ -188,6 +191,7 @@ export class StateRelaySurfaceManager {
   delete(surfaceId: string): boolean {
     const surface = this.get(surfaceId);
     if (!surface) return false;
+    this.recordDebugEvent({ ts: Date.now(), kind: 'surface.close', surfaceId, nodeId: surface.nodeId, message: `surface deleted` });
     this.bus.delete(surfaceGlobalKey(surfaceId));
     this.bus.delete(surfaceNodeKey(surface.nodeId, surfaceId));
     return true;
@@ -255,7 +259,7 @@ export class StateRelaySurfaceManager {
     return {
       id: surface.surfaceId,
       title: surface.title,
-      type: surface.viewType,
+      viewType: surface.viewType,
       instanceId: surface.runtimeRef?.instanceId || surface.nodeId,
       _surfaceId: surface.surfaceId,
       _operationId: surface.runtimeRef?.operationId,
@@ -313,10 +317,13 @@ export class StateRelaySurfaceManager {
     return surface;
   }
 
-  // ── Subscriber tracking (in-memory, WebSocket-scoped) ──────
+  // ── Subscriber tracking + output replay buffer ────────────
 
   private surfaceSubs = new Map<string, Set<WebSocket>>();
   private nodeSubs = new Map<string, Set<WebSocket>>();
+  private outputBuffer = new Map<string, Array<{ stream: string; data: string; ts: number }>>();
+  private lastResult = new Map<string, any>();
+  private readonly MAX_REPLAY_LINES = 5000;
 
   /** Subscribe a WS to a specific surface's output events. */
   subscribe(
@@ -329,6 +336,18 @@ export class StateRelaySurfaceManager {
     if (!surface) return null;
     if (!this.surfaceSubs.has(surfaceId)) this.surfaceSubs.set(surfaceId, new Set());
     this.surfaceSubs.get(surfaceId)!.add(ws);
+
+    // Replay buffered output to new subscriber
+    const buf = this.outputBuffer.get(surfaceId);
+    if (buf && buf.length > 0) {
+      const outputs = buf.map(c => ({ data: c.data, stream: c.stream }));
+      try { sendFn(ws, envelopeFn('runtime.replay', { surfaceId, outputs })); } catch {}
+    }
+    // Replay cached runtime.result (if operation already completed)
+    const result = this.lastResult.get(surfaceId);
+    if (result) {
+      try { sendFn(ws, result); } catch {}
+    }
 
     ws.addEventListener('close', () => {
       const subs = this.surfaceSubs.get(surfaceId);
@@ -417,6 +436,23 @@ export class StateRelaySurfaceManager {
     sendFn: (w: WebSocket, m: any) => void,
     msg: any,
   ): void {
+    // Buffer runtime.output for late-joining subscribers (replay).
+    // Messages can arrive in envelope format ({ v, type, body: { data } })
+    // or flat format ({ type, data }). Handle both.
+    if (msg?.type === 'runtime.output') {
+      const outputData = msg.data || msg.body?.data;
+      if (outputData) {
+        const buf = this.outputBuffer.get(surfaceId) || [];
+        buf.push({ stream: msg.stream || msg.body?.stream || 'stdout', data: outputData, ts: Date.now() });
+        while (buf.length > this.MAX_REPLAY_LINES) buf.shift();
+        this.outputBuffer.set(surfaceId, buf);
+      }
+    }
+    // Cache runtime.result so late-joining subscribers also receive it
+    if (msg?.type === 'runtime.result') {
+      this.lastResult.set(surfaceId, msg);
+    }
+
     const subs = this.surfaceSubs.get(surfaceId);
     if (!subs) return;
     for (const ws of subs) {
@@ -466,12 +502,16 @@ export class StateRelaySurfaceManager {
 
   // ── Debug ───────────────────────────────────────────────────
 
-  private debugEvents: Array<{ ts: number; kind: string; message: string; extra?: Record<string, unknown> }> = [];
+  private debugEvents: Array<{ ts: number; kind: string; surfaceId?: string; nodeId?: string; instanceId?: string; operationId?: string; message: string; extra?: Record<string, unknown> }> = [];
 
   recordDebugEvent(ev: { ts: number; kind: string; surfaceId?: string; nodeId?: string; instanceId?: string; operationId?: string; message?: string; extra?: Record<string, unknown> }): void {
     this.debugEvents.push({
       ts: ev.ts,
       kind: ev.kind,
+      surfaceId: ev.surfaceId,
+      nodeId: ev.nodeId,
+      instanceId: ev.instanceId,
+      operationId: ev.operationId,
       message: ev.message || ev.kind,
       extra: ev.extra,
     });
@@ -507,7 +547,17 @@ export class StateRelayWorkbenchStore {
   constructor(private bus: StateBus) {}
 
   get(nodeId: string): any[] | undefined {
-    return this.tabs.get(nodeId);
+    // Fast path: in-memory cache
+    const cached = this.tabs.get(nodeId);
+    if (cached !== undefined) return cached;
+    // Fallback: restore from StateBus persistence (survives relay restart)
+    const stored = this.bus.get<unknown[]>(workbenchKey(nodeId));
+    if (stored !== undefined) {
+      const restored = Array.isArray(stored) ? stored : [];
+      this.tabs.set(nodeId, restored);
+      return restored;
+    }
+    return undefined;
   }
 
   set(nodeId: string, tabs: any[]): void {
