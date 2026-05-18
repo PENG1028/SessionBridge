@@ -124,7 +124,7 @@ export class NodeRuntime {
         setRelayUpstream((type, body) => this.relay.send(type, body));
       }
       this.relay.on('relayMessage', (msg: any) => {
-        if (msg.type?.startsWith('workbench.') || msg.type?.startsWith('surface.')) {
+        if (msg.type?.startsWith('workbench.') || msg.type?.startsWith('surface.') || msg.type === 'runtime.output' || msg.type === 'runtime.status') {
           // Only process upstream messages if we have a real upstream relay.
           // Without upstreamRelay, this node is the root relay and uses a loopback
           // connection for internal communication. Broadcast messages from

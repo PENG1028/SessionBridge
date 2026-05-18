@@ -586,6 +586,21 @@ export class StateRelayWorkbenchStore {
     this.bus.delete(workbenchKey(nodeId));
   }
 
+  /** Remove ALL tabs and broadcasts cleanup to subscribers. */
+  clear(): void {
+    const allNodeIds = [...this.tabs.keys()];
+    this.tabs.clear();
+    for (const nid of allNodeIds) {
+      this.bus.delete(workbenchKey(nid));
+      this.broadcast(nid, []);
+    }
+  }
+
+  /** Get all node IDs with workbench tab entries. */
+  getAllNodeIds(): string[] {
+    return Array.from(this.tabs.keys());
+  }
+
   subscribe(nodeId: string, ws: WebSocket): any[] | undefined {
     if (!this.subscribers.has(nodeId)) this.subscribers.set(nodeId, new Set());
     this.subscribers.get(nodeId)!.add(ws);
@@ -612,11 +627,6 @@ export class StateRelayWorkbenchStore {
       subs.delete(ws);
       if (subs.size === 0) this.subscribers.delete(nid);
     }
-  }
-
-  /** Get all node IDs with workbench tab entries. */
-  getAllNodeIds(): string[] {
-    return Array.from(this.tabs.keys());
   }
 
   /** Diagnostic: return subscriber count per nodeId. */

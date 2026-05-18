@@ -483,6 +483,18 @@ export function onUpstreamMessage(msg: any): void {
       );
     }
   }
+  if (msg.type === 'runtime.output') {
+    const surfaceId = String(msg.surfaceId || '');
+    if (!surfaceId) return;
+    surfaceManager.emitOutput(surfaceId, msg.stream || 'stdout', msg.data || '', send, envelope);
+    return;
+  }
+  if (msg.type === 'runtime.status') {
+    const surfaceId = String(msg.surfaceId || '');
+    if (!surfaceId) return;
+    surfaceManager.emitStatus(surfaceId, msg.status || 'unknown', msg.detail, send, envelope);
+    return;
+  }
 }
 
 // ─── Core Services ────────────────────────────────────────────────
@@ -1986,6 +1998,31 @@ const serverRequestHandler = async (req: import("http").IncomingMessage, res: im
   }
 
   // ── StateBus diagnostic endpoint ─────────────────────────────
+  if (path === "/api/debug/statebus" && req.method === "POST") {
+    const clientIp = req.socket.remoteAddress || "";
+    const isLocal = clientIp === "127.0.0.1" || clientIp === "::1" || clientIp === "::ffff:127.0.0.1";
+    if (!isLocal) {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error: "Debug endpoint restricted to localhost" }));
+      return;
+    }
+    try {
+      // Clear all surfaces and workbench tabs, then flush
+      for (const s of stateSurfaceManager.listAll()) {
+        stateSurfaceManager.delete(s.surfaceId);
+      }
+      stateWorkbenchStore.clear();
+      stateBus.flush();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true, message: "StateBus surfaces and workbench tabs cleared" }));
+    } catch (e: any) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error: e.message }));
+    }
+    return;
+  }
+
+// ── StateBus diagnostic endpoint ─────────────────────────────
   if (path === "/api/debug/statebus" && req.method === "GET") {
     const clientIp = req.socket.remoteAddress || "";
     const isLocal = clientIp === "127.0.0.1" || clientIp === "::1" || clientIp === "::ffff:127.0.0.1";
@@ -3629,6 +3666,10 @@ function setupWssHandlers(): void {
             send(nodeInst.agentConnection, envelope("relay.shell.spawn", {
               instanceId: surface.runtimeRef.instanceId,
             }));
+            // Subscribe the downstream relay's upstream WS to the surface so the
+            // upstream relay broadcasts runtime.* updates (output, status, etc.)
+            // to this relay's relayMessage handler.
+            _sendUpstream?.("surface.subscribe", { surfaceId });
           } else {
             // Surface is kept but the instance is dead and there's no remote
             // agent to re-spawn it. Send surface.closed so the client removes
