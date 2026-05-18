@@ -387,27 +387,52 @@ export function onUpstreamMessage(msg: any): void {
     if (!nodeId || !surfaceData?.surfaceId) return;
     const inst = instanceManager.get(nodeId);
     if (!inst) {
-      // When nodeId is __local__ from an upstream relay, import the surface
-      // into our __local__ namespace so local browsers discover it.
-      // This handles the VPS→downstream sync direction (S1 scenario).
+      // When nodeId is __local__ and we have a _label, try to map the
+      // surface to the downstream relay's instance ID by label match.
+      // This handles the downstream→VPS sync direction (N1 scenario).
+      // Falls back to __local__ when no instance matches (VPS→downstream).
       if (nodeId === '__local__' && msg._label) {
-        const imported = surfaceManager.importFromUpstream(surfaceData as any, '__local__');
+        const label = String(msg._label);
+        const matchedInst = instanceManager.list().find(
+          i => i.label === label && i.status === 'running'
+        );
+        const remapNodeId = matchedInst ? matchedInst.id : '__local__';
+
+        const imported = surfaceManager.importFromUpstream(surfaceData as any, remapNodeId);
         if (imported) {
           const tab = surfaceManager.toWorkbenchTab(imported);
-          const existingTabs = stateWorkbenchStore.get('__local__') || [];
+          const existingTabs = stateWorkbenchStore.get(remapNodeId) || [];
           const idx = existingTabs.findIndex((t: any) => t.id === tab.id);
           if (idx >= 0) existingTabs[idx] = tab;
           else existingTabs.push(tab);
-          stateWorkbenchStore.set('__local__', existingTabs);
-          stateWorkbenchStore.broadcast('__local__', existingTabs);
+          stateWorkbenchStore.set(remapNodeId, existingTabs);
+          stateWorkbenchStore.broadcast(remapNodeId, existingTabs);
           surfaceManager.broadcastToNodeSubscribers(
-            '__local__',
+            remapNodeId,
             send as any,
             envelope("surface.published", {
               surfaceId: imported.surfaceId,
               surface: surfaceManager.toJSON(imported),
             }),
           );
+          // When matched a downstream relay, also sync to __local__ so a
+          // browser entering __local__ sees surfaces from downstream relays.
+          if (matchedInst) {
+            const localTabs = stateWorkbenchStore.get('__local__') || [];
+            const lIdx = localTabs.findIndex((t: any) => t.id === tab.id);
+            if (lIdx >= 0) localTabs[lIdx] = tab;
+            else localTabs.push(tab);
+            stateWorkbenchStore.set('__local__', localTabs);
+            stateWorkbenchStore.broadcast('__local__', localTabs);
+            surfaceManager.broadcastToNodeSubscribers(
+              '__local__',
+              send as any,
+              envelope("surface.published", {
+                surfaceId: imported.surfaceId,
+                surface: surfaceManager.toJSON(imported),
+              }),
+            );
+          }
           // Fulfill pending subscribers that forwarded their
           // surface.subscribe upstream before this broadcast arrived
           completePendingUpstreamSubs(imported.surfaceId);

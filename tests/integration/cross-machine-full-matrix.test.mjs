@@ -916,13 +916,19 @@ async function testTerminalExit() {
     const t8Surf = await waitFor(browserA.inbox, m => m.type === 'surface.published', 'A t8 surf');
     check('T8.1: Surface published for terminal', !!t8Surf.surfaceId);
 
-    // Send exit command
-    browserA.ws.send(env('operation.input', { operationId: t8Stat.operationId, data: 'exit\n' }));
-    await delay(3000);
+    // Send exit command (use \r\n for PTY line ending compatibility)
+    browserA.ws.send(env('operation.input', { operationId: t8Stat.operationId, data: 'exit\r\n' }));
+    // Wait for bash --login to process the exit command and terminate
+    await delay(8000);
 
-    // Check if instance stopped
-    const t8State2 = await httpGet(`${VPS_HTTP}/api/debug/statebus`);
-    const t8Stopped = t8State2.instances?.find(i => i.id === t8Inst.id);
+    // Check if instance stopped (retry with backoff to allow async exit handling)
+    let t8Stopped: any = null;
+    for (let retry = 0; retry < 3; retry++) {
+      const t8State2 = await httpGet(`${VPS_HTTP}/api/debug/statebus`);
+      t8Stopped = t8State2.instances?.find((i: any) => i.id === t8Inst.id);
+      if (!t8Stopped || t8Stopped.status === 'stopped') break;
+      await delay(2000);
+    }
     check('T8.2: Terminal instance stopped after exit', !t8Stopped || t8Stopped.status === 'stopped');
   } else {
     check('T8.1: Found terminal instance', false);
