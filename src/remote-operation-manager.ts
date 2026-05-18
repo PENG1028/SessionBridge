@@ -414,6 +414,11 @@ export class RemoteOperationManager {
     return true;
   }
 
+  /** Get operation metadata (read-only public accessor). */
+  getOperation(operationId: string): RemoteOperation | undefined {
+    return this.operations.get(operationId);
+  }
+
   /** Cancel an operation. */
   cancel(
     operationId: string,

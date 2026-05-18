@@ -399,21 +399,27 @@ export function onUpstreamMessage(msg: any): void {
   if (msg.type === 'surface.update') {
     const surfaceId = String(msg.surfaceId || '');
     if (!surfaceId) return;
+    console.log('[upstream.update] received surface.update surfaceId=%s patch?title=%s title=%s', surfaceId, msg.patch?.title, msg.title);
     const updated = surfaceManager.update(surfaceId, {
       title: msg.patch?.title ?? msg.title,
       replayPolicy: msg.patch?.replayPolicy ?? msg.replayPolicy,
       permissions: msg.patch?.permissions ?? msg.permissions,
       scope: msg.patch?.scope ?? msg.scope,
     } as any);
+    console.log('[upstream.update] updated=%s', !!updated);
     if (updated) {
       // Update workbenchTabStore so re-subscribe sees new title
       const nodeId = updated.nodeId;
       const tabs = stateWorkbenchStore.get(nodeId) || [];
+      console.log('[upstream.update] nodeId=%s tabs.length=%d tabIdx=%d', nodeId, tabs.length, tabs.findIndex((t: any) => t._surfaceId === surfaceId || t.id === surfaceId));
       const tabIdx = tabs.findIndex((t: any) => t._surfaceId === surfaceId || t.id === surfaceId);
       if (tabIdx >= 0) {
         tabs[tabIdx] = surfaceManager.toWorkbenchTab(updated);
         stateWorkbenchStore.set(nodeId, tabs);
         stateWorkbenchStore.broadcast(nodeId, tabs);
+        console.log('[upstream.update] tab updated tabIdx=%d title="%s" _surfaceId=%s', tabIdx, tabs[tabIdx]?.title, tabs[tabIdx]?._surfaceId);
+      } else {
+        console.log('[upstream.update] tab NOT FOUND in workbench store nodeId=%s tabs.length=%d', nodeId, tabs.length);
       }
       surfaceManager.broadcastToNodeSubscribers(
         updated.nodeId,
@@ -3176,6 +3182,20 @@ function setupWssHandlers(): void {
         return;
       }
 
+    // No linked surface — route via operation instanceId.
+    // shell.spawn creates a terminal op without a surface, so
+    // operation.input must reach the shell PTY directly.
+    const termOp = operationManager.getOperation(operationId);
+    if (termOp && termOp.kind === 'terminal' && termOp.instanceId) {
+      const inst = instanceManager.get(termOp.instanceId);
+      if (inst) {
+        if (!sendStdin(inst, data)) {
+          console.log('[operation.input] local terminal: sendStdin failed for instance=%s', termOp.instanceId);
+        }
+        return;
+      }
+    }
+
       operationManager.forwardInputToAgent(
         operationId, data,
         (id) => instanceManager.get(id),
@@ -3214,6 +3234,7 @@ function setupWssHandlers(): void {
       stateWorkbenchStore.subscribe(nodeId, ws);
       // Send current tab state immediately
       const tabs = stateWorkbenchStore.get(nodeId) || [];
+      console.log('[workbench.subscribe] nodeId=%s sending %d tabs titles=%s', nodeId, tabs.length, tabs.map((t:any) => `"${t.title}"`).join(','));
       send(ws, envelope("workbench.tabs", { nodeId, tabs }));
       // Notify upstream relay on first subscriber
       if (wasEmpty) _sendUpstream?.("workbench.subscribe", { nodeId });
@@ -3422,9 +3443,13 @@ function setupWssHandlers(): void {
 
       stateBus.flush();
 
+      // Debug: confirm surface exists in StateBus after creation
+      const checkGet = surfaceManager.get(surface.surfaceId);
+      console.log('[surface.publish] created surfaceId=%s nodeId=%s inStateBus=%s title="%s"', surface.surfaceId, nodeId, !!checkGet, surface.title);
+
       // Return published confirmation with full surface data.
       // Re-read from store so linkOperation updates are reflected.
-      const publishedSurface = surfaceManager.get(surface.surfaceId) || surface;
+      const publishedSurface = checkGet || surface;
       send(ws, envelope("surface.published", {
         surfaceId: surface.surfaceId,
         surface: stateSurfaceManager.toJSON(publishedSurface),
@@ -3704,12 +3729,17 @@ function setupWssHandlers(): void {
       const surfaceId = String(msg.surfaceId || "");
       if (!surfaceId) return;
 
+      console.log('[surface.update WS] surfaceId=%s title=%s patch?title=%s', surfaceId, msg.title, msg.patch?.title);
+      // Debug: check if surface exists in StateBus before update
+      const preGet = surfaceManager.get(surfaceId);
+      console.log('[surface.update WS] preGet=%s exists=%s', surfaceId, !!preGet);
       const updated = surfaceManager.update(surfaceId, {
         title: msg.title ?? msg.patch?.title,
         replayPolicy: msg.replayPolicy ?? msg.patch?.replayPolicy,
         permissions: msg.permissions ?? msg.patch?.permissions,
         scope: msg.scope ?? msg.patch?.scope,
       });
+      console.log('[surface.update WS] updated=%s nodeId=%s', !!updated, updated?.nodeId);
 
       if (!updated) {
         send(ws, envelope("error", { code: "SURFACE_NOT_FOUND", message: `Surface ${surfaceId} not found` }));
