@@ -73,9 +73,19 @@ export class RelayConnection extends EventEmitter {
   /** Send a raw string, encrypted if crypto is established. */
   private sendRaw(data: string): void {
     if (this._cryptoStream?.isEstablished) {
-      this._cryptoStream.send(data);
+      try {
+        this._cryptoStream.send(data);
+      } catch (err) {
+        console.error('[relay-connection] crypto send error:', (err as Error)?.message || err);
+      }
     } else if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(data);
+      try {
+        this.ws.send(data);
+      } catch (err) {
+        console.error('[relay-connection] ws send error:', (err as Error)?.message || err);
+      }
+    } else {
+      console.error('[relay-connection] sendRaw: ws not open (state=%s) ws=%s', this.ws?.readyState ?? 'null', !!this.ws);
     }
   }
 

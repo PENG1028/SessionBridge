@@ -430,6 +430,17 @@ async function testTerminalSpawn() {
     const t2Surf = await waitFor(browserB.inbox, m => m.type === 'surface.published', 'B t2 surf');
     check('T2.2: Surface published for local terminal', !!t2Surf.surfaceId);
 
+    // Wait for upstream propagation so VPS has the surface before A subscribes
+    await delay(3000);
+    // Debug: check local relay first, then VPS
+    const t2LocalState = await httpGet(`http://localhost:${LOCAL_PORT}/api/debug/surfaces`);
+    const t2LocalSurf = t2LocalState.surfaceDebug?.surfaces?.find((s) => s.surfaceId === t2Surf.surfaceId);
+    console.log(`[T2-DEBUG] Local has surface=${!!t2LocalSurf} localSurfaces=${t2LocalState.surfaceDebug?.surfaces?.length}`);
+    // Debug: check if VPS has the surface
+    const t2VpsState = await httpGet(`${VPS_HTTP}/api/debug/surfaces`);
+    const t2VpsSurf = t2VpsState.surfaceDebug?.surfaces?.find((s) => s.surfaceId === t2Surf.surfaceId);
+    console.log(`[T2-DEBUG] VPS has surface=${!!t2VpsSurf} vpsSurfaces=${t2VpsState.surfaceDebug?.surfaces?.length}`);
+
     // Subscribe A to it
     browserA.ws.send(env('surface.subscribe', { surfaceId: t2Surf.surfaceId }));
     const t2SubA = await waitFor(browserA.inbox, m => m.type === 'surface.subscribed', 'A t2 sub');

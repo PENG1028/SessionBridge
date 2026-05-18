@@ -108,6 +108,16 @@ export function setRelayConnection(connection: RelayConnection): void {
 // via the NodeRuntime's RelayConnection.
 let _sendUpstream: ((type: string, body: any) => void) | null = null;
 
+// Wrapped version with error logging for diagnostics.
+function safeSendUpstream(type: string, body: any): void {
+  if (!_sendUpstream) return;
+  try {
+    _sendUpstream(type, body);
+  } catch (err) {
+    console.error('[upstream] send failed type=%s error=%s', type, (err as Error)?.message || err);
+  }
+}
+
 // Enable for cross-relay surface sync debugging
 const VERBOSE_SURFACE = process.env.VERBOSE_SURFACE === '1';
 
@@ -3310,7 +3320,7 @@ function setupWssHandlers(): void {
       console.log('[workbench.subscribe] nodeId=%s sending %d tabs (reconciled %d -> %d) titles=%s', nodeId, tabs.length, rawTabs.length, reconciled.length, tabs.map((t:any) => `"${t.title}"`).join(','));
       send(ws, envelope("workbench.tabs", { nodeId, tabs }));
       // Notify upstream relay on first subscriber
-      if (wasEmpty) _sendUpstream?.("workbench.subscribe", { nodeId });
+      if (wasEmpty) safeSendUpstream("workbench.subscribe", { nodeId });
       return;
     }
 
@@ -3320,7 +3330,7 @@ function setupWssHandlers(): void {
       stateWorkbenchStore.unsubscribe(nodeId, ws);
       // Last local subscriber left — unsubscribe upstream
       if (!stateWorkbenchStore.hasSubscribers(nodeId)) {
-        _sendUpstream?.("workbench.unsubscribe", { nodeId });
+        safeSendUpstream("workbench.unsubscribe", { nodeId });
       }
       return;
     }
@@ -3347,7 +3357,7 @@ function setupWssHandlers(): void {
         send(nodeInst.agentConnection, envelope("workbench.tabs", { nodeId, tabs, _label: label }));
       }
       // Forward to upstream relay for cross-relay sync
-      _sendUpstream?.("workbench.tabs", { nodeId, tabs, _label: label });
+      safeSendUpstream("workbench.tabs", { nodeId, tabs, _label: label });
       // Cross-relay label normalization: if the incoming message uses
       // a different instance ID than what local subscribers expect,
       // find instances with the same label and sync there.
@@ -3560,7 +3570,7 @@ function setupWssHandlers(): void {
         label = localNodeInfo?.name || instanceManager.list().find(i => i.source === 'local')?.label;
       }
       console.log('[surface.publish] _sendUpstream nodeId=%s label=%s surfaceId=%s title="%s"', nodeId, label, surface.surfaceId, surface.title);
-      _sendUpstream?.("surface.publish", {
+      safeSendUpstream("surface.publish", {
         nodeId,
         surface: stateSurfaceManager.toJSON(surface),
         _label: label,
@@ -3669,7 +3679,20 @@ function setupWssHandlers(): void {
             // Subscribe the downstream relay's upstream WS to the surface so the
             // upstream relay broadcasts runtime.* updates (output, status, etc.)
             // to this relay's relayMessage handler.
-            _sendUpstream?.("surface.subscribe", { surfaceId });
+            safeSendUpstream("surface.subscribe", { surfaceId });
+          } else if (_sendUpstream) {
+            // Instance not found locally and no matching remote agent,
+            // but we have an upstream connection. The instance may be
+            // on the upstream relay (e.g., VPS surface viewed from a
+            // downstream relay). Subscribe the upstream WS so it
+            // forwards runtime.* updates back to us.
+            surfaceManager.recordDebugEvent({
+              ts: Date.now(), kind: 'surface.subscribe.forward_upstream',
+              surfaceId, nodeId: surface.nodeId,
+              instanceId: surface.runtimeRef.instanceId,
+              message: 'forwarding surface.subscribe upstream',
+            });
+            safeSendUpstream("surface.subscribe", { surfaceId });
           } else {
             // Surface is kept but the instance is dead and there's no remote
             // agent to re-spawn it. Send surface.closed so the client removes
@@ -3791,7 +3814,7 @@ function setupWssHandlers(): void {
         nodeId, extra: { surfaceCount: filteredSurfaces.length, filteredTotal: surfaces.length },
       });
       // Notify upstream relay so it forwards surface updates for this node
-      _sendUpstream?.("surface.subscribeNode", { nodeId });
+      safeSendUpstream("surface.subscribeNode", { nodeId });
       return;
     }
 
@@ -3799,7 +3822,7 @@ function setupWssHandlers(): void {
       const nodeId = String(msg.nodeId || "");
       if (nodeId) {
         surfaceManager.unsubscribeNode(nodeId, ws);
-        _sendUpstream?.("surface.unsubscribeNode", { nodeId });
+        safeSendUpstream("surface.unsubscribeNode", { nodeId });
       }
       return;
     }
@@ -3879,7 +3902,7 @@ function setupWssHandlers(): void {
         permissions: msg.patch?.permissions ?? msg.permissions,
         scope: msg.patch?.scope ?? msg.scope,
       };
-      _sendUpstream?.("surface.update", {
+      safeSendUpstream("surface.update", {
         surfaceId,
         nodeId: updated.nodeId,
         patch,
@@ -3926,7 +3949,7 @@ function setupWssHandlers(): void {
       // Remove from ALL workbench tab stores (surface may be in __local__ etc.)
       removeSurfaceFromAllWorkbenches(surfaceId);
 
-      _sendUpstream?.("surface.close", { surfaceId, nodeId });
+      safeSendUpstream("surface.close", { surfaceId, nodeId });
 
       // Broadcast close to downstream relays
       if (nodeId) {
