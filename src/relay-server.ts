@@ -790,8 +790,9 @@ function broadcastShellOutput(instanceId: string, data: string, stream: string =
     const hasShared = surfaces.some(s => s.shared);
     if (hasShared) {
       _sendUpstream("agent.stdout", { instanceId, line: data });
+      console.log('[broadcastShellOutput] FORWARDED instanceId=%s surfaces=%d lineLen=%d',
+        instanceId, surfaces.length, (data || '').length);
     } else if (data && data.length > 0) {
-      // Debug: log when output is NOT forwarded to help diagnose T2.4
       console.log('[broadcastShellOutput] NOT forwarding instanceId=%s surfaces=%d shared=%s firstTitle=%s',
         instanceId, surfaces.length, surfaces.map(s => s.shared),
         surfaces[0]?.title || '(none)');
@@ -2857,12 +2858,16 @@ function setupWssHandlers(): void {
         // Route output to shell subscribers if any surface tracks this instanceId.
         const surfaces = surfaceManager.findByInstanceId(msg.instanceId);
         if (surfaces.length > 0) {
+          console.log('[agent.stdout] cross-relay instanceId=%s surfaces=%d titles=%s',
+            msg.instanceId, surfaces.length, surfaces.map(s => s.title).join(','));
           broadcastShellOutput(msg.instanceId, (line || '').slice(0, 65536), "stdout");
           return;
         }
         // Silently drop — cross-relay traffic for instances that only exist on
         // a downstream relay. Sending errors back creates noise and can flood
         // the downstream relay's error handler.
+        console.log('[agent.stdout] DROPPED cross-relay instanceId=%s (no surface found)',
+          msg.instanceId);
         return;
       }
       remoteInst.status = 'running';
@@ -3335,6 +3340,8 @@ function setupWssHandlers(): void {
       let routed = false;
       if (linkedSurface && linkedSurface.runtimeRef.kind === 'terminal' && linkedSurface.runtimeRef.instanceId) {
         const inst = instanceManager.get(linkedSurface.runtimeRef.instanceId);
+        console.log('[op.input] surface=%s opId=%s instId=%s inst=%s',
+          linkedSurface.surfaceId, operationId, linkedSurface.runtimeRef.instanceId, !!inst);
         if (inst) {
           if (!sendStdin(inst, data)) {
             send(ws, envelope("error", {
@@ -3342,6 +3349,7 @@ function setupWssHandlers(): void {
               message: `Terminal surface ${linkedSurface.surfaceId}: PTY not available`,
             }));
           }
+          console.log('[op.input] sendStdin OK');
           routed = true;
         } else {
           // Cross-relay: instance may be on a connected agent.
