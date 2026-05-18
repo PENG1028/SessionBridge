@@ -781,10 +781,15 @@ function subscribeShellOutput(instanceId: string, ws: WebSocket): void {
 
 function broadcastShellOutput(instanceId: string, data: string, stream: string = 'stdout'): void {
   stateShellRouter.broadcast(instanceId, data, stream, stateSurfaceManager);
-  // Forward output upstream so cross-node surface subscribers on the
-  // upstream relay receive terminal output via agent.stdout handler.
+  // Forward output upstream only when at least one surface for this instance
+  // is shared cross-node. Unconditional forwarding floods the upstream relay
+  // with output from local-only shells, which can saturate SSH tunnels and
+  // cause browser WebSocket disconnects (code 1006).
   if (_sendUpstream) {
-    _sendUpstream("agent.stdout", { instanceId, line: data });
+    const surfaces = stateSurfaceManager.findByInstanceId(instanceId);
+    if (surfaces.some(s => s.shared)) {
+      _sendUpstream("agent.stdout", { instanceId, line: data });
+    }
   }
 }
 
@@ -2849,7 +2854,9 @@ function setupWssHandlers(): void {
           broadcastShellOutput(msg.instanceId, (line || '').slice(0, 65536), "stdout");
           return;
         }
-        send(ws, envelope("error", { code: "NOT_FOUND", message: `Instance ${msg.instanceId} not found`, replyTo: msg._raw?.id }));
+        // Silently drop — cross-relay traffic for instances that only exist on
+        // a downstream relay. Sending errors back creates noise and can flood
+        // the downstream relay's error handler.
         return;
       }
       remoteInst.status = 'running';
@@ -2901,7 +2908,7 @@ function setupWssHandlers(): void {
           broadcastShellOutput(msg.instanceId, (data || '').slice(0, 65536), "stderr");
           return;
         }
-        send(ws, envelope("error", { code: "NOT_FOUND", message: `Instance ${msg.instanceId} not found` }));
+        // Silently drop — cross-relay traffic (see agent.stdout handler).
         return;
       }
       const stderrAdapter = remoteInst.adapterId ? adapterRegistry.get(remoteInst.adapterId) : undefined;
