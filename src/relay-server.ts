@@ -419,12 +419,25 @@ export function onUpstreamMessage(msg: any): void {
     const surfaceId = String(msg.surfaceId || '');
     if (!surfaceId) return;
     console.log('[upstream.update] received surface.update surfaceId=%s patch?title=%s title=%s nodeId=%s', surfaceId, msg.patch?.title, msg.title, msg.nodeId);
-    const updated = surfaceManager.update(surfaceId, {
+    let updated = surfaceManager.update(surfaceId, {
       title: msg.patch?.title ?? msg.title,
       replayPolicy: msg.patch?.replayPolicy ?? msg.replayPolicy,
       permissions: msg.patch?.permissions ?? msg.permissions,
       scope: msg.patch?.scope ?? msg.scope,
     } as any);
+    // If surface not in StateBus, try importing from upstream msg first
+    if (!updated && msg.surface) {
+      console.log('[upstream.update] surface not in StateBus, importing from msg nodeId=%s', msg.nodeId || '__local__');
+      const imported = surfaceManager.importFromUpstream(msg.surface as any, msg.nodeId || '__local__');
+      if (imported) {
+        updated = surfaceManager.update(surfaceId, {
+          title: msg.patch?.title ?? msg.title,
+          replayPolicy: msg.patch?.replayPolicy ?? msg.replayPolicy,
+          permissions: msg.patch?.permissions ?? msg.permissions,
+          scope: msg.patch?.scope ?? msg.scope,
+        } as any);
+      }
+    }
     console.log('[upstream.update] updated=%s', !!updated);
     if (updated) {
       // Update workbenchTabStore so re-subscribe sees new title
@@ -432,14 +445,17 @@ export function onUpstreamMessage(msg: any): void {
       const tabs = stateWorkbenchStore.get(nodeId) || [];
       console.log('[upstream.update] nodeId=%s tabs.length=%d tabIdx=%d', nodeId, tabs.length, tabs.findIndex((t: any) => t._surfaceId === surfaceId || t.id === surfaceId));
       const tabIdx = tabs.findIndex((t: any) => t._surfaceId === surfaceId || t.id === surfaceId);
+      const newTab = surfaceManager.toWorkbenchTab(updated);
       if (tabIdx >= 0) {
-        tabs[tabIdx] = surfaceManager.toWorkbenchTab(updated);
-        stateWorkbenchStore.set(nodeId, tabs);
-        stateWorkbenchStore.broadcast(nodeId, tabs);
+        tabs[tabIdx] = newTab;
         console.log('[upstream.update] tab updated tabIdx=%d title="%s" _surfaceId=%s', tabIdx, tabs[tabIdx]?.title, tabs[tabIdx]?._surfaceId);
       } else {
-        console.log('[upstream.update] tab NOT FOUND in workbench store nodeId=%s tabs.length=%d', nodeId, tabs.length);
+        // Tab not found — create it (surface was in StateBus but tab was missing)
+        console.log('[upstream.update] tab NOT FOUND — creating new entry nodeId=%s title="%s"', nodeId, newTab.title);
+        tabs.push(newTab);
       }
+      stateWorkbenchStore.set(nodeId, tabs);
+      stateWorkbenchStore.broadcast(nodeId, tabs);
       surfaceManager.broadcastToNodeSubscribers(
         updated.nodeId,
         send as any,
@@ -3735,6 +3751,22 @@ function setupWssHandlers(): void {
       return;
     }
 
+    if (msg.type === "workbench.reconcile") {
+      // Manual reconciliation: sync __local__ workbench tabs against actual surfaces.
+      // Removes stale tab entries whose corresponding surface no longer exists.
+      const nodeId = String(msg.nodeId || '__local__');
+      const tabs = stateWorkbenchStore.get(nodeId);
+      if (!tabs || tabs.length === 0) return;
+      const surfaces = surfaceManager.listAll();
+      const surfaceIds = new Set(surfaces.map(s => s.surfaceId));
+      const filtered = tabs.filter((t: any) => surfaceIds.has(t._surfaceId || t.id));
+      if (filtered.length !== tabs.length) {
+        stateWorkbenchStore.set(nodeId, filtered);
+        stateWorkbenchStore.broadcast(nodeId, filtered);
+      }
+      return;
+    }
+
     if (msg.type === "surface.update") {
       const surfaceId = String(msg.surfaceId || "");
       if (!surfaceId) return;
@@ -3763,6 +3795,17 @@ function setupWssHandlers(): void {
       if (idx >= 0) nodeTabs[idx] = tab;
       stateWorkbenchStore.set(updated.nodeId, nodeTabs);
       stateWorkbenchStore.broadcast(updated.nodeId, nodeTabs, ws);
+
+      // Also sync __local__ workbench so browsers on this relay see the update
+      if (updated.nodeId !== '__local__') {
+        const localTabs = stateWorkbenchStore.get('__local__') || [];
+        const lIdx = localTabs.findIndex((t: any) => t.id === tab.id);
+        if (lIdx >= 0) {
+          localTabs[lIdx] = tab;
+          stateWorkbenchStore.set('__local__', localTabs);
+          stateWorkbenchStore.broadcast('__local__', localTabs, ws);
+        }
+      }
 
       // Broadcast surface.updated to surface subscribers
       const surfSubs = surfaceManager.getSubscribers(surfaceId);
