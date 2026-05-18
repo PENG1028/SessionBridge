@@ -3619,6 +3619,7 @@ function setupWssHandlers(): void {
 
       // Broadcast to node subscribers so browsers that called
       // surface.subscribeNode see new surfaces without refresh.
+      // Exclude the creating WS — they already got a direct surface.published.
       surfaceManager.broadcastToNodeSubscribers(
         nodeId,
         send as any,
@@ -3626,6 +3627,7 @@ function setupWssHandlers(): void {
           surfaceId: surface.surfaceId,
           surface: stateSurfaceManager.toJSON(surface),
         }),
+        ws,
       );
 
       // Backward-compat: project into workbench.tabs

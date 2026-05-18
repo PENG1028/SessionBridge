@@ -702,6 +702,12 @@ async function testConcurrency() {
   }
   check(`CC4.2: All ${cc4Ids.length} surfaces in statebus (got ${cc4Count})`, cc4Count === cc4Ids.length);
 
+  // Drain stale surface.published broadcasts that accumulated (publisher is
+  // also a node subscriber after CC3, so each CC4 publish generated a direct
+  // surface.published + a broadcast copy; the direct copy was consumed by
+  // waitFor but broadcasts remain and would corrupt cc5Ids).
+  drainMsgs(browserA.inbox, ['surface.published']);
+
   // CC5: Interleaved create/delete
   const cc5Ids = [];
   for (let i = 0; i < 3; i++) {

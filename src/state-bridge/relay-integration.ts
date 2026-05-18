@@ -419,16 +419,17 @@ export class StateRelaySurfaceManager {
     return this.nodeSubs.get(nodeId);
   }
 
-  /** Broadcast to all subscribers of a node. */
+  /** Broadcast to all subscribers of a node, optionally excluding a sender. */
   broadcastToNodeSubscribers(
     nodeId: string,
     sendFn: (w: WebSocket, m: any) => void,
     msg: any,
+    excludeWs?: WebSocket,
   ): void {
     const subs = this.nodeSubs.get(nodeId);
     if (!subs) return;
     for (const ws of subs) {
-      if (ws.readyState === WebSocket.OPEN) sendFn(ws, msg);
+      if (ws !== excludeWs && ws.readyState === WebSocket.OPEN) sendFn(ws, msg);
     }
   }
 
