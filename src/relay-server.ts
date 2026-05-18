@@ -573,6 +573,21 @@ export function onUpstreamMessage(msg: any): void {
     surfaceManager.emitOutput(surfaceId, msg.stream || 'stdout', msg.data || '', send, envelope);
     return;
   }
+  if (msg.type === 'shell.output') {
+    const instanceId = String(msg.instanceId || '');
+    const d = String(msg.data || '');
+    if (instanceId && d) {
+      stateShellRouter.broadcast(instanceId, d, msg.stream || 'stdout', stateSurfaceManager);
+    }
+    return;
+  }
+  if (msg.type === 'shell.exit') {
+    const instanceId = String(msg.instanceId || '');
+    if (instanceId) {
+      stateShellRouter.broadcastExit(instanceId, msg.code ?? null, stateSurfaceManager);
+    }
+    return;
+  }
   if (msg.type === 'runtime.status') {
     const surfaceId = String(msg.surfaceId || '');
     if (!surfaceId) return;
@@ -608,6 +623,13 @@ const adminRelayToShellId = new Map<string, string>();
 function addAdminLog(msg: string): void {
   adminLogs.push(`[${new Date().toISOString()}] ${msg}`);
   if (adminLogs.length > 200) adminLogs.shift();
+}
+
+/** Write stdin data to any known instance (local PTY or remote agent). Cross-relay bridge for agent.stdin → PTY. */
+export function sendStdinByInstanceId(instanceId: string, data: string): boolean {
+  const inst = instanceManager.get(instanceId);
+  if (!inst) return false;
+  return sendStdin(inst, data);
 }
 
 /** Write stdin data to an ad-hoc shell instance, looked up by relay instance ID. */
@@ -759,6 +781,11 @@ function subscribeShellOutput(instanceId: string, ws: WebSocket): void {
 
 function broadcastShellOutput(instanceId: string, data: string, stream: string = 'stdout'): void {
   stateShellRouter.broadcast(instanceId, data, stream, stateSurfaceManager);
+  // Forward output upstream so cross-node surface subscribers on the
+  // upstream relay receive terminal output via agent.stdout handler.
+  if (_sendUpstream) {
+    _sendUpstream("agent.stdout", { instanceId, line: data });
+  }
 }
 
 // Session persistence: clientToken → session data for reconnect recovery

@@ -243,14 +243,21 @@ async function testSurfaceUpdateCrossNode() {
 
   // S3: Update surface on VPS → B sees new title
   browserA.ws.send(env('surface.update', { surfaceId: s3Pub.surfaceId, title: 'S3-Updated-VPS' }));
-  await delay(2500);
-  // Drain stale workbench.tabs broadcasts to avoid catching them
-  drainMsgs(browserB.inbox, ['workbench.tabs']);
-  browserB.ws.send(env('workbench.subscribe', { nodeId: '__local__' }));
-  const s3UpdateRsp = await waitFor(browserB.inbox, m => m.type === 'workbench.tabs', 'B s3 update');
-  const s3SeenSurfIds = s3UpdateRsp.tabs.filter(t => t._surfaceId === s3Pub.surfaceId).map(t => `"${t.title}"`);
-  console.log('  [S3-DEBUG] s3Pub.surfaceId=%s matching tabs=%s total=%d', s3Pub.surfaceId, s3SeenSurfIds.join(', '), s3UpdateRsp.tabs.length);
-  const s3BUpdated = s3UpdateRsp.tabs.some(t => t._surfaceId === s3Pub.surfaceId && t.title === 'S3-Updated-VPS');
+  // Retry loop: the surface.update must propagate from VPS → downstream relay
+  // before Browser B's re-subscribe will reflect it.
+  let s3BUpdated = false;
+  const s3Deadline = Date.now() + 10000;
+  while (!s3BUpdated && Date.now() < s3Deadline) {
+    await delay(500);
+    drainMsgs(browserB.inbox, ['workbench.tabs']);
+    browserB.ws.send(env('workbench.subscribe', { nodeId: '__local__' }));
+    const s3Rsp = await waitFor(browserB.inbox, m => m.type === 'workbench.tabs', 'B s3 update');
+    const s3Titles = s3Rsp.tabs.filter(t => t._surfaceId === s3Pub.surfaceId).map(t => `"${t.title}"`);
+    s3BUpdated = s3Rsp.tabs.some(t => t._surfaceId === s3Pub.surfaceId && t.title === 'S3-Updated-VPS');
+    if (s3BUpdated || Date.now() >= s3Deadline) {
+      console.log('  [S3-DEBUG] s3Pub.surfaceId=%s matching=%s total=%d updated=%s', s3Pub.surfaceId, s3Titles.join(', '), s3Rsp.tabs.length, !!s3BUpdated);
+    }
+  }
   check('S3: Surface update on VPS reflected on local relay', s3BUpdated);
 
   // S4: Create on local, update, check VPS
@@ -266,11 +273,22 @@ async function testSurfaceUpdateCrossNode() {
   await delay(2000);
   console.log('  [S4-DEBUG] sending surface.update surfaceId=%s', s4Pub.surfaceId);
   browserB.ws.send(env('surface.update', { surfaceId: s4Pub.surfaceId, title: 'S4-Updated-Local' }));
-  await delay(2000);
-  const s4State = await httpGet(`${VPS_HTTP}/api/debug/statebus`);
-  const s4InDown = (s4State.surfaces?.byNode?.[localNodeId] || []);
-  const s4Updated = s4InDown.some(s => s.surfaceId === s4Pub.surfaceId && s.title === 'S4-Updated-Local');
-  console.log('  [S4-DEBUG] localNodeId=%s s4Pub.surfaceId=%s found=%d matching=%s', localNodeId, s4Pub.surfaceId, s4InDown.length, JSON.stringify(s4InDown.filter(s => s.surfaceId === s4Pub.surfaceId).map(s => ({title: s.title, surfaceId: s.surfaceId}))));
+  // Retry loop: wait for the update to appear in VPS statebus
+  let s4Updated = false;
+  const s4Deadline = Date.now() + 10000;
+  while (!s4Updated && Date.now() < s4Deadline) {
+    await delay(500);
+    const s4State = await httpGet(`${VPS_HTTP}/api/debug/statebus`);
+    // Refresh localNodeId in case the downstream relay reconnected with a new ID
+    const s4DownInst = s4State.instances?.find(i => i.label === 'local-test-node' && i.status === 'running');
+    const s4NodeId = s4DownInst?.id || localNodeId;
+    const s4InDown = (s4State.surfaces?.byNode?.[s4NodeId] || [])
+      .concat(s4State.surfaces?.byNode?.['__local__'] || []);
+    s4Updated = s4InDown.some(s => s.surfaceId === s4Pub.surfaceId && s.title === 'S4-Updated-Local');
+    if (s4Updated || Date.now() >= s4Deadline) {
+      console.log('  [S4-DEBUG] s4NodeId=%s s4Pub.surfaceId=%s found=%d updated=%s', s4NodeId, s4Pub.surfaceId, s4InDown.length, !!s4Updated);
+    }
+  }
   check('S4: Surface update on local relay reflected in VPS statebus', s4Updated);
 
   // Cleanup

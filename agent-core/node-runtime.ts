@@ -52,6 +52,8 @@ export class NodeRuntime {
   private appendRelayLog: ((msg: string) => void) | null = null;
   /** Reference to relay's writeToShellByRelayId (set after dynamic import). */
   private _writeToShellByRelayId: ((relayId: string, data: string) => boolean) | null = null;
+  /** Relay server's sendStdinByInstanceId (cross-relay PTY bridge). */
+  private _sendStdinByInstanceId: ((instanceId: string, data: string) => boolean) | null = null;
   /** Per-instance remote shells spawned via relay.shell.spawn */
   private remoteShells: Map<string, ChildProcess> = new Map();
   /** Unified operation runner for relay.operation.* protocol */
@@ -114,9 +116,10 @@ export class NodeRuntime {
     // 2. Always start the local HTTP/UI server. Relay mode is a capability,
     // not a prerequisite for controlling the local node from its page.
     {
-      const { NodeRelayServer, setNodeId, setLocalNodeInfo, setRelayConnection, appendAdminLog, writeToShellByRelayId, setRelayUpstream, onUpstreamMessage } = await import('../src/relay-server');
+      const { NodeRelayServer, setNodeId, setLocalNodeInfo, setRelayConnection, appendAdminLog, writeToShellByRelayId, sendStdinByInstanceId, setRelayUpstream, onUpstreamMessage } = await import('../src/relay-server');
       this.appendRelayLog = appendAdminLog;
       this._writeToShellByRelayId = writeToShellByRelayId;
+      this._sendStdinByInstanceId = sendStdinByInstanceId;
       setRelayConnection(this.relay);
       // Wire upstream workbench forwarding (only if we have an actual upstream,
       // not a loopback — prevents infinite message loops on standalone relays).
@@ -124,7 +127,7 @@ export class NodeRuntime {
         setRelayUpstream((type, body) => this.relay.send(type, body));
       }
       this.relay.on('relayMessage', (msg: any) => {
-        if (msg.type?.startsWith('workbench.') || msg.type?.startsWith('surface.') || msg.type === 'runtime.output' || msg.type === 'runtime.status') {
+        if (msg.type?.startsWith('workbench.') || msg.type?.startsWith('surface.') || msg.type === 'runtime.output' || msg.type === 'runtime.status' || msg.type === 'shell.output' || msg.type === 'shell.exit') {
           // Only process upstream messages if we have a real upstream relay.
           // Without upstreamRelay, this node is the root relay and uses a loopback
           // connection for internal communication. Broadcast messages from
@@ -134,7 +137,13 @@ export class NodeRuntime {
             onUpstreamMessage(msg);
           }
         } else if (msg.type === 'relay.shell.spawn') {
-          this.spawnRemoteShell(msg.instanceId, msg.dir);
+          // Only spawn a remote shell if the instance doesn't already have a
+          // running PTY in the relay server. The relay server's terminalAdapter
+          // PTY is the real shell; spawnRemoteShell creates a separate child
+          // process that would not receive input routed through relay-server.
+          if (!this._sendStdinByInstanceId?.(msg.instanceId, '')) {
+            this.spawnRemoteShell(msg.instanceId, msg.dir);
+          }
         } else if (msg.type === 'relay.operation.start'
           || msg.type === 'relay.operation.input'
           || msg.type === 'relay.operation.cancel') {
@@ -367,6 +376,12 @@ export class NodeRuntime {
     });
 
     this.relay.on('stdin', (relayInstanceId, data) => {
+      // Route to relay server's instance manager (cross-relay PTY bridge).
+      // This handles agent.stdin from upstream when the local PTY was
+      // spawned by the relay server, not by spawnRemoteShell.
+      if (relayInstanceId && this._sendStdinByInstanceId?.(relayInstanceId, data)) {
+        return;
+      }
       // Route to per-instance remote shell if one exists
       if (relayInstanceId && this.remoteShells.has(relayInstanceId)) {
         const proc = this.remoteShells.get(relayInstanceId);
