@@ -49,7 +49,7 @@ function nodeSurfacesGlob(nodeId: string): string {
 let surfaceCounter = 0;
 export function nextSurfaceId(): string {
   surfaceCounter++;
-  return `surf_${surfaceCounter}_${Date.now().toString(36)}`;
+  return `surf_${surfaceCounter}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
 }
 
 // ─── Surface Manager Adapter ───────────────────────────────

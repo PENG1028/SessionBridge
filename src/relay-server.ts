@@ -1435,7 +1435,7 @@ const serverRequestHandler = async (req: import("http").IncomingMessage, res: im
       if (p.name) projectName = p.name;
     } catch {}
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ cwd: ROOT_DIR, projectName, projectDir: ROOT_DIR }));
+    res.end(JSON.stringify({ cwd: ROOT_DIR, projectName, projectDir: ROOT_DIR, homeDir: os.homedir() }));
     return;
   }
 

@@ -23,16 +23,18 @@ function env(type: string, body: Record<string, unknown> = {}) {
 }
 
 export function TerminalView({ instanceId, _surfaceId, _operationId }: TerminalViewProps) {
-  const { wsUrl, token, createInstance, bindCurrentTabInstance, ensureSurfacePublished, projectCwd } = useWorkbench();
+  const { wsUrl, token, createInstance, bindCurrentTabInstance, ensureSurfacePublished, projectCwd, homeDir, activeNodeWsUrl } = useWorkbench();
+  // Compute API base URL: remote node gets proxied, local uses empty (same-origin)
+  const apiBaseUrl = activeNodeWsUrl !== wsUrl ? activeNodeWsUrl.replace(/^ws/, 'http') : '';
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const autoCreated = useRef(false);
   const surfacePublished = useRef(false);
   const [cwd, setCwd] = useState(() => {
     if (typeof window !== 'undefined' && getRestoreLastPath()) {
-      return getLastActiveDir() || projectCwd || '.';
+      return getLastActiveDir() || homeDir || projectCwd || '.';
     }
-    return projectCwd || '.';
+    return homeDir || projectCwd || '.';
   });
   const [pickerOpen, setPickerOpen] = useState(false);
 
@@ -161,6 +163,7 @@ export function TerminalView({ instanceId, _surfaceId, _operationId }: TerminalV
           onSelect={handleSelectDir}
           initialPath="."
           title="Directory Browser"
+          baseUrl={apiBaseUrl}
         />
       </div>
     );
@@ -190,6 +193,7 @@ export function TerminalView({ instanceId, _surfaceId, _operationId }: TerminalV
         onSelect={handleSelectDir}
         initialPath="."
         title="Terminal Directory"
+        baseUrl={apiBaseUrl}
       />
     </div>
   );

@@ -16,6 +16,7 @@ interface DirectoryPickerProps {
   onSelect: (path: string) => void;
   initialPath?: string;
   title?: string;
+  baseUrl?: string;
 }
 
 /** Reactive hook: true when viewport is at most 767px wide. */
@@ -92,6 +93,7 @@ export function DirectoryPicker({
   open, onClose, onSelect,
   initialPath = '.',
   title = 'Select Directory',
+  baseUrl = '',
 }: DirectoryPickerProps) {
   const [tree, setTree] = useState<Record<string, { items: DirEntry[]; loaded: boolean }>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set(['.']));
@@ -103,14 +105,14 @@ export function DirectoryPicker({
 
   const fetchDir = useCallback(async (dir: string) => {
     try {
-      const r = await fetch(`/api/list?dir=${encodeURIComponent(dir)}`);
+      const r = await fetch(`${baseUrl}/api/list?dir=${encodeURIComponent(dir)}`);
       const d = await r.json();
       if (d.items) {
         setRootCwd(d.cwd || '');
         setTree(prev => ({ ...prev, [dir]: { items: d.items, loaded: true } }));
       }
     } catch {}
-  }, []);
+  }, [baseUrl]);
 
   useEffect(() => {
     if (open) {
@@ -137,7 +139,7 @@ export function DirectoryPicker({
     setSelected(path);
     setExpanded(new Set(['.']));
     const q = path.replace(/^([A-Za-z]):$/, '$1:/'); // fix bare drive letter
-    fetch(`/api/list?dir=${encodeURIComponent(q)}`)
+    fetch(`${baseUrl}/api/list?dir=${encodeURIComponent(q)}`)
       .then(r => r.json())
       .then(d => {
         if (d.items) {
@@ -146,7 +148,7 @@ export function DirectoryPicker({
         }
       })
       .catch(() => {});
-  }, []);
+  }, [baseUrl]);
 
   const rootLabelStr = useMemo(() => rootLabel(rootCwd), [rootCwd]);
   const breadcrumb = useMemo(() => pathSegments(selected, rootLabelStr), [selected, rootLabelStr]);

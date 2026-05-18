@@ -342,7 +342,7 @@ function PageContent() {
     return () => clearInterval(timer);
   }, []);
   // ── Project / Session state ──────────────
-  const [projectInfo, setProjectInfo] = useState<{cwd: string; projectName: string} | null>(null);
+  const [projectInfo, setProjectInfo] = useState<{cwd: string; projectName: string; homeDir?: string} | null>(null);
   const [savedSessions, setSavedSessions] = useState<{id: string; label: string; dir: string; ts: string}[]>([]);
   const [showDirSwitcher, setShowDirSwitcher] = useState(false);
   const [switchDirLocal, setSwitchDirLocal] = useState('');
@@ -1081,7 +1081,7 @@ function PageContent() {
   }, [sendCommand, addLog]);
 
   // ── Hook integration (extracted from page.tsx to reduce size) ──
-  const [nodeProjectInfo, setNodeProjectInfo] = useState<Record<string, { cwd: string; projectName: string }>>({});
+  const [nodeProjectInfo, setNodeProjectInfo] = useState<Record<string, { cwd: string; projectName: string; homeDir?: string }>>({});
   useEffect(() => {
     if (activeNodeWsUrl === wsUrl) return;
     let cancelled = false;
@@ -1094,6 +1094,7 @@ function PageContent() {
           [activeNodeWsUrl]: {
             cwd: info.cwd,
             projectName: info.projectName || info.cwd,
+            homeDir: info.homeDir,
           },
         }));
       })
@@ -1107,9 +1108,9 @@ function PageContent() {
     if (known) return known;
     try {
       const host = new URL(activeNodeWsUrl).hostname;
-      return { cwd: '.', projectName: host };
+      return { cwd: '.', projectName: host, homeDir: '.' };
     } catch {
-      return { cwd: '.', projectName: 'remote' };
+      return { cwd: '.', projectName: 'remote', homeDir: '.' };
     }
   }, [activeNodeWsUrl, wsUrl, projectInfo, nodeProjectInfo]);
 
@@ -1873,6 +1874,8 @@ function PageContent() {
     ensureSurfacePublished: handleEnsureSurfacePublished,
     activeInstanceId,
     projectCwd: activeNodeProjectInfo?.cwd || '.',
+    homeDir: activeNodeProjectInfo?.homeDir || '.',
+    activeNodeWsUrl,
     activateInstance,
     activeExternalSession,
     clearExternalSession: () => {

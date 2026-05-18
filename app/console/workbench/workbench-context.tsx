@@ -104,6 +104,8 @@ export interface WorkbenchContextValue {
   ensureSurfacePublished: (instanceId: string) => boolean;
   activeInstanceId: string | null;
   projectCwd: string;
+  homeDir: string;
+  activeNodeWsUrl: string;
   activateInstance: (id: string) => void;
 
   // External session
