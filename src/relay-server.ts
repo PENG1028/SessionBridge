@@ -126,6 +126,25 @@ function _broadcastToDownstreams(type: string, body: Record<string, unknown>, ex
     }
   }
 }
+/**
+ * Remove a surface's tab from ALL workbench tab stores, not just the
+ * surface's own nodeId. Surfaces created via importFromUpstream may
+ * also appear in __local__ or other node stores.
+ */
+function removeSurfaceFromAllWorkbenches(surfaceId: string): void {
+  const allNodeIds = new Set(stateWorkbenchStore.getAllNodeIds());
+  allNodeIds.add('__local__');
+  for (const nid of allNodeIds) {
+    const tabs = stateWorkbenchStore.get(nid);
+    if (!tabs || tabs.length === 0) continue;
+    const filtered = tabs.filter((t: any) => t._surfaceId !== surfaceId && t.id !== surfaceId);
+    if (filtered.length !== tabs.length) {
+      stateWorkbenchStore.set(nid, filtered);
+      stateWorkbenchStore.broadcast(nid, filtered);
+    }
+  }
+}
+
 
 /**
  * After storing tabs for a nodeId, also sync to any other instances
@@ -399,7 +418,7 @@ export function onUpstreamMessage(msg: any): void {
   if (msg.type === 'surface.update') {
     const surfaceId = String(msg.surfaceId || '');
     if (!surfaceId) return;
-    console.log('[upstream.update] received surface.update surfaceId=%s patch?title=%s title=%s', surfaceId, msg.patch?.title, msg.title);
+    console.log('[upstream.update] received surface.update surfaceId=%s patch?title=%s title=%s nodeId=%s', surfaceId, msg.patch?.title, msg.title, msg.nodeId);
     const updated = surfaceManager.update(surfaceId, {
       title: msg.patch?.title ?? msg.title,
       replayPolicy: msg.patch?.replayPolicy ?? msg.replayPolicy,
@@ -439,10 +458,8 @@ export function onUpstreamMessage(msg: any): void {
     surfaceManager.delete(surfaceId);
     stateBus.flush();
     if (nodeId) {
-      const tabs = stateWorkbenchStore.get(nodeId) || [];
-      const filtered = tabs.filter((t: any) => t._surfaceId !== surfaceId && t.id !== surfaceId);
-      stateWorkbenchStore.set(nodeId, filtered);
-      stateWorkbenchStore.broadcast(nodeId, filtered);
+      // Remove from ALL workbench tab stores
+      removeSurfaceFromAllWorkbenches(surfaceId);
       surfaceManager.broadcastToNodeSubscribers(
         nodeId,
         send as any,
@@ -1091,15 +1108,8 @@ async function spawnShellForWs(ws: WebSocket, instanceId?: string): Promise<impo
             if (client.readyState === WebSocket.OPEN) send(client, closeMsg);
           }
         }
-        // Clean up workbench tab store
-        const tabs = stateWorkbenchStore.get(surface.nodeId) || [];
-        const filtered = tabs.filter((t: any) =>
-          t.id !== surface.surfaceId && t._surfaceId !== surface.surfaceId
-        );
-        if (filtered.length !== tabs.length) {
-          stateWorkbenchStore.set(surface.nodeId, filtered);
-          stateWorkbenchStore.broadcast(surface.nodeId, filtered);
-        }
+        // Clean up ALL workbench tab stores
+        removeSurfaceFromAllWorkbenches(surface.surfaceId);
       }
       i.handle = undefined;
       i.status = "stopped";
@@ -2650,10 +2660,8 @@ function setupWssHandlers(): void {
               if (client.readyState === WebSocket.OPEN) send(client, closeMsg);
             }
           }
-          const tabs = stateWorkbenchStore.get(nodeId) || [];
-          const filtered = tabs.filter((t: any) => t.id !== surfaceId && t._surfaceId !== surfaceId);
-          stateWorkbenchStore.set(nodeId, filtered);
-          stateWorkbenchStore.broadcast(nodeId, filtered);
+          // Remove from ALL workbench tab stores
+          removeSurfaceFromAllWorkbenches(surfaceId);
         }
       }
       return;
@@ -3306,6 +3314,7 @@ function setupWssHandlers(): void {
           const match = findInstanceByLabel(msg._label);
           if (match) remapNodeId = match.id;
         }
+        console.log('[VPS surface.publish] agent-forwarded surfaceId=%s remapNodeId=%s _label=%s', surfaceData.surfaceId, remapNodeId, msg._label);
         const inst = instanceManager.get(remapNodeId);
         if (!inst) {
           surfaceManager.recordDebugEvent({ ts: Date.now(), kind: 'surface.publish.upstream', nodeId: remapNodeId, message: 'no local instance, delegating to syncSurfacesByLabel' });
@@ -3445,7 +3454,7 @@ function setupWssHandlers(): void {
 
       // Debug: confirm surface exists in StateBus after creation
       const checkGet = surfaceManager.get(surface.surfaceId);
-      console.log('[surface.publish] created surfaceId=%s nodeId=%s inStateBus=%s title="%s"', surface.surfaceId, nodeId, !!checkGet, surface.title);
+      console.log('[surface.publish] created surfaceId=%s nodeId=%s inStateBus=%s title="%s" agent=%s', surface.surfaceId, nodeId, !!checkGet, surface.title, senderRole || '');
 
       // Return published confirmation with full surface data.
       // Re-read from store so linkOperation updates are reflected.
@@ -3485,6 +3494,7 @@ function setupWssHandlers(): void {
         // sees when this relay registers as a remote agent.
         label = localNodeInfo?.name || instanceManager.list().find(i => i.source === 'local')?.label;
       }
+      console.log('[surface.publish] _sendUpstream nodeId=%s label=%s surfaceId=%s title="%s"', nodeId, label, surface.surfaceId, surface.title);
       _sendUpstream?.("surface.publish", {
         nodeId,
         surface: stateSurfaceManager.toJSON(surface),
@@ -3769,6 +3779,7 @@ function setupWssHandlers(): void {
 
       _sendUpstream?.("surface.update", {
         surfaceId,
+        nodeId: updated.nodeId,
         patch: { title: msg.title, replayPolicy: msg.replayPolicy, permissions: msg.permissions, scope: msg.scope },
       });
 
@@ -3810,11 +3821,8 @@ function setupWssHandlers(): void {
         }
       }
 
-      // Remove from workbenchTabStore
-      const nodeTabs = stateWorkbenchStore.get(nodeId) || [];
-      const filtered = nodeTabs.filter((t: any) => t.id !== surfaceId && t._surfaceId !== surfaceId);
-      stateWorkbenchStore.set(nodeId, filtered);
-      stateWorkbenchStore.broadcast(nodeId, filtered);
+      // Remove from ALL workbench tab stores (surface may be in __local__ etc.)
+      removeSurfaceFromAllWorkbenches(surfaceId);
 
       _sendUpstream?.("surface.close", { surfaceId, nodeId });
 

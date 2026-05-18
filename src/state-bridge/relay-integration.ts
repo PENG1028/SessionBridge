@@ -614,6 +614,11 @@ export class StateRelayWorkbenchStore {
     }
   }
 
+  /** Get all node IDs with workbench tab entries. */
+  getAllNodeIds(): string[] {
+    return Array.from(this.tabs.keys());
+  }
+
   /** Diagnostic: return subscriber count per nodeId. */
   getSubscriberInfo(): Record<string, { count: number; label: string }> {
     const info: Record<string, { count: number; label: string }> = {};
