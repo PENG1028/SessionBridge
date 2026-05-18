@@ -116,6 +116,18 @@ export function setRelayUpstream(fn: ((type: string, body: any) => void) | null)
 }
 
 /**
+ * Broadcast a message to all downstream relay (agent) connections.
+ * Used by the root relay to push surface events to connected leaf relays.
+ */
+function _broadcastToDownstreams(type: string, body: Record<string, unknown>, excludeWs?: WebSocket): void {
+  for (const inst of instanceManager.list()) {
+    if (inst.source === 'remote' && inst.agentConnection && inst.agentConnection !== excludeWs && inst.agentConnection.readyState === WebSocket.OPEN) {
+      send(inst.agentConnection, envelope(type, body));
+    }
+  }
+}
+
+/**
  * After storing tabs for a nodeId, also sync to any other instances
  * that share the same label (hostname). This bridges cross-relay sync
  * where the same physical node has different instance IDs on each relay.
@@ -314,6 +326,30 @@ export function onUpstreamMessage(msg: any): void {
     if (!nodeId || !surfaceData?.surfaceId) return;
     const inst = instanceManager.get(nodeId);
     if (!inst) {
+      // When nodeId is __local__ from an upstream relay, import the surface
+      // into our __local__ namespace so local browsers discover it.
+      // This handles the VPS→downstream sync direction (S1 scenario).
+      if (nodeId === '__local__' && msg._label) {
+        const imported = surfaceManager.importFromUpstream(surfaceData as any, '__local__');
+        if (imported) {
+          const tab = surfaceManager.toWorkbenchTab(imported);
+          const existingTabs = stateWorkbenchStore.get('__local__') || [];
+          const idx = existingTabs.findIndex((t: any) => t.id === tab.id);
+          if (idx >= 0) existingTabs[idx] = tab;
+          else existingTabs.push(tab);
+          stateWorkbenchStore.set('__local__', existingTabs);
+          stateWorkbenchStore.broadcast('__local__', existingTabs);
+          surfaceManager.broadcastToNodeSubscribers(
+            '__local__',
+            send as any,
+            envelope("surface.published", {
+              surfaceId: imported.surfaceId,
+              surface: surfaceManager.toJSON(imported),
+            }),
+          );
+        }
+        return;
+      }
       syncSurfacesByLabel(nodeId, surfaceData, msg._label);
       return;
     }
@@ -3283,8 +3319,10 @@ function setupWssHandlers(): void {
           else existingTabs.push(tab);
           stateWorkbenchStore.set(remapNodeId, existingTabs);
           stateWorkbenchStore.broadcast(remapNodeId, existingTabs, ws);
-          // Also sync to __local__ if the remapped instance is the local relay
-          if (inst && (inst.source === 'local' || (msg._label && localNodeInfo?.name === msg._label))) {
+          // Also sync to __local__ so browsers on this relay discover
+          // downstream surfaces through workbench.subscribe(__local__).
+          // This covers both local instances and agent-forwarded (remote) surfaces.
+          if (inst && (inst.source === 'local' || msg._label)) {
             const localTabs = stateWorkbenchStore.get('__local__') || [];
             const lIdx = localTabs.findIndex((t: any) => t.id === tab.id);
             if (lIdx >= 0) localTabs[lIdx] = tab;
@@ -3427,6 +3465,16 @@ function setupWssHandlers(): void {
           _label: label,
         }));
       }
+
+      // Broadcast to ALL downstream relays so they can import
+      // VPS-created surfaces (S1 cross-node sync direction).
+      // Only surfaces rooted on the VPS itself (__local__) are broadcast;
+      // agent-scoped surfaces stay on their agent connection.
+      _broadcastToDownstreams("surface.publish", {
+        nodeId,
+        surface: stateSurfaceManager.toJSON(surface),
+        _label: label || localNodeInfo?.name,
+      }, ws);
 
       return;
     }
@@ -3682,6 +3730,13 @@ function setupWssHandlers(): void {
         patch: { title: msg.title, replayPolicy: msg.replayPolicy, permissions: msg.permissions, scope: msg.scope },
       });
 
+      // Broadcast update to downstream relays
+      _broadcastToDownstreams("surface.update", {
+        surfaceId,
+        nodeId: updated.nodeId,
+        patch: { title: msg.title, replayPolicy: msg.replayPolicy, permissions: msg.permissions, scope: msg.scope },
+      });
+
       return;
     }
 
@@ -3720,6 +3775,11 @@ function setupWssHandlers(): void {
       stateWorkbenchStore.broadcast(nodeId, filtered);
 
       _sendUpstream?.("surface.close", { surfaceId, nodeId });
+
+      // Broadcast close to downstream relays
+      if (nodeId) {
+        _broadcastToDownstreams("surface.close", { surfaceId, nodeId });
+      }
 
       return;
     }
