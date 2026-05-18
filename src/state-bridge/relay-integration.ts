@@ -191,6 +191,8 @@ export class StateRelaySurfaceManager {
   delete(surfaceId: string): boolean {
     const surface = this.get(surfaceId);
     if (!surface) return false;
+    const stack = new Error().stack?.split('\n').slice(2, 6).join('; ') || 'unknown';
+    console.log('[DELETE-SURFACE] surfaceId=%s nodeId=%s title="%s" keep=%s instanceId=%s stack=[%s]', surfaceId, surface.nodeId, surface.title, surface.keep, surface.runtimeRef?.instanceId, stack);
     this.recordDebugEvent({ ts: Date.now(), kind: 'surface.close', surfaceId, nodeId: surface.nodeId, message: `surface deleted` });
     this.bus.delete(surfaceGlobalKey(surfaceId));
     this.bus.delete(surfaceNodeKey(surface.nodeId, surfaceId));
