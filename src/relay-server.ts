@@ -1191,35 +1191,39 @@ async function spawnShellForWs(ws: WebSocket, instanceId?: string): Promise<impo
       }
     },
     onExit: (code: number | null) => {
-      // Delegate shell subscriber notification + surface emitResult to router
-      stateShellRouter.broadcastExit(i.id, code, stateSurfaceManager);
-      // Surface cleanup (beyond emitResult already handled above)
-      const surfaces = surfaceManager.findByInstanceId(i.id);
-      for (const surface of surfaces) {
-        // Auto-cleanup: when the shell process exits, unkeep and delete the
-        // surface so dead terminal tabs don't persist. Cross-relay (remote
-        // agent surfaces) are excluded — inventory clears those.
-        surfaceManager.setKeep(surface.surfaceId, false);
-        surfaceManager.recordDebugEvent({
-          ts: Date.now(), kind: 'surface.close',
-          surfaceId: surface.surfaceId, nodeId: surface.nodeId,
-          instanceId: i.id,
-          message: `shell exited (code=${code}) — auto-closing surface`,
-        });
-        surfaceManager.delete(surface.surfaceId);
-        // Broadcast surface.closed to node subscribers
-        const nodeSubs = surfaceManager.getNodeSubscribers(surface.nodeId);
-        if (nodeSubs) {
-          const closeMsg = envelope("surface.closed", {
+      try {
+        // Delegate shell subscriber notification + surface emitResult to router
+        stateShellRouter.broadcastExit(i.id, code, stateSurfaceManager);
+        // Surface cleanup (beyond emitResult already handled above)
+        const surfaces = surfaceManager.findByInstanceId(i.id);
+        for (const surface of surfaces) {
+          // Auto-cleanup: when the shell process exits, unkeep and delete the
+          // surface so dead terminal tabs don't persist. Cross-relay (remote
+          // agent surfaces) are excluded — inventory clears those.
+          surfaceManager.setKeep(surface.surfaceId, false);
+          surfaceManager.recordDebugEvent({
+            ts: Date.now(), kind: 'surface.close',
             surfaceId: surface.surfaceId, nodeId: surface.nodeId,
-            reason: 'shell_exit',
+            instanceId: i.id,
+            message: `shell exited (code=${code}) — auto-closing surface`,
           });
-          for (const client of nodeSubs) {
-            if (client.readyState === WebSocket.OPEN) send(client, closeMsg);
+          surfaceManager.delete(surface.surfaceId);
+          // Broadcast surface.closed to node subscribers
+          const nodeSubs = surfaceManager.getNodeSubscribers(surface.nodeId);
+          if (nodeSubs) {
+            const closeMsg = envelope("surface.closed", {
+              surfaceId: surface.surfaceId, nodeId: surface.nodeId,
+              reason: 'shell_exit',
+            });
+            for (const client of nodeSubs) {
+              if (client.readyState === WebSocket.OPEN) send(client, closeMsg);
+            }
           }
+          // Clean up ALL workbench tab stores
+          removeSurfaceFromAllWorkbenches(surface.surfaceId);
         }
-        // Clean up ALL workbench tab stores
-        removeSurfaceFromAllWorkbenches(surface.surfaceId);
+      } catch (err) {
+        console.error('[shell] onExit error for instance=%s code=%s: %s', i.id, code, (err as Error)?.message || err);
       }
       i.handle = undefined;
       i.status = "stopped";
@@ -3810,6 +3814,18 @@ function setupWssHandlers(): void {
       }
 
       for (const surface of surfaceManager.listByNode(nodeId)) {
+        // Preserve surfaces that should survive instance-missing checks:
+        // - Upstream-imported surfaces (proxy markers for surfaces on other relays)
+        if (surface.createdBy === 'upstream') continue;
+        // - Node-level shell surface (relay node's own terminal)
+        if (surface.runtimeRef.instanceId === surface.nodeId) continue;
+        // - Cross-relay surface on a connected remote agent node
+        const snNodeInst = instanceManager.get(surface.nodeId);
+        if (snNodeInst?.source === 'remote') continue;
+        if (typeof surface.nodeId === 'string' && surface.nodeId.startsWith('upstream:')) continue;
+        // - Kept surfaces are intentionally preserved
+        if (surfaceManager.isKept(surface.surfaceId)) continue;
+
         if (
           surface.runtimeRef.kind === 'terminal' &&
           surface.runtimeRef.instanceId &&
@@ -3821,14 +3837,8 @@ function setupWssHandlers(): void {
             instanceId: surface.runtimeRef.instanceId,
             message: 'missing instance for terminal surface (surface.subscribeNode)',
           });
-          if (surfaceManager.isKept(surface.surfaceId)) {
-            // Keep=true → persist surface, mark orphaned. Agent inventory
-            // will re-validate when the agent reconnects.
-            surfaceManager.setOrphaned(surface.surfaceId);
-          } else {
-            surfaceManager.delete(surface.surfaceId);
-            send(ws, envelope("surface.closed", { surfaceId: surface.surfaceId, nodeId }));
-          }
+          surfaceManager.delete(surface.surfaceId);
+          send(ws, envelope("surface.closed", { surfaceId: surface.surfaceId, nodeId }));
         }
       }
 
@@ -3873,10 +3883,8 @@ function setupWssHandlers(): void {
         (t: any, b: any) => envelope(t, b),
       );
 
-      // Filter: exclude terminal surfaces whose runtime instance is missing.
-      // Kept surfaces waiting for agent reconnect are preserved server-side
-      // but not sent to the subscriber — otherwise the tab reappears with
-      // "instance not found" error on every keystroke.
+      // Filter: exclude terminal surfaces whose runtime instance is missing
+      // and whose surface is not explicitly kept.
       const filteredSurfaces = surfaces.filter(s => {
         if (s.runtimeRef.kind === 'terminal' && s.runtimeRef.instanceId) {
           // Surfaces imported from upstream are proxy markers — keep visible
@@ -3888,6 +3896,9 @@ function setupWssHandlers(): void {
           const nodeInst = instanceManager.get(s.nodeId);
           if (nodeInst?.source === 'remote') return true;
           if (typeof s.nodeId === 'string' && s.nodeId.startsWith('upstream:')) return true;
+          // Kept surfaces are preserved server-side — show them even if the
+          // runtime instance hasn't been created yet or is reconnecting.
+          if (surfaceManager.isKept(s.surfaceId)) return true;
           // Local instance: must exist in instanceManager
           return !!instanceManager.get(s.runtimeRef.instanceId);
         }
