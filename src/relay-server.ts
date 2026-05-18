@@ -3254,11 +3254,23 @@ function setupWssHandlers(): void {
     if (msg.type === "workbench.subscribe") {
       const nodeId = String(msg.nodeId || '');
       if (!nodeId) return;
+
+      // Auto-reconcile: remove tabs whose surface no longer exists.
+      // Prevents stale tab accumulation across test runs and sessions.
+      const allSurfaces = surfaceManager.listAll();
+      const surfaceIds = new Set(allSurfaces.map((s: any) => s.surfaceId));
+      const rawTabs = stateWorkbenchStore.get(nodeId) || [];
+      const reconciled = rawTabs.filter((t: any) => surfaceIds.has(t._surfaceId || t.id));
+      if (reconciled.length !== rawTabs.length) {
+        stateWorkbenchStore.set(nodeId, reconciled);
+        stateWorkbenchStore.broadcast(nodeId, reconciled);
+      }
+
       const wasEmpty = !stateWorkbenchStore.hasSubscribers(nodeId);
       stateWorkbenchStore.subscribe(nodeId, ws);
       // Send current tab state immediately
       const tabs = stateWorkbenchStore.get(nodeId) || [];
-      console.log('[workbench.subscribe] nodeId=%s sending %d tabs titles=%s', nodeId, tabs.length, tabs.map((t:any) => `"${t.title}"`).join(','));
+      console.log('[workbench.subscribe] nodeId=%s sending %d tabs (reconciled %d -> %d) titles=%s', nodeId, tabs.length, rawTabs.length, reconciled.length, tabs.map((t:any) => `"${t.title}"`).join(','));
       send(ws, envelope("workbench.tabs", { nodeId, tabs }));
       // Notify upstream relay on first subscriber
       if (wasEmpty) _sendUpstream?.("workbench.subscribe", { nodeId });
