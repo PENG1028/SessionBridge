@@ -3820,17 +3820,23 @@ function setupWssHandlers(): void {
         }
       }
 
+      const patch = {
+        title: msg.patch?.title ?? msg.title,
+        replayPolicy: msg.patch?.replayPolicy ?? msg.replayPolicy,
+        permissions: msg.patch?.permissions ?? msg.permissions,
+        scope: msg.patch?.scope ?? msg.scope,
+      };
       _sendUpstream?.("surface.update", {
         surfaceId,
         nodeId: updated.nodeId,
-        patch: { title: msg.title, replayPolicy: msg.replayPolicy, permissions: msg.permissions, scope: msg.scope },
+        patch,
       });
 
       // Broadcast update to downstream relays
       _broadcastToDownstreams("surface.update", {
         surfaceId,
         nodeId: updated.nodeId,
-        patch: { title: msg.title, replayPolicy: msg.replayPolicy, permissions: msg.permissions, scope: msg.scope },
+        patch,
       });
 
       return;
