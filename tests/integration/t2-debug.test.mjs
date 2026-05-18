@@ -26,7 +26,15 @@ async function connectBrowser(wsUrl, label) {
   const ws = new WebSocket(wsUrl);
   const inbox = [];
   ws.on('message', data => {
-    try { inbox.push(JSON.parse(data.toString())); } catch {}
+    try {
+      const parsed = JSON.parse(data.toString());
+      // Merge v1 envelope body fields up for direct access
+      if (parsed.v === 1 && parsed.body) {
+        inbox.push({ type: parsed.type, ...parsed.body, _raw: parsed });
+      } else {
+        inbox.push(parsed);
+      }
+    } catch {}
   });
   await new Promise((resolve, reject) => {
     ws.on('open', resolve);
@@ -68,7 +76,7 @@ async function main() {
   const vpsInfo = await httpGet(`${VPS_HTTP}/api/info`);
   console.log(`VPS: ${vpsInfo.version} ${vpsInfo.homeDir}`);
   const vpsState = await httpGet(`${VPS_HTTP}/api/debug/statebus`);
-  const downInst = vpsState.instances?.find(i => i.label === 'local-test-node' && i.status === 'running');
+  const downInst = vpsState.instances?.find(i => i.status === 'running' && i.source === 'remote' && i.label !== 'VM-0-15-ubuntu');
   if (!downInst) { console.error('Local relay not registered on VPS'); process.exit(1); }
   const localNodeId = downInst.id;
   console.log(`Local node: ${localNodeId}`);
