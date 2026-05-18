@@ -118,6 +118,38 @@ function safeSendUpstream(type: string, body: any): void {
   }
 }
 
+/**
+ * Pending surface.subscribe requests forwarded upstream.
+ * When the upstream responds with surface.subscribed, the waiting
+ * browser WS is notified and subscribed to the surface locally.
+ * Keyed by surfaceId → Set of browser WebSockets waiting for the surface.
+ */
+const pendingUpstreamSubs = new Map<string, Set<WebSocket>>();
+
+/**
+ * Complete pending upstream subscriptions for a surface that just arrived
+ * via surface.publish broadcast. Subscribes each waiting browser WS to the
+ * surface locally and sends surface.subscribed.
+ */
+function completePendingUpstreamSubs(surfaceId: string): void {
+  const subs = pendingUpstreamSubs.get(surfaceId);
+  if (!subs || subs.size === 0) return;
+  const surface = surfaceManager.get(surfaceId);
+  if (!surface) return;
+  for (const ws of subs) {
+    if (ws.readyState !== WebSocket.OPEN) continue;
+    surfaceManager.subscribe(surfaceId, ws,
+      (w: any, m: any) => send(w, m),
+      (t: any, b: any) => envelope(t, b),
+    );
+    send(ws, envelope("surface.subscribed", {
+      surfaceId,
+      runtime: surfaceManager.getRuntime(surfaceId),
+    }));
+  }
+  pendingUpstreamSubs.delete(surfaceId);
+}
+
 // Enable for cross-relay surface sync debugging
 const VERBOSE_SURFACE = process.env.VERBOSE_SURFACE === '1';
 
@@ -376,6 +408,9 @@ export function onUpstreamMessage(msg: any): void {
               surface: surfaceManager.toJSON(imported),
             }),
           );
+          // Fulfill pending subscribers that forwarded their
+          // surface.subscribe upstream before this broadcast arrived
+          completePendingUpstreamSubs(imported.surfaceId);
         }
         return;
       }
@@ -422,6 +457,9 @@ export function onUpstreamMessage(msg: any): void {
             }),
           );
         }
+        // Fulfill pending subscribers that forwarded surface.subscribe
+        // upstream before this surface arrived via broadcast
+        completePendingUpstreamSubs(surface.surfaceId);
       }
     }
   }
@@ -492,6 +530,15 @@ export function onUpstreamMessage(msg: any): void {
         envelope("surface.closed", { surfaceId, nodeId }),
       );
     }
+  }
+  if (msg.type === 'surface.subscribed') {
+    const surfaceId = String(msg.surfaceId || '');
+    if (!surfaceId) return;
+    // Forward to pending local subscribers that waited for this surface
+    // to arrive from the upstream relay. The completePendingUpstreamSubs
+    // helper subscribes each waiting WS and sends surface.subscribed.
+    completePendingUpstreamSubs(surfaceId);
+    return;
   }
   if (msg.type === 'runtime.output') {
     const surfaceId = String(msg.surfaceId || '');
@@ -3637,6 +3684,23 @@ function setupWssHandlers(): void {
       );
 
       if (!surface) {
+        // Surface not found locally — if we have an upstream connection,
+        // the surface might be on the upstream relay. Forward the subscribe
+        // request and wait for the upstream to respond with surface.subscribed.
+        if (_sendUpstream) {
+          if (!pendingUpstreamSubs.has(surfaceId)) pendingUpstreamSubs.set(surfaceId, new Set());
+          pendingUpstreamSubs.get(surfaceId)!.add(ws);
+          safeSendUpstream("surface.subscribe", { surfaceId });
+          // Set a timeout so pending subscribers don't leak
+          setTimeout(() => {
+            const subs = pendingUpstreamSubs.get(surfaceId);
+            if (subs) {
+              subs.delete(ws);
+              if (subs.size === 0) pendingUpstreamSubs.delete(surfaceId);
+            }
+          }, 15000);
+          return;
+        }
         send(ws, envelope("error", { code: "SURFACE_NOT_FOUND", message: `Surface ${surfaceId} not found` }));
         return;
       }
