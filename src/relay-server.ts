@@ -400,12 +400,21 @@ export function onUpstreamMessage(msg: any): void {
     const surfaceId = String(msg.surfaceId || '');
     if (!surfaceId) return;
     const updated = surfaceManager.update(surfaceId, {
-      title: msg.patch?.title,
-      replayPolicy: msg.patch?.replayPolicy,
-      permissions: msg.patch?.permissions,
-      scope: msg.patch?.scope,
+      title: msg.patch?.title ?? msg.title,
+      replayPolicy: msg.patch?.replayPolicy ?? msg.replayPolicy,
+      permissions: msg.patch?.permissions ?? msg.permissions,
+      scope: msg.patch?.scope ?? msg.scope,
     } as any);
     if (updated) {
+      // Update workbenchTabStore so re-subscribe sees new title
+      const nodeId = updated.nodeId;
+      const tabs = stateWorkbenchStore.get(nodeId) || [];
+      const tabIdx = tabs.findIndex((t: any) => t._surfaceId === surfaceId || t.id === surfaceId);
+      if (tabIdx >= 0) {
+        tabs[tabIdx] = surfaceManager.toWorkbenchTab(updated);
+        stateWorkbenchStore.set(nodeId, tabs);
+        stateWorkbenchStore.broadcast(nodeId, tabs);
+      }
       surfaceManager.broadcastToNodeSubscribers(
         updated.nodeId,
         send as any,
@@ -3654,6 +3663,9 @@ function setupWssHandlers(): void {
       // "instance not found" error on every keystroke.
       const filteredSurfaces = surfaces.filter(s => {
         if (s.runtimeRef.kind === 'terminal' && s.runtimeRef.instanceId) {
+          // Surfaces imported from upstream are proxy markers — keep visible
+          // even though the runtime instance lives on a different relay.
+          if (s.createdBy === 'upstream') return true;
           // Node-level shell surface (relay node's own terminal)
           if (s.runtimeRef.instanceId === s.nodeId) return true;
           // Cross-relay surface: node belongs to a connected remote agent or upstream relay
@@ -3693,10 +3705,10 @@ function setupWssHandlers(): void {
       if (!surfaceId) return;
 
       const updated = surfaceManager.update(surfaceId, {
-        title: msg.title,
-        replayPolicy: msg.replayPolicy,
-        permissions: msg.permissions,
-        scope: msg.scope,
+        title: msg.title ?? msg.patch?.title,
+        replayPolicy: msg.replayPolicy ?? msg.patch?.replayPolicy,
+        permissions: msg.permissions ?? msg.patch?.permissions,
+        scope: msg.scope ?? msg.patch?.scope,
       });
 
       if (!updated) {
