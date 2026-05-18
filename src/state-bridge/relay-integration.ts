@@ -305,7 +305,7 @@ export class StateRelaySurfaceManager {
       runtimeRef: (surfaceData.runtimeRef as SharedSurface['runtimeRef']) || { kind: 'none' },
       replayPolicy: (surfaceData.replayPolicy as ReplayPolicy) || { mode: 'none' },
       permissions: surfaceData.permissions as SharedSurface['permissions'],
-      createdBy: String(surfaceData.createdBy || 'upstream'),
+      createdBy: 'upstream',
       createdAt: typeof surfaceData.createdAt === 'number' ? surfaceData.createdAt : Date.now(),
       updatedAt: Date.now(),
       keep: surfaceData.keep !== false,
