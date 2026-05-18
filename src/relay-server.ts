@@ -3607,7 +3607,7 @@ function setupWssHandlers(): void {
 
       // Debug: confirm surface exists in StateBus after creation
       const checkGet = surfaceManager.get(surface.surfaceId);
-      console.log('[surface.publish] created surfaceId=%s nodeId=%s inStateBus=%s title="%s" agent=%s', surface.surfaceId, nodeId, !!checkGet, surface.title, senderRole || '');
+      console.log('[surface.publish] created surfaceId=%s nodeId=%s inStateBus=%s title="%s" agent=%s keep=%s', surface.surfaceId, nodeId, !!checkGet, surface.title, senderRole || '', checkGet?.keep);
 
       // Return published confirmation with full surface data.
       // Re-read from store so linkOperation updates are reflected.
@@ -3826,13 +3826,20 @@ function setupWssHandlers(): void {
         if (snNodeInst?.source === 'remote') continue;
         if (typeof surface.nodeId === 'string' && surface.nodeId.startsWith('upstream:')) continue;
         // - Kept surfaces are intentionally preserved
-        if (surfaceManager.isKept(surface.surfaceId)) continue;
+        const kept = surfaceManager.isKept(surface.surfaceId);
+        if (kept) continue;
+
+        // Debug: potential keep miss for CC4 surfaces
+        if (surface.runtimeRef.kind === 'terminal' && surface.runtimeRef.instanceId && !instanceManager.get(surface.runtimeRef.instanceId)) {
+          console.log('[CLEANUP-CANDIDATE] nodeId=%s surfaceId=%s title="%s" keep=%s isKept=%s instanceId=%s', nodeId, surface.surfaceId, surface.title, surface.keep, kept, surface.runtimeRef.instanceId);
+        }
 
         if (
           surface.runtimeRef.kind === 'terminal' &&
           surface.runtimeRef.instanceId &&
           !instanceManager.get(surface.runtimeRef.instanceId)
         ) {
+          console.log('[CLEANUP-DELETE] nodeId=%s surfaceId=%s title="%s" keep=%s isKept=%s instanceId=%s', nodeId, surface.surfaceId, surface.title, surface.keep, kept, surface.runtimeRef.instanceId);
           surfaceManager.recordDebugEvent({
             ts: Date.now(), kind: 'surface.stale.instance_missing',
             surfaceId: surface.surfaceId, nodeId,
