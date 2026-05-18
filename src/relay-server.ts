@@ -543,6 +543,8 @@ export function onUpstreamMessage(msg: any): void {
   if (msg.type === 'surface.close') {
     const surfaceId = String(msg.surfaceId || '');
     const nodeId = String(msg.nodeId || '');
+    const existing = surfaceManager.get(surfaceId);
+    console.log('[UPSTREAM-CLOSE] surfaceId=%s nodeId=%s title="%s" keep=%s', surfaceId, nodeId, existing?.title || '?', existing?.keep);
     if (!surfaceId) return;
     surfaceManager.delete(surfaceId);
     stateBus.flush();
@@ -4029,6 +4031,9 @@ function setupWssHandlers(): void {
       }
 
       const nodeId = surface.nodeId;
+      const wsRole = (ws as any)._agentRole || 'browser';
+      const wsPeerIp = (ws as any)._peerId || (ws as any).__peekId || '';
+      console.log('[SURFACE-CLOSE] surfaceId=%s nodeId=%s title="%s" keep=%s wsRole=%s wsPeerIp=%s creator=%s', surfaceId, nodeId, surface.title, surface.keep, wsRole, wsPeerIp, surface.createdBy);
 
       // Snapshot subscribers BEFORE deleting (delete clears the subscriber set)
       const surfSubs = surfaceManager.getSubscribers(surfaceId);
