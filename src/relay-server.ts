@@ -950,7 +950,7 @@ async function spawnShellForWs(ws: WebSocket, instanceId?: string): Promise<impo
       send(ws, envelope("error", { code: "NO_TERMINAL_ADAPTER", message: "No terminal-capable adapter available" }));
       throw Object.assign(new Error('No terminal-capable adapter available for shell.spawn'), { _reported: true });
     }
-    i = instanceManager.create(process.cwd(), os.hostname(), "local", terminalAdapter.id);
+    i = instanceManager.create(os.homedir(), os.hostname(), "local", terminalAdapter.id);
     i.instanceRole = 'runtime';
     i.runtimeKind = 'terminal';
   }

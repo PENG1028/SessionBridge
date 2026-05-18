@@ -450,11 +450,11 @@ export function registerApiRoutes(
           return;
         }
 
-        const targetDir = dir
+        const targetDir = dir && dir !== '.'
           ? isAbsolute(dir)
             ? resolve(dir)
             : resolve(process.cwd(), dir)
-          : process.cwd();
+          : os.homedir();
 
         if (!existsSync(targetDir)) {
           json(res, 400, { error: `Directory not found: ${targetDir}` });
