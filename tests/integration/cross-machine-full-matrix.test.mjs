@@ -433,12 +433,17 @@ async function testTerminalSpawn() {
   await delay(1500);
   drainMsgs(browserB.inbox, ['shell.output', 'runtime.output', 'operation.output']);
 
-  const t2State = await httpGet(`${VPS_HTTP}/api/debug/statebus`);
-  // Find the most recent local instance on local relay
-  const t2Inst = t2State.instances?.filter(i => i.source === 'remote' && i.status === 'running')
-    .slice(-1)[0] || t2State.instances?.find(i => i.id === localNodeId);
-  const t2InstId = t2Inst?.id;
+  // Get instanceId from the operation.status response (now includes instanceId).
+  // Fall back to querying the LOCAL relay statebus for the shell instance.
+  let t2InstId = t2Stat.instanceId;
+  if (!t2InstId) {
+    const t2State = await httpGet(`http://localhost:${LOCAL_PORT}/api/debug/statebus`);
+    const t2Inst = t2State.instances?.filter(i => i.source === 'local' && i.status === 'running')
+      .slice(-1)[0];
+    t2InstId = t2Inst?.id;
+  }
 
+  console.log(`[T2-DEBUG] t2InstId=${t2InstId} fromOpStatus=${!!t2Stat.instanceId} t2StatKeys=${Object.keys(t2Stat).join(',')}`);
   if (t2InstId) {
     browserB.ws.send(env('surface.publish', {
       nodeId: '__local__', title: 'T2 Local Remote', viewType: 'terminal',

@@ -787,8 +787,14 @@ function broadcastShellOutput(instanceId: string, data: string, stream: string =
   // cause browser WebSocket disconnects (code 1006).
   if (_sendUpstream) {
     const surfaces = stateSurfaceManager.findByInstanceId(instanceId);
-    if (surfaces.some(s => s.shared)) {
+    const hasShared = surfaces.some(s => s.shared);
+    if (hasShared) {
       _sendUpstream("agent.stdout", { instanceId, line: data });
+    } else if (data && data.length > 0) {
+      // Debug: log when output is NOT forwarded to help diagnose T2.4
+      console.log('[broadcastShellOutput] NOT forwarding instanceId=%s surfaces=%d shared=%s firstTitle=%s',
+        instanceId, surfaces.length, surfaces.map(s => s.shared),
+        surfaces[0]?.title || '(none)');
     }
   }
 }
@@ -3320,71 +3326,61 @@ function setupWssHandlers(): void {
       const data = String(msg.data || "");
       if (!operationId) return;
 
-      // Terminal surfaces: route input through the existing shell PTY
-      // (agent.stdin → PTY write), not through OperationRunner echo.
-      // The surface provides shared display + replay; input still targets
-      // the shell instance directly so it reaches the real PTY.
+      // Route terminal input: try surface → instance first, then
+      // fall back to operationManager (shell.spawn creates the
+      // real operation with the correct instanceId). If the surface
+      // has a stale/fake instanceId (e.g. from a test or import),
+      // the operationManager path still routes input correctly.
       const linkedSurface = surfaceManager.findByOperationId(operationId);
+      let routed = false;
       if (linkedSurface && linkedSurface.runtimeRef.kind === 'terminal' && linkedSurface.runtimeRef.instanceId) {
         const inst = instanceManager.get(linkedSurface.runtimeRef.instanceId);
-        if (!inst) {
-          // Cross-relay: instance may be on a connected agent. Try forwarding
-          // agent.stdin to the agent that owns the surface's node.
+        if (inst) {
+          if (!sendStdin(inst, data)) {
+            send(ws, envelope("error", {
+              code: "PTY_NOT_AVAILABLE",
+              message: `Terminal surface ${linkedSurface.surfaceId}: PTY not available`,
+            }));
+          }
+          routed = true;
+        } else {
+          // Cross-relay: instance may be on a connected agent.
           const nodeInst = linkedSurface.nodeId ? instanceManager.get(linkedSurface.nodeId) : null;
           if (nodeInst?.source === 'remote' && nodeInst.agentConnection?.readyState === WebSocket.OPEN) {
-            surfaceManager.recordDebugEvent({
-              ts: Date.now(), kind: 'runtime.input.cross_relay',
-              surfaceId: linkedSurface.surfaceId, operationId,
-              nodeId: linkedSurface.nodeId, instanceId: linkedSurface.runtimeRef.instanceId,
-              extra: { dataLen: data.length },
-            });
             send(nodeInst.agentConnection, envelope("agent.stdin", {
               instanceId: linkedSurface.runtimeRef.instanceId,
               data,
             }));
+            routed = true;
+          }
+          // If instance not found locally and not a remote agent,
+          // fall through to operationManager path below.
+        }
+      }
+
+      if (!routed) {
+        // Fallback: route via operation.instanceId (set by shell.spawn).
+        // The surface's runtimeRef may have a synthetic/fake instanceId
+        // that doesn't match any real instance, but the operation record
+        // always has the correct one.
+        const termOp = operationManager.getOperation(operationId);
+        if (termOp && termOp.kind === 'terminal' && termOp.instanceId) {
+          const inst = instanceManager.get(termOp.instanceId);
+          if (inst) {
+            if (!sendStdin(inst, data)) {
+              console.log('[operation.input] local terminal: sendStdin failed for instance=%s', termOp.instanceId);
+            }
             return;
           }
-          send(ws, envelope("error", {
-            code: "INSTANCE_NOT_FOUND",
-            message: `Terminal surface ${linkedSurface.surfaceId}: instance ${linkedSurface.runtimeRef.instanceId} not found`,
-          }));
-          return;
         }
-        surfaceManager.recordDebugEvent({
-          ts: Date.now(), kind: 'runtime.input',
-          surfaceId: linkedSurface.surfaceId, operationId,
-          nodeId: linkedSurface.nodeId, instanceId: linkedSurface.runtimeRef.instanceId,
-          extra: { dataLen: data.length },
-        });
-        if (!sendStdin(inst, data)) {
-          send(ws, envelope("error", {
-            code: "PTY_NOT_AVAILABLE",
-            message: `Terminal surface ${linkedSurface.surfaceId}: PTY not available (agent disconnected or shell not spawned)`,
-          }));
-        }
+
+        operationManager.forwardInputToAgent(
+          operationId, data,
+          (id) => instanceManager.get(id),
+          send, envelope,
+        );
         return;
       }
-
-    // No linked surface — route via operation instanceId.
-    // shell.spawn creates a terminal op without a surface, so
-    // operation.input must reach the shell PTY directly.
-    const termOp = operationManager.getOperation(operationId);
-    if (termOp && termOp.kind === 'terminal' && termOp.instanceId) {
-      const inst = instanceManager.get(termOp.instanceId);
-      if (inst) {
-        if (!sendStdin(inst, data)) {
-          console.log('[operation.input] local terminal: sendStdin failed for instance=%s', termOp.instanceId);
-        }
-        return;
-      }
-    }
-
-      operationManager.forwardInputToAgent(
-        operationId, data,
-        (id) => instanceManager.get(id),
-        send, envelope,
-      );
-      return;
     }
 
     if (msg.type === "operation.subscribe") {
@@ -3601,10 +3597,21 @@ function setupWssHandlers(): void {
         const isTerminal = surface.runtimeRef.kind === "terminal";
         try {
           if (isTerminal) {
-            // Generate an operationId for input/replay binding without
-            // creating a real operation or forwarding to the agent.
-            const syntheticId = surfaceManager.nextOperationId();
-            surfaceManager.linkOperation(surface.surfaceId, syntheticId);
+            // Reuse the operation already created by shell.spawn if one
+            // exists. Otherwise generate a synthetic operationId for
+            // input/replay binding. This keeps operation.input routing
+            // consistent: the surface operationId always matches the
+            // shell.spawn operationId when the instance is a real PTY.
+            const existingOp = operationManager.findByInstanceAndKind(
+              surface.runtimeRef.instanceId!,
+              "terminal",
+            );
+            if (existingOp) {
+              surfaceManager.linkOperation(surface.surfaceId, existingOp.operationId);
+            } else {
+              const syntheticId = surfaceManager.nextOperationId();
+              surfaceManager.linkOperation(surface.surfaceId, syntheticId);
+            }
           } else {
             const op = operationManager.create(surface.nodeId, surface.runtimeRef.kind as import("./remote-operation-manager").OperationKind, {
               pluginId: surface.pluginId,

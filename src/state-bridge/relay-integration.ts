@@ -194,6 +194,11 @@ export class StateRelaySurfaceManager {
     const stack = new Error().stack?.split('\n').slice(2, 6).join('; ') || 'unknown';
     console.log('[DELETE-SURFACE] surfaceId=%s nodeId=%s title="%s" keep=%s instanceId=%s stack=[%s]', surfaceId, surface.nodeId, surface.title, surface.keep, surface.runtimeRef?.instanceId, stack);
     this.recordDebugEvent({ ts: Date.now(), kind: 'surface.close', surfaceId, nodeId: surface.nodeId, message: `surface deleted` });
+    // Clean up operationToSurface mapping so stale entries don't shadow
+    // future lookups (surface.publish reuses operationIds from shell.spawn).
+    if (surface.runtimeRef?.operationId) {
+      this.operationToSurface.delete(surface.runtimeRef.operationId);
+    }
     this.bus.delete(surfaceGlobalKey(surfaceId));
     this.bus.delete(surfaceNodeKey(surface.nodeId, surfaceId));
     return true;
@@ -316,6 +321,11 @@ export class StateRelaySurfaceManager {
 
     this.bus.set(surfaceGlobalKey(surface.surfaceId), surface);
     this.bus.set(surfaceNodeKey(remapNodeId, surface.surfaceId), surface);
+    // Rebuild operationToSurface mapping so operation.input routing
+    // works cross-relay (VPS → downstream) for terminal surfaces.
+    if (surface.runtimeRef?.operationId) {
+      this.operationToSurface.set(surface.runtimeRef.operationId, surface.surfaceId);
+    }
     return surface;
   }
 

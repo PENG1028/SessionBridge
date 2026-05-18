@@ -200,6 +200,7 @@ export class RemoteOperationManager {
       envelopeFn("operation.status", {
         operationId,
         nodeId: op.nodeId,
+        instanceId: op.instanceId,
         kind: op.kind,
         status: op.status,
         pluginId: op.pluginId,
@@ -313,6 +314,7 @@ export class RemoteOperationManager {
     const msg = envelopeFn("operation.status", {
       operationId,
       nodeId: op.nodeId,
+      instanceId: op.instanceId,
       kind: op.kind,
       status,
       detail,
