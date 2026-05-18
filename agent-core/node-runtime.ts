@@ -125,7 +125,14 @@ export class NodeRuntime {
       }
       this.relay.on('relayMessage', (msg: any) => {
         if (msg.type?.startsWith('workbench.') || msg.type?.startsWith('surface.')) {
-          onUpstreamMessage(msg);
+          // Only process upstream messages if we have a real upstream relay.
+          // Without upstreamRelay, this node is the root relay and uses a loopback
+          // connection for internal communication. Broadcast messages from
+          // _broadcastToDownstreams received via the loopback are already
+          // processed by the main WS handler — re-processing would corrupt state.
+          if (this.config.upstreamRelay) {
+            onUpstreamMessage(msg);
+          }
         } else if (msg.type === 'relay.shell.spawn') {
           this.spawnRemoteShell(msg.instanceId, msg.dir);
         } else if (msg.type === 'relay.operation.start'
