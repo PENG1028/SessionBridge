@@ -14,7 +14,6 @@ function debugLog(...args: any[]) { if (DEBUG_SURFACE) console.log('[debugSurfac
 interface TerminalViewProps {
   instanceId?: string;
   _surfaceId?: string;
-  _operationId?: string;
 }
 
 /** Envelope helper — same format as ShellTerminal. */
@@ -22,7 +21,7 @@ function env(type: string, body: Record<string, unknown> = {}) {
   return JSON.stringify({ v: 1, ts: Date.now(), type, body });
 }
 
-export function TerminalView({ instanceId, _surfaceId, _operationId }: TerminalViewProps) {
+export function TerminalView({ instanceId, _surfaceId }: TerminalViewProps) {
   const { wsUrl, token, createInstance, bindCurrentTabInstance, ensureSurfacePublished, projectCwd, homeDir, activeNodeWsUrl } = useWorkbench();
   // Compute API base URL: remote node gets proxied, local uses empty (same-origin)
   const apiBaseUrl = activeNodeWsUrl !== wsUrl ? activeNodeWsUrl.replace(/^ws/, 'http') : '';
@@ -40,7 +39,7 @@ export function TerminalView({ instanceId, _surfaceId, _operationId }: TerminalV
 
   // Debug: log mount/render with current props
   useEffect(() => {
-    debugLog('TerminalView mount/update', { instanceId, _surfaceId, _operationId, autoCreated: autoCreated.current, surfacePublished: surfacePublished.current });
+    debugLog('TerminalView mount/update', { instanceId, _surfaceId, autoCreated: autoCreated.current, surfacePublished: surfacePublished.current });
   });
 
   // Auto-create a new shell instance when no instanceId
@@ -184,7 +183,7 @@ export function TerminalView({ instanceId, _surfaceId, _operationId }: TerminalV
       </TitleBar>
 
       <div className="flex-1 flex flex-col min-h-0">
-        <ShellTerminal wsUrl={wsUrl} instanceId={instanceId} token={token} _surfaceId={_surfaceId} _operationId={_operationId} onOpenDirectoryPicker={handleOpenDirectoryPicker} />
+        <ShellTerminal wsUrl={wsUrl} instanceId={instanceId} token={token} _surfaceId={_surfaceId} onOpenDirectoryPicker={handleOpenDirectoryPicker} />
       </div>
 
       <DirectoryPicker

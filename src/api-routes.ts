@@ -66,8 +66,6 @@ export interface ApiContext {
     create(nodeId: string, opts: Record<string, unknown>): any;
     toJSON(surface: any): Record<string, unknown>;
     toWorkbenchTab(surface: any): any;
-    nextOperationId(): string;
-    linkOperation(surfaceId: string, operationId: string): void;
     setKeep(surfaceId: string, keep: boolean): void;
     broadcastToNodeSubscribers(nodeId: string, sendFn: (ws: any, msg: any) => void, msg: any): void;
   };
@@ -382,8 +380,6 @@ export function registerApiRoutes(
               runtimeRef: { kind: 'terminal', instanceId: newInst.id },
               replayPolicy: { mode: 'tail', lines: 5000, bytes: 500_000 },
             });
-            const operationId = ctx.surfaceManager.nextOperationId();
-            ctx.surfaceManager.linkOperation(surface.surfaceId, operationId);
             if (!keep) ctx.surfaceManager.setKeep(surface.surfaceId, false);
             createdSurface = ctx.surfaceManager.toJSON(surface);
 
@@ -497,8 +493,6 @@ export function registerApiRoutes(
             runtimeRef: { kind: 'terminal', instanceId: newInst.id },
             replayPolicy: { mode: 'tail', lines: 5000, bytes: 500_000 },
           });
-          const operationId = ctx.surfaceManager.nextOperationId();
-          ctx.surfaceManager.linkOperation(surface.surfaceId, operationId);
           if (!keep) ctx.surfaceManager.setKeep(surface.surfaceId, false);
           createdSurface = ctx.surfaceManager.toJSON(surface);
 

@@ -470,7 +470,6 @@ function PageContent() {
                 title: surface.title || existingTab.title,
                 instanceId: instId,
                 _surfaceId: surface.surfaceId,
-                _operationId: surface.runtimeRef?.operationId,
               });
               return { ...prev, instanceStates: { ...prev.instanceStates, [surface.nodeId]: currentWs } };
             }
@@ -484,7 +483,6 @@ function PageContent() {
             instanceId: instId,
             pluginId: surface.pluginId,
             _surfaceId: surface.surfaceId,
-            _operationId: surface.runtimeRef?.operationId,
           };
           currentWs = workbenchReducer(currentWs, { type: 'ADD_TAB', paneId: activePane.id, tab, activate: false });
           // Clean up empty placeholder tab when real surface tab was added
@@ -539,7 +537,6 @@ function PageContent() {
                   title: s.title || existingTab.title,
                   instanceId: instId,
                   _surfaceId: s.surfaceId,
-                  _operationId: s.runtimeRef?.operationId,
                 });
                 continue;
               }
@@ -553,7 +550,6 @@ function PageContent() {
               instanceId: instId,
               pluginId: s.pluginId,
               _surfaceId: s.surfaceId,
-              _operationId: s.runtimeRef?.operationId,
             };
             const shouldActivate = existingPane.tabs.every(t => t.viewType === 'empty');
             currentWs = workbenchReducer(currentWs, { type: 'ADD_TAB', paneId: existingPane.id, tab, activate: shouldActivate });
@@ -573,7 +569,6 @@ function PageContent() {
                   title: t.title,
                   instanceId: t.instanceId,
                   _surfaceId: undefined,
-                  _operationId: undefined,
                   _stale: true,
                 } as any);
               }
@@ -635,7 +630,6 @@ function PageContent() {
                     title: tab.title,
                     instanceId: tab.instanceId,
                     _surfaceId: undefined,
-                    _operationId: undefined,
                     _stale: true,
                   } as any);
                 } else {
@@ -1781,7 +1775,6 @@ function PageContent() {
       title: activeTab.title,
       instanceId,
       _surfaceId: surface?.surfaceId,
-      _operationId: surface?.runtimeRef?.operationId,
     });
     if (surface?.surfaceId) {
       debugLog('bindCurrentTabInstance SKIP publish: API returned surface', { instanceId, surfaceId: surface.surfaceId });
@@ -2072,7 +2065,7 @@ function PageContent() {
               const resolvedViewId = boundInstance?.adapterId
                 ? getAdapterViewId(boundInstance.adapterId) || viewType
                 : viewType;
-              return <MainSlot viewId={resolvedViewId} instanceId={instanceId} _surfaceId={tab?._surfaceId} _operationId={tab?._operationId} />;
+              return <MainSlot viewId={resolvedViewId} instanceId={instanceId} _surfaceId={tab?._surfaceId} />;
             }}
           />
           </div>) : (

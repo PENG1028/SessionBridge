@@ -14,10 +14,8 @@ interface ShellTerminalProps {
   wsUrl: string;
   instanceId?: string;
   token?: string;
-  /** SharedSurface id — when set, use surface protocol (subscribe, replay, operation.input) */
+  /** SharedSurface id — when set, use surface protocol (subscribe, replay) */
   _surfaceId?: string;
-  /** RemoteOperation id — for sending input/cancel to the surface's runtime */
-  _operationId?: string;
   onOpenDirectoryPicker?: () => void;
 }
 
@@ -34,7 +32,7 @@ function isTouchDevice(): boolean {
   return navigator.maxTouchPoints > 0 || 'ontouchstart' in window;
 }
 
-export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, _operationId, onOpenDirectoryPicker }: ShellTerminalProps) {
+export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, onOpenDirectoryPicker }: ShellTerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -50,12 +48,12 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, _o
     const ws = wsRef.current;
     if (ws?.readyState !== WebSocket.OPEN) return;
 
-    if (_surfaceId && _operationId) {
+    if (_surfaceId) {
       if (inputLogFirstRef.current) {
-        debugLog('ShellTerminal input routing: operation.input (surface path)', { _surfaceId, _operationId });
+        debugLog('ShellTerminal input routing: operation.input (surface path)', { _surfaceId, instanceId });
         inputLogFirstRef.current = false;
       }
-      ws.send(env('operation.input', { operationId: _operationId, data }));
+      ws.send(env('operation.input', { instanceId, data }));
       return;
     }
 
@@ -66,7 +64,7 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, _o
     const body: Record<string, unknown> = { data };
     if (instanceId) body.instanceId = instanceId;
     ws.send(env('shell.input', body));
-  }, [_operationId, _surfaceId, instanceId]);
+  }, [_surfaceId, instanceId]);
 
   /** Connect (or reconnect) the WebSocket for this terminal. */
   function connect(term: Terminal, fitAddon: FitAddon) {
@@ -173,7 +171,7 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, _o
       // running on the node that created the surface. We only subscribe to
       // the surface to receive runtime.replay + runtime.output.
       ws.send(env('surface.subscribe', { surfaceId: _surfaceId }));
-      debugLog('ShellTerminal surface.subscribe SENT', { _surfaceId, _operationId, instanceId });
+      debugLog('ShellTerminal surface.subscribe SENT', { _surfaceId, instanceId });
     };
 
     ws.onmessage = (ev) => {
@@ -340,7 +338,7 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, _o
 
     // ── Initial WebSocket connection ──
     if (_surfaceId) {
-      debugLog('ShellTerminal: connecting via SURFACE protocol', { _surfaceId, _operationId, instanceId });
+      debugLog('ShellTerminal: connecting via SURFACE protocol', { _surfaceId, instanceId });
       connectSurface(term, fitAddon);
     } else {
       debugLog('ShellTerminal: connecting via SHELL protocol', { instanceId });
@@ -389,7 +387,7 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, _o
       term.dispose();
       termRef.current = null;
     };
-  }, [wsUrl, token, instanceId, _surfaceId, _operationId, sendTerminalData]);
+  }, [wsUrl, token, instanceId, _surfaceId, sendTerminalData]);
 
   // Re-focus terminal after React re-renders (prevents focus-steal from parent updates)
   // Only when WebSocket is open — avoids stealing focus from other tabs/elements

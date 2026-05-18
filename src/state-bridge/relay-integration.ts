@@ -109,33 +109,6 @@ export class StateRelaySurfaceManager {
     return this.bus.get<SharedSurface>(surfaceGlobalKey(surfaceId));
   }
 
-  /** Link an operation ID to a surface (for input/output routing). */
-  private operationToSurface = new Map<string, string>();
-
-  /** Find a surface by its linked operationId. */
-  findByOperationId(operationId: string): SharedSurface | undefined {
-    const surfaceId = this.operationToSurface.get(operationId);
-    return surfaceId ? this.get(surfaceId) : undefined;
-  }
-
-  /** Link an operation to a surface. */
-  linkOperation(surfaceId: string, operationId: string): void {
-    this.operationToSurface.set(operationId, surfaceId);
-    const surface = this.get(surfaceId);
-    if (surface) {
-      surface.runtimeRef = { ...surface.runtimeRef, operationId };
-      this.bus.set(surfaceGlobalKey(surfaceId), surface);
-      this.bus.set(surfaceNodeKey(surface.nodeId, surfaceId), surface);
-    }
-  }
-
-  private _opCounter = 0;
-
-  /** Generate a synthetic operation ID for operation-less surfaces. */
-  nextOperationId(): string {
-    return `op_${++this._opCounter}_${Date.now().toString(36)}`;
-  }
-
   /** In-memory runtime state tracking (mimics old SurfaceManager). */
   private runtimeStates = new Map<string, RuntimeState>();
 
@@ -146,7 +119,7 @@ export class StateRelaySurfaceManager {
     // Fallback: derive from surface data when no explicit runtime was initialized
     const surface = this.get(surfaceId);
     if (!surface) return undefined;
-    return { status: surface.orphaned ? 'orphaned' : 'idle', operationId: surface.runtimeRef?.operationId || '' };
+    return { status: surface.orphaned ? 'orphaned' : 'idle', operationId: '' };
   }
 
   /** Initialize runtime state for a surface. Called after create(). */
@@ -155,7 +128,7 @@ export class StateRelaySurfaceManager {
     if (!surface) return;
     const now = Date.now();
     const rt: RuntimeState = {
-      operationId: surface.runtimeRef?.operationId || '',
+      operationId: '',
       nodeId: surface.nodeId,
       surfaceId,
       kind,
@@ -194,11 +167,6 @@ export class StateRelaySurfaceManager {
     const stack = new Error().stack?.split('\n').slice(2, 6).join('; ') || 'unknown';
     console.log('[DELETE-SURFACE] surfaceId=%s nodeId=%s title="%s" keep=%s instanceId=%s stack=[%s]', surfaceId, surface.nodeId, surface.title, surface.keep, surface.runtimeRef?.instanceId, stack);
     this.recordDebugEvent({ ts: Date.now(), kind: 'surface.close', surfaceId, nodeId: surface.nodeId, message: `surface deleted` });
-    // Clean up operationToSurface mapping so stale entries don't shadow
-    // future lookups (surface.publish reuses operationIds from shell.spawn).
-    if (surface.runtimeRef?.operationId) {
-      this.operationToSurface.delete(surface.runtimeRef.operationId);
-    }
     this.bus.delete(surfaceGlobalKey(surfaceId));
     this.bus.delete(surfaceNodeKey(surface.nodeId, surfaceId));
     return true;
@@ -269,7 +237,6 @@ export class StateRelaySurfaceManager {
       viewType: surface.viewType,
       instanceId: surface.runtimeRef?.instanceId || surface.nodeId,
       _surfaceId: surface.surfaceId,
-      _operationId: surface.runtimeRef?.operationId,
       _keep: surface.keep ?? false,
       _orphaned: surface.orphaned ?? false,
     };
@@ -321,11 +288,6 @@ export class StateRelaySurfaceManager {
 
     this.bus.set(surfaceGlobalKey(surface.surfaceId), surface);
     this.bus.set(surfaceNodeKey(remapNodeId, surface.surfaceId), surface);
-    // Rebuild operationToSurface mapping so operation.input routing
-    // works cross-relay (VPS → downstream) for terminal surfaces.
-    if (surface.runtimeRef?.operationId) {
-      this.operationToSurface.set(surface.runtimeRef.operationId, surface.surfaceId);
-    }
     return surface;
   }
 

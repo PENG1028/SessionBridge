@@ -2878,9 +2878,6 @@ function setupWssHandlers(): void {
       if (!instAdapter) {
         // Unknown adapter: send to shell subscribers only, not global broadcast
         broadcastShellOutput(remoteInst.id, line.slice(0, 65536), "stdout");
-        // Also emit via operation manager for unified tracking
-        const op = operationManager.findByInstanceAndKind(remoteInst.id, "terminal");
-        if (op) operationManager.emitOutput(op.operationId, "stdout", line.slice(0, 65536), send, envelope);
         remoteInst.outputBuffer.push(line);
         remoteInst.outputSize += line.length;
         while (remoteInst.outputSize > 512 * 1024 && remoteInst.outputBuffer.length > 0) {
@@ -2892,9 +2889,6 @@ function setupWssHandlers(): void {
       if (!caps.structuredEvents) {
         // Raw shell output → send to shell subscribers only
         broadcastShellOutput(remoteInst.id, line.slice(0, 65536), "stdout");
-        // Also emit via operation manager for unified tracking
-        const op = operationManager.findByInstanceAndKind(remoteInst.id, "terminal");
-        if (op) operationManager.emitOutput(op.operationId, "stdout", line.slice(0, 65536), send, envelope);
         remoteInst.outputBuffer.push(line);
         remoteInst.outputSize += line.length;
         while (remoteInst.outputSize > 512 * 1024 && remoteInst.outputBuffer.length > 0) {
@@ -2946,15 +2940,6 @@ function setupWssHandlers(): void {
       if (!operationId) return;
 
       operationManager.emitOutput(operationId, stream, data, send, envelope);
-
-      // Bridge to surface subscribers → runtime.output
-      const linkedSurfaceOut = surfaceManager.findByOperationId(operationId);
-      if (linkedSurfaceOut) {
-        surfaceManager.emitOutput(linkedSurfaceOut.surfaceId, stream, data,
-          (w: any, m: any) => send(w, m),
-          (t: any, b: any) => envelope(t, b),
-        );
-      }
       return;
     }
 
@@ -2964,15 +2949,6 @@ function setupWssHandlers(): void {
       if (!operationId || !status) return;
 
       operationManager.emitStatus(operationId, status, msg.detail, send, envelope);
-
-      // Bridge to surface subscribers → runtime.status
-      const linkedSurfaceSt = surfaceManager.findByOperationId(operationId);
-      if (linkedSurfaceSt) {
-        surfaceManager.emitStatus(linkedSurfaceSt.surfaceId, status as any, msg.detail,
-          (w: any, m: any) => send(w, m),
-          (t: any, b: any) => envelope(t, b),
-        );
-      }
       return;
     }
 
@@ -2986,20 +2962,6 @@ function setupWssHandlers(): void {
         exitCode: typeof msg.exitCode === 'number' ? msg.exitCode : undefined,
         error: msg.error,
       }, send, envelope);
-
-      // Bridge to surface subscribers → runtime.result
-      const linkedSurfaceRes = surfaceManager.findByOperationId(operationId);
-      if (linkedSurfaceRes) {
-        surfaceManager.emitResult(linkedSurfaceRes.surfaceId, {
-          success: !!msg.success,
-          data: msg.data,
-          exitCode: typeof msg.exitCode === 'number' ? msg.exitCode : undefined,
-          error: msg.error,
-        },
-          (w: any, m: any) => send(w, m),
-          (t: any, b: any) => envelope(t, b),
-        );
-      }
       return;
     }
 
@@ -3197,16 +3159,14 @@ function setupWssHandlers(): void {
           const session = clientSessionMap.get(clientToken);
           if (session) session.shellIds.add(shellInst.id);
         }
-        // Also register as an operation for unified tracking
-        let existingOp = operationManager.findByInstanceAndKind(shellInst.id, "terminal");
-        if (!existingOp) {
-          existingOp = operationManager.create(shellInst.id, "terminal", {
-            instanceId: shellInst.id,
-            createdBy: clientToken || "shell.spawn",
-          });
-        }
-        operationManager.subscribe(existingOp.operationId, ws, send, envelope);
-        operationManager.emitStatus(existingOp.operationId, "running", "Shell spawned", send, envelope);
+        // No operationId for terminal — instanceId is the sole identity.
+        // Output routing: broadcastShellOutput → surface subscribers via findByInstanceId.
+        // Input routing: operation.input { instanceId } → sendStdin directly.
+        send(ws, envelope("shell.status", {
+          instanceId: shellInst.id,
+          status: "running",
+          detail: "Shell spawned",
+        }));
       }).catch((err) => {
         // spawnShellForWs already sends its own error envelope for known failures
         // (INSTANCE_NOT_FOUND, ACCESS_DENIED, etc.). Only send INTERNAL_ERROR for
@@ -3327,68 +3287,55 @@ function setupWssHandlers(): void {
     }
 
     if (msg.type === "operation.input") {
-      const operationId = String(msg.operationId || "");
       const data = String(msg.data || "");
-      if (!operationId) return;
+      if (!data) return;
 
-      // Route terminal input: try surface → instance first, then
-      // fall back to operationManager (shell.spawn creates the
-      // real operation with the correct instanceId). If the surface
-      // has a stale/fake instanceId (e.g. from a test or import),
-      // the operationManager path still routes input correctly.
-      const linkedSurface = surfaceManager.findByOperationId(operationId);
-      let routed = false;
-      if (linkedSurface && linkedSurface.runtimeRef.kind === 'terminal' && linkedSurface.runtimeRef.instanceId) {
-        const inst = instanceManager.get(linkedSurface.runtimeRef.instanceId);
-        console.log('[op.input] surface=%s opId=%s instId=%s inst=%s',
-          linkedSurface.surfaceId, operationId, linkedSurface.runtimeRef.instanceId, !!inst);
+      // Primary path: route by instanceId directly (terminals)
+      const instanceId = String(msg.instanceId || "");
+      if (instanceId) {
+        const inst = instanceManager.get(instanceId);
         if (inst) {
           if (!sendStdin(inst, data)) {
             send(ws, envelope("error", {
               code: "PTY_NOT_AVAILABLE",
-              message: `Terminal surface ${linkedSurface.surfaceId}: PTY not available`,
+              message: `Terminal instance ${instanceId}: PTY not available`,
             }));
           }
-          console.log('[op.input] sendStdin OK');
-          routed = true;
-        } else {
-          // Cross-relay: instance may be on a connected agent.
-          const nodeInst = linkedSurface.nodeId ? instanceManager.get(linkedSurface.nodeId) : null;
-          if (nodeInst?.source === 'remote' && nodeInst.agentConnection?.readyState === WebSocket.OPEN) {
-            send(nodeInst.agentConnection, envelope("agent.stdin", {
-              instanceId: linkedSurface.runtimeRef.instanceId,
-              data,
-            }));
-            routed = true;
-          }
-          // If instance not found locally and not a remote agent,
-          // fall through to operationManager path below.
+          return;
         }
-      }
-
-      if (!routed) {
-        // Fallback: route via operation.instanceId (set by shell.spawn).
-        // The surface's runtimeRef may have a synthetic/fake instanceId
-        // that doesn't match any real instance, but the operation record
-        // always has the correct one.
-        const termOp = operationManager.getOperation(operationId);
-        if (termOp && termOp.kind === 'terminal' && termOp.instanceId) {
-          const inst = instanceManager.get(termOp.instanceId);
-          if (inst) {
-            if (!sendStdin(inst, data)) {
-              console.log('[operation.input] local terminal: sendStdin failed for instance=%s', termOp.instanceId);
+        // Cross-relay: find which agent node owns this instance
+        for (const surf of surfaceManager.listAll()) {
+          if (surf.runtimeRef?.instanceId === instanceId && surf.nodeId) {
+            const nodeInst = instanceManager.get(surf.nodeId);
+            if (nodeInst?.source === 'remote' && nodeInst.agentConnection?.readyState === WebSocket.OPEN) {
+              send(nodeInst.agentConnection, envelope("agent.stdin", { instanceId, data }));
+              return;
             }
-            return;
           }
         }
-
-        operationManager.forwardInputToAgent(
-          operationId, data,
-          (id) => instanceManager.get(id),
-          send, envelope,
-        );
         return;
       }
+
+      // Legacy path: route by operationId (non-terminal + backward compat)
+      const operationId = String(msg.operationId || "");
+      if (!operationId) return;
+
+      // Try terminal operation instance as fallback
+      const termOp = operationManager.getOperation(operationId);
+      if (termOp && termOp.kind === 'terminal' && termOp.instanceId) {
+        const inst = instanceManager.get(termOp.instanceId);
+        if (inst) {
+          sendStdin(inst, data);
+          return;
+        }
+      }
+
+      operationManager.forwardInputToAgent(
+        operationId, data,
+        (id) => instanceManager.get(id),
+        send, envelope,
+      );
+      return;
     }
 
     if (msg.type === "operation.subscribe") {
@@ -3595,39 +3542,19 @@ function setupWssHandlers(): void {
       // reconnected yet). Users can explicitly unkeep via surface.unkeep.
       surfaceManager.setKeep(surface.surfaceId, true);
 
-      // If the surface has a runtime, create an operation for it.
-      // Terminal surfaces use the existing shell PTY (shell.spawn /
-      // relay.shell.spawn) — the operationId exists only for relay-internal
-      // input/replay binding. We must NOT forward relay.operation.start to
-      // the agent because OperationRunner has no terminal handler and would
-      // produce a spurious runtime failure.
+      // Terminal surfaces route input/output via instanceId directly
+      // (shell.output → broadcastShellOutput → surface subscribers via findByInstanceId).
+      // No operation needed — instanceId is the sole identity.
+      // Non-terminal runtimes (plugin, adapter_command) still use operationManager.
       if (surface.runtimeRef.kind !== "none" && surface.runtimeRef.instanceId) {
         const isTerminal = surface.runtimeRef.kind === "terminal";
-        try {
-          if (isTerminal) {
-            // Reuse the operation already created by shell.spawn if one
-            // exists. Otherwise generate a synthetic operationId for
-            // input/replay binding. This keeps operation.input routing
-            // consistent: the surface operationId always matches the
-            // shell.spawn operationId when the instance is a real PTY.
-            const existingOp = operationManager.findByInstanceAndKind(
-              surface.runtimeRef.instanceId!,
-              "terminal",
-            );
-            if (existingOp) {
-              surfaceManager.linkOperation(surface.surfaceId, existingOp.operationId);
-            } else {
-              const syntheticId = surfaceManager.nextOperationId();
-              surfaceManager.linkOperation(surface.surfaceId, syntheticId);
-            }
-          } else {
+        if (!isTerminal) {
+          try {
             const op = operationManager.create(surface.nodeId, surface.runtimeRef.kind as import("./remote-operation-manager").OperationKind, {
               pluginId: surface.pluginId,
               instanceId: surface.runtimeRef.instanceId,
               createdBy: surface.createdBy,
             });
-            surfaceManager.linkOperation(surface.surfaceId, op.operationId);
-
             // Forward to remote agent if applicable
             const inst = instanceManager.get(surface.runtimeRef.instanceId);
             if (inst && inst.source === "remote" && inst.agentConnection) {
@@ -3637,12 +3564,12 @@ function setupWssHandlers(): void {
                 (t: any, b: any) => envelope(t, b),
               );
             }
+          } catch (err) {
+            send(ws, envelope("error", {
+              code: (err as any)?.code || "OPERATION_CREATE_FAILED",
+              message: (err as any)?.message || "Failed to create operation",
+            }));
           }
-        } catch (err) {
-          send(ws, envelope("error", {
-            code: (err as any)?.code || "OPERATION_CREATE_FAILED",
-            message: (err as any)?.message || "Failed to create operation",
-          }));
         }
       }
 

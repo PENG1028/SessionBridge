@@ -81,11 +81,11 @@ async function main() {
 
   // T2: Spawn shell on local relay
   browserB.ws.send(env('shell.spawn', {}));
-  const t2Stat = await waitFor(browserB.inbox, m => m.type === 'operation.status', 'B t2 op');
-  console.log(`T2.1: Shell spawned. opId=${t2Stat.operationId} instId=${t2Stat.instanceId} keys=${Object.keys(t2Stat).join(',')}`);
+  const t2Stat = await waitFor(browserB.inbox, m => m.type === 'shell.status', 'B t2 op');
+  console.log(`T2.1: Shell spawned. instId=${t2Stat.instanceId} keys=${Object.keys(t2Stat).join(',')}`);
 
   if (!t2Stat.instanceId) {
-    console.error('FAIL: operation.status missing instanceId');
+    console.error('FAIL: shell.status missing instanceId');
     process.exit(1);
   }
   const t2InstId = t2Stat.instanceId;
@@ -126,11 +126,9 @@ async function main() {
 
   await delay(500);
 
-  // Send operation.input to Browser B
-  const t2OpId = t2Surf.surface?.runtimeRef?.operationId || t2Stat.operationId;
-  console.log(`Using operationId for input: ${t2OpId}`);
+  // Send input to Browser B via instanceId
   const t2Msg = `T2_DEBUG_${uid()}`;
-  browserB.ws.send(env('operation.input', { operationId: t2OpId, data: `echo ${t2Msg}\n` }));
+  browserB.ws.send(env('operation.input', { instanceId: t2InstId, data: `echo ${t2Msg}\n` }));
   console.log(`Sent operation.input: echo ${t2Msg}`);
 
   // Check Browser B gets shell.output (local)
