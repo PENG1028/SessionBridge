@@ -3781,7 +3781,7 @@ function setupWssHandlers(): void {
         permissions: msg.permissions ?? msg.patch?.permissions,
         scope: msg.scope ?? msg.patch?.scope,
       });
-      console.log('[surface.update WS] updated=%s nodeId=%s', !!updated, updated?.nodeId);
+      console.log('[surface.update WS] updated=%s nodeId=%s title="%s"', !!updated, updated?.nodeId, updated?.title);
 
       if (!updated) {
         send(ws, envelope("error", { code: "SURFACE_NOT_FOUND", message: `Surface ${surfaceId} not found` }));
