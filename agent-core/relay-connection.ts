@@ -203,7 +203,8 @@ export class RelayConnection extends EventEmitter {
       }
     });
 
-    this.ws.on('close', () => {
+    this.ws.on('close', (code, reason) => {
+      console.error('[relay-connection] ws closed: code=%s reason=%s closing=%s', code, reason?.toString() || '', this.closing);
       this.ws = null;
       this._instanceId = null;
       this._cryptoStream = null;
@@ -215,6 +216,7 @@ export class RelayConnection extends EventEmitter {
     this.ws.on('error', (err) => {
       this._status = 'error';
       this._lastError = err instanceof Error ? err.message : String(err);
+      console.error('[relay-connection] ws error:', this._lastError);
       // close event fires after this
     });
   }
