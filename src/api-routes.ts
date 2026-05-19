@@ -77,6 +77,8 @@ export interface ApiContext {
     broadcast(nodeId: string, tabs: any[], sender?: any): void;
     hasSubscribers(nodeId: string): boolean;
   };
+  /** Cross-relay surface forwarding hook for surfaces created through REST APIs. */
+  forwardSurfacePublish?: (nodeId: string, surface: Record<string, unknown>) => void;
 }
 
 // ─── Helpers ───────────────────────────────────────────────────
@@ -405,6 +407,7 @@ export function registerApiRoutes(
                   surface: createdSurface,
                 }),
               );
+              ctx.forwardSurfacePublish?.(nodeIdStr, createdSurface);
             }
           }
 
@@ -518,6 +521,7 @@ export function registerApiRoutes(
                 surface: createdSurface,
               }),
             );
+            ctx.forwardSurfacePublish?.(nodeIdStr, createdSurface);
           }
         }
 

@@ -168,6 +168,40 @@ function _broadcastToDownstreams(type: string, body: Record<string, unknown>, ex
     }
   }
 }
+
+function labelForNode(nodeId: string): string | undefined {
+  const nodeInst = instanceManager.get(nodeId);
+  if (nodeInst?.label) return nodeInst.label;
+  if (nodeId === '__local__') {
+    return localNodeInfo?.name || instanceManager.list().find(i => i.source === 'local')?.label;
+  }
+  return undefined;
+}
+
+function forwardSurfacePublish(nodeId: string, surfaceData: Record<string, unknown>, excludeWs?: WebSocket): void {
+  const label = labelForNode(nodeId);
+  safeSendUpstream("surface.publish", {
+    nodeId,
+    surface: surfaceData,
+    _label: label,
+  });
+
+  const nodeInst = instanceManager.get(nodeId);
+  if (nodeInst?.source === 'remote' && nodeInst.agentConnection && nodeInst.agentConnection !== excludeWs) {
+    send(nodeInst.agentConnection, envelope("surface.publish", {
+      nodeId,
+      surface: surfaceData,
+      _label: label,
+    }));
+  }
+
+  _broadcastToDownstreams("surface.publish", {
+    nodeId,
+    surface: surfaceData,
+    _label: label || localNodeInfo?.name,
+  }, excludeWs);
+}
+
 /**
  * Remove a surface's tab from ALL workbench tab stores, not just the
  * surface's own nodeId. Surfaces created via importFromUpstream may
@@ -1515,7 +1549,22 @@ const serverRequestHandler = async (req: import("http").IncomingMessage, res: im
   }
 
   // Delegate to structured API routes first
-  if (registerApiRoutes(req, res, { instanceManager, surfaceManager, broadcast: broadcastToBrowsers, auditLog, checkPermission: checkHttpPermission, configManager: appConfig, relayConfig: relayConfigManager, configRegistry, configStore, secretStore, workDir: process.cwd(), aliases: aliasStore, workbenchStore: stateWorkbenchStore })) return;
+  if (registerApiRoutes(req, res, {
+    instanceManager,
+    surfaceManager,
+    broadcast: broadcastToBrowsers,
+    auditLog,
+    checkPermission: checkHttpPermission,
+    configManager: appConfig,
+    relayConfig: relayConfigManager,
+    configRegistry,
+    configStore,
+    secretStore,
+    workDir: process.cwd(),
+    aliases: aliasStore,
+    workbenchStore: stateWorkbenchStore,
+    forwardSurfacePublish,
+  })) return;
 
   // Delegate to admin routes (migrated from dashboard server)
   if (await registerAdminRoutes(req, res, {
