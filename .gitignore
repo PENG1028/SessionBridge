@@ -29,6 +29,10 @@ test-results/
 # Old backup directories
 dist_old2/
 
+# Go Core — compiled binaries
+go-core/node.exe
+go-core/node
+
 # Flutter / Dart
 flutter_app/build/
 flutter_app/.dart_tool/
