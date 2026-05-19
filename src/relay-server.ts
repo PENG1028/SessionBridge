@@ -2483,9 +2483,13 @@ function setupWssHandlers(): void {
     const msg = parseMsg(rawStr);
     if (!msg) return;
 
-    // TEMP DIAGNOSTIC: trace all messages from agent connections
-    if ((ws as any)._agentRole && msg.type !== 'agent.stdout' && msg.type !== 'agent.stderr' && msg.type !== 'shell.output') {
-      console.log('[VPS:MSG] type=%s hasSurface=%s surfaceId=%s', msg.type, !!msg.surface, msg.surface?.surfaceId || msg.surfaceId || '');
+    // TEMP DIAGNOSTIC: trace ALL messages (unconditional)
+    if (msg.type !== 'agent.stdout' && msg.type !== 'agent.stderr' && msg.type !== 'shell.output' && msg.type !== 'pong') {
+      const role = (ws as any)._agentRole || (ws as any)._browserId ? 'browser' : 'unknown';
+      console.log('[VPS:MSG-ALL] type=%s role=%s surface=%s', msg.type, role, msg.surface?.surfaceId || msg.surfaceId || '-');
+    }
+    if (msg.type === 'surface.publish') {
+      console.log('[VPS:SURFACE-PUB] reached! hasSurface=%s surfaceId=%s', !!msg.surface, msg.surface?.surfaceId || '-');
     }
 
     // ── Lifecycle: hello/welcome handshake ────────────────
