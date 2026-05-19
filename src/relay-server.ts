@@ -2483,15 +2483,6 @@ function setupWssHandlers(): void {
     const msg = parseMsg(rawStr);
     if (!msg) return;
 
-    // TEMP DIAGNOSTIC: trace ALL messages (unconditional)
-    if (msg.type !== 'agent.stdout' && msg.type !== 'agent.stderr' && msg.type !== 'shell.output' && msg.type !== 'pong') {
-      const role = (ws as any)._agentRole || (ws as any)._browserId ? 'browser' : 'unknown';
-      console.log('[VPS:MSG-ALL] type=%s role=%s surface=%s', msg.type, role, msg.surface?.surfaceId || msg.surfaceId || '-');
-    }
-    if (msg.type === 'surface.publish') {
-      console.log('[VPS:SURFACE-PUB] reached! hasSurface=%s surfaceId=%s', !!msg.surface, msg.surface?.surfaceId || '-');
-    }
-
     // ── Lifecycle: hello/welcome handshake ────────────────
     if (msg.type === "hello") {
       const token = msg.token || "";
@@ -3461,7 +3452,7 @@ function setupWssHandlers(): void {
           const match = findInstanceByLabel(msg._label);
           if (match) remapNodeId = match.id;
         }
-        console.log('[VPS surface.publish] agent-forwarded surfaceId=%s remapNodeId=%s _label=%s', surfaceData.surfaceId, remapNodeId, msg._label);
+        if (VERBOSE_SURFACE) console.log('[surface] agent-forwarded surfaceId=%s remapNodeId=%s', surfaceData.surfaceId, remapNodeId);
         const inst = instanceManager.get(remapNodeId);
         if (!inst) {
           surfaceManager.recordDebugEvent({ ts: Date.now(), kind: 'surface.publish.upstream', nodeId: remapNodeId, message: 'no local instance, delegating to syncSurfacesByLabel' });
@@ -3590,9 +3581,8 @@ function setupWssHandlers(): void {
 
       stateBus.flush();
 
-      // Debug: confirm surface exists in StateBus after creation
       const checkGet = surfaceManager.get(surface.surfaceId);
-      console.log('[surface.publish] created surfaceId=%s nodeId=%s inStateBus=%s title="%s" agent=%s keep=%s', surface.surfaceId, nodeId, !!checkGet, surface.title, senderRole || '', checkGet?.keep);
+      if (VERBOSE_SURFACE) console.log('[surface] created surfaceId=%s nodeId=%s title="%s"', surface.surfaceId, nodeId, surface.title);
 
       // Return published confirmation with full surface data.
       // Re-read from store so linkOperation updates are reflected.
@@ -3634,7 +3624,7 @@ function setupWssHandlers(): void {
         // sees when this relay registers as a remote agent.
         label = localNodeInfo?.name || instanceManager.list().find(i => i.source === 'local')?.label;
       }
-      console.log('[surface.publish] _sendUpstream nodeId=%s label=%s surfaceId=%s title="%s"', nodeId, label, surface.surfaceId, surface.title);
+      if (VERBOSE_SURFACE) console.log('[surface] _sendUpstream nodeId=%s surfaceId=%s', nodeId, surface.surfaceId);
       safeSendUpstream("surface.publish", {
         nodeId,
         surface: stateSurfaceManager.toJSON(surface),
