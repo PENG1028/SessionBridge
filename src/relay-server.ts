@@ -2483,6 +2483,11 @@ function setupWssHandlers(): void {
     const msg = parseMsg(rawStr);
     if (!msg) return;
 
+    // TEMP DIAGNOSTIC: trace all messages from agent connections
+    if ((ws as any)._agentRole && msg.type !== 'agent.stdout' && msg.type !== 'agent.stderr' && msg.type !== 'shell.output') {
+      console.log('[VPS:MSG] type=%s hasSurface=%s surfaceId=%s', msg.type, !!msg.surface, msg.surface?.surfaceId || msg.surfaceId || '');
+    }
+
     // ── Lifecycle: hello/welcome handshake ────────────────
     if (msg.type === "hello") {
       const token = msg.token || "";
