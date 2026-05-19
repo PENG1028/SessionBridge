@@ -1,0 +1,4579 @@
+import { createServer as createHttpServer, IncomingMessage, ServerResponse } from "http";
+import { createServer as createHttpsServer } from "https";
+import { readFileSync, readdirSync, statSync, existsSync, writeFileSync, unlinkSync, mkdirSync } from "fs";
+import { join, extname, basename, resolve, isAbsolute, relative, dirname } from "path";
+import { WebSocketServer, WebSocket } from "ws";
+import { spawn, execSync } from "child_process";
+import { createInterface } from "readline";
+import { memoryUsage } from "process";
+import os from "os";
+
+import { checkRateLimit } from "./rate-limiter";
+import { CheckpointManager } from "./checkpoint-manager";
+import { InstanceManager } from "./instance-manager";
+import { envelope, parseMsg } from "../extensions/protocol";
+import { adapterRegistry, getDefaultAdapterId, getTerminalAdapterId, resolveAdapter, resolveAdapterByCapability } from "../extensions/registry";
+import { extensionPoints, evaluateWhen } from "../agent-core/extension-points";
+import type { WhenContext, StreamParserDeps } from "../extensions/types";
+import { RelayEventBus } from "../agent-core/event-bus";
+import { AuditLogger } from "./audit-log";
+import { appConfig } from "./config";
+import { ensureCert } from "./cert";
+import { SessionPersistence } from "./session-persistence";
+import { registerApiRoutes, type AliasStore } from "./api-routes";
+import { registerAdminRoutes, type AdminRouteContext, type ShellRunInstance } from "./admin-routes";
+import { RelayConfigManager } from "../agent-core/config-sync";
+import { PermissionModel } from "../agent-core/permissions";
+import { RelayConnection } from "../agent-core/relay-connection";
+import { CryptoStream } from "./crypto-stream";
+import { tryDecrypt } from "./crypto-layer";
+import { loadOrCreateIdentity } from "./identity-manager";
+import { detectNetwork } from "./network-detect";
+import { configRegistry } from "./configuration/registry";
+import { configStore } from "./configuration/store";
+import { secretStore } from "./configuration/secret-store";
+import { RemoteOperationManager, OperationError } from "./remote-operation-manager";
+import type { OperationKind, OperationInput } from "./remote-operation-manager";
+import { createStateBus, getStateBus } from "./state-bridge";
+import { stateKey } from "./state-bridge/types";
+import { StateRelaySurfaceManager, StateRelayWorkbenchStore, StateRelayShellRouter } from "./state-bridge/relay-integration";
+
+// ─── Session provider helper — first adapter that provides SessionProvider ──
+function sessionProvider() {
+  for (const adapter of adapterRegistry.list()) {
+    const provider = adapter.getSessionProvider?.();
+    if (provider) return provider;
+  }
+  return undefined;
+}
+
+// ─── Start Time ────────────────────────────────────────────────────
+const START_TIME = Date.now();
+
+import { VERSION as SERVER_VERSION } from "../version";
+import { mismatchSeverity } from "../extensions/semver";
+
+// ─── Config ──────────────────────────────────────────────────────
+const PORT = appConfig.get("port");
+let relayToken = appConfig.get("token") || process.env.BRIDGE_TOKEN || "";
+const sslKey = appConfig.get("sslKey") || process.env.BRIDGE_SSL_KEY || "";
+const sslCert = appConfig.get("sslCert") || process.env.BRIDGE_SSL_CERT || "";
+
+/** Allow runtime to set the relay token (overrides env var). */
+export function setRelayToken(token: string): void {
+  relayToken = token;
+}
+
+/** Allow runtime to set the node identity (injected by NodeRuntime). */
+export function setNodeId(id: string): void {
+  eventBus.setNodeId(id);
+}
+
+/** Get the current nodeId (empty string if not set yet). */
+export function getNodeId(): string {
+  return eventBus.nodeId;
+}
+
+type LocalNodeInfo = {
+  id: string;
+  name: string;
+  role: 'relay' | 'leaf';
+  ip: string;
+  port: number;
+  networkType: 'loopback' | 'lan' | 'wan';
+};
+
+let localNodeInfo: LocalNodeInfo = {
+  id: '__local__',
+  name: os.hostname(),
+  role: 'leaf',
+  ip: '127.0.0.1',
+  port: PORT,
+  networkType: 'loopback',
+};
+let runtimeRelayConnection: RelayConnection | null = null;
+
+/** Allow runtime to publish the actual local node represented by this server. */
+export function setLocalNodeInfo(info: Partial<LocalNodeInfo>): void {
+  localNodeInfo = { ...localNodeInfo, ...info, id: '__local__' };
+}
+
+/** Allow NodeRuntime to expose its live upstream/loopback connection to admin routes. */
+export function setRelayConnection(connection: RelayConnection): void {
+  runtimeRelayConnection = connection;
+}
+
+// ─── Upstream Relay Forwarding ──────────────────────────────────
+// Allows forwarding workbench.* messages to an upstream relay
+// via the NodeRuntime's RelayConnection.
+let _sendUpstream: ((type: string, body: any) => void) | null = null;
+
+// Wrapped version with error logging for diagnostics.
+function safeSendUpstream(type: string, body: any): void {
+  if (!_sendUpstream) return;
+  try {
+    _sendUpstream(type, body);
+  } catch (err) {
+    console.error('[upstream] send failed type=%s error=%s', type, (err as Error)?.message || err);
+  }
+}
+
+/**
+ * Pending surface.subscribe requests forwarded upstream.
+ * When the upstream responds with surface.subscribed, the waiting
+ * browser WS is notified and subscribed to the surface locally.
+ * Keyed by surfaceId → Set of browser WebSockets waiting for the surface.
+ */
+const pendingUpstreamSubs = new Map<string, Set<WebSocket>>();
+
+/**
+ * Complete pending upstream subscriptions for a surface that just arrived
+ * via surface.publish broadcast. Subscribes each waiting browser WS to the
+ * surface locally and sends surface.subscribed.
+ */
+function completePendingUpstreamSubs(surfaceId: string): void {
+  const subs = pendingUpstreamSubs.get(surfaceId);
+  if (!subs || subs.size === 0) return;
+  const surface = surfaceManager.get(surfaceId);
+  if (!surface) return;
+  for (const ws of subs) {
+    if (ws.readyState !== WebSocket.OPEN) continue;
+    surfaceManager.subscribe(surfaceId, ws,
+      (w: any, m: any) => send(w, m),
+      (t: any, b: any) => envelope(t, b),
+    );
+    send(ws, envelope("surface.subscribed", {
+      surfaceId,
+      runtime: surfaceManager.getRuntime(surfaceId),
+    }));
+  }
+  pendingUpstreamSubs.delete(surfaceId);
+}
+
+// Enable for cross-relay surface sync debugging
+const VERBOSE_SURFACE = process.env.VERBOSE_SURFACE === '1';
+
+export function setRelayUpstream(fn: ((type: string, body: any) => void) | null): void {
+  _sendUpstream = fn;
+}
+
+/**
+ * Broadcast a message to all downstream relay (agent) connections.
+ * Used by the root relay to push surface events to connected leaf relays.
+ */
+function _broadcastToDownstreams(type: string, body: Record<string, unknown>, excludeWs?: WebSocket): void {
+  for (const inst of instanceManager.list()) {
+    if (inst.source === 'remote' && inst.agentConnection && inst.agentConnection !== excludeWs && inst.agentConnection.readyState === WebSocket.OPEN) {
+      send(inst.agentConnection, envelope(type, body));
+    }
+  }
+}
+
+function labelForNode(nodeId: string): string | undefined {
+  const nodeInst = instanceManager.get(nodeId);
+  if (nodeInst?.label) return nodeInst.label;
+  if (nodeId === '__local__') {
+    return localNodeInfo?.name || instanceManager.list().find(i => i.source === 'local')?.label;
+  }
+  return undefined;
+}
+
+function forwardSurfacePublish(nodeId: string, surfaceData: Record<string, unknown>, excludeWs?: WebSocket): void {
+  const label = labelForNode(nodeId);
+  safeSendUpstream("surface.publish", {
+    nodeId,
+    surface: surfaceData,
+    _label: label,
+  });
+
+  const nodeInst = instanceManager.get(nodeId);
+  if (nodeInst?.source === 'remote' && nodeInst.agentConnection && nodeInst.agentConnection !== excludeWs) {
+    send(nodeInst.agentConnection, envelope("surface.publish", {
+      nodeId,
+      surface: surfaceData,
+      _label: label,
+    }));
+  }
+
+  _broadcastToDownstreams("surface.publish", {
+    nodeId,
+    surface: surfaceData,
+    _label: label || localNodeInfo?.name,
+  }, excludeWs);
+}
+
+/**
+ * Remove a surface's tab from ALL workbench tab stores, not just the
+ * surface's own nodeId. Surfaces created via importFromUpstream may
+ * also appear in __local__ or other node stores.
+ */
+function removeSurfaceFromAllWorkbenches(surfaceId: string): void {
+  const allNodeIds = new Set(stateWorkbenchStore.getAllNodeIds());
+  allNodeIds.add('__local__');
+  for (const nid of allNodeIds) {
+    const tabs = stateWorkbenchStore.get(nid);
+    if (!tabs || tabs.length === 0) continue;
+    const filtered = tabs.filter((t: any) => t._surfaceId !== surfaceId && t.id !== surfaceId);
+    if (filtered.length !== tabs.length) {
+      stateWorkbenchStore.set(nid, filtered);
+      stateWorkbenchStore.broadcast(nid, filtered);
+    }
+  }
+}
+
+
+/**
+ * After storing tabs for a nodeId, also sync to any other instances
+ * that share the same label (hostname). This bridges cross-relay sync
+ * where the same physical node has different instance IDs on each relay.
+ */
+function syncTabsByLabel(nodeId: string, tabs: any[], sourceLabel?: string, sender?: WebSocket): void {
+  const label = sourceLabel || instanceManager.get(nodeId)?.label;
+  if (!label) return;
+  let matchedLocal = false;
+  let primaryLocalId: string | null = null;
+  for (const inst of instanceManager.list()) {
+    if (inst.label === label && inst.id !== nodeId) {
+      // Remap tab instanceIds from the remote node's ID to this local
+      // instance's ID. Without this, cross-relay tabs carry VPS-side
+      // instance IDs that don't exist on the local relay, causing
+      // INSTANCE_NOT_FOUND when the UI tries to spawn shells.
+      const remapped = tabs.map((t: any) => ({
+        ...t,
+        instanceId: t.instanceId ? inst.id : t.instanceId,
+      }));
+      stateWorkbenchStore.set(inst.id, remapped);
+      stateWorkbenchStore.broadcast(inst.id, remapped, sender);
+      if (inst.source === 'local') {
+        matchedLocal = true;
+        primaryLocalId = inst.id;
+      }
+    }
+  }
+  // __local__ is used by browser NodeBar for the local relay's own node.
+  // When we matched a local instance, also sync tabs to __local__ subscribers
+  // so the browser sees cross-relay updates.
+  if (matchedLocal && primaryLocalId) {
+    const remapped = tabs.map((t: any) => ({
+      ...t,
+      instanceId: t.instanceId ? primaryLocalId! : t.instanceId,
+    }));
+    stateWorkbenchStore.set('__local__', remapped);
+    stateWorkbenchStore.broadcast('__local__', remapped, sender);
+  } else if (label && localNodeInfo?.name === label) {
+    // No local instance matched, but the label matches the local node's name.
+    // Broadcast to __local__ subscribers so the browser sees cross-relay tabs
+    // even before opening any terminal on the local node.
+    const primaryLocal = instanceManager.list().find(
+      (i: any) => i.source === 'local' && i.label === label,
+    );
+    const localId = primaryLocal?.id;
+    const remapped = tabs.map((t: any) => ({
+      ...t,
+      instanceId: (t.instanceId && localId) ? localId : t.instanceId,
+    }));
+    stateWorkbenchStore.set('__local__', remapped);
+    stateWorkbenchStore.broadcast('__local__', remapped, sender);
+  }
+}
+
+/**
+ * Find an instance by label, preferring running instances.
+ * When a relay reconnects, it creates a new remote instance; the old one
+ * becomes "stopped". Surfaces must be associated with the running instance
+ * so that browsers viewing that instance can discover them.
+ */
+function findInstanceByLabel(label: string): ReturnType<typeof instanceManager.get> {
+  const all = instanceManager.list();
+  // Prefer running
+  const running = all.find(i => i.label === label && i.status === 'running');
+  if (running) return running;
+  // Fall back to any matching (stopped, etc.)
+  return all.find(i => i.label === label);
+}
+
+/**
+ * After publishing a surface for a nodeId, sync to any other instances
+ * that share the same label (hostname). Mirrors syncTabsByLabel for surfaces.
+ */
+function syncSurfacesByLabel(nodeId: string, surfaceData: Record<string, unknown>, sourceLabel?: string): void {
+  const label = sourceLabel || instanceManager.get(nodeId)?.label;
+  if (!label || !surfaceData.surfaceId) return;
+  // Sort: running instances first, so importFromUpstream lands on the active one
+  const sorted = instanceManager.list();
+  sorted.sort((a, b) => (b.status === 'running' ? 1 : 0) - (a.status === 'running' ? 1 : 0));
+  let matchedLocal = false;
+  let primaryLocalId: string | null = null;
+  for (const inst of sorted) {
+    if (inst.label === label && inst.id !== nodeId) {
+      const surface = surfaceManager.importFromUpstream(
+        surfaceData as any,
+        inst.id,
+      );
+      if (surface) {
+        if (inst.source === 'local') {
+          matchedLocal = true;
+          primaryLocalId = inst.id;
+        }
+        // Project into workbench.tabs for backward-compat
+        const tab = surfaceManager.toWorkbenchTab(surface);
+        const existingTabs = stateWorkbenchStore.get(inst.id) || [];
+        const idx = existingTabs.findIndex((t: any) => t.id === tab.id);
+        if (idx >= 0) existingTabs[idx] = tab;
+        else existingTabs.push(tab);
+        stateWorkbenchStore.set(inst.id, existingTabs);
+        stateWorkbenchStore.broadcast(inst.id, existingTabs);
+        // Notify browser subscribers so UI auto-updates without re-entering node
+        surfaceManager.broadcastToNodeSubscribers(
+          inst.id,
+          send as any,
+          envelope("surface.published", {
+            surfaceId: surface.surfaceId,
+            surface: surfaceManager.toJSON(surface),
+          }),
+        );
+      }
+    }
+  }
+  // Also sync to __local__ so the browser sees surfaces when entering the
+  // local relay node (which uses the virtual '__local__' ID, not the real
+  // instance ID). Mirrors syncTabsByLabel's __local__ fallback.
+  if (matchedLocal && primaryLocalId) {
+    const surfaceData2 = surfaceData as Record<string, unknown>;
+    const existing = surfaceManager.get(String(surfaceData2.surfaceId || ''));
+    if (existing) {
+      const tab = surfaceManager.toWorkbenchTab(existing);
+      const localTabs = stateWorkbenchStore.get('__local__') || [];
+      const ti = localTabs.findIndex((t: any) => t.id === tab.id);
+      if (ti >= 0) localTabs[ti] = tab;
+      else localTabs.push(tab);
+      stateWorkbenchStore.set('__local__', localTabs);
+      stateWorkbenchStore.broadcast('__local__', localTabs);
+      surfaceManager.broadcastToNodeSubscribers(
+        '__local__',
+        send as any,
+        envelope("surface.published", {
+          surfaceId: existing.surfaceId,
+          surface: surfaceManager.toJSON(existing),
+        }),
+      );
+    }
+  } else if (label && localNodeInfo?.name === label) {
+    // Label matches the local node's hostname — sync to __local__ so the
+    // browser sees surfaces even before opening any terminal on the local node.
+    const surfaceData2 = surfaceData as Record<string, unknown>;
+    const existing = surfaceManager.get(String(surfaceData2.surfaceId || ''));
+    if (existing) {
+      const tab = surfaceManager.toWorkbenchTab(existing);
+      const localTabs = stateWorkbenchStore.get('__local__') || [];
+      const ti = localTabs.findIndex((t: any) => t.id === tab.id);
+      if (ti >= 0) localTabs[ti] = tab;
+      else localTabs.push(tab);
+      stateWorkbenchStore.set('__local__', localTabs);
+      stateWorkbenchStore.broadcast('__local__', localTabs);
+      surfaceManager.broadcastToNodeSubscribers(
+        '__local__',
+        send as any,
+        envelope("surface.published", {
+          surfaceId: existing.surfaceId,
+          surface: surfaceManager.toJSON(existing),
+        }),
+      );
+    }
+  }
+}
+
+/**
+ * Handle a workbench message forwarded from the upstream relay.
+ * Called by NodeRuntime when the upstream RelayConnection emits 'relayMessage'.
+ */
+export function onUpstreamMessage(msg: any): void {
+  if (!msg || !msg.type) return;
+  if (msg.type === "workbench.tabs") {
+    const nodeId = String(msg.nodeId || '');
+    const tabs = Array.isArray(msg.tabs) ? msg.tabs : [];
+    if (!nodeId) return;
+    // Only update store and broadcast if tabs have actual content.
+    // Empty tabs (from subscribe responses) must not overwrite existing
+    // local store or confuse subscribers with stale empty state.
+    if (tabs.length > 0) {
+      // Only broadcast if tabs actually changed — prevents echoing
+      // a node's own tabs back to its subscribers when the upstream
+      // relay broadcasts to this node's agent connection.
+      const existing = stateWorkbenchStore.get(nodeId);
+      const changed = !existing || JSON.stringify(existing) !== JSON.stringify(tabs);
+      if (changed) {
+        stateWorkbenchStore.set(nodeId, tabs);
+        stateWorkbenchStore.broadcast(nodeId, tabs);
+      }
+    }
+    // Cross-relay label normalization: only when tabs carry content.
+    // Empty tabs from a subscribe-response must not overwrite existing
+    // local store for a different instance ID via label matching.
+    if (tabs.length > 0) {
+      syncTabsByLabel(nodeId, tabs, msg._label);
+    }
+  }
+  // ── surface.* cross-relay forwarding ──
+  if (msg.type === 'surface.publish') {
+    const surfaceData = msg.surface;
+    const nodeId = String(msg.nodeId || surfaceData?.nodeId || '');
+    if (!nodeId || !surfaceData?.surfaceId) return;
+    const inst = instanceManager.get(nodeId);
+    if (!inst) {
+      // When nodeId is __local__ and we have a _label, try to map the
+      // surface to the downstream relay's instance ID by label match.
+      // This handles the downstream→VPS sync direction (N1 scenario).
+      // Falls back to __local__ when no instance matches (VPS→downstream).
+      if (nodeId === '__local__' && msg._label) {
+        const label = String(msg._label);
+        const matchedInst = instanceManager.list().find(
+          i => i.label === label && i.status === 'running'
+        );
+        const remapNodeId = matchedInst ? matchedInst.id : '__local__';
+
+        const imported = surfaceManager.importFromUpstream(surfaceData as any, remapNodeId);
+        if (imported) {
+          const tab = surfaceManager.toWorkbenchTab(imported);
+          const existingTabs = stateWorkbenchStore.get(remapNodeId) || [];
+          const idx = existingTabs.findIndex((t: any) => t.id === tab.id);
+          if (idx >= 0) existingTabs[idx] = tab;
+          else existingTabs.push(tab);
+          stateWorkbenchStore.set(remapNodeId, existingTabs);
+          stateWorkbenchStore.broadcast(remapNodeId, existingTabs);
+          surfaceManager.broadcastToNodeSubscribers(
+            remapNodeId,
+            send as any,
+            envelope("surface.published", {
+              surfaceId: imported.surfaceId,
+              surface: surfaceManager.toJSON(imported),
+            }),
+          );
+          // When matched a downstream relay, also sync to __local__ so a
+          // browser entering __local__ sees surfaces from downstream relays.
+          if (matchedInst) {
+            const localTabs = stateWorkbenchStore.get('__local__') || [];
+            const lIdx = localTabs.findIndex((t: any) => t.id === tab.id);
+            if (lIdx >= 0) localTabs[lIdx] = tab;
+            else localTabs.push(tab);
+            stateWorkbenchStore.set('__local__', localTabs);
+            stateWorkbenchStore.broadcast('__local__', localTabs);
+            surfaceManager.broadcastToNodeSubscribers(
+              '__local__',
+              send as any,
+              envelope("surface.published", {
+                surfaceId: imported.surfaceId,
+                surface: surfaceManager.toJSON(imported),
+              }),
+            );
+          }
+          // Fulfill pending subscribers that forwarded their
+          // surface.subscribe upstream before this broadcast arrived
+          completePendingUpstreamSubs(imported.surfaceId);
+        }
+        return;
+      }
+      syncSurfacesByLabel(nodeId, surfaceData, msg._label);
+      return;
+    }
+    const existing = surfaceManager.get(surfaceData.surfaceId as string);
+    if (!existing) {
+      surfaceManager.importFromUpstream(surfaceData as any, inst.id);
+      // Project into workbench.tabs for backward-compat discovery
+      const surface = surfaceManager.get(surfaceData.surfaceId as string);
+      if (surface) {
+        const tab = surfaceManager.toWorkbenchTab(surface);
+        const existingTabs = stateWorkbenchStore.get(inst.id) || [];
+        const idx = existingTabs.findIndex((t: any) => t.id === tab.id);
+        if (idx >= 0) existingTabs[idx] = tab;
+        else existingTabs.push(tab);
+        stateWorkbenchStore.set(inst.id, existingTabs);
+        stateWorkbenchStore.broadcast(inst.id, existingTabs);
+        surfaceManager.broadcastToNodeSubscribers(
+          inst.id,
+          send as any,
+          envelope("surface.published", {
+            surfaceId: surface.surfaceId,
+            surface: surfaceManager.toJSON(surface),
+          }),
+        );
+        // If the imported instance is the local relay's own instance, also
+        // sync to __local__ so the browser sees surfaces when entering the
+        // local relay node via the synthetic '__local__' ID.
+        if (inst.source === 'local' || (msg._label && localNodeInfo?.name === msg._label)) {
+          const localTabs = stateWorkbenchStore.get('__local__') || [];
+          const ti = localTabs.findIndex((t: any) => t.id === tab.id);
+          if (ti >= 0) localTabs[ti] = tab;
+          else localTabs.push(tab);
+          stateWorkbenchStore.set('__local__', localTabs);
+          stateWorkbenchStore.broadcast('__local__', localTabs);
+          surfaceManager.broadcastToNodeSubscribers(
+            '__local__',
+            send as any,
+            envelope("surface.published", {
+              surfaceId: surface.surfaceId,
+              surface: surfaceManager.toJSON(surface),
+            }),
+          );
+        }
+        // Fulfill pending subscribers that forwarded surface.subscribe
+        // upstream before this surface arrived via broadcast
+        completePendingUpstreamSubs(surface.surfaceId);
+      }
+    }
+  }
+  if (msg.type === 'surface.update') {
+    const surfaceId = String(msg.surfaceId || '');
+    if (!surfaceId) return;
+    console.log('[upstream.update] received surface.update surfaceId=%s patch?title=%s title=%s nodeId=%s', surfaceId, msg.patch?.title, msg.title, msg.nodeId);
+    let updated = surfaceManager.update(surfaceId, {
+      title: msg.patch?.title ?? msg.title,
+      replayPolicy: msg.patch?.replayPolicy ?? msg.replayPolicy,
+      permissions: msg.patch?.permissions ?? msg.permissions,
+      scope: msg.patch?.scope ?? msg.scope,
+    } as any);
+    // If surface not in StateBus, try importing from upstream msg first
+    if (!updated && msg.surface) {
+      console.log('[upstream.update] surface not in StateBus, importing from msg nodeId=%s', msg.nodeId || '__local__');
+      const imported = surfaceManager.importFromUpstream(msg.surface as any, msg.nodeId || '__local__');
+      if (imported) {
+        updated = surfaceManager.update(surfaceId, {
+          title: msg.patch?.title ?? msg.title,
+          replayPolicy: msg.patch?.replayPolicy ?? msg.replayPolicy,
+          permissions: msg.patch?.permissions ?? msg.permissions,
+          scope: msg.patch?.scope ?? msg.scope,
+        } as any);
+      }
+    }
+    console.log('[upstream.update] updated=%s', !!updated);
+    if (updated) {
+      // Update workbenchTabStore so re-subscribe sees new title
+      const nodeId = updated.nodeId;
+      const tabs = stateWorkbenchStore.get(nodeId) || [];
+      console.log('[upstream.update] nodeId=%s tabs.length=%d tabIdx=%d', nodeId, tabs.length, tabs.findIndex((t: any) => t._surfaceId === surfaceId || t.id === surfaceId));
+      const tabIdx = tabs.findIndex((t: any) => t._surfaceId === surfaceId || t.id === surfaceId);
+      const newTab = surfaceManager.toWorkbenchTab(updated);
+      if (tabIdx >= 0) {
+        tabs[tabIdx] = newTab;
+        console.log('[upstream.update] tab updated tabIdx=%d title="%s" _surfaceId=%s', tabIdx, tabs[tabIdx]?.title, tabs[tabIdx]?._surfaceId);
+      } else {
+        // Tab not found — create it (surface was in StateBus but tab was missing)
+        console.log('[upstream.update] tab NOT FOUND — creating new entry nodeId=%s title="%s"', nodeId, newTab.title);
+        tabs.push(newTab);
+      }
+      stateWorkbenchStore.set(nodeId, tabs);
+      stateWorkbenchStore.broadcast(nodeId, tabs);
+      surfaceManager.broadcastToNodeSubscribers(
+        updated.nodeId,
+        send as any,
+        envelope("surface.updated", {
+          surfaceId,
+          nodeId: updated.nodeId,
+          surface: surfaceManager.toJSON(updated),
+        }),
+      );
+    }
+  }
+  if (msg.type === 'surface.close') {
+    const surfaceId = String(msg.surfaceId || '');
+    const nodeId = String(msg.nodeId || '');
+    const existing = surfaceManager.get(surfaceId);
+    console.log('[UPSTREAM-CLOSE] surfaceId=%s nodeId=%s title="%s" keep=%s', surfaceId, nodeId, existing?.title || '?', existing?.keep);
+    if (!surfaceId) return;
+    surfaceManager.delete(surfaceId);
+    stateBus.flush();
+    if (nodeId) {
+      // Remove from ALL workbench tab stores
+      removeSurfaceFromAllWorkbenches(surfaceId);
+      surfaceManager.broadcastToNodeSubscribers(
+        nodeId,
+        send as any,
+        envelope("surface.closed", { surfaceId, nodeId }),
+      );
+    }
+  }
+  if (msg.type === 'surface.subscribed') {
+    const surfaceId = String(msg.surfaceId || '');
+    if (!surfaceId) return;
+    // Forward to pending local subscribers that waited for this surface
+    // to arrive from the upstream relay. The completePendingUpstreamSubs
+    // helper subscribes each waiting WS and sends surface.subscribed.
+    completePendingUpstreamSubs(surfaceId);
+    return;
+  }
+  if (msg.type === 'runtime.output') {
+    const surfaceId = String(msg.surfaceId || '');
+    if (!surfaceId) return;
+    surfaceManager.emitOutput(surfaceId, msg.stream || 'stdout', msg.data || '', send, envelope);
+    return;
+  }
+  if (msg.type === 'shell.output') {
+    const instanceId = String(msg.instanceId || '');
+    const d = String(msg.data || '');
+    if (instanceId && d) {
+      stateShellRouter.broadcast(instanceId, d, msg.stream || 'stdout', stateSurfaceManager);
+    }
+    return;
+  }
+  if (msg.type === 'shell.exit') {
+    const instanceId = String(msg.instanceId || '');
+    if (instanceId) {
+      stateShellRouter.broadcastExit(instanceId, msg.code ?? null, stateSurfaceManager);
+    }
+    return;
+  }
+  if (msg.type === 'runtime.status') {
+    const surfaceId = String(msg.surfaceId || '');
+    if (!surfaceId) return;
+    surfaceManager.emitStatus(surfaceId, msg.status || 'unknown', msg.detail, send, envelope);
+    return;
+  }
+}
+
+// ─── Core Services ────────────────────────────────────────────────
+const eventBus = new RelayEventBus();
+const instanceManager = new InstanceManager(eventBus);
+const auditLog = new AuditLogger(process.cwd());
+
+// ─── Pending External Access Requests ───────────────────────────────
+// Map requestId → WebSocket of the browser that initiated the request
+const pendingExternalRequests = new Map<string, WebSocket>();
+const PENDING_TIMEOUT_MS = 30_000;
+const sessionPersistence = new SessionPersistence(process.cwd(), eventBus);
+const permissions = new PermissionModel();
+
+// ─── Workbench tab sync ────────────────────────────────────
+// Delegate to StateRelayWorkbenchStore (created after surfaceManager init).
+// Legacy workbenchTabStore/workbenchSubscribers removed — use stateWorkbenchStore.
+function cleanupWorkbenchSubs(ws: WebSocket): void {
+  if (typeof stateWorkbenchStore !== 'undefined') stateWorkbenchStore.cleanupWs(ws);
+}
+
+// ─── Admin routes state (merged from old dashboard server) ────
+const adminLogs: string[] = [];
+const adminShellInstances = new Map<string, ShellRunInstance>();
+const adminRelayToShellId = new Map<string, string>();
+
+function addAdminLog(msg: string): void {
+  adminLogs.push(`[${new Date().toISOString()}] ${msg}`);
+  if (adminLogs.length > 200) adminLogs.shift();
+}
+
+/** Write stdin data to any known instance (local PTY or remote agent). Cross-relay bridge for agent.stdin → PTY. */
+export function sendStdinByInstanceId(instanceId: string, data: string): boolean {
+  const inst = instanceManager.get(instanceId);
+  if (!inst) return false;
+  return sendStdin(inst, data);
+}
+
+/** Write stdin data to an ad-hoc shell instance, looked up by relay instance ID. */
+export function writeToShellByRelayId(relayInstanceId: string, data: string): boolean {
+  const shellId = adminRelayToShellId.get(relayInstanceId);
+  if (!shellId) return false;
+  const entry = adminShellInstances.get(shellId);
+  if (!entry || !entry.proc.stdin?.writable) return false;
+  entry.proc.stdin.write(data);
+  return true;
+}
+
+/** Get the admin logs (for node-runtime to pass to AdminRouteContext). */
+export function getAdminLogs(): string[] {
+  return adminLogs;
+}
+
+/** Append to admin logs from outside. */
+export function appendAdminLog(msg: string): void {
+  addAdminLog(msg);
+}
+const relayConfigManager = new RelayConfigManager(eventBus);
+
+// ─── Notification Bus ────────────────────────────────────────────
+let ntfCounter = 0;
+function notifyBus(params: {
+  scenarioId: string;
+  severity: 'info' | 'success' | 'warning' | 'error';
+  title: string;
+  detail?: string;
+  duration?: number;
+}): string {
+  const id = `ntf_${++ntfCounter}_${Date.now().toString(36)}`;
+  broadcastToBrowsers(envelope("system.notification", { id, ...params, timestamp: Date.now() }));
+  return id;
+}
+function dismissNotify(id: string): void {
+  broadcastToBrowsers(envelope("system.notification_dismiss", { id }));
+}
+
+const defaultAdapterId = getDefaultAdapterId();
+const defaultInstance = instanceManager.create(process.cwd(), os.hostname());
+defaultInstance.status = "running";
+defaultInstance.adapterId = defaultAdapterId;
+instanceManager.setActive(defaultInstance.id);
+
+// ── Alias store (device naming, persisted to .sessionbridge/aliases.json) ──
+const aliasStore: AliasStore = (() => {
+  const filePath = join(process.cwd(), '.sessionbridge', 'aliases.json');
+  let aliases: Record<string, string> = {};
+  try { if (existsSync(filePath)) aliases = JSON.parse(readFileSync(filePath, 'utf-8')); } catch {}
+  const save = () => {
+    try { mkdirSync(dirname(filePath), { recursive: true }); writeFileSync(filePath, JSON.stringify(aliases, null, 2)); } catch {}
+  };
+  return {
+    get(key: string) { return aliases[key]; },
+    set(key: string, alias: string) { aliases[key] = alias; save(); },
+    remove(key: string) { delete aliases[key]; save(); },
+    all() { return { ...aliases }; },
+  };
+})();
+
+/** Apply alias from the alias store to an instance (if one exists). */
+function applyAlias(inst: import("./instance-manager").InstanceData): void {
+  const key = `${inst.source}:${inst.dir}`;
+  const alias = aliasStore.get(key);
+  if (alias) inst.label = alias;
+}
+// Apply alias to the default instance too
+applyAlias(defaultInstance);
+
+/** Get the currently active instance */
+function inst(): import("./instance-manager").InstanceData {
+  return instanceManager.getActive() || defaultInstance;
+}
+
+/** Check an HTTP request against the permission model. Returns true if allowed. */
+function checkHttpPermission(
+  res: import("http").ServerResponse,
+  category: import("../extensions/types").PermissionCategory,
+  context?: Record<string, unknown>,
+): boolean {
+  const result = permissions.check(category, context);
+  if (!result.allowed) {
+    res.writeHead(403, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: result.reason || "Permission denied" }));
+    return false;
+  }
+  return true;
+}
+
+// ─── MIME ────────────────────────────────────────────────────────
+const MIME: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "application/javascript",
+  ".css": "text/css",
+};
+
+// ─── Instance-based shorthand accessors ───────────────────────
+
+let blockSeq = 0;
+const nextId = () => `blk_${++blockSeq}`;
+
+const MAX_BLOCKS = 500;
+
+function bufferBlock(block: Record<string, unknown>) {
+  const i = inst();
+  i.blockBuffer.push(block);
+  if (i.blockBuffer.length > MAX_BLOCKS) i.blockBuffer.shift();
+}
+
+function flushBuffer(ws: WebSocket) {
+  const i = inst();
+  for (const block of i.blockBuffer) send(ws, block);
+  for (const data of i.outputBuffer) send(ws, envelope("instance.output", { data }));
+}
+
+// ─── Browser WebSocket Connections ──────────────────────────────
+const browsers = new Set<WebSocket>();
+const authenticatedSockets = new Set<WebSocket>();
+const shellWsMap = new Map<WebSocket, Set<string>>();
+const agentVersionMap = new Map<WebSocket, string>();
+// Shell write-lock: instanceId → owning WebSocket
+const shellLockMap = new Map<string, WebSocket>();
+/** Shell output routing delegated to StateRelayShellRouter (created below). */
+let stateShellRouter: StateRelayShellRouter;
+/** Guard: instanceId → in-flight spawn promise, prevents double-spawn from shell.input handler */
+const pendingShellSpawns = new Map<string, Promise<unknown>>();
+
+const operationManager = new RemoteOperationManager();
+
+// ─── StateBridge adapters ───────────────────────────────────
+// Initialize StateBus first, then create the three relay adapters.
+// StateBus auto-restores persisted entries from disk on construction.
+const stateBus = createStateBus(process.env.BRIDGE_DIR || process.cwd());
+stateBus.setNodeId('relay', ['relay']);
+const stateSurfaceManager = new StateRelaySurfaceManager(stateBus);
+const stateWorkbenchStore = new StateRelayWorkbenchStore(stateBus);
+stateShellRouter = new StateRelayShellRouter(stateBus);
+// Keep the old name so existing code compiles against the new adapter.
+// All surfaceManager.* calls resolve to StateRelaySurfaceManager methods.
+const surfaceManager = stateSurfaceManager;
+
+// subscribeShellOutput and broadcastShellOutput delegated to stateShellRouter
+
+function subscribeShellOutput(instanceId: string, ws: WebSocket): void {
+  stateShellRouter.subscribe(instanceId, ws);
+}
+
+function broadcastShellOutput(instanceId: string, data: string, stream: string = 'stdout'): void {
+  stateShellRouter.broadcast(instanceId, data, stream, stateSurfaceManager);
+  // Forward output upstream only when at least one surface for this instance
+  // is shared cross-node. Unconditional forwarding floods the upstream relay
+  // with output from local-only shells, which can saturate SSH tunnels and
+  // cause browser WebSocket disconnects (code 1006).
+  if (_sendUpstream) {
+    const surfaces = stateSurfaceManager.findByInstanceId(instanceId);
+    const hasShared = surfaces.some(s => s.shared);
+    if (hasShared) {
+      _sendUpstream("agent.stdout", { instanceId, line: data });
+      console.log('[broadcastShellOutput] FORWARDED instanceId=%s surfaces=%d lineLen=%d',
+        instanceId, surfaces.length, (data || '').length);
+    } else if (data && data.length > 0) {
+      console.log('[broadcastShellOutput] NOT forwarding instanceId=%s surfaces=%d shared=%s firstTitle=%s',
+        instanceId, surfaces.length, surfaces.map(s => s.shared),
+        surfaces[0]?.title || '(none)');
+    }
+  }
+}
+
+// Session persistence: clientToken → session data for reconnect recovery
+interface ClientSession { ws: WebSocket; shellIds: Set<string>; label: string; disconnectTime?: number }
+const clientSessionMap = new Map<string, ClientSession>();
+const wsToClientToken = new Map<WebSocket, string>();
+const SESSION_RECONNECT_GRACE_MS = 60000; // 60s grace period before cleanup
+
+// ─── Chunk reassembly ─────────────────────────────────────────────
+interface ChunkedBuffer { total: number; parts: string[]; ts: number }
+const chunkBuffers = new Map<string, ChunkedBuffer>();
+
+function reassembleChunk(msg: Record<string, any>): string | null {
+  const chunk = msg.chunk as { msgId?: string; seq?: number; total?: number } | undefined;
+  if (!chunk?.msgId) return msg.line || msg.data || null;
+  let buf = chunkBuffers.get(chunk.msgId);
+  if (!buf) {
+    buf = { total: chunk.total ?? 0, parts: [], ts: Date.now() };
+    chunkBuffers.set(chunk.msgId, buf);
+  }
+  buf.parts[chunk.seq ?? 0] = msg.line || msg.data || '';
+  if (buf.parts.filter(() => true).length < buf.total) return null; // incomplete
+  chunkBuffers.delete(chunk.msgId);
+  return buf.parts.join('');
+}
+
+// Clean up stale chunk buffers every 30s
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, buf] of chunkBuffers) {
+    if (now - buf.ts > 30000) chunkBuffers.delete(key);
+  }
+}, 30000);
+
+function send(ws: WebSocket, msg: unknown) {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  const cs = cryptoStreams.get(ws);
+  if (cs?.isEstablished) {
+    cs.send(JSON.stringify(msg));
+  } else {
+    ws.send(JSON.stringify(msg));
+  }
+}
+
+function broadcastToBrowsers(msg: unknown) {
+  for (const ws of browsers) send(ws, msg);
+}
+
+// ─── Peer Discovery ──────────────────────────────────────────
+// Tracks connected browsers/agents and broadcasts peer list changes.
+
+function classifyPeerIP(ip: string): 'loopback' | 'lan' | 'wan' {
+  if (ip === '127.0.0.1' || ip === '::1' || ip === 'localhost') return 'loopback';
+  if (ip.startsWith('10.') || ip.startsWith('192.168.')) return 'lan';
+  if (ip.startsWith('172.')) {
+    const second = parseInt(ip.split('.')[1], 10);
+    if (second >= 16 && second <= 31) return 'lan';
+  }
+  return 'wan';
+}
+
+function getPeerInfo(ws: WebSocket): Record<string, unknown> | null {
+  const label = (ws as any)._agentLabel || (ws as any)._browserLabel;
+  if (!label) return null; // not fully identified yet
+  const rawIP = (ws as any)._socket?.remoteAddress || '127.0.0.1';
+  const ip = rawIP.replace(/^::ffff:/, '');
+  const networkType = classifyPeerIP(ip);
+  const isAgent = !!(ws as any)._isAgent;
+  const info: Record<string, unknown> = {
+    id: (ws as any)._agentInstanceId || (ws as any)._browserId || `peer_${Date.now()}`,
+    name: label,
+    ip,
+    type: isAgent ? 'agent' : 'browser',
+    networkType,
+    hasPublicAccess: networkType === 'wan',
+    connectedAt: (ws as any)._connectedAt || Date.now(),
+  };
+  if (isAgent) {
+    info.role = (ws as any)._agentRole || 'leaf';
+  }
+  const latency = (ws as any)._latency;
+  if (latency !== undefined) info.latency = latency;
+  return info;
+}
+
+/** Normalize WebSocket remote address for IP-based grouping. */
+function normalizePeerIP(ws: WebSocket): string {
+  if (!(ws as any)._socket) return '127.0.0.1';
+  const raw = (ws as any)._socket.remoteAddress || '127.0.0.1';
+  let ip = raw.replace(/^::ffff:/, '');
+  if (ip === '::1') ip = '127.0.0.1';
+  return ip;
+}
+
+function collectPeers(): { peers: Record<string, unknown>[]; links: { source: string; target: string; type: string }[] } {
+  const peers: Record<string, unknown>[] = [{
+    ...localNodeInfo,
+    type: 'agent',
+    hasPublicAccess: localNodeInfo.role === 'relay' || localNodeInfo.networkType === 'wan',
+    connectedAt: START_TIME,
+    isLocal: true,
+  }];
+  // Group browser connections by IP — same device = one VIEW node regardless of tab count
+  const browserByIP = new Map<string, { count: number; connectedAt: number; label: string }>();
+  for (const ws of browsers) {
+    if (!(ws as any)._isAgent) {
+      const label = (ws as any)._browserLabel;
+      if (!label) continue;
+      const ip = normalizePeerIP(ws);
+      const group = browserByIP.get(ip);
+      if (group) {
+        group.count++;
+        const ca = (ws as any)._connectedAt || Date.now();
+        if (ca < group.connectedAt) group.connectedAt = ca;
+      } else {
+        browserByIP.set(ip, {
+          count: 1,
+          connectedAt: (ws as any)._connectedAt || Date.now(),
+          label,
+        });
+      }
+      continue;
+    }
+    const info = getPeerInfo(ws);
+    if (info) peers.push(info);
+  }
+  // Add one aggregated VIEW node per unique IP
+  for (const [ip, group] of browserByIP) {
+    const networkType = classifyPeerIP(ip);
+    peers.push({
+      id: `view_${ip}`,
+      name: group.label,
+      ip,
+      type: 'browser',
+      networkType,
+      hasPublicAccess: networkType === 'wan',
+      connectedAt: group.connectedAt,
+      tabCount: group.count,
+    });
+  }
+  // Also collect agents (agents are removed from browsers set but have _isAgent)
+  for (const inst of instanceManager.list()) {
+    // Runtime sub-instances (terminal, plugin, etc.) are not device nodes.
+    // They are exposed through SharedSurface tabs, not the peer/node list.
+    // Only instanceRole === 'node' (or legacy undefined) can appear in peer.list.
+    if (inst.instanceRole === 'runtime') continue;
+    if (typeof inst.adapterState.parentNodeId === 'string') continue;
+    if (inst.agentConnection && !browsers.has(inst.agentConnection)) {
+      const ws2 = inst.agentConnection;
+      const rawIP = (ws2 as any)._socket?.remoteAddress || '127.0.0.1';
+      const ip = rawIP.replace(/^::ffff:/, '');
+      const networkType = classifyPeerIP(ip);
+      const viaRelayId: string | undefined = (ws2 as any)._viaRelayId;
+      peers.push({
+        id: inst.id,
+        name: inst.label,
+        ip,
+        type: 'agent',
+        role: (ws2 as any)._agentRole || 'leaf',
+        networkType,
+        hasPublicAccess: networkType === 'wan',
+        connectedAt: inst.createdAt,
+        connectedToRelayId: viaRelayId || null,
+        latency: (ws2 as any)._latency,
+      });
+    }
+  }
+
+  // Build topology links from peer list
+  const links: { source: string; target: string; type: string }[] = [];
+  const relayPeers = peers.filter(p => p.id !== '__local__' && p.type === 'agent' && (p.role === 'relay' || p.hasPublicAccess));
+  const leafPeers = peers.filter(p => p.id !== '__local__' && p.type === 'agent' && p.role !== 'relay' && !p.hasPublicAccess);
+
+  for (const leaf of leafPeers) {
+    const explicitRelayId = leaf.connectedToRelayId as string | undefined;
+    if (explicitRelayId && peers.some(p => p.id === explicitRelayId)) {
+      links.push({ source: explicitRelayId, target: leaf.id as string, type: 'agent' });
+    } else if (relayPeers.length === 1) {
+      // Single relay — all leaves are behind it
+      links.push({ source: relayPeers[0].id as string, target: leaf.id as string, type: 'agent' });
+    } else {
+      // Unknown topology — leaf connects to local node directly
+      links.push({ source: '__local__', target: leaf.id as string, type: 'agent' });
+    }
+  }
+  // If relays exist, link them to local.
+  for (const rp of relayPeers) {
+    links.push({ source: '__local__', target: rp.id as string, type: 'relay' });
+  }
+
+  return { peers, links };
+}
+
+function broadcastPeers(): void {
+  const { peers, links } = collectPeers();
+  for (const ws of browsers) {
+    if ((ws as any)._isAgent) {
+      send(ws, envelope("peer.list", { peers, links }));
+    } else {
+      const ip = normalizePeerIP(ws);
+      send(ws, envelope("peer.list", {
+        peers: peers.filter(p => p.type !== 'browser' || p.ip !== ip),
+        links,
+      }));
+    }
+  }
+}
+
+function sendPeers(ws: WebSocket): void {
+  const { peers, links } = collectPeers();
+  if ((ws as any)._isAgent) {
+    send(ws, envelope("peer.list", { peers, links }));
+  } else {
+    const ip = normalizePeerIP(ws);
+    send(ws, envelope("peer.list", {
+      peers: peers.filter(p => p.type !== 'browser' || p.ip !== ip),
+      links,
+    }));
+  }
+}
+
+function sendBlock(block: Record<string, unknown>) {
+  const msg = envelope("instance.block", { ...block, ts: Date.now() });
+  broadcastToBrowsers(msg);
+  if (block.blockType !== 'user') {
+    bufferBlock(msg);
+  }
+}
+
+function resetStreamState() {
+  const i = inst();
+  i.thinkingId = null;
+  i.thinkingText = "";
+  i.toolUseId = null;
+  i.toolResult = "";
+  i.textBuffer = "";
+}
+
+// ─── Spawn / Kill Instance ──────────────────────────────────────
+async function spawnInstance(instanceId?: string) {
+  const i = instanceId ? (instanceManager.get(instanceId) || inst()) : inst();
+  instanceManager.setActive(i.id);
+
+  // Permission check
+  const permResult = permissions.check('processManagement', { action: 'spawn', instanceId: i.id, adapterId: i.adapterId });
+  if (!permResult.allowed) {
+    broadcastToBrowsers(envelope("instance.block", { blockType: "error", text: `Spawn denied: ${permResult.reason}` }));
+    return;
+  }
+
+  // Kill existing process via handle
+  if (i.handle) {
+    i.handle.stop().catch(() => {});
+    i.handle = undefined;
+  }
+  if (i.process) {
+    i.process.kill();
+    i.process = null;
+  }
+
+  // Clear stale blocks (but preserve outputBuffer — it's needed for shell replay on reconnect)
+  i.blockBuffer.length = 0;
+
+  const adapter = resolveAdapter(i.adapterId) || adapterRegistry.get(getDefaultAdapterId())!;
+  const adapterName = adapter.displayName;
+
+  broadcastToBrowsers(envelope("instance.block", { blockType: "status", text: `Spawning ${adapterName} instance...` }));
+
+  // Delegate to adapter.start() — adapter owns process lifecycle
+  i.handle = await adapter.start({
+    workspaceId: i.id,
+    directory: i.dir,
+    label: i.label,
+    adapterId: i.adapterId || getDefaultAdapterId(),
+    config: { model: i.model },
+    onBlock: (block: Record<string, unknown>) => {
+      const msg = envelope("instance.block", { ...block, ts: Date.now() });
+      broadcastToBrowsers(msg);
+      if (block.blockType !== 'user') {
+        i.blockBuffer.push(msg);
+        if (i.blockBuffer.length > 2000) i.blockBuffer.shift();
+      }
+    },
+    onOutput: (data: string) => {
+      if (!adapter.getCapabilities().structuredEvents) {
+        broadcastShellOutput(i.id, data, "stdout");
+      } else {
+        broadcastToBrowsers(envelope("instance.output", { data }));
+      }
+      i.outputBuffer.push(data);
+      if (i.outputBuffer.length > 2000) i.outputBuffer.shift();
+      i.outputSize += data.length;
+    },
+    onExit: (code: number | null) => {
+      if (code !== null && code !== 0) {
+        sendBlock({ blockType: "status", text: `Process exited (${code})` });
+      }
+      i.handle = undefined;
+      i.process = null;
+      i.status = 'stopped';
+    },
+  });
+
+  i.status = 'running';
+}
+
+function killInstance(instanceId?: string) {
+  const i = instanceId ? instanceManager.get(instanceId) : inst();
+  if (!i) return;
+  if (i.handle) {
+    i.handle.stop().catch(() => {});
+    i.handle = undefined;
+  }
+  if (i.process) {
+    i.process.kill();
+    i.process = null;
+  }
+  i.status = 'stopped';
+  releaseQueueForInstance(i);
+}
+
+async function spawnShellForWs(ws: WebSocket, instanceId?: string): Promise<import("./instance-manager").InstanceData> {
+  // Permission check
+  const permResult = permissions.check('shellAccess', { action: 'spawn_shell' });
+  if (!permResult.allowed) {
+    send(ws, envelope("error", { code: "ACCESS_DENIED", message: permResult.reason || "Shell access denied" }));
+    throw Object.assign(new Error(permResult.reason || 'Shell access denied'), { _reported: true });
+  }
+
+  let i: import("./instance-manager").InstanceData;
+  let terminalAdapter: import("../extensions/types").AgentAdapter | undefined;
+
+  if (instanceId) {
+    const existing = instanceManager.get(instanceId);
+    if (existing) {
+      if (existing.source === 'remote') {
+        i = existing;
+      } else {
+      // Use the instance's own adapter — NOT resolveAdapterByCapability('terminal', true).
+      // resolveAdapterByCapability returns the FIRST registered adapter with terminal:true,
+      // which may be claude-code (also terminal-capable) rather than shell. Using the
+      // instance's own adapter guarantees we spawn with the correct adapter type.
+      terminalAdapter = existing.adapterId ? adapterRegistry.get(existing.adapterId) : undefined;
+      if (!terminalAdapter) {
+        // Adapter not found (e.g., 'unknown') — fall back to shell adapter
+        terminalAdapter = adapterRegistry.get('shell') || resolveAdapterByCapability('terminal', true);
+      }
+      if (!terminalAdapter) {
+        send(ws, envelope("error", { code: "INVALID_ADAPTER", message: `Instance ${instanceId} has unknown adapter: ${existing.adapterId} and no shell fallback` }));
+        throw Object.assign(new Error(`Instance ${instanceId} has unknown adapter: ${existing.adapterId} and no shell fallback`), { _reported: true });
+      }
+      if (!terminalAdapter.getCapabilities().terminal) {
+        send(ws, envelope("error", { code: "NOT_TERMINAL", message: "Instance is not terminal-capable — cannot attach shell" }));
+        throw Object.assign(new Error(`Instance ${instanceId} is not terminal-capable`), { _reported: true });
+      }
+      i = existing;
+      }
+    } else {
+      // Explicit instanceId was provided but not found — must not fallback to local shell.
+      // This prevents stale instanceIds (e.g. from localStorage after relay restart) from
+      // silently creating a wrong shell on the wrong machine.
+      send(ws, envelope("error", { code: "INSTANCE_NOT_FOUND", message: `Instance ${instanceId} not found` }));
+      throw Object.assign(new Error(`Instance ${instanceId} not found`), { _reported: true });
+    }
+  } else {
+    // No instanceId — create new instance with shell adapter specifically.
+    terminalAdapter = adapterRegistry.get('shell') || resolveAdapterByCapability('terminal', true);
+    if (!terminalAdapter) {
+      send(ws, envelope("error", { code: "NO_TERMINAL_ADAPTER", message: "No terminal-capable adapter available" }));
+      throw Object.assign(new Error('No terminal-capable adapter available for shell.spawn'), { _reported: true });
+    }
+    i = instanceManager.create(os.homedir(), os.hostname(), "local", terminalAdapter.id);
+    i.instanceRole = 'runtime';
+    i.runtimeKind = 'terminal';
+  }
+
+  // Apply alias from the alias store (if one exists for this instance)
+  applyAlias(i);
+
+  // Track ownership
+  if (!shellWsMap.has(ws)) shellWsMap.set(ws, new Set());
+  shellWsMap.get(ws)!.add(i.id);
+
+  // Remote instances: proxy shell spawn to the agent via WebSocket
+  if (i.source === 'remote') {
+    // Remote agent must be connected to forward shell.spawn.
+    // If the agent disconnected, fail explicitly — don't silently succeed
+    // and leave the browser thinking the shell is running.
+    if (!i.agentConnection || i.agentConnection.readyState !== WebSocket.OPEN) {
+      send(ws, envelope("error", { code: "REMOTE_AGENT_DISCONNECTED", message: `Agent for instance ${i.id} (${i.label}) is not connected` }));
+      throw Object.assign(new Error(`Agent for instance ${i.id} is not connected`), { _reported: true });
+    }
+    i.status = 'running';
+    subscribeShellOutput(i.id, ws);
+    // Replay any buffered output
+    for (const chunk of i.outputBuffer) {
+      send(ws, envelope("shell.output", { data: chunk, stream: "stdout" }));
+    }
+    send(i.agentConnection, envelope("relay.shell.spawn", { instanceId: i.id, dir: i.dir }));
+    return i;
+  }
+
+  // ── Reconnect to existing shell ──────────────────────
+  if (i.handle && i.status === 'running') {
+    subscribeShellOutput(i.id, ws);
+    // Replay output buffer to the newly connected WS
+    for (const chunk of i.outputBuffer) {
+      send(ws, envelope("shell.output", { data: chunk, stream: "stdout" }));
+    }
+    send(ws, envelope("shell.output", { data: `\x1b[33m[Reconnected — output history above]\x1b[0m\r\n`, stream: "stdout" }));
+    return i;
+  }
+
+  // ── Fresh spawn ──────────────────────────────────
+  if (!terminalAdapter) {
+    send(ws, envelope("error", { code: "INVALID_ADAPTER", message: "No local terminal adapter available" }));
+    throw Object.assign(new Error("No local terminal adapter available"), { _reported: true });
+  }
+  subscribeShellOutput(i.id, ws);
+  i.handle = await terminalAdapter.start({
+    workspaceId: i.id,
+    directory: i.dir,
+    label: i.label || terminalAdapter.displayName,
+    adapterId: terminalAdapter.id,
+    config: {},
+    onOutput: (data: string) => {
+      broadcastShellOutput(i.id, data, "stdout");
+      i.outputBuffer.push(data);
+      i.outputSize += data.length;
+      while (i.outputSize > 512 * 1024 && i.outputBuffer.length > 0) {
+        i.outputSize -= i.outputBuffer.shift()?.length ?? 0;
+      }
+    },
+    onExit: (code: number | null) => {
+      try {
+        // Delegate shell subscriber notification + surface emitResult to router
+        stateShellRouter.broadcastExit(i.id, code, stateSurfaceManager);
+        // Surface cleanup (beyond emitResult already handled above)
+        const surfaces = surfaceManager.findByInstanceId(i.id);
+        for (const surface of surfaces) {
+          // Auto-cleanup: when the shell process exits, unkeep and delete the
+          // surface so dead terminal tabs don't persist. Cross-relay (remote
+          // agent surfaces) are excluded — inventory clears those.
+          surfaceManager.setKeep(surface.surfaceId, false);
+          surfaceManager.recordDebugEvent({
+            ts: Date.now(), kind: 'surface.close',
+            surfaceId: surface.surfaceId, nodeId: surface.nodeId,
+            instanceId: i.id,
+            message: `shell exited (code=${code}) — auto-closing surface`,
+          });
+          surfaceManager.delete(surface.surfaceId);
+          // Broadcast surface.closed to node subscribers
+          const nodeSubs = surfaceManager.getNodeSubscribers(surface.nodeId);
+          if (nodeSubs) {
+            const closeMsg = envelope("surface.closed", {
+              surfaceId: surface.surfaceId, nodeId: surface.nodeId,
+              reason: 'shell_exit',
+            });
+            for (const client of nodeSubs) {
+              if (client.readyState === WebSocket.OPEN) send(client, closeMsg);
+            }
+          }
+          // Clean up ALL workbench tab stores
+          removeSurfaceFromAllWorkbenches(surface.surfaceId);
+        }
+      } catch (err) {
+        console.error('[shell] onExit error for instance=%s code=%s: %s', i.id, code, (err as Error)?.message || err);
+      }
+      i.handle = undefined;
+      i.status = "stopped";
+    },
+  });
+
+  i.status = "running";
+  return i;
+}
+
+function interruptInstance(instanceId?: string) {
+  const i = instanceId ? instanceManager.get(instanceId) : inst();
+  if (!i) return false;
+  if (i.source === 'remote') {
+    sendBlock({ blockType: "status", text: "Cannot interrupt remote instance" });
+    return false;
+  }
+  if (!i.process?.pid) return false;
+
+  sendBlock({ blockType: "status", text: "Interrupting and rewinding changes..." });
+  const rewindResult = i.checkpointManager.rewindCurrentTurn();
+  if (rewindResult.restored > 0) {
+    sendBlock({ blockType: "status", text: `↩ Rewound ${rewindResult.restored} change(s) (${rewindResult.skipped} skipped)` });
+  }
+
+  try {
+    if (process.platform === "win32") {
+      execSync(`taskkill //PID ${i.process.pid} //T`, { timeout: 3000 });
+    } else {
+      process.kill(i.process.pid, "SIGINT");
+    }
+    setTimeout(() => {
+      if (i.process) {
+        i.process.kill();
+        i.process = null;
+        spawnInstance(i.id);
+      }
+    }, 5000);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ─── Mode / Effort State ──────────────────────────────────────────
+let currentPermissionMode: string = "default";
+let currentEffortLevel: string = "medium";
+
+// ─── Control Request Protocol (stdin JSON commands to Claude) ────
+function sendControlRequest(subtype: string, data: Record<string, unknown>, instanceId?: string): boolean {
+  const i = instanceId ? (instanceManager.get(instanceId) || inst()) : inst();
+  if (i.source === 'remote') {
+    if (!i.agentConnection || i.agentConnection.readyState !== WebSocket.OPEN) return false;
+    const requestId = `r${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const msg = JSON.stringify({
+      type: "control_request",
+      request_id: requestId,
+      request: { subtype, ...data },
+    }) + "\n";
+    send(i.agentConnection, envelope("agent.stdin", { instanceId: i.id, data: msg }));
+    broadcastToBrowsers(envelope("instance.control_sent", { subtype, ...data, requestId }));
+    return true;
+  }
+  // Prefer adapter handle for local instances
+  if (i.handle) {
+    i.handle.sendCommand(subtype, data).catch(() => {});
+    broadcastToBrowsers(envelope("instance.control_sent", { subtype, ...data }));
+    return true;
+  }
+  if (!i.process?.stdin?.writable) return false;
+  const requestId = `r${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  const msg = JSON.stringify({
+    type: "control_request",
+    request_id: requestId,
+    request: { subtype, ...data },
+  }) + "\n";
+  i.process.stdin.write(msg);
+  broadcastToBrowsers(envelope("instance.control_sent", { subtype, ...data, requestId }));
+  return true;
+}
+
+function setPermissionMode(mode: "default" | "acceptEdits" | "plan") {
+  currentPermissionMode = mode;
+  sendControlRequest("set_permission_mode", { mode });
+  broadcastToBrowsers(envelope("system.mode_changed", { mode, effort: currentEffortLevel }));
+}
+
+function setThinkingLevel(level: "low" | "medium" | "high") {
+  currentEffortLevel = level;
+  const tokens = level === "low" ? 0 : 31999;
+  sendControlRequest("set_max_thinking_tokens", { maxThinkingTokens: tokens });
+  broadcastToBrowsers(envelope("system.mode_changed", { mode: currentPermissionMode, effort: level }));
+}
+
+// ─── Message Queue (sequential processing, source-locked) ──────────
+
+/** Write data to an instance's stdin (local process or remote agent). */
+function sendStdin(i: import("./instance-manager").InstanceData, data: string): boolean {
+  if (i.source === 'remote') {
+    if (!i.agentConnection || i.agentConnection.readyState !== WebSocket.OPEN) return false;
+    send(i.agentConnection, envelope("agent.stdin", { instanceId: i.id, data }));
+    return true;
+  }
+  // Prefer adapter handle for local instances
+  if (i.handle) {
+    i.handle.send(data).catch(() => {});
+    return true;
+  }
+  if (!i.process?.stdin?.writable) return false;
+  i.process.stdin.write(data);
+  return true;
+}
+
+function processQueueForInstance(i: import("./instance-manager").InstanceData) {
+  const canProcess = i.source === 'remote'
+    ? (i.agentConnection && i.agentConnection.readyState === WebSocket.OPEN)
+    : !!i.process?.stdin?.writable;
+  if (i.isProcessing || i.pendingQueue.length === 0 || !canProcess) {
+    if (i.pendingQueue.length === 0) i.queueLock = null;
+    return;
+  }
+  i.isProcessing = true;
+  const entry = i.pendingQueue.shift()!;
+  const pipeIdx = entry.indexOf("|");
+  const source = pipeIdx > 0 ? entry.slice(0, pipeIdx) : "terminal";
+  const text = pipeIdx > 0 ? entry.slice(pipeIdx + 1) : entry;
+
+  broadcastToBrowsers(envelope("queue.status", {
+    processing: true,
+    source,
+    queueDepth: i.pendingQueue.length,
+  }));
+
+  // Strict lookup — this instance's queue must use its own adapter's capabilities.
+  const queueAdapter = i.adapterId ? adapterRegistry.get(i.adapterId) : undefined;
+  const cap = queueAdapter?.getCapabilities();
+  if (cap?.structuredEvents) {
+    // Structured adapter: JSONL-encoded user message
+    resetStreamState();
+    if (i.source !== 'remote') i.checkpointManager.startNewTurn();
+    sendStdin(i, JSON.stringify({
+      type: "user",
+      message: { role: "user", content: [{ type: "text", text }] },
+    }) + "\n");
+  } else {
+    // Terminal adapter: send raw text to stdin
+    sendStdin(i, text + "\n");
+    i.isProcessing = false;
+    processQueueForInstance(i);
+  }
+}
+
+function processQueue() {
+  const i = inst();
+  processQueueForInstance(i);
+}
+
+function enqueueInput(text: string, source: string = "terminal") {
+  const i = inst();
+  if (i.isProcessing && i.queueLock && i.queueLock !== source && !text.startsWith("/")) {
+    broadcastToBrowsers(envelope("system.queue_blocked", {
+      message: `Cannot send — ${i.queueLock} is currently processing. Wait or interrupt first.`,
+      blockedSource: source,
+      activeSource: i.queueLock,
+    }));
+    return;
+  }
+
+  if (!i.queueLock) i.queueLock = source;
+  i.pendingQueue.push(`${source}|${text}`);
+
+  broadcastToBrowsers(envelope("queue.status", {
+    processing: i.isProcessing,
+    source: i.queueLock,
+    queueDepth: i.pendingQueue.length,
+  }));
+
+  processQueueForInstance(i);
+}
+
+function releaseQueueForInstance(i: import("./instance-manager").InstanceData) {
+  i.pendingQueue.length = 0;
+  i.queueLock = null;
+  i.isProcessing = false;
+  broadcastToBrowsers(envelope("queue.status", {
+    processing: false,
+    source: null,
+    queueDepth: 0,
+  }));
+}
+
+function releaseQueue() {
+  const i = inst();
+  releaseQueueForInstance(i);
+}
+
+/**
+ * Create parser deps for any instance (local or remote).
+ * Used by both spawnInstance() and agent message handlers.
+ */
+function parserDepsFor(i: import("./instance-manager").InstanceData): StreamParserDeps {
+  return {
+    sendBlock: (block: Record<string, unknown>) => {
+      const msg = envelope("instance.block", { ...block, ts: Date.now() });
+      broadcastToBrowsers(msg);
+      if (block.blockType !== 'user') {
+        i.blockBuffer.push(msg);
+        if (i.blockBuffer.length > MAX_BLOCKS) i.blockBuffer.shift();
+      }
+    },
+    broadcast: (msg: unknown) => broadcastToBrowsers(msg),
+    bufferOutput: (data: string) => {
+      bufferOutputFor(i, data);
+    },
+    nextId,
+    setActive: (id: string | null) => instanceManager.setActive(id),
+    getActiveId: () => instanceManager.activeId,
+    processQueueForInstance: (inst: any) => {
+      processQueueForInstance(inst);
+    },
+    sendControlRequest,
+    getEffortLevel: () => currentEffortLevel,
+  };
+}
+
+function bufferOutputFor(i: import("./instance-manager").InstanceData, data: string) {
+  i.outputBuffer.push(data);
+  i.outputSize += data.length;
+  while (i.outputSize > 512 * 1024 && i.outputBuffer.length > 0) {
+    i.outputSize -= i.outputBuffer.shift()?.length ?? 0;
+  }
+}
+
+// ─── HTTP Server ──────────────────────────────────────────────────
+const OUT_DIR = join(process.cwd(), "out");
+let ROOT_DIR = inst().dir;
+
+const serverRequestHandler = async (req: import("http").IncomingMessage, res: import("http").ServerResponse) => {
+  // CORS headers: allow any origin so the Next.js dev server (port 3000)
+  // can call the relay API (port 8080) during development.
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  if (req.method === "OPTIONS") {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  // Delegate to structured API routes first
+  if (registerApiRoutes(req, res, {
+    instanceManager,
+    surfaceManager,
+    broadcast: broadcastToBrowsers,
+    auditLog,
+    checkPermission: checkHttpPermission,
+    configManager: appConfig,
+    relayConfig: relayConfigManager,
+    configRegistry,
+    configStore,
+    secretStore,
+    workDir: process.cwd(),
+    aliases: aliasStore,
+    workbenchStore: stateWorkbenchStore,
+    forwardSurfacePublish,
+  })) return;
+
+  // Delegate to admin routes (migrated from dashboard server)
+  if (await registerAdminRoutes(req, res, {
+    nodeLabel: os.hostname(),
+    nodeStartTime: START_TIME,
+    adapters: [],
+    permissions,
+    relayConnection: runtimeRelayConnection,
+    relayPort: PORT,
+    upstreamRelay: undefined,
+    relayToken: relayToken || undefined,
+    role: localNodeInfo.role,
+    shellInstances: adminShellInstances,
+    relayToShellId: adminRelayToShellId,
+    extensionHost: null,
+    logs: adminLogs,
+    addLog: addAdminLog,
+    setRelayUpstream: (fn) => { _sendUpstream = fn; },
+  })) return;
+
+  const url = new URL(req.url!, `http://${req.headers.host}`);
+  const path = url.pathname.replace(/\/$/, '') || '/';
+  const clientIp = req.socket.remoteAddress || "unknown";
+
+  // API-level rate limiting (skip for static and health)
+  const isApiRoute = path.startsWith("/api/") && path !== "/api/health" && path !== "/api/info";
+  if (isApiRoute && req.method === "POST" && !checkRateLimit(clientIp)) {
+    res.writeHead(429, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Too many requests. Please slow down." }));
+    return;
+  }
+
+  // ── API: List directory ──────────────────────────────────
+  // Supports `?dir=` and `?showAll=1` — when showAll is set, all files
+  // including dotfiles and common noise directories are shown.
+  if (path === "/api/list" && req.method === "GET") {
+    if (!checkHttpPermission(res, 'fileRead', { path: url.searchParams.get("dir") || "." })) return;
+    const dirParam = url.searchParams.get("dir") || ".";
+    const showAll = url.searchParams.get("showAll") === "1";
+    const targetDir = isAbsolute(dirParam) ? dirParam : resolve(ROOT_DIR, dirParam);
+    if (!existsSync(targetDir)) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Directory not found" }));
+      return;
+    }
+
+    // Default ignore list — common noise directories and files,
+    // matching the convention used by VS Code / GitHub's file explorer.
+    const IGNORE_DIRS = new Set([
+      'node_modules', '.git', '.next', 'dist', 'build', 'out',
+      'target', '.cache', '__pycache__', '.venv', 'venv', 'env',
+      'coverage', '.nyc_output', '.parcel-cache', '.svn', '.hg',
+      '.sass-cache', '.eslintcache', '.pytest_cache', 'bower_components',
+      'jspm_packages', '.lsp', '.tmp', 'tmp',
+    ]);
+    const IGNORE_FILES = new Set([
+      '.DS_Store', 'Thumbs.db', 'desktop.ini',
+    ]);
+
+    try {
+      const entries = readdirSync(targetDir, { withFileTypes: true });
+      let items = entries.map(e => {
+        const full = join(targetDir, e.name);
+        const rel = full.startsWith(ROOT_DIR)
+          ? relative(ROOT_DIR, full).replace(/\\/g, "/")
+          : full.replace(/\\/g, "/");
+        return {
+          name: e.name,
+          path: rel,
+          type: e.isDirectory() ? "dir" : "file",
+          size: e.isFile() ? statSync(full).size : 0,
+        };
+      });
+
+      if (!showAll) {
+        items = items.filter(e =>
+          !((e.type === 'dir' && IGNORE_DIRS.has(e.name)) ||
+            (e.type === 'file' && IGNORE_FILES.has(e.name)) ||
+            e.name.startsWith('.'))
+        );
+      }
+
+      items.sort((a, b) => {
+        if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ items, cwd: targetDir.replace(/\\/g, "/"), showAll }));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: String(err) }));
+    }
+    return;
+  }
+
+  // ── API: Read file ──────────────────────────────────────
+  if (path === "/api/read-file" && req.method === "GET") {
+    if (!checkHttpPermission(res, 'fileRead', { path: url.searchParams.get("path") || "" })) return;
+    const fileParam = url.searchParams.get("path") || "";
+    const targetFile = isAbsolute(fileParam) ? fileParam : resolve(ROOT_DIR, fileParam);
+
+    if (!targetFile.startsWith(ROOT_DIR)) {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Outside workspace" }));
+      return;
+    }
+
+    if (!existsSync(targetFile) || statSync(targetFile).isDirectory()) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "File not found" }));
+      return;
+    }
+
+    try {
+      const content = readFileSync(targetFile, "utf8");
+      const rel = relative(ROOT_DIR, targetFile).replace(/\\/g, "/");
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ path: rel, content }));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: String(err) }));
+    }
+    return;
+  }
+
+  // ── API: Project info ───────────────────────────────────
+  if (path === "/api/info") {
+    let projectName = basename(ROOT_DIR);
+    try {
+      const pkg = readFileSync(join(ROOT_DIR, "package.json"), "utf8");
+      const p = JSON.parse(pkg);
+      if (p.name) projectName = p.name;
+    } catch {}
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ cwd: ROOT_DIR, projectName, projectDir: ROOT_DIR, homeDir: os.homedir() }));
+    return;
+  }
+
+  // ── API: Check for updates ──────────────────────────────
+  if (path === "/api/check-update") {
+    const { execSync } = require("child_process");
+    const scriptPath = join(process.cwd(), "scripts", "check-update.js");
+    try {
+      const result = execSync(`node "${scriptPath}"`, {
+        encoding: "utf-8", timeout: 70000, stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      // stderr from git fetch may have been mixed in — extract last JSON line
+      const lines = result.trim().split('\n').filter(Boolean);
+      const lastJson = lines.filter((l: string) => l.startsWith('{')).pop() || '{}';
+      let data;
+      try { data = JSON.parse(lastJson); } catch { data = { error: 'parse failed' }; }
+      data.currentVersion = SERVER_VERSION;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(data));
+    } catch {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ currentVersion: SERVER_VERSION, hasUpdate: false, error: "check failed" }));
+    }
+    return;
+  }
+
+  // ── API: Trigger update (SSE stream) ────────────────────
+  if (path === "/api/do-update" && req.method === "POST") {
+    const scriptPath = join(process.cwd(), "scripts", "update.js");
+    const { spawn } = require("child_process");
+
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+      "Access-Control-Allow-Origin": "*",
+    });
+
+    // Helper to send SSE events
+    const send = (event: string, data: unknown) => {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+
+    send("status", { message: "Starting update..." });
+
+    const proc = spawn(process.execPath, [scriptPath, "--force"], {
+      cwd: process.cwd(),
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, FORCE_COLOR: '0' },
+    });
+
+    proc.stdout?.on("data", (chunk: Buffer) => {
+      const text = chunk.toString().trim();
+      if (text) send("log", { message: text });
+    });
+
+    proc.stderr?.on("data", (chunk: Buffer) => {
+      const text = chunk.toString().trim();
+      if (text) send("log", { message: text });
+    });
+
+    proc.on("close", (code: number | null) => {
+      if (code === 0) {
+        send("complete", { message: "Update complete. Restart server to apply changes." });
+      } else {
+        send("error", { message: `Update failed (exit code ${code})` });
+      }
+      res.end();
+    });
+
+    proc.on("error", (err: Error) => {
+      send("error", { message: err.message });
+      res.end();
+    });
+    return;
+  }
+
+  // ── API: Restart server ─────────────────────────────────
+  if (path === "/api/restart" && req.method === "POST") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ success: true, message: "Restarting..." }));
+    // Spawn a child that waits 500ms then kills us — the process manager restarts us
+    const { spawn } = require("child_process");
+    const killer = spawn(process.execPath, ["-e", `
+      setTimeout(() => { process.kill(${process.pid}, 'SIGTERM'); }, 500);
+    `], { detached: true, stdio: 'ignore' });
+    killer.unref();
+    return;
+  }
+
+  // ── API: Current version ────────────────────────────────
+  if (path === "/api/version") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ version: SERVER_VERSION }));
+    return;
+  }
+
+  // ── API: Write file (for revert) ────────────────────────
+  if (path === "/api/write" && req.method === "POST") {
+    if (!checkHttpPermission(res, 'fileWrite')) return;
+    let body = "";
+    req.on("data", (c) => body += c);
+    req.on("end", () => {
+      try {
+        const { filePath: fp, content } = JSON.parse(body);
+        const target = isAbsolute(fp) ? fp : resolve(ROOT_DIR, fp);
+        if (!target.startsWith(ROOT_DIR)) {
+          res.writeHead(403); res.end(JSON.stringify({ error: "Outside workspace" }));
+          return;
+        }
+        writeFileSync(target, content, "utf8");
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: true }));
+      } catch (err) {
+        res.writeHead(500); res.end(JSON.stringify({ error: String(err) }));
+      }
+    });
+    return;
+  }
+
+  // ── API: Download file ──────────────────────────────────
+  if (path === "/api/download" && req.method === "GET") {
+    if (!checkHttpPermission(res, 'fileRead', { path: url.searchParams.get("path") || "" })) return;
+    const fileParam = url.searchParams.get("path") || "";
+    const target = isAbsolute(fileParam) ? fileParam : resolve(ROOT_DIR, fileParam);
+    if (!target.startsWith(ROOT_DIR)) {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Outside workspace" }));
+      return;
+    }
+    if (!existsSync(target) || statSync(target).isDirectory()) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "File not found" }));
+      return;
+    }
+    try {
+      const content = readFileSync(target);
+      const name = basename(target);
+      res.writeHead(200, {
+        "Content-Type": "application/octet-stream",
+        "Content-Disposition": `attachment; filename="${name}"`,
+        "Content-Length": String(content.length),
+      });
+      res.end(content);
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: String(err) }));
+    }
+    return;
+  }
+
+  // ── API: Upload file ────────────────────────────────────
+  if (path === "/api/upload" && req.method === "POST") {
+    if (!checkHttpPermission(res, 'fileWrite')) return;
+    let body = "";
+    req.on("data", (c) => body += c);
+    req.on("end", () => {
+      try {
+        const { path: uploadPath, data, encoding } = JSON.parse(body);
+        const target = isAbsolute(uploadPath) ? uploadPath : resolve(ROOT_DIR, uploadPath);
+        if (!target.startsWith(ROOT_DIR)) {
+          res.writeHead(403); res.end(JSON.stringify({ error: "Outside workspace" }));
+          return;
+        }
+        const dir = dirname(target);
+        if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+        const buf = encoding === "base64" ? Buffer.from(data, "base64") : Buffer.from(data, "utf8");
+        writeFileSync(target, buf);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: true, path: relative(ROOT_DIR, target).replace(/\\/g, "/") }));
+      } catch (err) {
+        res.writeHead(500); res.end(JSON.stringify({ error: String(err) }));
+      }
+    });
+    return;
+  }
+
+  // ── API: Search Sessions (via SessionProvider) ─────────────
+  if (path === "/api/sessions/search" && req.method === "GET") {
+    const provider = sessionProvider();
+    if (!provider) {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ results: [], error: null }));
+      return;
+    }
+    const query = url.searchParams.get("q") || "";
+    try {
+      const results = provider.searchSessions(query);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ results }));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: String(err) }));
+    }
+    return;
+  }
+
+  // ── API: Session detail (via SessionProvider) ─────────────
+  if (path === "/api/sessions/detail" && req.method === "GET") {
+    const sessionId = url.searchParams.get("id") || "";
+    if (!sessionId) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Missing sessionId" }));
+      return;
+    }
+    const provider = sessionProvider();
+    if (!provider) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "No session provider available" }));
+      return;
+    }
+    const project = url.searchParams.get("project") || "";
+    try {
+      const result = provider.getSessionDetail(sessionId, project);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(result));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: String(err) }));
+    }
+    return;
+  }
+
+  // ── API: Current session detail (via SessionProvider) ─────
+  if (path === "/api/sessions/current") {
+    const provider = sessionProvider();
+    if (!provider) {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ sessionId: "", messages: [], found: false }));
+      return;
+    }
+    try {
+      const result = provider.getCurrentSession(ROOT_DIR);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(result));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: String(err) }));
+    }
+    return;
+  }
+
+  // ── API: Interrupt ──────────────────────────────────────
+  if (path === "/api/interrupt" && req.method === "POST") {
+    interruptInstance();
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ success: true, message: "Interrupt sent" }));
+    return;
+  }
+
+  // ── API: Rewind ──────────────────────────────────────────
+  if (path === "/api/rewind" && req.method === "POST") {
+    const { success, checkpoint } = inst().checkpointManager.rewindLastCheckpoint();
+    if (success) {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true, filePath: checkpoint?.filePath }));
+    } else {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: false, message: "No checkpoints to rewind" }));
+    }
+    return;
+  }
+
+  // ── API: List checkpoints ──────────────────────────────
+  if (path === "/api/checkpoints") {
+    const cm = inst().checkpointManager;
+    const currentTurnCps = cm.getCurrentTurnCheckpoints();
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({
+      total: cm.totalCheckpoints(),
+      currentTurn: currentTurnCps.length,
+      turnStartIndex: cm.getTurnStartIndex(),
+      checkpoints: currentTurnCps.map(c => ({
+        id: c.id,
+        toolName: c.toolName,
+        filePath: c.filePath,
+        timestamp: c.timestamp,
+        hasExpectedText: !!c.expectedText,
+      })),
+    }));
+    return;
+  }
+
+  // ── API: Rewind all (current turn) ────────────────────
+  if (path === "/api/rewind-all" && req.method === "POST") {
+    const result = inst().checkpointManager.rewindCurrentTurn();
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(result));
+    return;
+  }
+
+  // ── API: Queue status ──────────────────────────────────
+  if (path === "/api/queue") {
+    const qi = inst();
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({
+      isProcessing: qi.isProcessing,
+      queueDepth: qi.pendingQueue.length,
+      queue: qi.pendingQueue.slice(0, 10).map((t, i) => ({ pos: i + 1, text: t.slice(0, 100) })),
+    }));
+    return;
+  }
+
+  // ── API: Mode / Effort state ──────────────────────────
+  if (path === "/api/mode") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({
+      mode: currentPermissionMode,
+      effort: currentEffortLevel,
+    }));
+    return;
+  }
+
+  // ── API: Switch session directory ─────────────────────
+  if (path === "/api/session/switch" && req.method === "POST") {
+    let body = "";
+    req.on("data", (c) => body += c);
+    req.on("end", () => {
+      try {
+        const { directory } = JSON.parse(body);
+        const targetDir = join(process.cwd(), directory);
+        if (!existsSync(targetDir)) {
+          res.writeHead(400); res.end(JSON.stringify({ error: "Directory not found" }));
+          return;
+        }
+        const newInst = instanceManager.create(targetDir, basename(targetDir));
+        applyAlias(newInst);
+        instanceManager.setActive(newInst.id);
+        ROOT_DIR = targetDir;
+        spawnInstance(newInst.id);
+        broadcastToBrowsers(envelope("instance.added", { instance: { id: newInst.id, dir: newInst.dir, label: newInst.label, status: newInst.status, adapterId: newInst.adapterId, source: newInst.source } }));
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: true, cwd: targetDir, instanceId: newInst.id }));
+      } catch (err) {
+        res.writeHead(500); res.end(JSON.stringify({ error: String(err) }));
+      }
+    });
+    return;
+  }
+
+  // ── API: List instances ──────────────────────────────
+  if (path === "/api/instances" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({
+      instances: instanceManager.toJSON(),
+      activeId: instanceManager.activeId,
+    }));
+    return;
+  }
+
+  // ── API: Delete (kill) instance ──────────────────────
+  if (path.startsWith("/api/instances/") && req.method === "DELETE") {
+    const instId = path.replace("/api/instances/", "");
+    const target = instanceManager.get(instId);
+    if (!target) {
+      res.writeHead(404); res.end(JSON.stringify({ error: "Instance not found" }));
+      return;
+    }
+    killInstance(instId);
+    instanceManager.kill(instId);
+    broadcastToBrowsers(envelope("instance.removed", { instanceId: instId }));
+    if (instanceManager.activeId === instId || !instanceManager.getActive()) {
+      const remaining = instanceManager.list();
+      if (remaining.length > 0) {
+        instanceManager.setActive(remaining[0].id);
+        ROOT_DIR = remaining[0].dir;
+      } else {
+        instanceManager.setActive(null);
+      }
+    }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ success: true }));
+    return;
+  }
+
+  // ── API: Activate (switch to) instance ───────────────
+  if (path.startsWith("/api/instances/") && req.method === "POST" && path.endsWith("/activate")) {
+    const instId = path.replace("/api/instances/", "").replace("/activate", "");
+    const target = instanceManager.get(instId);
+    if (!target) {
+      res.writeHead(404); res.end(JSON.stringify({ error: "Instance not found" }));
+      return;
+    }
+    instanceManager.setActive(instId);
+    ROOT_DIR = target.dir;
+    broadcastToBrowsers(envelope("instance.switched", { instanceId: instId }));
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ success: true, instanceId: instId }));
+    return;
+  }
+
+  // ── API: Health check ──────────────────────────────────
+  if (path === "/api/health") {
+    const mem = memoryUsage();
+    const heartbeatAlive = heartbeatTimer !== undefined;
+    res.writeHead(200, { "Content-Type": "application/json" });
+    const hi = inst();
+    res.end(JSON.stringify({
+      status: hi.process ? "ok" : "degraded",
+      uptime: Date.now() - START_TIME,
+      claude: {
+        alive: hi.process !== null,
+        pid: hi.process?.pid || null,
+        model: hi.model,
+      },
+      queue: {
+        depth: hi.pendingQueue.length,
+        processing: hi.isProcessing,
+      },
+      connections: wss?.clients.size ?? 0,
+      memory: {
+        rss: mem.rss,
+        heapTotal: mem.heapTotal,
+        heapUsed: mem.heapUsed,
+        rssMB: Math.round(mem.rss / 1024 / 1024),
+        heapMB: Math.round(mem.heapUsed / 1024 / 1024),
+      },
+      system: {
+        platform: process.platform,
+        hostname: os.hostname(),
+        freemem: os.freemem(),
+        totalmem: os.totalmem(),
+        loadavg: os.loadavg(),
+      },
+      mode: currentPermissionMode,
+      effort: currentEffortLevel,
+      activeInstanceId: instanceManager.activeId,
+      instances: instanceManager.toJSON(),
+    }));
+    return;
+  }
+
+  // ── API: Surface debug snapshot (diagnostics only, no secrets) ──
+  if (path === "/api/debug/surfaces" && req.method === "GET") {
+    // Only allow localhost access
+    const clientIp = req.socket.remoteAddress || "";
+    const isLocal = clientIp === "127.0.0.1" || clientIp === "::1" || clientIp === "::ffff:127.0.0.1";
+    if (!isLocal) {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error: "Debug endpoint restricted to localhost" }));
+      return;
+    }
+    try {
+      const snapshot = surfaceManager.getDebugSnapshot();
+      const tabs: Record<string, unknown[]> = {};
+      for (const inst of instanceManager.list()) {
+        const nodeTabs = stateWorkbenchStore.get(inst.id);
+        if (nodeTabs) tabs[inst.id] = nodeTabs;
+      }
+      const instances = instanceManager.list().map(i => ({
+        id: i.id,
+        label: i.label,
+        source: i.source,
+        status: i.status,
+        hasAgentConnection: i.agentConnection ? true : false,
+      }));
+      const localNodeLabel = instanceManager.list().find(i => i.source === 'local')?.label || 'unknown';
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        ok: true,
+        localNode: localNodeLabel,
+        surfaceDebug: snapshot,
+        workbenchTabs: tabs,
+        instances,
+      }, null, 2));
+    } catch (e: any) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error: e.message }));
+    }
+    return;
+  }
+
+  // ── StateBus diagnostic endpoint ─────────────────────────────
+  if (path === "/api/debug/statebus" && req.method === "POST") {
+    const clientIp = req.socket.remoteAddress || "";
+    const isLocal = clientIp === "127.0.0.1" || clientIp === "::1" || clientIp === "::ffff:127.0.0.1";
+    if (!isLocal) {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error: "Debug endpoint restricted to localhost" }));
+      return;
+    }
+    try {
+      // Clear all surfaces and workbench tabs, then flush
+      for (const s of stateSurfaceManager.listAll()) {
+        stateSurfaceManager.delete(s.surfaceId);
+      }
+      stateWorkbenchStore.clear();
+      stateBus.flush();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true, message: "StateBus surfaces and workbench tabs cleared" }));
+    } catch (e: any) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error: e.message }));
+    }
+    return;
+  }
+
+// ── StateBus diagnostic endpoint ─────────────────────────────
+  if (path === "/api/debug/statebus" && req.method === "GET") {
+    const clientIp = req.socket.remoteAddress || "";
+    const isLocal = clientIp === "127.0.0.1" || clientIp === "::1" || clientIp === "::ffff:127.0.0.1";
+    if (!isLocal) {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error: "Debug endpoint restricted to localhost" }));
+      return;
+    }
+    try {
+      // Collect instances
+      const instances = instanceManager.list().map(i => ({
+        id: i.id, label: i.label, source: i.source, status: i.status,
+      }));
+
+      // Workbench tabs per nodeId
+      const workbenchTabs: Record<string, unknown[]> = {};
+      for (const inst of instanceManager.list()) {
+        const tabs = stateWorkbenchStore.get(inst.id);
+        if (tabs && tabs.length > 0) workbenchTabs[inst.id] = tabs;
+      }
+      const localTabs = stateWorkbenchStore.get('__local__');
+      if (localTabs && localTabs.length > 0) workbenchTabs['__local__'] = localTabs;
+
+      // Subscribers per nodeId
+      const workbenchSubscribers = stateWorkbenchStore.getSubscriberInfo();
+
+      // Surfaces grouped by nodeId
+      const allSurfaces = stateSurfaceManager.listAll();
+      const byNode: Record<string, unknown[]> = {};
+      for (const s of allSurfaces) {
+        if (!byNode[s.nodeId]) byNode[s.nodeId] = [];
+        byNode[s.nodeId].push(stateSurfaceManager.toJSON(s));
+      }
+
+      // StateBus summary
+      const allEntries = stateBus.list('**');
+      const nsCounts: Record<string, number> = {};
+      for (const e of allEntries) {
+        const ns = e.key.split('/')[2] || 'other';
+        nsCounts[ns] = (nsCounts[ns] || 0) + 1;
+      }
+
+      // Peers
+      const peers = instanceManager.list().filter(i => i.source !== 'local').map(i => ({
+        id: i.id, label: i.label, source: i.source, status: i.status,
+      }));
+      peers.push({ id: '__local__', label: localNodeInfo?.name || 'local', source: 'local', status: 'running' });
+
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        ok: true,
+        localNodeInfo: { id: '__local__', name: localNodeInfo?.name || 'unknown', uptime: process.uptime() },
+        instances,
+        surfaces: { total: allSurfaces.length, byNode },
+        stateBus: { totalEntries: allEntries.length, byNamespace: nsCounts },
+        workbenchTabs,
+        workbenchSubscribers,
+        peers,
+      }, null, 2));
+    } catch (e: any) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error: e.message }));
+    }
+    return;
+  }
+
+  // ── StateBus HTML diagnostic page ──────────────────────────
+  if (path === "/debug/statebus") {
+    const clientIp = req.socket.remoteAddress || "";
+    const isLocal = clientIp === "127.0.0.1" || clientIp === "::1" || clientIp === "::ffff:127.0.0.1";
+    if (!isLocal) {
+      res.writeHead(403, { "Content-Type": "text/plain" });
+      res.end("Debug page restricted to localhost");
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(`<!DOCTYPE html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StateBus 诊断 — sessionBridge</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; }
+h1 { font-size: 1.5rem; margin-bottom: 8px; color: #58a6ff; }
+h2 { font-size: 1.2rem; margin: 20px 0 8px; padding-bottom: 4px; border-bottom: 1px solid #30363d; color: #f0f6fc; }
+.card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+.summary-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+.stat { background: #1c2128; border-radius: 6px; padding: 10px; text-align: center; }
+.stat-value { font-size: 1.8rem; font-weight: 700; color: #58a6ff; }
+.stat-label { font-size: 0.8rem; color: #8b949e; margin-top: 2px; }
+table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #21262d; }
+th { color: #8b949e; font-weight: 500; }
+td { font-family: 'SFMono-Regular', Consolas, monospace; }
+tr:hover td { background: #1c2128; }
+.mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 0.8rem; }
+.error-msg { color: #f85149; padding: 12px; background: #1c2128; border-radius: 6px; margin: 8px 0; }
+.empty { color: #8b949e; font-style: italic; padding: 8px; }
+.refresh { padding: 6px 16px; background: #1f6feb; border: none; border-radius: 6px; color: #fff; cursor: pointer; font-size: 0.85rem; }
+.refresh:hover { background: #388bfd; }
+.badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 0.75rem; margin-left: 4px; }
+.badge-local { background: #1b7e3d; color: #fff; }
+.badge-remote { background: #1f6feb; color: #fff; }
+.nav a { color: #58a6ff; text-decoration: none; margin-right: 16px; }
+details { margin: 4px 0; }
+summary { cursor: pointer; color: #58a6ff; padding: 4px 0; }
+.raw-json { background: #1c2128; padding: 8px; border-radius: 6px; font-size: 0.75rem; white-space: pre-wrap; overflow-x: auto; max-height: 400px; overflow-y: auto; }
+</style></head><body>
+<div class="nav">
+  <a href="/">← 首页</a>
+  <a href="/api/debug/statebus" target="_blank">Raw JSON</a>
+  <a href="/api/debug/surfaces" target="_blank">Surfaces</a>
+</div>
+<h1>StateBus 诊断</h1>
+<p style="color:#8b949e;margin-bottom:12px;">节点 / 标签页 / Surface 同步</p>
+<div class="toolbar">
+  <button class="refresh" onclick="location.reload()">↻ 刷新</button>
+  <span class="filter-group">
+    <button class="filter-btn active" data-filter="all" onclick="setFilter('all')">全部</button>
+    <button class="filter-btn" data-filter="active" onclick="setFilter('active')">仅活跃</button>
+  </span>
+</div>
+<div id="root"><div class="card" style="text-align:center;padding:40px;color:#8b949e;">加载中...</div></div>
+<style>
+.toolbar { display:flex; align-items:center; gap:12px; margin-bottom:16px; flex-wrap:wrap; }
+.filter-group { display:flex; gap:4px; }
+.filter-btn { padding:6px 14px; border:1px solid #30363d; background:#0d1117; color:#c9d1d9; cursor:pointer; font-size:13px; border-radius:4px; }
+.filter-btn:hover { background:#161b22; }
+.filter-btn.active { background:#1f6feb; color:#fff; border-color:#1f6feb; }
+</style>
+<script>
+let _cachedData = null;
+let _filter = 'all';
+
+function setFilter(f) {
+  _filter = f;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.toggle('active', b.dataset.filter === f));
+  if (_cachedData) render(_cachedData);
+}
+
+function isRunning(inst) { return inst && inst.status === 'running'; }
+function activeNodeIds(instances) {
+  const s = new Set();
+  s.add('__local__');
+  if (instances) { for (const inst of instances) { if (isRunning(inst)) s.add(inst.id); } }
+  return s;
+}
+
+function esc(s) { if (s===null||s===undefined) return ''; return String(s).replace(/[&<>]/g, function(m) { return { '&':'&amp;','<':'&lt;','>':'&gt;' }[m]||m; }); }
+
+function render(d) {
+  const activeOnly = _filter === 'active';
+  const activeIds = activeOnly ? activeNodeIds(d.instances) : null;
+
+  let html = '<div class="summary-grid">';
+  const totalInst = (d.instances||[]).length;
+  const runningInst = activeOnly ? (d.instances||[]).filter(isRunning).length : totalInst;
+  const totalTabNodes = Object.keys(d.workbenchTabs||{}).length;
+  const activeTabNodes = activeOnly ? Object.keys(d.workbenchTabs||{}).filter(k => activeIds.has(k)).length : totalTabNodes;
+  html += '<div class="stat"><div class="stat-value">' + (activeOnly ? runningInst + '/' + totalInst : totalInst) + '</div><div class="stat-label">实例</div></div>';
+  html += '<div class="stat"><div class="stat-value">' + (activeOnly ? activeTabNodes + '/' + totalTabNodes : totalTabNodes) + '</div><div class="stat-label">有标签页的节点</div></div>';
+  html += '<div class="stat"><div class="stat-value">' + (d.surfaces?.total||0) + '</div><div class="stat-label">Surface 总数</div></div>';
+  html += '<div class="stat"><div class="stat-value">' + (d.peers||[]).length + '</div><div class="stat-label">Peer</div></div>';
+  html += '<div class="stat"><div class="stat-value">' + Object.keys(d.workbenchSubscribers||{}).length + '</div><div class="stat-label">标签页订阅节点</div></div>';
+  html += '<div class="stat"><div class="stat-value">' + (d.stateBus?.totalEntries||0) + '</div><div class="stat-label">StateBus 条目</div></div>';
+  html += '</div>';
+
+  html += '<h2>节点</h2><div class="card">';
+  if (!d.instances||!d.instances.length) { html += '<div class="empty">无</div>'; }
+  else {
+    html += '<table><tr><th>ID</th><th>标签</th><th>来源</th><th>状态</th><th>标签页</th><th>Surfaces</th></tr>';
+    for (const inst of d.instances) {
+      if (activeOnly && !activeIds.has(inst.id)) continue;
+      const tabCount = (d.workbenchTabs[inst.id]||[]).length;
+      const surfCount = (d.surfaces?.byNode?.[inst.id]||[]).length;
+      const srcBadge = inst.source==='local'?'badge-local':'badge-remote';
+      const statusColor = inst.status === 'running' ? '' : ' style="color:#8b949e;"';
+      html += '<tr' + statusColor + '><td>' + esc(inst.id.slice(0,12)) + '</td><td>' + esc(inst.label) + '</td>'
+        + '<td><span class="badge ' + srcBadge + '">' + esc(inst.source) + '</span></td>'
+        + '<td>' + esc(inst.status) + '</td><td>' + tabCount + '</td><td>' + surfCount + '</td></tr>';
+    }
+    html += '</table>';
+  }
+  html += '</div>';
+
+  html += '<h2>__local__</h2><div class="card">';
+  if (d.localNodeInfo) {
+    html += '<table><tr><th>属性</th><th>值</th></tr>';
+    for (const [k,v] of Object.entries(d.localNodeInfo)) html += '<tr><td>' + esc(k) + '</td><td>' + esc(String(v)) + '</td></tr>';
+    html += '</table>';
+  }
+  const localTabs = d.workbenchTabs['__local__'];
+  if (localTabs && localTabs.length) {
+    html += '<h3>标签页 (' + localTabs.length + ')</h3><table><tr><th>ID</th><th>标题</th><th>viewType</th><th>instanceId</th><th>_surfaceId</th></tr>';
+    for (const t of localTabs) html += '<tr><td>' + esc(t.id||'') + '</td><td>' + esc(t.title||'') + '</td><td>' + esc(t.viewType||'') + '</td><td>' + esc(t.instanceId||'') + '</td><td>' + esc(t._surfaceId||'') + '</td></tr>';
+    html += '</table>';
+  } else { html += '<div class="empty">无标签页</div>'; }
+  html += '</div>';
+
+  html += '<h2>Surfaces</h2><div class="card">';
+  if (d.surfaces?.byNode) {
+    for (const [nid, surfs] of Object.entries(d.surfaces.byNode)) {
+      if (activeOnly && !activeIds.has(nid)) continue;
+      html += '<h3>' + esc(nid) + ' (' + (surfs||[]).length + ')</h3>';
+      if (surfs && surfs.length) {
+        html += '<table><tr><th>ID</th><th>标题</th><th>viewType</th><th>instanceId</th></tr>';
+        for (const s of surfs) html += '<tr><td>' + esc(s.surfaceId||'') + '</td><td>' + esc(s.title||'') + '</td><td>' + esc(s.viewType||'') + '</td><td>' + esc(s.runtimeRef?.instanceId||'') + '</td></tr>';
+        html += '</table>';
+      }
+    }
+  }
+  html += '</div>';
+
+  html += '<h2>StateBus 条目数</h2><div class="card"><table><tr><th>命名空间</th><th>条目数</th></tr>';
+  if (d.stateBus?.byNamespace) {
+    for (const [ns, count] of Object.entries(d.stateBus.byNamespace)) html += '<tr><td>' + esc(ns) + '</td><td>' + count + '</td></tr>';
+  }
+  html += '</table></div>';
+
+  html += '<details><summary>Raw JSON</summary><div class="raw-json">' + esc(JSON.stringify(d, null, 2)) + '</div></details>';
+  document.getElementById('root').innerHTML = html;
+}
+
+async function main() {
+  try {
+    const resp = await fetch('/api/debug/statebus');
+    const d = await resp.json();
+    if (!d.ok) { document.getElementById('root').innerHTML = '<div class="error-msg">' + d.error + '</div>'; return; }
+    _cachedData = d;
+    render(d);
+  } catch(e) { document.getElementById('root').innerHTML = '<div class="error-msg">Error: ' + esc(e.message) + '</div>'; }
+}
+main();
+</script></body></html>`);
+    return;
+  }
+
+  // ── Static files ──────────────────────────────────────
+  const cleanPath = path.replace(/^\//, '');
+  const filePath = cleanPath || 'index.html';
+  const diskPath = join(OUT_DIR, filePath);
+  try {
+    const content = readFileSync(diskPath);
+    const ext = extname(diskPath);
+    res.writeHead(200, { "Content-Type": MIME[ext] ?? "application/octet-stream" });
+    res.end(content);
+  } catch {
+    try {
+      const content = readFileSync(join(OUT_DIR, "index.html"));
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(content);
+    } catch {
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      res.end("Not found");
+    }
+  }
+};
+
+// ─── HTTP/HTTPS Server ──────────────────────────────────────────
+let httpServer: ReturnType<typeof createHttpServer> | null = null;
+let wss: WebSocketServer | null = null;
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+const HEARTBEAT_INTERVAL = 30000;
+const heartbeatMap = new WeakMap<WebSocket, boolean>();
+
+// ─── Crypto Layer ──────────────────────────────────────────────
+const serverIdentity = loadOrCreateIdentity();
+const cryptoStreams = new WeakMap<WebSocket, CryptoStream>();
+
+function ensureServer(): void {
+  if (httpServer) return;
+
+  // Only auto-generate self-signed cert if SSL was explicitly configured
+  const hasExplicitSSL = !!appConfig.get("sslKey") || !!process.env.BRIDGE_SSL_KEY;
+  let keyPath = sslKey;
+  let certPath = sslCert;
+  if (hasExplicitSSL && (!keyPath || !certPath)) {
+    const autoPaths = ensureCert();
+    if (autoPaths) {
+      keyPath = autoPaths.key;
+      certPath = autoPaths.cert;
+    }
+  }
+
+  if (keyPath && certPath) {
+    httpServer = createHttpsServer({
+      key: readFileSync(keyPath, "utf8"),
+      cert: readFileSync(certPath, "utf8"),
+    }, serverRequestHandler);
+  } else {
+    httpServer = createHttpServer(serverRequestHandler);
+  }
+  wss = new WebSocketServer({ server: httpServer });
+  heartbeatTimer = setInterval(heartbeatPing, HEARTBEAT_INTERVAL);
+  wss.on("close", () => { if (heartbeatTimer) clearInterval(heartbeatTimer); });
+  setupWssHandlers();
+}
+
+function heartbeatPing() {
+  if (!wss) return;
+  for (const ws of wss.clients) {
+    if (ws.readyState !== WebSocket.OPEN) continue;
+    if (heartbeatMap.get(ws) === false) {
+      ws.terminate();
+      continue;
+    }
+    heartbeatMap.set(ws, false);
+    (ws as any)._lastPingTime = Date.now();
+    send(ws, envelope("ping"));
+  }
+}
+
+/** Register WebSocket connection handlers. Called from ensureServer(). */
+function setupWssHandlers(): void {
+  wss!.on("connection", (ws: WebSocket) => {
+  heartbeatMap.set(ws, true);
+  browsers.add(ws);
+
+  ws.on("pong", () => {
+    heartbeatMap.set(ws, true);
+  });
+
+  // Don't start Claude until we know the peer's intent
+
+  ws.on("message", (raw: Buffer) => {
+    // ── Crypto: decrypt before processing ────────────────────
+    const cs = cryptoStreams.get(ws);
+    const rawStr = cs?.isEstablished ? tryDecrypt(cs.sessionKey, raw.toString()) : raw.toString();
+
+    const msg = parseMsg(rawStr);
+    if (!msg) return;
+
+    // ── Lifecycle: hello/welcome handshake ────────────────
+    if (msg.type === "hello") {
+      const token = msg.token || "";
+      const role = msg.role || "browser";
+      const clientToken = msg.clientToken || "";
+
+      // Authentication check
+      if (relayToken && token !== relayToken) {
+        send(ws, envelope("error", { code: "UNAUTHORIZED", message: "Invalid or missing token" }));
+        setTimeout(() => ws.close(4001, "Unauthorized"), 100);
+        return;
+      }
+      authenticatedSockets.add(ws);
+
+      // ── Crypto handshake (v0.7+) ─────────────────────────
+      const clientFeatures: string[] = Array.isArray(msg.features) ? msg.features : [];
+      const clientWantsCrypto = clientFeatures.includes("crypto_v1");
+      let cryptoSession: CryptoStream | null = null;
+      if (clientWantsCrypto) {
+        cryptoSession = new CryptoStream(ws, serverIdentity);
+        cryptoStreams.set(ws, cryptoSession);
+      }
+
+      // Session recovery: if browser reconnects with same clientToken, restore session
+      let restoredInstances: Record<string, unknown>[] = [];
+      if (role === "browser" && clientToken) {
+        const prevSession = clientSessionMap.get(clientToken);
+        if (prevSession && prevSession.disconnectTime) {
+          // Reconnect: reuse shell instances
+          const allInstances = instanceManager.toJSON();
+          for (const shellId of prevSession.shellIds) {
+            const match = allInstances.find(ji => ji.id === shellId);
+            if (match) restoredInstances.push(match);
+          }
+          prevSession.ws = ws;
+          prevSession.disconnectTime = undefined;
+        } else {
+          clientSessionMap.set(clientToken, { ws, shellIds: new Set(), label: msg.label || '' });
+        }
+        wsToClientToken.set(ws, clientToken);
+      }
+
+      // Start Claude on first browser connection (skip in test mode)
+      if (role === "browser" && !process.env.BRIDGE_TEST_MODE) {
+        const activeInst = inst();
+        if (!activeInst.process && activeInst.adapterId && adapterRegistry.get(activeInst.adapterId)?.getCapabilities().structuredEvents) spawnInstance();
+      }
+
+      // Track agent version for update notification
+      if (role === "agent" && msg.version) {
+        agentVersionMap.set(ws, msg.version);
+      }
+
+      // Flush history
+      flushBuffer(ws);
+
+      // Build server features list
+      const serverFeatures = [
+        "crypto_v1",
+        "agent_registration", "shell", "multi_instance",
+        "structured_chat", "queue", "update_notification", "session_recovery",
+      ];
+
+      // Respond with welcome (include crypto keys if handshaking)
+      const welcomeBody: Record<string, unknown> = {
+        version: SERVER_VERSION,
+        features: serverFeatures,
+        sessionId: inst().id,
+        serverTime: Date.now(),
+        instances: instanceManager.toJSON(),
+        extensionPoints: extensionPoints.toJSON(),
+        ...(restoredInstances.length > 0 ? { restoredInstances } : {}),
+      };
+      if (cryptoSession) {
+        welcomeBody.staticKey = cryptoSession.staticKey;
+        welcomeBody.ephemeralKey = cryptoSession.ephemeralKey;
+      }
+      send(ws, envelope("welcome", welcomeBody));
+
+      // Tag peer info and broadcast to all connected peers
+      if (role === "browser") {
+        (ws as any)._browserLabel = msg.label || `Browser-${Date.now().toString(36).slice(-4)}`;
+        (ws as any)._browserId = msg.clientToken || `browser_${Date.now()}`;
+        (ws as any)._connectedAt = Date.now();
+        sendPeers(ws);          // send peer list to the new connection
+        broadcastPeers();       // notify other peers (VIEW card appears)
+      }
+
+      // Complete crypto handshake if peer provided ephemeral key
+      if (cryptoSession && msg.ephemeralKey) {
+        cryptoSession.handshake(
+          String(msg.ephemeralKey),
+          msg.staticKey ? String(msg.staticKey) : undefined,
+        );
+      }
+      return;
+    }
+
+    // Backward compat: legacy auth / direct (no hello handshake)
+    if (msg.type === "auth" || msg.type === "direct") {
+      const token = msg.token || "";
+      if (relayToken && token !== relayToken) {
+        send(ws, envelope("error", { code: "UNAUTHORIZED", message: "Invalid or missing token" }));
+        setTimeout(() => ws.close(4001, "Unauthorized"), 100);
+        return;
+      }
+      authenticatedSockets.add(ws);
+
+      if (!process.env.BRIDGE_TEST_MODE) {
+        const activeInst = inst();
+        if (!activeInst.process && activeInst.adapterId && adapterRegistry.get(activeInst.adapterId)?.getCapabilities().structuredEvents) spawnInstance();
+      }
+      flushBuffer(ws);
+      send(ws, { type: "auth_result", success: true, sessionId: inst().id, instances: instanceManager.toJSON() });
+      send(ws, { type: "workspace_connected" });
+
+      if (msg.type === "auth") return;
+      // For "direct", fall through to the instance routing below
+    }
+
+    // ── Ping/Pong ─────────────────────────────────────────
+    if (msg.type === "ping") {
+      send(ws, envelope("pong"));
+      return;
+    }
+    if (msg.type === "pong") {
+      heartbeatMap.set(ws, true);
+      if ((ws as any)._lastPingTime) {
+        (ws as any)._latency = Date.now() - (ws as any)._lastPingTime;
+        (ws as any)._lastPingTime = undefined;
+      }
+      return;
+    }
+
+    // ── Auth guard for all subsequent handlers ──
+    if (relayToken && !authenticatedSockets.has(ws)) {
+      send(ws, envelope("error", { code: "UNAUTHORIZED", message: "Authentication required — send hello first" }));
+      setTimeout(() => ws.close(4001, "Unauthorized"), 100);
+      return;
+    }
+
+    // ── Agent registration ────────────────────────────────
+    if (msg.type === "agent.register" || msg.type === "agent_register") {
+      const dir = msg.dir || process.cwd();
+      const label = msg.label || `remote-${Date.now().toString(36)}`;
+      const agentVersion = agentVersionMap.get(ws) || "unknown";
+      // TODO: protocol should carry adapterId/capability — the agent must declare what type it is.
+      const agentAdapterId = msg.adapterId || 'unknown';
+
+      // Reuse an existing stopped instance with the same label instead of
+      // creating a new one. When a leaf relay reconnects, it should reclaim
+      // its previous instance so surfaces/workbench tabs remain associated.
+      let remoteInst = instanceManager.list().find(
+        i => i.label === label && i.source === 'remote' && i.status === 'stopped'
+      );
+      const isReconnect = !!remoteInst;
+      if (remoteInst) {
+        remoteInst.agentConnection = ws;
+        remoteInst.agentVersion = agentVersion;
+        remoteInst.status = 'running';
+        remoteInst.dir = dir;
+      } else {
+        remoteInst = instanceManager.create(dir, label, 'remote', agentAdapterId);
+        applyAlias(remoteInst);
+        remoteInst.agentConnection = ws;
+        remoteInst.agentVersion = agentVersion;
+        remoteInst.status = 'running';
+      }
+      (ws as any)._isAgent = true;
+      (ws as any)._agentInstanceId = remoteInst.id;
+      (ws as any)._agentLabel = label;
+      (ws as any)._agentRole = msg.role || 'leaf';
+      (ws as any)._viaRelayId = msg.viaRelayId || undefined;
+      (ws as any)._connectedAt = Date.now();
+      // Not a browser — this is an agent node. Agents are tracked separately
+      // via their instance in instanceManager, not in the browsers set.
+      browsers.delete(ws);
+      send(ws, envelope("agent.registered", { instanceId: remoteInst.id, sessionId: remoteInst.id }));
+      const entry = instanceManager.toJSON().find(i => i.id === remoteInst.id);
+      if (!isReconnect) {
+        broadcastToBrowsers(envelope("instance.added", { instance: entry }));
+      }
+      broadcastPeers(); // notify browsers about agent peer
+      notifyBus({ scenarioId: 'agent.connected', severity: 'success', title: `Agent connected: ${label}` });
+      auditLog.log('agent.registered', label, { version: agentVersion }, remoteInst.id);
+      instanceManager.startOperation(remoteInst.id, 'spawn', 'agent_register');
+      instanceManager.transitionOperation(remoteInst.id, instanceManager.getCurrentOperation(remoteInst.id)?.id || '', 'succeeded', { resultText: `Agent ${label} registered` });
+
+      // Version mismatch notification — semver-aware, notify both browsers and agent
+      const mismatch = mismatchSeverity(agentVersion, SERVER_VERSION);
+      if (mismatch) {
+        const severity = mismatch.diff === 'major' ? 'error' : 'warning';
+        notifyBus({ scenarioId: 'update.available', severity, title: `Agent "${label}" version mismatch`, detail: mismatch.message });
+        // Also notify the agent directly
+        send(ws, envelope("system.notification", { type: severity, title: `Agent "${label}" version mismatch`, detail: mismatch.message, scenarioId: 'update.available' }));
+      }
+      // Request agent inventory so relay can reconcile surfaces
+      send(ws, envelope("agent.inventory.request", { nodeId: remoteInst.id }));
+      return;
+    }
+
+    if (msg.type === "agent.inventory.report") {
+      const reported = msg.body || msg;
+      const agentNodeId = reported.nodeId || String(msg.nodeId || '');
+      const reportedProcesses: Array<{ instanceId: string; kind: string; title?: string; command?: string; pid?: number; cwd?: string; createdAt: number }> = reported.processes || [];
+      const reportedOperations: Array<{ operationId: string; kind: string; command?: string; instanceId?: string; createdAt: number }> = reported.activeOperations || [];
+
+      // Reconciliation: match reported processes against existing surfaces
+      const reportedInstanceIds = new Set(reportedProcesses.map(p => p.instanceId));
+      let createdCount = 0;
+      let clearedOrphanCount = 0;
+      let deletedCount = 0;
+      let remappedCount = 0;
+
+      for (const proc of reportedProcesses) {
+        const existingSurfaces = surfaceManager.findByInstanceId(proc.instanceId);
+        if (existingSurfaces.length === 0) {
+          // No surface for this process → synthesize one under the agent's node
+          const nodeId = agentNodeId;
+          const synthSurface = surfaceManager.create(nodeId, {
+            title: proc.title || 'Terminal',
+            viewType: proc.kind === 'terminal' ? 'terminal' : 'plugin',
+            scope: 'node',
+            shared: true,
+            runtimeRef: { kind: (proc.kind as any) || 'terminal', instanceId: proc.instanceId },
+            replayPolicy: { mode: 'tail', lines: 5000, bytes: 500_000 },
+          });
+          surfaceManager.clearOrphaned(synthSurface.surfaceId);
+          surfaceManager.setKeep(synthSurface.surfaceId, true);
+          const tabs = stateWorkbenchStore.get(nodeId) || [];
+          tabs.push(surfaceManager.toWorkbenchTab(synthSurface));
+          stateWorkbenchStore.set(nodeId, tabs);
+          surfaceManager.recordDebugEvent({
+            ts: Date.now(), kind: 'surface.publish.created',
+            surfaceId: synthSurface.surfaceId, nodeId, instanceId: proc.instanceId,
+            message: 'synthesized surface from agent inventory report',
+          });
+          createdCount++;
+        } else {
+          // Surface exists → clear orphaned flag and remap nodeId
+          for (const s of existingSurfaces) {
+            if (s.orphaned) {
+              surfaceManager.clearOrphaned(s.surfaceId);
+              clearedOrphanCount++;
+            }
+            // After relay restart, surfaces.json restores surfaces with old
+            // nodeIds. When the agent reconnects and reports inventory, remap
+            // the surface to the current agent instance id so that
+            // subscribeNode(currentId) finds these surfaces.
+            if (s.nodeId !== agentNodeId) {
+              const oldNodeId = s.nodeId;
+              const oldTabs = stateWorkbenchStore.get(oldNodeId) || [];
+              const newTabs = stateWorkbenchStore.get(agentNodeId) || [];
+              for (const t of oldTabs) {
+                if (t._surfaceId === s.surfaceId || t.id === s.surfaceId) {
+                  newTabs.push(t);
+                }
+              }
+              stateWorkbenchStore.set(agentNodeId, newTabs);
+              stateWorkbenchStore.delete(oldNodeId);
+              // Persist nodeId change to StateBus entries
+              const globalKey = stateKey('global', `surfaces/${s.surfaceId}`);
+              const nodeKey = stateKey('node', `${oldNodeId}/surfaces/${s.surfaceId}`);
+              const newNodeKey = stateKey('node', `${agentNodeId}/surfaces/${s.surfaceId}`);
+              const entry = stateBus.getEntry(globalKey);
+              if (entry) {
+                const updatedValue = { ...entry.value as any, nodeId: agentNodeId, updatedAt: Date.now() };
+                stateBus.set(globalKey, updatedValue);
+                // Move node-keyed entry from old nodeId to new
+                const oldNodeEntry = stateBus.getEntry(nodeKey);
+                if (oldNodeEntry) {
+                  stateBus.delete(nodeKey);
+                }
+                stateBus.set(newNodeKey, updatedValue);
+              }
+              remappedCount++;
+              surfaceManager.recordDebugEvent({
+                ts: Date.now(), kind: 'surface.remap.nodeId',
+                surfaceId: s.surfaceId, nodeId: agentNodeId,
+                extra: { oldNodeId },
+                message: 'remapped surface nodeId to reconnected agent instance',
+              });
+            }
+          }
+        }
+      }
+
+      // Delete surfaces for processes not in the inventory (unless kept)
+      for (const surface of surfaceManager.listAll()) {
+        if (surface.runtimeRef.kind === 'none') continue;
+        const instId = surface.runtimeRef.instanceId;
+        if (!instId) continue;
+        // Only consider surfaces that belong to this agent (label match)
+        const surfaceInst = instanceManager.get(surface.nodeId);
+        const agentInst = instanceManager.get(agentNodeId);
+        if (!surfaceInst || !agentInst || surfaceInst.label !== agentInst.label) continue;
+        if (!reportedInstanceIds.has(instId)) {
+          if (surfaceManager.isKept(surface.surfaceId)) {
+            surfaceManager.setOrphaned(surface.surfaceId);
+          } else {
+            surfaceManager.delete(surface.surfaceId);
+            // Broadcast close
+            const nodeSubs = surfaceManager.getNodeSubscribers(surface.nodeId);
+            if (nodeSubs) {
+              const closeMsg = envelope("surface.closed", { surfaceId: surface.surfaceId, nodeId: surface.nodeId });
+              for (const client of nodeSubs) {
+                if (client.readyState === WebSocket.OPEN) send(client, closeMsg);
+              }
+            }
+            deletedCount++;
+          }
+        }
+      }
+
+      if (createdCount > 0 || clearedOrphanCount > 0 || deletedCount > 0 || remappedCount > 0) {
+        stateBus.flush();
+      }
+      send(ws, envelope("agent.inventory.ack", {
+        nodeId: agentNodeId,
+        createdSurfaces: createdCount,
+        clearedOrphaned: clearedOrphanCount,
+        deletedStale: deletedCount,
+        remapped: remappedCount,
+      }));
+      if (createdCount > 0 || clearedOrphanCount > 0 || deletedCount > 0 || remappedCount > 0) {
+        console.log(`[inventory] ${agentNodeId}: +${createdCount} created, ${clearedOrphanCount} cleared, -${deletedCount} deleted, ~${remappedCount} remapped`);
+      }
+      return;
+    }
+
+    if (msg.type === "agent.unregister" || msg.type === "agent_unregister") {
+      const agentInst = msg.instanceId ? instanceManager.get(msg.instanceId) : null;
+      if (agentInst) {
+        agentInst.agentConnection = null;
+        agentInst.status = 'stopped';
+        instanceManager.kill(agentInst.id);
+        broadcastToBrowsers(envelope("instance.removed", { instanceId: agentInst.id }));
+        notifyBus({ scenarioId: 'agent.disconnected', severity: 'warning', title: `Agent disconnected: ${agentInst.label}` });
+        auditLog.log('agent.unregistered', agentInst.label, {}, agentInst.id);
+        // Delete ALL terminal surfaces owned by this node — on clean unregister
+        // the agent is shutting down, no process survives. This also handles
+        // surfaces whose runtimeRef.instanceId === nodeId (common in tests).
+        const nodeSurfaceIds: Array<{ surfaceId: string; nodeId: string }> = [];
+        for (const s of surfaceManager.listByNode(agentInst.id)) {
+          if (s.runtimeRef.kind === 'terminal') {
+            surfaceManager.delete(s.surfaceId);
+            nodeSurfaceIds.push({ surfaceId: s.surfaceId, nodeId: s.nodeId });
+          }
+        }
+        for (const { surfaceId, nodeId } of nodeSurfaceIds) {
+          const nodeSubs = surfaceManager.getNodeSubscribers(nodeId);
+          if (nodeSubs) {
+            const closeMsg = envelope("surface.closed", { surfaceId, nodeId });
+            for (const client of nodeSubs) {
+              if (client.readyState === WebSocket.OPEN) send(client, closeMsg);
+            }
+          }
+          // Remove from ALL workbench tab stores
+          removeSurfaceFromAllWorkbenches(surfaceId);
+        }
+      }
+      return;
+    }
+
+    if (msg.type === "agent.stdout" || msg.type === "agent_stdout") {
+      // Reassemble chunked messages
+      const line = reassembleChunk(msg);
+      if (line === null) return; // chunk incomplete, wait for more
+
+      const remoteInst = instanceManager.get(msg.instanceId);
+      if (!remoteInst) {
+        // Cross-relay: instance may be a PC-local terminal referenced by a surface.
+        // Route output to shell subscribers if any surface tracks this instanceId.
+        const surfaces = surfaceManager.findByInstanceId(msg.instanceId);
+        if (surfaces.length > 0) {
+          console.log('[agent.stdout] cross-relay instanceId=%s surfaces=%d titles=%s',
+            msg.instanceId, surfaces.length, surfaces.map(s => s.title).join(','));
+          broadcastShellOutput(msg.instanceId, (line || '').slice(0, 65536), "stdout");
+          return;
+        }
+        // Silently drop — cross-relay traffic for instances that only exist on
+        // a downstream relay. Sending errors back creates noise and can flood
+        // the downstream relay's error handler.
+        console.log('[agent.stdout] DROPPED cross-relay instanceId=%s (no surface found)',
+          msg.instanceId);
+        return;
+      }
+      remoteInst.status = 'running';
+
+      // Strict adapter lookup — resolveAdapter() would fallback on 'unknown',
+      // causing the wrong adapter to parse this instance's output.
+      const instAdapter = remoteInst.adapterId ? adapterRegistry.get(remoteInst.adapterId) : undefined;
+      if (!instAdapter) {
+        // Unknown adapter: send to shell subscribers only, not global broadcast
+        broadcastShellOutput(remoteInst.id, line.slice(0, 65536), "stdout");
+        remoteInst.outputBuffer.push(line);
+        remoteInst.outputSize += line.length;
+        while (remoteInst.outputSize > 512 * 1024 && remoteInst.outputBuffer.length > 0) {
+          remoteInst.outputSize -= remoteInst.outputBuffer.shift()?.length ?? 0;
+        }
+        return;
+      }
+      const caps = instAdapter.getCapabilities();
+      if (!caps.structuredEvents) {
+        // Raw shell output → send to shell subscribers only
+        broadcastShellOutput(remoteInst.id, line.slice(0, 65536), "stdout");
+        remoteInst.outputBuffer.push(line);
+        remoteInst.outputSize += line.length;
+        while (remoteInst.outputSize > 512 * 1024 && remoteInst.outputBuffer.length > 0) {
+          remoteInst.outputSize -= remoteInst.outputBuffer.shift()?.length ?? 0;
+        }
+      } else {
+        instAdapter.parseLine?.(line, remoteInst, parserDepsFor(remoteInst));
+      }
+      return;
+    }
+
+    if (msg.type === "agent.stderr" || msg.type === "agent_stderr") {
+      // Reassemble chunked messages
+      const data = reassembleChunk(msg);
+      if (data === null) return; // chunk incomplete, wait for more
+
+      const remoteInst = instanceManager.get(msg.instanceId);
+      if (!remoteInst) {
+        // Cross-relay: instance may be a PC-local terminal referenced by a surface.
+        const surfaces = surfaceManager.findByInstanceId(msg.instanceId);
+        if (surfaces.length > 0) {
+          broadcastShellOutput(msg.instanceId, (data || '').slice(0, 65536), "stderr");
+          return;
+        }
+        // Silently drop — cross-relay traffic (see agent.stdout handler).
+        return;
+      }
+      const stderrAdapter = remoteInst.adapterId ? adapterRegistry.get(remoteInst.adapterId) : undefined;
+      const stderrCaps = stderrAdapter?.getCapabilities();
+      if (stderrCaps && !stderrCaps.structuredEvents) {
+        // Raw shell stderr → shell subscribers only
+        broadcastShellOutput(remoteInst.id, data.slice(0, 65536), "stderr");
+      } else {
+        broadcastToBrowsers(envelope("instance.output", { data: data.slice(0, 65536) }));
+      }
+      remoteInst.outputBuffer.push(data);
+      remoteInst.outputSize += data.length;
+      while (remoteInst.outputSize > 512 * 1024 && remoteInst.outputBuffer.length > 0) {
+        remoteInst.outputSize -= remoteInst.outputBuffer.shift()?.length ?? 0;
+      }
+      return;
+    }
+
+    // ── Agent → relay: operation output/status/result ─────
+    if (msg.type === "agent.operation.output") {
+      const operationId = String(msg.operationId || "");
+      const stream = (msg.stream as "stdout" | "stderr" | "structured") || "stdout";
+      const data = String(msg.data || "");
+      if (!operationId) return;
+
+      operationManager.emitOutput(operationId, stream, data, send, envelope);
+      return;
+    }
+
+    if (msg.type === "agent.operation.status") {
+      const operationId = String(msg.operationId || "");
+      const status = msg.status as import("./remote-operation-manager").OperationStatus;
+      if (!operationId || !status) return;
+
+      operationManager.emitStatus(operationId, status, msg.detail, send, envelope);
+      return;
+    }
+
+    if (msg.type === "agent.operation.result") {
+      const operationId = String(msg.operationId || "");
+      if (!operationId) return;
+
+      operationManager.complete(operationId, {
+        success: !!msg.success,
+        data: msg.data,
+        exitCode: typeof msg.exitCode === 'number' ? msg.exitCode : undefined,
+        error: msg.error,
+      }, send, envelope);
+      return;
+    }
+
+    // ── Agent notification → forward to browsers ──────────
+    if (msg.type === "agent.notification" || msg.type === "agent_notification") {
+      const title = msg.title || 'Notification';
+      const detail = msg.detail || '';
+      notifyBus({ scenarioId: msg.scenarioId || 'agent.notification', severity: msg.severity || 'info', title, detail });
+      return;
+    }
+
+    // ── Config push → relay config manager receives ack ────
+    if (msg.type === "config.ack") {
+      relayConfigManager.ack((ws as any)._agentInstanceId || '', msg.applied || []);
+      auditLog.log('config.ack', (ws as any)._agentLabel || 'agent', { applied: msg.applied, rejected: msg.rejected });
+      return;
+    }
+
+    // ── Agent spawns a sub-instance (bridge run) ─────────
+    if (msg.type === "agent.instance.spawn") {
+      const dir = msg.dir || process.cwd();
+      const label = msg.label || 'Shell';
+      // TODO: protocol should carry adapterId — agent.instance.spawn declares what type.
+      const agentAdapterId = msg.adapterId || 'unknown';
+      const remoteInst = instanceManager.create(dir, label, 'remote', agentAdapterId);
+      applyAlias(remoteInst);
+      remoteInst.agentConnection = ws;
+      remoteInst.status = 'running';
+      // Mark as runtime so it never appears in peer.list / NodeBar.
+      // Only instanceRole='node' (or legacy undefined) can be a peer.
+      remoteInst.instanceRole = 'runtime';
+      remoteInst.runtimeKind = 'terminal';
+      remoteInst.adapterState.parentNodeId = (ws as any)._agentInstanceId || '';
+      // Atomic surface creation so cross-device browsers can discover this terminal
+      const agentNodeId = (ws as any)._agentInstanceId as string | undefined;
+      if (agentNodeId && surfaceManager) {
+        const surface = surfaceManager.create(agentNodeId, {
+          title: label,
+          viewType: 'terminal',
+          scope: 'node',
+          shared: true,
+          runtimeRef: { kind: 'terminal', instanceId: remoteInst.id },
+          replayPolicy: { mode: 'tail', lines: 5000, bytes: 500_000 },
+        });
+        surfaceManager.setKeep(surface.surfaceId, true);
+        const tab = surfaceManager.toWorkbenchTab(surface);
+        const nodeTabs = stateWorkbenchStore.get(agentNodeId) || [];
+        const ti = nodeTabs.findIndex((t: any) => t.id === tab.id);
+        if (ti >= 0) nodeTabs[ti] = tab; else nodeTabs.push(tab);
+        stateWorkbenchStore.set(agentNodeId, nodeTabs);
+        stateWorkbenchStore.broadcast(agentNodeId, nodeTabs);
+        surfaceManager.broadcastToNodeSubscribers(
+          agentNodeId,
+          (w: any, m: any) => { try { w.send(typeof m === 'string' ? m : JSON.stringify(m)); } catch {} },
+          envelope("surface.published", { surfaceId: surface.surfaceId, surface: surfaceManager.toJSON(surface) }),
+        );
+      }
+      send(ws, envelope("agent.instance.spawned", {
+        requestId: msg.requestId,
+        instanceId: remoteInst.id,
+      }));
+      const entry = instanceManager.toJSON().find(i => i.id === remoteInst.id);
+      broadcastToBrowsers(envelope("instance.added", { instance: entry }));
+      auditLog.log('instance.spawned', label, { dir, requestId: msg.requestId }, remoteInst.id);
+      return;
+    }
+
+    // ── Agent kills a sub-instance ───────────────────────
+    if (msg.type === "agent.instance.exit") {
+      if (!(ws as any)._isAgent) return;
+      const remoteInst = msg.instanceId ? instanceManager.get(msg.instanceId) : null;
+      if (remoteInst && remoteInst.source === 'remote') {
+        remoteInst.status = 'stopped';
+        // Bridge to surface subscribers before killing the instance
+        const surfaces = surfaceManager.findByInstanceId(remoteInst.id);
+        for (const surface of surfaces) {
+          surfaceManager.emitResult(
+            surface.surfaceId,
+            { success: (msg.exitCode ?? 1) === 0, exitCode: msg.exitCode },
+            (w: any, m: any) => send(w, m),
+            (t: any, b: any) => envelope(t, b),
+          );
+        }
+        instanceManager.kill(remoteInst.id);
+        broadcastToBrowsers(envelope("instance.removed", { instanceId: remoteInst.id }));
+        auditLog.log('instance.exited', remoteInst.label, { exitCode: msg.exitCode }, remoteInst.id);
+      } else if (msg.instanceId) {
+        // Cross-relay: instance may be a PC-local terminal.
+        // Use stateShellRouter to broadcast exit + emitResult to surfaces.
+        stateShellRouter.broadcastExit(msg.instanceId, msg.exitCode ?? 0, stateSurfaceManager);
+        // Surface cleanup (beyond emitResult already handled above)
+        const surfaces = surfaceManager.findByInstanceId(msg.instanceId);
+        if (surfaces.length > 0) {
+          for (const surface of surfaces) {
+            // Clean up workbench tab
+            const tabs = stateWorkbenchStore.get(surface.nodeId) || [];
+            const filtered = tabs.filter((t: any) => t._surfaceId !== surface.surfaceId && t.id !== surface.surfaceId);
+            stateWorkbenchStore.set(surface.nodeId, filtered);
+            stateWorkbenchStore.broadcast(surface.nodeId, filtered);
+            surfaceManager.delete(surface.surfaceId);
+            stateBus.flush();
+          }
+        }
+      }
+      return;
+    }
+
+    // ── Config push ───────────────────────────────────────
+    if (msg.type === "config.push" || msg.type === "config_push") {
+      const entries = msg.entries || (msg.config ? Object.entries(msg.config).map(([k, v]) => ({ key: k, value: v })) : []);
+      if (!Array.isArray(entries) || entries.length === 0) {
+        send(ws, envelope("error", { code: "INVALID_CONFIG", message: "No entries in config.push" }));
+        return;
+      }
+      relayConfigManager.setBatch(entries.map((e) => ({ key: e.key, value: e.value })), 'relay');
+      const pending = relayConfigManager.getPending();
+      for (const client of wss?.clients || []) {
+        if ((client as any)._isAgent && client.readyState === WebSocket.OPEN) {
+          client.send(JSON.stringify(envelope("config.push", { entries: pending.entries, requestId: pending.requestId })));
+        }
+      }
+      auditLog.log('config.pushed', 'admin', { entries: pending.entries }, '');
+      notifyBus({ scenarioId: 'config.synced', severity: 'info', title: 'Config pushed', detail: `${pending.entries.length} key(s) sent` });
+      return;
+    }
+
+    // ── Node External Access ─────────────────────────────────
+    if (msg.type === "node.external.inspect") {
+      const targetId = msg.instanceId || '';
+      const targetInst = targetId ? instanceManager.get(targetId) : null;
+
+      if (targetInst?.source === 'remote' && targetInst.agentConnection) {
+        // Forward to remote agent with request tracking
+        const requestId = `ext_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        pendingExternalRequests.set(requestId, ws);
+        setTimeout(() => pendingExternalRequests.delete(requestId), PENDING_TIMEOUT_MS);
+        send(targetInst.agentConnection, envelope("node.external.inspect", { requestId }));
+      } else {
+        // Self-service: detect locally and respond directly
+        const hasToken = !!relayToken;
+        const result = detectNetwork(PORT, hasToken);
+        send(ws, envelope("node.external.inspected", { result }));
+      }
+      return;
+    }
+
+    if (msg.type === "node.external.inspected" && msg.requestId) {
+      // Route response from agent back to original requester
+      const requester = pendingExternalRequests.get(msg.requestId);
+      if (requester && requester.readyState === WebSocket.OPEN) {
+        send(requester, envelope("node.external.inspected", { result: msg.result }));
+      }
+      pendingExternalRequests.delete(msg.requestId);
+      return;
+    }
+
+    if (msg.type === "node.external.set") {
+      // Toggle external access on/off on the target node
+      const targetId = msg.instanceId || '';
+      const enable = msg.enable === true;
+      const targetInst = targetId ? instanceManager.get(targetId) : null;
+
+      if (targetInst?.source === 'remote' && targetInst.agentConnection) {
+        // Forward set command to remote agent
+        const requestId = `ext_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        pendingExternalRequests.set(requestId, ws);
+        setTimeout(() => pendingExternalRequests.delete(requestId), PENDING_TIMEOUT_MS);
+        send(targetInst.agentConnection, envelope("node.external.set", { requestId, enable }));
+      } else {
+        // Self-service: just report that this requires runtime support
+        send(ws, envelope("node.external.status", {
+          enabled: false,
+          url: '',
+          message: 'self-service toggle not yet implemented',
+        }));
+      }
+      return;
+    }
+
+    if (msg.type === "node.external.status" && msg.requestId) {
+      const requester = pendingExternalRequests.get(msg.requestId);
+      if (requester && requester.readyState === WebSocket.OPEN) {
+        send(requester, envelope("node.external.status", { enabled: msg.enabled, url: msg.url || '', message: msg.message || '', error: msg.error || '' }));
+      }
+      pendingExternalRequests.delete(msg.requestId);
+      return;
+    }
+
+    // ── Shell terminal ────────────────────────────────────
+    if (msg.type === "shell.spawn" || msg.type === "shell_spawn") {
+      spawnShellForWs(ws, msg.instanceId).then((shellInst) => {
+        // Track shell in browser session for reconnect recovery
+        const clientToken = wsToClientToken.get(ws);
+        if (clientToken) {
+          const session = clientSessionMap.get(clientToken);
+          if (session) session.shellIds.add(shellInst.id);
+        }
+        // No operationId for terminal — instanceId is the sole identity.
+        // Output routing: broadcastShellOutput → surface subscribers via findByInstanceId.
+        // Input routing: operation.input { instanceId } → sendStdin directly.
+        send(ws, envelope("shell.status", {
+          instanceId: shellInst.id,
+          status: "running",
+          detail: "Shell spawned",
+        }));
+      }).catch((err) => {
+        // spawnShellForWs already sends its own error envelope for known failures
+        // (INSTANCE_NOT_FOUND, ACCESS_DENIED, etc.). Only send INTERNAL_ERROR for
+        // truly unexpected exceptions that didn't originate from our error reporting.
+        if (!(err as any)._reported) {
+          send(ws, envelope("error", { code: "INTERNAL_ERROR", message: `Shell spawn failed: ${err}` }));
+        }
+      });
+      return;
+    }
+    if (msg.type === "shell.input" || msg.type === "shell_input") {
+      const instId = msg.instanceId;
+      const target = instId ? instanceManager.get(instId) : null;
+      const i = target || (() => {
+        const owned = shellWsMap.get(ws);
+        if (owned && owned.size > 0) {
+          const firstId = [...owned][0];
+          return instanceManager.get(firstId);
+        }
+        return null;
+      })();
+      if (!i) return;
+
+      // No shell lock — ptty handles interleaved input naturally.
+      // shell.lock / shell.unlock are still available for peers that want
+      // explicit coordination, but are not enforced on the input path.
+
+      if (i.source === 'remote') {
+        sendStdin(i, msg.data);
+      } else if (i.handle) {
+        i.handle.send(msg.data).catch(() => {});
+      } else if (i.status !== 'stopped') {
+        // No handle yet (PTY not spawned or race). Self-heal by spawning.
+        // Guard: prevent concurrent spawnShellForWs calls for the same instance.
+        const _buffered = msg.data;
+        if (!pendingShellSpawns.has(i.id)) {
+          pendingShellSpawns.set(
+            i.id,
+            spawnShellForWs(ws, i.id).finally(() => pendingShellSpawns.delete(i.id))
+          );
+        }
+        pendingShellSpawns.get(i.id)!.then(() => {
+          if (i.handle) i.handle.send(_buffered).catch(() => {});
+        }).catch(() => {});
+      }
+      return;
+    }
+    if (msg.type === "shell.lock") {
+      const instId = msg.instanceId || inst().id;
+      const owner = shellLockMap.get(instId);
+      if (owner && owner !== ws) {
+        send(ws, envelope("shell.lock_status", { instanceId: instId, locked: true, owner: "another-browser" }));
+      } else {
+        shellLockMap.set(instId, ws);
+        broadcastToBrowsers(envelope("shell.lock_status", { instanceId: instId, locked: true }));
+      }
+      return;
+    }
+    if (msg.type === "shell.unlock") {
+      const instId = msg.instanceId || inst().id;
+      if (shellLockMap.get(instId) === ws) {
+        shellLockMap.delete(instId);
+        broadcastToBrowsers(envelope("shell.lock_status", { instanceId: instId, locked: false }));
+      }
+      return;
+    }
+    if (msg.type === "shell.resize" || msg.type === "shell_resize") {
+      // Resize PTY for the shell instance associated with this WS
+      const cols = typeof msg.cols === 'number' ? Math.max(10, Math.round(msg.cols)) : undefined;
+      const rows = typeof msg.rows === 'number' ? Math.max(2, Math.round(msg.rows)) : undefined;
+      if (cols && rows) {
+        const owned = shellWsMap.get(ws);
+        if (owned && owned.size > 0) {
+          const instId = [...owned][0];
+          const inst = instanceManager.get(instId);
+          if (inst?.handle?.resize) inst.handle.resize(cols, rows);
+        }
+      }
+      return;
+    }
+
+    // ── Remote Operation: unified remote execution ──────────
+    if (msg.type === "operation.start") {
+      const nodeId = String(msg.nodeId || "");
+      const kind = (msg.kind || "task") as OperationKind;
+      const clientToken = wsToClientToken.get(ws) || "unknown";
+      if (!nodeId) { send(ws, envelope("error", { code: "MISSING_NODE", message: "nodeId is required" })); return; }
+
+      try {
+        const instance = operationManager.validateTarget(nodeId, (id) => instanceManager.get(id));
+        const op = operationManager.create(nodeId, kind, {
+          instanceId: msg.instanceId,
+          pluginId: msg.pluginId,
+          command: msg.command,
+          input: msg.input as OperationInput | undefined,
+          createdBy: clientToken,
+        });
+
+        // Subscribe the requesting browser
+        operationManager.subscribe(op.operationId, ws, send, envelope);
+
+        // Emit starting status
+        operationManager.emitStatus(op.operationId, "starting", undefined, send, envelope);
+
+        // Forward to remote agent
+        if (instance.source === "remote") {
+          operationManager.forwardToAgent(op, instance, send, envelope);
+          operationManager.emitStatus(op.operationId, "running", "Forwarded to agent", send, envelope);
+        }
+      } catch (err) {
+        if (err instanceof OperationError) {
+          send(ws, envelope("error", { code: err.code, message: err.message }));
+        } else {
+          send(ws, envelope("error", { code: "INTERNAL_ERROR", message: `Operation start failed: ${(err as Error).message}` }));
+        }
+      }
+      return;
+    }
+
+    if (msg.type === "operation.input") {
+      const data = String(msg.data || "");
+      if (!data) return;
+
+      // Primary path: route by instanceId directly (terminals)
+      const instanceId = String(msg.instanceId || "");
+      if (instanceId) {
+        const inst = instanceManager.get(instanceId);
+        if (inst) {
+          if (!sendStdin(inst, data)) {
+            send(ws, envelope("error", {
+              code: "PTY_NOT_AVAILABLE",
+              message: `Terminal instance ${instanceId}: PTY not available`,
+            }));
+          }
+          return;
+        }
+        // Cross-relay: find which agent node owns this instance
+        for (const surf of surfaceManager.listAll()) {
+          if (surf.runtimeRef?.instanceId === instanceId && surf.nodeId) {
+            const nodeInst = instanceManager.get(surf.nodeId);
+            if (nodeInst?.source === 'remote' && nodeInst.agentConnection?.readyState === WebSocket.OPEN) {
+              send(nodeInst.agentConnection, envelope("agent.stdin", { instanceId, data }));
+              return;
+            }
+          }
+        }
+        return;
+      }
+
+      // Legacy path: route by operationId (non-terminal + backward compat)
+      const operationId = String(msg.operationId || "");
+      if (!operationId) return;
+
+      // Try terminal operation instance as fallback
+      const termOp = operationManager.getOperation(operationId);
+      if (termOp && termOp.kind === 'terminal' && termOp.instanceId) {
+        const inst = instanceManager.get(termOp.instanceId);
+        if (inst) {
+          sendStdin(inst, data);
+          return;
+        }
+      }
+
+      operationManager.forwardInputToAgent(
+        operationId, data,
+        (id) => instanceManager.get(id),
+        send, envelope,
+      );
+      return;
+    }
+
+    if (msg.type === "operation.subscribe") {
+      const operationId = String(msg.operationId || "");
+      if (!operationId) return;
+
+      const op = operationManager.subscribe(operationId, ws, send, envelope);
+      if (!op) {
+        send(ws, envelope("error", { code: "OPERATION_NOT_FOUND", message: `Operation ${operationId} not found` }));
+      }
+      return;
+    }
+
+    if (msg.type === "operation.cancel") {
+      const operationId = String(msg.operationId || "");
+      if (!operationId) return;
+
+      const ok = operationManager.cancel(operationId, send, envelope);
+      if (!ok) {
+        send(ws, envelope("error", { code: "OPERATION_NOT_FOUND", message: `Operation ${operationId} not found or already terminal` }));
+      }
+      return;
+    }
+
+    // ── Workbench tab sync ─────────────────────────────
+    if (msg.type === "workbench.subscribe") {
+      const nodeId = String(msg.nodeId || '');
+      if (!nodeId) return;
+
+      // Auto-reconcile: remove tabs whose surface no longer exists.
+      // Prevents stale tab accumulation across test runs and sessions.
+      const allSurfaces = surfaceManager.listAll();
+      const surfaceIds = new Set(allSurfaces.map((s: any) => s.surfaceId));
+      const rawTabs = stateWorkbenchStore.get(nodeId) || [];
+      const reconciled = rawTabs.filter((t: any) => surfaceIds.has(t._surfaceId || t.id));
+      if (reconciled.length !== rawTabs.length) {
+        stateWorkbenchStore.set(nodeId, reconciled);
+        stateWorkbenchStore.broadcast(nodeId, reconciled);
+      }
+
+      const wasEmpty = !stateWorkbenchStore.hasSubscribers(nodeId);
+      stateWorkbenchStore.subscribe(nodeId, ws);
+      // Send current tab state immediately
+      const tabs = stateWorkbenchStore.get(nodeId) || [];
+      console.log('[workbench.subscribe] nodeId=%s sending %d tabs (reconciled %d -> %d) titles=%s', nodeId, tabs.length, rawTabs.length, reconciled.length, tabs.map((t:any) => `"${t.title}"`).join(','));
+      send(ws, envelope("workbench.tabs", { nodeId, tabs }));
+      // Notify upstream relay on first subscriber
+      if (wasEmpty) safeSendUpstream("workbench.subscribe", { nodeId });
+      return;
+    }
+
+    if (msg.type === "workbench.unsubscribe") {
+      const nodeId = String(msg.nodeId || '');
+      if (!nodeId) return;
+      stateWorkbenchStore.unsubscribe(nodeId, ws);
+      // Last local subscriber left — unsubscribe upstream
+      if (!stateWorkbenchStore.hasSubscribers(nodeId)) {
+        safeSendUpstream("workbench.unsubscribe", { nodeId });
+      }
+      return;
+    }
+
+    if (msg.type === "workbench.tabs") {
+      const nodeId = String(msg.nodeId || '');
+      const tabs = Array.isArray(msg.tabs) ? msg.tabs : [];
+      if (!nodeId) return;
+      stateWorkbenchStore.set(nodeId, tabs);
+      // Broadcast to all OTHER subscribers
+      stateWorkbenchStore.broadcast(nodeId, tabs, ws);
+      const nodeInst = instanceManager.get(nodeId);
+      // Include label so the receiving relay can map to its own instance IDs.
+      let label = nodeInst?.label;
+      if (!nodeInst && nodeId === '__local__') {
+        // __local__ is the browser-side ID for the local relay itself.
+        // Use localNodeInfo.name first — it matches the label the upstream
+        // sees when this relay registers as a remote agent.
+        label = localNodeInfo?.name || instanceManager.list().find(i => i.source === 'local')?.label;
+      }
+      // Forward to remote agent's WebSocket if this node belongs to
+      // an agent connection (VPS—leaf cross-relay sync direction).
+      if (nodeInst?.source === 'remote' && nodeInst.agentConnection && nodeInst.agentConnection !== ws) {
+        send(nodeInst.agentConnection, envelope("workbench.tabs", { nodeId, tabs, _label: label }));
+      }
+      // Forward to upstream relay for cross-relay sync
+      safeSendUpstream("workbench.tabs", { nodeId, tabs, _label: label });
+      // Cross-relay label normalization: if the incoming message uses
+      // a different instance ID than what local subscribers expect,
+      // find instances with the same label and sync there.
+      syncTabsByLabel(nodeId, tabs, msg._label, ws);
+      return;
+    }
+
+    // ── SharedSurface protocol ──────────────────────────────
+    // Surface is the source of truth for shared tabs.
+    // workbench.tabs remains as compatibility projection only.
+
+    if (msg.type === "surface.publish") {
+      const senderRole = (ws as any)._agentRole;
+      surfaceManager.recordDebugEvent({
+        ts: Date.now(), kind: 'surface.publish.request',
+        nodeId: String(msg.nodeId || msg.surface?.nodeId || ''),
+        instanceId: msg.runtimeRef?.instanceId || msg.surface?.runtimeRef?.instanceId,
+        extra: { clientRole: senderRole || 'browser', hasSurface: !!msg.surface, viewType: msg.viewType || msg.surface?.viewType },
+      });
+      // When forwarded by an agent (cross-relay), import the serialized
+      // surface with label remapping instead of creating a fresh one.
+      // This mirrors onUpstreamMessage's logic for agent-forwarded surfaces.
+      if (senderRole && msg.surface?.surfaceId) {
+        const surfaceData = msg.surface;
+        let remapNodeId = String(msg.nodeId || surfaceData.nodeId || "");
+        // __local__ is the browser-side ID for the sending relay itself.
+        // On the receiving relay, remap to the matching instance by label.
+        if ((!instanceManager.get(remapNodeId) || remapNodeId === '__local__') && msg._label) {
+          const match = findInstanceByLabel(msg._label);
+          if (match) remapNodeId = match.id;
+        }
+        if (VERBOSE_SURFACE) console.log('[surface] agent-forwarded surfaceId=%s remapNodeId=%s', surfaceData.surfaceId, remapNodeId);
+        const inst = instanceManager.get(remapNodeId);
+        if (!inst) {
+          surfaceManager.recordDebugEvent({ ts: Date.now(), kind: 'surface.publish.upstream', nodeId: remapNodeId, message: 'no local instance, delegating to syncSurfacesByLabel' });
+          syncSurfacesByLabel(remapNodeId, surfaceData, msg._label);
+          return;
+        }
+        // Node exists on this relay — import the surface with its original ID.
+        // If the surface already exists locally (e.g. we created it and the
+        // agent is echoing back), only sync workbench tabs — don't broadcast
+        // surface.published again, which would create duplicate tabs in the UI.
+        const alreadyExisted = surfaceManager.get(surfaceData.surfaceId as string);
+        const imported = surfaceManager.importFromUpstream(surfaceData, remapNodeId);
+        if (imported) {
+          if (!alreadyExisted) {
+            // First time seeing this surface — full broadcast
+            surfaceManager.subscribe(imported.surfaceId, ws,
+              (w: any, m: any) => send(w, m),
+              (t: any, b: any) => envelope(t, b),
+            );
+            send(ws, envelope("surface.published", {
+              surfaceId: imported.surfaceId,
+              surface: stateSurfaceManager.toJSON(imported),
+            }));
+            surfaceManager.broadcastToNodeSubscribers(
+              remapNodeId,
+              send as any,
+              envelope("surface.published", {
+                surfaceId: imported.surfaceId,
+                surface: stateSurfaceManager.toJSON(imported),
+              }),
+            );
+            if (VERBOSE_SURFACE) console.log(`[surface] agent-forwarded NEW surface ${imported.surfaceId} "${imported.title}" → node ${remapNodeId}`);
+          } else {
+            if (VERBOSE_SURFACE) console.log(`[surface] agent-forwarded EXISTING surface ${imported.surfaceId} — tabs only`);
+          }
+          // Always sync workbench tabs (deduped)
+          const tab = surfaceManager.toWorkbenchTab(imported);
+          const existingTabs = stateWorkbenchStore.get(remapNodeId) || [];
+          const tIdx = existingTabs.findIndex((t: any) => t.id === tab.id);
+          if (tIdx >= 0) existingTabs[tIdx] = tab;
+          else existingTabs.push(tab);
+          stateWorkbenchStore.set(remapNodeId, existingTabs);
+          stateWorkbenchStore.broadcast(remapNodeId, existingTabs, ws);
+          // Also sync to __local__ so browsers on this relay discover
+          // downstream surfaces through workbench.subscribe(__local__).
+          // This covers both local instances and agent-forwarded (remote) surfaces.
+          if (inst && (inst.source === 'local' || msg._label)) {
+            const localTabs = stateWorkbenchStore.get('__local__') || [];
+            const lIdx = localTabs.findIndex((t: any) => t.id === tab.id);
+            if (lIdx >= 0) localTabs[lIdx] = tab;
+            else localTabs.push(tab);
+            stateWorkbenchStore.set('__local__', localTabs);
+            stateWorkbenchStore.broadcast('__local__', localTabs, ws);
+            surfaceManager.broadcastToNodeSubscribers(
+              '__local__',
+              send as any,
+              envelope("surface.published", {
+                surfaceId: imported.surfaceId,
+                surface: stateSurfaceManager.toJSON(imported),
+              }),
+            );
+          }
+        }
+        return;
+      }
+
+      const nodeId = String(msg.nodeId || "");
+      if (!nodeId) {
+        send(ws, envelope("error", { code: "MISSING_NODE", message: "nodeId is required" }));
+        return;
+      }
+
+      const surface = surfaceManager.create(nodeId, {
+        title: String(msg.title || "Untitled"),
+        viewType: String(msg.viewType || "terminal"),
+        pluginId: msg.pluginId ? String(msg.pluginId) : undefined,
+        scope: msg.scope || "node",
+        shared: msg.shared !== false,
+        runtimeRef: msg.runtimeRef || { kind: "none" },
+        replayPolicy: msg.replayPolicy,
+        permissions: msg.permissions,
+        createdBy: wsToClientToken.get(ws) || "unknown",
+      });
+
+      // Default keep=true for all shared surfaces so they survive stale
+      // validation (e.g. after relay restart when runtime instances haven't
+      // reconnected yet). Users can explicitly unkeep via surface.unkeep.
+      surfaceManager.setKeep(surface.surfaceId, true);
+
+      // Terminal surfaces route input/output via instanceId directly
+      // (shell.output → broadcastShellOutput → surface subscribers via findByInstanceId).
+      // No operation needed — instanceId is the sole identity.
+      // Non-terminal runtimes (plugin, adapter_command) still use operationManager.
+      if (surface.runtimeRef.kind !== "none" && surface.runtimeRef.instanceId) {
+        const isTerminal = surface.runtimeRef.kind === "terminal";
+        if (!isTerminal) {
+          try {
+            const op = operationManager.create(surface.nodeId, surface.runtimeRef.kind as import("./remote-operation-manager").OperationKind, {
+              pluginId: surface.pluginId,
+              instanceId: surface.runtimeRef.instanceId,
+              createdBy: surface.createdBy,
+            });
+            // Forward to remote agent if applicable
+            const inst = instanceManager.get(surface.runtimeRef.instanceId);
+            if (inst && inst.source === "remote" && inst.agentConnection) {
+              operationManager.forwardToAgent(
+                op, inst,
+                (w: any, m: any) => send(w, m),
+                (t: any, b: any) => envelope(t, b),
+              );
+            }
+          } catch (err) {
+            send(ws, envelope("error", {
+              code: (err as any)?.code || "OPERATION_CREATE_FAILED",
+              message: (err as any)?.message || "Failed to create operation",
+            }));
+          }
+        }
+      }
+
+      // Auto-subscribe the publisher
+      surfaceManager.subscribe(surface.surfaceId, ws,
+        (w: any, m: any) => send(w, m),
+        (t: any, b: any) => envelope(t, b),
+      );
+
+      stateBus.flush();
+
+      const checkGet = surfaceManager.get(surface.surfaceId);
+      if (VERBOSE_SURFACE) console.log('[surface] created surfaceId=%s nodeId=%s title="%s"', surface.surfaceId, nodeId, surface.title);
+
+      // Return published confirmation with full surface data.
+      // Re-read from store so linkOperation updates are reflected.
+      const publishedSurface = checkGet || surface;
+      send(ws, envelope("surface.published", {
+        surfaceId: surface.surfaceId,
+        surface: stateSurfaceManager.toJSON(publishedSurface),
+      }));
+
+      // Broadcast to node subscribers so browsers that called
+      // surface.subscribeNode see new surfaces without refresh.
+      // Exclude the creating WS — they already got a direct surface.published.
+      surfaceManager.broadcastToNodeSubscribers(
+        nodeId,
+        send as any,
+        envelope("surface.published", {
+          surfaceId: surface.surfaceId,
+          surface: stateSurfaceManager.toJSON(surface),
+        }),
+        ws,
+      );
+
+      // Backward-compat: project into workbench.tabs
+      const tab = surfaceManager.toWorkbenchTab(surface);
+      const existingTabs = stateWorkbenchStore.get(nodeId) || [];
+      const idx = existingTabs.findIndex((t: any) => t.id === tab.id);
+      if (idx >= 0) existingTabs[idx] = tab;
+      else existingTabs.push(tab);
+      stateWorkbenchStore.set(nodeId, existingTabs);
+      stateWorkbenchStore.broadcast(nodeId, existingTabs, ws);
+
+      // Cross-relay: forward to upstream so other relays see this surface.
+      // Include _label so the receiving relay can remap instanceId by hostname.
+      const nodeInst = instanceManager.get(nodeId);
+      let label = nodeInst?.label;
+      if (!nodeInst && nodeId === '__local__') {
+        // __local__ is the browser-side ID for the local relay itself.
+        // Use localNodeInfo.name first — it matches the label the upstream
+        // sees when this relay registers as a remote agent.
+        label = localNodeInfo?.name || instanceManager.list().find(i => i.source === 'local')?.label;
+      }
+      if (VERBOSE_SURFACE) console.log('[surface] _sendUpstream nodeId=%s surfaceId=%s', nodeId, surface.surfaceId);
+      safeSendUpstream("surface.publish", {
+        nodeId,
+        surface: stateSurfaceManager.toJSON(surface),
+        _label: label,
+      });
+      // Also forward surface to the remote agent's WS if this node belongs
+      // to an agent connection (same pattern as workbench.tabs).
+      if (nodeInst?.source === 'remote' && nodeInst.agentConnection && nodeInst.agentConnection !== ws) {
+        send(nodeInst.agentConnection, envelope("surface.publish", {
+          nodeId,
+          surface: stateSurfaceManager.toJSON(surface),
+          _label: label,
+        }));
+      }
+
+      // Broadcast to ALL downstream relays so they can import
+      // VPS-created surfaces (S1 cross-node sync direction).
+      // Only surfaces rooted on the VPS itself (__local__) are broadcast;
+      // agent-scoped surfaces stay on their agent connection.
+      _broadcastToDownstreams("surface.publish", {
+        nodeId,
+        surface: stateSurfaceManager.toJSON(surface),
+        _label: label || localNodeInfo?.name,
+      }, ws);
+
+      return;
+    }
+
+    if (msg.type === "surface.subscribe") {
+      const surfaceId = String(msg.surfaceId || "");
+      if (!surfaceId) {
+        send(ws, envelope("error", { code: "MISSING_SURFACE_ID", message: "surfaceId is required" }));
+        return;
+      }
+      const existingSurface = surfaceManager.get(surfaceId);
+      if (
+        existingSurface?.runtimeRef.kind === 'terminal' &&
+        existingSurface.runtimeRef.instanceId &&
+        !instanceManager.get(existingSurface.runtimeRef.instanceId)
+      ) {
+        surfaceManager.recordDebugEvent({
+          ts: Date.now(), kind: 'surface.stale.instance_missing',
+          surfaceId, nodeId: existingSurface.nodeId,
+          instanceId: existingSurface.runtimeRef.instanceId,
+          message: 'missing instance for terminal surface (surface.subscribe)',
+        });
+        if (surfaceManager.isKept(surfaceId)) {
+          // Keep=true → persist surface, mark orphaned. Continue to
+          // subscribe so the peer can still use the surface tab.
+          // Agent inventory will re-validate when the agent reconnects.
+          surfaceManager.setOrphaned(surfaceId);
+          stateBus.flush();
+        } else {
+          surfaceManager.delete(surfaceId);
+          stateBus.flush();
+          send(ws, envelope("surface.closed", { surfaceId, nodeId: existingSurface.nodeId }));
+          send(ws, envelope("error", { code: "SURFACE_STALE", message: `Surface ${surfaceId} points to a missing terminal instance` }));
+          return;
+        }
+      }
+
+      const surface = surfaceManager.subscribe(surfaceId, ws,
+        (w: any, m: any) => send(w, m),
+        (t: any, b: any) => envelope(t, b),
+      );
+
+      if (!surface) {
+        // Surface not found locally — if we have an upstream connection,
+        // the surface might be on the upstream relay. Forward the subscribe
+        // request and wait for the upstream to respond with surface.subscribed.
+        if (_sendUpstream) {
+          if (!pendingUpstreamSubs.has(surfaceId)) pendingUpstreamSubs.set(surfaceId, new Set());
+          pendingUpstreamSubs.get(surfaceId)!.add(ws);
+          safeSendUpstream("surface.subscribe", { surfaceId });
+          // Set a timeout so pending subscribers don't leak
+          setTimeout(() => {
+            const subs = pendingUpstreamSubs.get(surfaceId);
+            if (subs) {
+              subs.delete(ws);
+              if (subs.size === 0) pendingUpstreamSubs.delete(surfaceId);
+            }
+          }, 15000);
+          return;
+        }
+        send(ws, envelope("error", { code: "SURFACE_NOT_FOUND", message: `Surface ${surfaceId} not found` }));
+        return;
+      }
+
+      send(ws, envelope("surface.subscribed", {
+        surfaceId,
+        runtime: surfaceManager.getRuntime(surfaceId),
+      }));
+      if (surface.runtimeRef.kind === 'terminal' && surface.runtimeRef.instanceId) {
+        // Skip spawn if the terminal instance was already found stale above
+        // (kept surface whose agent disconnected). The shell will be re-spawned
+        // when agent inventory re-validates on reconnect.
+        const inst = instanceManager.get(surface.runtimeRef.instanceId);
+        if (inst) {
+          spawnShellForWs(ws, surface.runtimeRef.instanceId).catch((err) => {
+            if (!(err as any)._reported) {
+              send(ws, envelope("error", { code: "INTERNAL_ERROR", message: `Shell spawn failed: ${err}` }));
+            }
+          });
+        } else if (surface.nodeId) {
+          // Cross-relay: instance is on a connected agent, not locally.
+          // Forward relay.shell.spawn to the agent so it spawns the PTY.
+          // Note: we do NOT call subscribeShellOutput() here because
+          // broadcastShellOutput already bridges agent.stdout -> surface
+          // subscribers via emitOutput, avoiding duplicate output.
+          const nodeInst = instanceManager.get(surface.nodeId);
+          if (nodeInst?.source === 'remote' && nodeInst.agentConnection?.readyState === WebSocket.OPEN) {
+            // Reset runtime status to 'running' (was 'completed' from prior exit)
+            const rt = surfaceManager.getRuntime(surfaceId);
+            if (rt) rt.status = 'running';
+            surfaceManager.recordDebugEvent({
+              ts: Date.now(), kind: 'surface.subscribe.cross_relay',
+              surfaceId, nodeId: surface.nodeId,
+              instanceId: surface.runtimeRef.instanceId,
+              message: 'forwarding shell spawn to connected agent (cross-relay)',
+            });
+            send(nodeInst.agentConnection, envelope("relay.shell.spawn", {
+              instanceId: surface.runtimeRef.instanceId,
+            }));
+            // Subscribe the downstream relay's upstream WS to the surface so the
+            // upstream relay broadcasts runtime.* updates (output, status, etc.)
+            // to this relay's relayMessage handler.
+            safeSendUpstream("surface.subscribe", { surfaceId });
+          } else if (_sendUpstream) {
+            // Instance not found locally and no matching remote agent,
+            // but we have an upstream connection. The instance may be
+            // on the upstream relay (e.g., VPS surface viewed from a
+            // downstream relay). Subscribe the upstream WS so it
+            // forwards runtime.* updates back to us.
+            surfaceManager.recordDebugEvent({
+              ts: Date.now(), kind: 'surface.subscribe.forward_upstream',
+              surfaceId, nodeId: surface.nodeId,
+              instanceId: surface.runtimeRef.instanceId,
+              message: 'forwarding surface.subscribe upstream',
+            });
+            safeSendUpstream("surface.subscribe", { surfaceId });
+          } else {
+            // Surface is kept but the instance is dead and there's no remote
+            // agent to re-spawn it. Send surface.closed so the client removes
+            // the dead tab; the orphaned surface stays server-side (keep=true).
+            surfaceManager.recordDebugEvent({
+              ts: Date.now(), kind: 'surface.subscribe.dead_local',
+              surfaceId, nodeId: surface.nodeId,
+              instanceId: surface.runtimeRef.instanceId,
+              message: 'kept surface with dead local instance — sending surface.closed',
+            });
+            send(ws, envelope("surface.closed", {
+              surfaceId, nodeId: surface.nodeId,
+              reason: 'instance_gone',
+            }));
+          }
+        }
+      }
+      return;
+    }
+
+    if (msg.type === "surface.subscribeNode") {
+      const nodeId = String(msg.nodeId || "");
+      if (!nodeId) {
+        send(ws, envelope("error", { code: "MISSING_NODE", message: "nodeId is required" }));
+        return;
+      }
+
+      for (const surface of surfaceManager.listByNode(nodeId)) {
+        // Preserve surfaces that should survive instance-missing checks:
+        // - Upstream-imported surfaces (proxy markers for surfaces on other relays)
+        if (surface.createdBy === 'upstream') continue;
+        // - Node-level shell surface (relay node's own terminal)
+        if (surface.runtimeRef.instanceId === surface.nodeId) continue;
+        // - Cross-relay surface on a connected remote agent node
+        const snNodeInst = instanceManager.get(surface.nodeId);
+        if (snNodeInst?.source === 'remote') continue;
+        if (typeof surface.nodeId === 'string' && surface.nodeId.startsWith('upstream:')) continue;
+        // - Kept surfaces are intentionally preserved
+        const kept = surfaceManager.isKept(surface.surfaceId);
+        if (kept) continue;
+
+        // Debug: potential keep miss for CC4 surfaces
+        if (surface.runtimeRef.kind === 'terminal' && surface.runtimeRef.instanceId && !instanceManager.get(surface.runtimeRef.instanceId)) {
+          console.log('[CLEANUP-CANDIDATE] nodeId=%s surfaceId=%s title="%s" keep=%s isKept=%s instanceId=%s', nodeId, surface.surfaceId, surface.title, surface.keep, kept, surface.runtimeRef.instanceId);
+        }
+
+        if (
+          surface.runtimeRef.kind === 'terminal' &&
+          surface.runtimeRef.instanceId &&
+          !instanceManager.get(surface.runtimeRef.instanceId)
+        ) {
+          console.log('[CLEANUP-DELETE] nodeId=%s surfaceId=%s title="%s" keep=%s isKept=%s instanceId=%s', nodeId, surface.surfaceId, surface.title, surface.keep, kept, surface.runtimeRef.instanceId);
+          surfaceManager.recordDebugEvent({
+            ts: Date.now(), kind: 'surface.stale.instance_missing',
+            surfaceId: surface.surfaceId, nodeId,
+            instanceId: surface.runtimeRef.instanceId,
+            message: 'missing instance for terminal surface (surface.subscribeNode)',
+          });
+          surfaceManager.delete(surface.surfaceId);
+          send(ws, envelope("surface.closed", { surfaceId: surface.surfaceId, nodeId }));
+        }
+      }
+
+      // Synthesis: create surfaces for running instances that lack one
+      for (const inst of instanceManager.list()) {
+        if (inst.status !== 'running') continue;
+        if (inst.source !== 'local') continue; // remote instances rely on agent inventory (Phase 3)
+        if (inst.label !== nodeId && inst.id !== nodeId) {
+          // Check if this instance is on the same node (label match)
+          const nodeInst = instanceManager.get(nodeId);
+          if (!nodeInst || nodeInst.label !== inst.label) continue;
+        }
+        const existing = surfaceManager.findByInstanceId(inst.id);
+        if (existing.length === 0) {
+          const synthSurface = surfaceManager.create(nodeId || inst.id, {
+            title: inst.label || 'Terminal',
+            viewType: 'terminal',
+            scope: 'node',
+            shared: true,
+            runtimeRef: { kind: 'terminal', instanceId: inst.id },
+            replayPolicy: { mode: 'tail', lines: 5000, bytes: 500_000 },
+          });
+          surfaceManager.setOrphaned(synthSurface.surfaceId);
+          surfaceManager.setKeep(synthSurface.surfaceId, true);
+          // Insert into workbenchTabStore for backward compat
+          const tabs = stateWorkbenchStore.get(nodeId || inst.id) || [];
+          tabs.push(surfaceManager.toWorkbenchTab(synthSurface));
+          stateWorkbenchStore.set(nodeId || inst.id, tabs);
+          surfaceManager.recordDebugEvent({
+            ts: Date.now(), kind: 'surface.publish.created',
+            surfaceId: synthSurface.surfaceId, nodeId: nodeId || inst.id,
+            instanceId: inst.id,
+            message: 'synthesized surface for running instance without surface',
+          });
+        }
+      }
+
+      stateBus.flush();
+
+      const surfaces = surfaceManager.subscribeNode(nodeId, ws,
+        (w: any, m: any) => send(w, m),
+        (t: any, b: any) => envelope(t, b),
+      );
+
+      // Filter: exclude terminal surfaces whose runtime instance is missing
+      // and whose surface is not explicitly kept.
+      const filteredSurfaces = surfaces.filter(s => {
+        if (s.runtimeRef.kind === 'terminal' && s.runtimeRef.instanceId) {
+          // Surfaces imported from upstream are proxy markers — keep visible
+          // even though the runtime instance lives on a different relay.
+          if (s.createdBy === 'upstream') return true;
+          // Node-level shell surface (relay node's own terminal)
+          if (s.runtimeRef.instanceId === s.nodeId) return true;
+          // Cross-relay surface: node belongs to a connected remote agent or upstream relay
+          const nodeInst = instanceManager.get(s.nodeId);
+          if (nodeInst?.source === 'remote') return true;
+          if (typeof s.nodeId === 'string' && s.nodeId.startsWith('upstream:')) return true;
+          // Kept surfaces are preserved server-side — show them even if the
+          // runtime instance hasn't been created yet or is reconnecting.
+          if (surfaceManager.isKept(s.surfaceId)) return true;
+          // Local instance: must exist in instanceManager
+          return !!instanceManager.get(s.runtimeRef.instanceId);
+        }
+        return true;
+      });
+
+      send(ws, envelope("surface.list", {
+        nodeId,
+        surfaces: filteredSurfaces.map(s => stateSurfaceManager.toJSON(s)),
+      }));
+      surfaceManager.recordDebugEvent({
+        ts: Date.now(), kind: 'surface.list.sent',
+        nodeId, extra: { surfaceCount: filteredSurfaces.length, filteredTotal: surfaces.length },
+      });
+      // Notify upstream relay so it forwards surface updates for this node
+      safeSendUpstream("surface.subscribeNode", { nodeId });
+      return;
+    }
+
+    if (msg.type === "surface.unsubscribeNode") {
+      const nodeId = String(msg.nodeId || "");
+      if (nodeId) {
+        surfaceManager.unsubscribeNode(nodeId, ws);
+        safeSendUpstream("surface.unsubscribeNode", { nodeId });
+      }
+      return;
+    }
+
+    if (msg.type === "workbench.reconcile") {
+      // Manual reconciliation: sync __local__ workbench tabs against actual surfaces.
+      // Removes stale tab entries whose corresponding surface no longer exists.
+      const nodeId = String(msg.nodeId || '__local__');
+      const tabs = stateWorkbenchStore.get(nodeId);
+      if (!tabs || tabs.length === 0) return;
+      const surfaces = surfaceManager.listAll();
+      const surfaceIds = new Set(surfaces.map(s => s.surfaceId));
+      const filtered = tabs.filter((t: any) => surfaceIds.has(t._surfaceId || t.id));
+      if (filtered.length !== tabs.length) {
+        stateWorkbenchStore.set(nodeId, filtered);
+        stateWorkbenchStore.broadcast(nodeId, filtered);
+      }
+      return;
+    }
+
+    if (msg.type === "surface.update") {
+      const surfaceId = String(msg.surfaceId || "");
+      if (!surfaceId) return;
+
+      console.log('[surface.update WS] surfaceId=%s title=%s patch?title=%s', surfaceId, msg.title, msg.patch?.title);
+      // Debug: check if surface exists in StateBus before update
+      const preGet = surfaceManager.get(surfaceId);
+      console.log('[surface.update WS] preGet=%s exists=%s', surfaceId, !!preGet);
+      const updated = surfaceManager.update(surfaceId, {
+        title: msg.title ?? msg.patch?.title,
+        replayPolicy: msg.replayPolicy ?? msg.patch?.replayPolicy,
+        permissions: msg.permissions ?? msg.patch?.permissions,
+        scope: msg.scope ?? msg.patch?.scope,
+      });
+      console.log('[surface.update WS] updated=%s nodeId=%s title="%s"', !!updated, updated?.nodeId, updated?.title);
+
+      if (!updated) {
+        send(ws, envelope("error", { code: "SURFACE_NOT_FOUND", message: `Surface ${surfaceId} not found` }));
+        return;
+      }
+
+      // Sync workbench tab
+      const tab = surfaceManager.toWorkbenchTab(updated);
+      const nodeTabs = stateWorkbenchStore.get(updated.nodeId) || [];
+      const idx = nodeTabs.findIndex((t: any) => t.id === tab.id);
+      if (idx >= 0) nodeTabs[idx] = tab;
+      stateWorkbenchStore.set(updated.nodeId, nodeTabs);
+      stateWorkbenchStore.broadcast(updated.nodeId, nodeTabs, ws);
+
+      // Also sync __local__ workbench so browsers on this relay see the update
+      if (updated.nodeId !== '__local__') {
+        const localTabs = stateWorkbenchStore.get('__local__') || [];
+        const lIdx = localTabs.findIndex((t: any) => t.id === tab.id);
+        if (lIdx >= 0) {
+          localTabs[lIdx] = tab;
+          stateWorkbenchStore.set('__local__', localTabs);
+          stateWorkbenchStore.broadcast('__local__', localTabs, ws);
+        }
+      }
+
+      // Broadcast surface.updated to surface subscribers
+      const surfSubs = surfaceManager.getSubscribers(surfaceId);
+      if (surfSubs) {
+        for (const client of surfSubs) {
+          if (client !== ws && client.readyState === WebSocket.OPEN) {
+            send(client, envelope("surface.updated", {
+              surfaceId,
+              patch: { title: msg.title, replayPolicy: msg.replayPolicy },
+            }));
+          }
+        }
+      }
+
+      const patch = {
+        title: msg.patch?.title ?? msg.title,
+        replayPolicy: msg.patch?.replayPolicy ?? msg.replayPolicy,
+        permissions: msg.patch?.permissions ?? msg.permissions,
+        scope: msg.patch?.scope ?? msg.scope,
+      };
+      safeSendUpstream("surface.update", {
+        surfaceId,
+        nodeId: updated.nodeId,
+        patch,
+      });
+
+      // Broadcast update to downstream relays
+      _broadcastToDownstreams("surface.update", {
+        surfaceId,
+        nodeId: updated.nodeId,
+        patch,
+      });
+
+      return;
+    }
+
+    if (msg.type === "surface.close") {
+      const surfaceId = String(msg.surfaceId || "");
+      if (!surfaceId) return;
+
+      const surface = surfaceManager.get(surfaceId);
+      if (!surface) {
+        send(ws, envelope("error", { code: "SURFACE_NOT_FOUND", message: `Surface ${surfaceId} not found` }));
+        return;
+      }
+
+      const nodeId = surface.nodeId;
+      const wsRole = (ws as any)._agentRole || 'browser';
+      const wsPeerIp = (ws as any)._peerId || (ws as any).__peekId || '';
+      console.log('[SURFACE-CLOSE] surfaceId=%s nodeId=%s title="%s" keep=%s wsRole=%s wsPeerIp=%s creator=%s', surfaceId, nodeId, surface.title, surface.keep, wsRole, wsPeerIp, surface.createdBy);
+
+      // Snapshot subscribers BEFORE deleting (delete clears the subscriber set)
+      const surfSubs = surfaceManager.getSubscribers(surfaceId);
+      const closeMsg = envelope("surface.closed", { surfaceId });
+
+      surfaceManager.delete(surfaceId);
+      stateBus.flush();
+
+      // Broadcast surface.closed
+      if (surfSubs) {
+        for (const client of surfSubs) {
+          if (client !== ws && client.readyState === WebSocket.OPEN) {
+            send(client, closeMsg);
+          }
+        }
+      }
+
+      // Remove from ALL workbench tab stores (surface may be in __local__ etc.)
+      removeSurfaceFromAllWorkbenches(surfaceId);
+
+      safeSendUpstream("surface.close", { surfaceId, nodeId });
+
+      // Broadcast close to downstream relays
+      if (nodeId) {
+        _broadcastToDownstreams("surface.close", { surfaceId, nodeId });
+      }
+
+      return;
+    }
+
+    if (msg.type === "surface.keep") {
+      const surfaceId = String(msg.surfaceId || "");
+      if (!surfaceId) return;
+      const surface = surfaceManager.get(surfaceId);
+      if (!surface) {
+        send(ws, envelope("error", { code: "SURFACE_NOT_FOUND", message: `Surface ${surfaceId} not found` }));
+        return;
+      }
+      surfaceManager.setKeep(surfaceId, true);
+      stateBus.flush();
+      // Sync to workbenchTabStore
+      const tabs = stateWorkbenchStore.get(surface.nodeId) || [];
+      const tab = surfaceManager.toWorkbenchTab(surface);
+      const idx = tabs.findIndex((t: any) => t.id === tab.id);
+      if (idx >= 0) tabs[idx] = { ...tabs[idx], _keep: true };
+      stateWorkbenchStore.set(surface.nodeId, tabs);
+      send(ws, envelope("surface.kept", { surfaceId, keep: true }));
+      return;
+    }
+
+    if (msg.type === "surface.unkeep") {
+      const surfaceId = String(msg.surfaceId || "");
+      if (!surfaceId) return;
+      const surface = surfaceManager.get(surfaceId);
+      if (!surface) {
+        send(ws, envelope("error", { code: "SURFACE_NOT_FOUND", message: `Surface ${surfaceId} not found` }));
+        return;
+      }
+      surfaceManager.setKeep(surfaceId, false);
+      stateBus.flush();
+      const tabs = stateWorkbenchStore.get(surface.nodeId) || [];
+      const tab = surfaceManager.toWorkbenchTab(surface);
+      const idx = tabs.findIndex((t: any) => t.id === tab.id);
+      if (idx >= 0) tabs[idx] = { ...tabs[idx], _keep: false };
+      stateWorkbenchStore.set(surface.nodeId, tabs);
+      send(ws, envelope("surface.kept", { surfaceId, keep: false }));
+      return;
+    }
+
+    // ── Claude chat commands ────────────────────────────────
+    const targetInst = msg.instanceId ? (instanceManager.get(msg.instanceId) || inst()) : inst();
+    const prevActive = instanceManager.activeId;
+    instanceManager.setActive(targetInst.id);
+
+    switch (msg.type) {
+      case "instance.command":
+      case "command": {
+        const name = msg.name;
+        if (name === "clear" || name === "restart") {
+          if (msg.args?.model) targetInst.model = msg.args.model;
+          targetInst.checkpointManager.clear();
+          spawnInstance(targetInst.id);
+          sendBlock({
+            blockType: "status",
+            text: name === "restart" && msg.args?.model
+              ? `Model switched to ${msg.args.model}`
+              : "Session cleared — starting fresh...",
+          });
+          instanceManager.startOperation(targetInst.id, 'command', name);
+          instanceManager.transitionOperation(targetInst.id, instanceManager.getCurrentOperation(targetInst.id)?.id || '', 'succeeded', { resultText: name });
+        } else if (name === "interrupt") {
+          interruptInstance(targetInst.id);
+        } else if (name === "rewind") {
+          const { success, checkpoint } = targetInst.checkpointManager.rewindLastCheckpoint();
+          if (success) {
+            sendBlock({ blockType: "status", text: `Rewound: ${checkpoint?.filePath ?? "unknown"}` });
+          } else {
+            sendBlock({ blockType: "status", text: "Nothing to rewind" });
+          }
+        } else if (name === "rewind-all") {
+          const result = targetInst.checkpointManager.rewindCurrentTurn();
+          sendBlock({ blockType: "status", text: `Rewound ${result.restored} change(s) (${result.skipped} skipped, ${result.failed} failed)` });
+        } else if (name === "setMode") {
+          const mode = msg.args?.mode;
+          if (["default", "acceptEdits", "plan"].includes(mode)) {
+            setPermissionMode(mode);
+            sendBlock({ blockType: "status", text: `Permission mode: ${mode}` });
+          }
+        } else if (name === "setEffort") {
+          const level = msg.args?.level;
+          if (["low", "medium", "high"].includes(level)) {
+            setThinkingLevel(level);
+            sendBlock({ blockType: "status", text: `Thinking effort: ${level}` });
+          }
+        } else if (name === "switch-instance") {
+          const target = msg.args?.instanceId;
+          if (target && instanceManager.get(target)) {
+            instanceManager.setActive(target);
+            sendBlock({ blockType: "status", text: `Switched to instance: ${target}` });
+            send(ws, envelope("instance.switched", { instanceId: target }));
+          }
+        } else if (name === "list-instances") {
+          send(ws, envelope("instance.list", { instances: instanceManager.toJSON(), activeId: instanceManager.activeId }));
+        } else if (name === "bridge-update") {
+          // Trigger update in the background
+          const { execFile } = require("child_process");
+          execFile("node", [join(__dirname, "../scripts/update.js"), "--force"], {
+            timeout: 120000, windowsHide: true,
+          }, (updateErr: Error | null, stdout: string, stderr: string) => {
+            if (updateErr) {
+              sendBlock({ blockType: "error", text: `Update failed: ${updateErr.message}` });
+            } else {
+              sendBlock({ blockType: "status", text: `Update installed. Restart the server to apply.` });
+              broadcastToBrowsers(envelope("system.notification", {
+                severity: "success", title: "Update ready",
+                detail: "Restart the server to apply the update.",
+                scenarioId: "update", duration: 0,
+              }));
+            }
+          });
+        } else {
+          // Extension-contributed commands
+          const cmd = extensionPoints.findCommand(name);
+          if (cmd) {
+            const ctx: WhenContext = {
+              view: targetInst?.adapterId || getDefaultAdapterId(),
+              instanceStatus: targetInst?.status || 'stopped',
+              activeAdapterId: targetInst?.adapterId || getDefaultAdapterId(),
+              isRunning: targetInst?.status === 'running',
+            };
+            if (!cmd.when || evaluateWhen(cmd.when, ctx)) {
+              if (targetInst?.handle?.sendCommand) {
+                targetInst.handle.sendCommand(cmd.id, msg.args || {}).then(() => {
+                  send(ws, envelope("instance.command_result", { name: cmd.id, ok: true }));
+                }).catch((err: Error) => {
+                  send(ws, envelope("instance.command_result", { name: cmd.id, ok: false, error: err.message }));
+                });
+              }
+            }
+          }
+        }
+        break;
+      }
+
+      case "session.list_req":
+      case "list_sessions":
+        // Sessions list — no-op (placeholder)
+        break;
+    }
+
+    // Restore previous active instance if routing was temporary
+    if (msg.instanceId && prevActive) {
+      instanceManager.setActive(prevActive);
+    }
+  });
+
+  ws.on("close", () => {
+    browsers.delete(ws);
+    authenticatedSockets.delete(ws);
+    agentVersionMap.delete(ws);
+    cryptoStreams.delete(ws);
+    broadcastPeers(); // notify remaining peers about peer change
+    // Release shell write-locks held by this WS
+    for (const [instId, owner] of shellLockMap) {
+      if (owner === ws) {
+        shellLockMap.delete(instId);
+        broadcastToBrowsers(envelope("shell.lock_status", { instanceId: instId, locked: false }));
+      }
+    }
+    // Session persistence: disconnect doesn't kill shells.
+    // Processes stay alive until explicitly killed (× button on instance bar)
+    // or the server/agent restarts. Close page = keep running, reopen = reconnect.
+    const clientToken = wsToClientToken.get(ws);
+    wsToClientToken.delete(ws);
+    if (clientToken) {
+      const session = clientSessionMap.get(clientToken);
+      if (session && session.ws === ws) {
+        session.disconnectTime = Date.now();
+        // No auto-kill — shells persist until explicitly killed.
+        return;
+      }
+    }
+    // Clean up shell ownership tracking without killing processes
+    const ownedShells = shellWsMap.get(ws);
+    if (ownedShells) {
+      shellWsMap.delete(ws);
+    }
+    // Auto-unregister agent connections
+    if ((ws as any)._isAgent) {
+      for (const inst of instanceManager.list()) {
+        if (inst.agentConnection === ws) {
+          inst.agentConnection = null;
+          inst.status = 'stopped';
+          instanceManager.kill(inst.id);
+          broadcastToBrowsers(envelope("instance.removed", { instanceId: inst.id }));
+          broadcastPeers(); // agent peer removed
+          auditLog.log('agent.auto_unregistered', inst.label, {}, inst.id);
+          instanceManager.cancelOperation(inst.id);
+          break;
+        }
+      }
+    }
+    // Cleanup workbench subscribers
+    cleanupWorkbenchSubs(ws);
+    // Cleanup surface subscribers
+    surfaceManager.cleanupWs(ws);
+    // Cleanup shell output subscribers
+    stateShellRouter.cleanupWs(ws);
+
+    // Persist session state
+    sessionPersistence.save(instanceManager);
+    stateBus.flush();
+  });
+  });
+}
+
+// ─── Graceful Shutdown ───────────────────────────────────────────
+function shutdown(signal: string) {
+  console.log(`\n  [${signal}] Shutting down gracefully...`);
+
+  // Notify peers
+  broadcastToBrowsers(envelope("system.shutdown", { message: "Server is shutting down..." }));
+
+  // Persist session before stopping
+  sessionPersistence.flush(instanceManager);
+  stateBus.flush();
+  auditLog.log('server.shutdown', 'system', { signal, instanceCount: instanceManager.count });
+
+  // Stop all adapter handles (shell + claude)
+  for (const inst of instanceManager.list()) {
+    if (inst.handle) { inst.handle.stop().catch(() => {}); }
+    if (inst.process) {
+      inst.process.kill();
+      inst.process = null;
+    }
+  }
+  instanceManager.stopAll();
+
+  // Clear timers
+  if (heartbeatTimer) clearInterval(heartbeatTimer);
+
+  // Close all WebSocket connections
+  if (wss) {
+    for (const ws of wss.clients) {
+      ws.close(1001, "Server shutting down");
+    }
+  }
+
+  // Close HTTP server
+  if (httpServer) {
+    httpServer.close(() => {
+      console.log(`  [${signal}] Server stopped.`);
+      process.exit(0);
+    });
+  } else {
+    process.exit(0);
+  }
+
+  // Force exit after 5s
+  setTimeout(() => {
+    console.error(`  [${signal}] Forced exit after timeout.`);
+    process.exit(1);
+  }, 5000);
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
+
+// ─── Start ────────────────────────────────────────────────────────
+export async function startRelayServer(port?: number): Promise<{ close: () => void; port: number }> {
+  ensureServer();
+  const p = port ?? PORT;
+
+  // ── Initialize configuration system ────────────────────
+  configStore.load();
+  secretStore.load();
+  configStore.setWorkspaceDir(process.cwd());
+
+  // ── Register adapters via extension loader ──────────────
+  // Must complete before server starts so the adapter registry is populated.
+  try {
+    const { scanAndActivate } = await import("../agent-core/extension-loader");
+    const result = await scanAndActivate({ log: (msg: string) => console.log(`[ext] ${msg}`) });
+    console.log(`  ✓ Extensions activated: ${result.activated.map(a => a.manifest.id).join(', ')}`);
+    if (result.diagnostics.some(d => d.status === 'failed' || d.status === 'invalid')) {
+      const bad = result.diagnostics.filter(d => d.status === 'failed' || d.status === 'invalid');
+      for (const d of bad) console.warn(`  ⚠ Extension "${d.id}": ${d.message}`);
+    }
+  } catch (err) {
+    console.warn(`  ⚠ Adapter loading failed: ${(err as Error).message}`);
+  }
+
+  // ── Background update check (non-blocking) ────────────
+  setTimeout(() => {
+    const { execFile } = require("child_process");
+    execFile("node", [join(__dirname, "../scripts/check-update.js")], {
+      timeout: 10000, windowsHide: true,
+    }, (err: Error | null, stdout: string) => {
+      if (err) return;
+      try {
+        const data = JSON.parse(stdout.trim());
+        if (data.hasUpdate) {
+          console.log(`\n  ⚠ Update available: v${data.current} → v${data.latest}`);
+          console.log(`  ${data.updateUrl}`);
+          console.log(`  Run "bridge update" to upgrade.\n`);
+          // Notify connected browsers
+          broadcastToBrowsers(envelope("update.available", {
+            current: data.current,
+            latest: data.latest,
+            url: data.updateUrl,
+          }));
+        }
+      } catch {}
+    });
+  }, 5000); // Check 5s after startup
+
+  // ── Port validation (0 = random port, skip check) ──────
+  if (p !== 0 && (p < 1 || p > 65535)) {
+    console.error(`  ✗ Invalid port: ${p}. Using default 8080.`);
+    process.exit(1);
+  }
+
+  return new Promise((resolve) => {
+    httpServer!.listen(p, () => {
+      const addr = httpServer!.address() as import("net").AddressInfo;
+      const proto = sslKey && sslCert ? "https" : "http";
+      console.log(`\n  ┌──────────────────────────────────────┐`);
+      console.log(`  │  SessionBridge Relay Server         │`);
+      console.log(`  │                                      │`);
+      console.log(`  │  Server:    ${proto}://localhost:${String(addr.port).padEnd(5)}            │`);
+      console.log(`  │  Web UI:    ${proto}://localhost:${String(addr.port).padEnd(5)} (static frontend) │`);
+      console.log(`  │  Health:    ${proto}://localhost:${String(addr.port).padEnd(5)}/api/health  │`);
+      console.log(`  │                                      │`);
+      console.log(`  │  Instance spawns on first connection   │`);
+      console.log(`  └──────────────────────────────────────┘\n`);
+      resolve({
+        close: () => {
+          if (heartbeatTimer) clearInterval(heartbeatTimer);
+          for (const inst of instanceManager.list()) {
+            if (inst.handle) { inst.handle.stop().catch(() => {}); }
+            if (inst.process) { inst.process.kill(); inst.process = null; }
+          }
+          instanceManager.stopAll();
+          if (wss) { for (const ws of wss.clients) ws.close(1001, "Server shutting down"); }
+          if (httpServer) httpServer.close();
+        },
+        port: addr.port,
+      });
+    });
+  });
+}
+
+// ─── NodeRelayServer — class wrapper for NodeRuntime ═══════════
+export class NodeRelayServer {
+  private _port: number;
+  private _token: string;
+  private _bind?: string;
+
+  constructor(port?: number, token?: string, bind?: string) {
+    this._port = port ?? PORT;
+    this._token = token || '';
+    this._bind = bind;
+  }
+
+  /** Start the relay HTTP+WebSocket server. Returns the actual port. */
+  async start(): Promise<number> {
+    if (this._token) setRelayToken(this._token);
+    ensureServer();
+    // Validate port
+    if (this._port !== 0 && (this._port < 1 || this._port > 65535)) {
+      this._port = 8080;
+    }
+    // Register adapters via extension loader — await so the adapter registry
+    // is populated before the server accepts connections. Without this,
+    // shell.spawn (and other adapter-dependent operations) can race and fail.
+    const extResult = await (async () => {
+      try {
+        const { scanAndActivate } = await import("../agent-core/extension-loader");
+        return await scanAndActivate({ log: (msg: string) => console.log(`[ext] ${msg}`) });
+      } catch (err) {
+        console.warn(`  ⚠ Extension loading failed: ${(err as Error).message}`);
+        return null;
+      }
+    })();
+    if (extResult) {
+      console.log(`  ✓ Extensions activated: ${extResult.activated.map(a => a.manifest.id).join(', ')}`);
+      if (extResult.diagnostics.some(d => d.status === 'failed' || d.status === 'invalid')) {
+        const bad = extResult.diagnostics.filter(d => d.status === 'failed' || d.status === 'invalid');
+        for (const d of bad) console.warn(`  ⚠ Extension "${d.id}": ${d.message}`);
+      }
+    }
+    // Restore sessions from previous run
+    const snapshot = sessionPersistence.restore();
+    if (snapshot) {
+      for (const inst of snapshot.instances) {
+        const restored = instanceManager.create(inst.dir, inst.label, inst.source, inst.adapterId);
+        applyAlias(restored);
+        restored.agentVersion = inst.agentVersion;
+        restored.status = 'stopped'; // OS processes died with the relay; user must restart
+        console.log(`[relay] Restored session: ${restored.id} (${inst.label})`);
+        auditLog.log('session.restored', 'system', { originalId: inst.id }, restored.id);
+      }
+      if (snapshot.activeId) {
+        const match = instanceManager.list().find(i => i.label === snapshot.instances.find(p => p.id === snapshot.activeId)?.label);
+        if (match) instanceManager.setActive(match.id);
+      }
+    }
+    // Restore surfaces from StateBus (auto-restored from disk on createStateBus).
+    // All restored surfaces are marked orphaned until agent confirms.
+    {
+      const allSurfaces = stateSurfaceManager.listAll();
+      // Rebuild workbench tab projections for restored surfaces
+      for (const s of allSurfaces) {
+        const tabs = stateWorkbenchStore.get(s.nodeId) || [];
+        const tab = stateSurfaceManager.toWorkbenchTab(s);
+        const idx = tabs.findIndex((t: any) => t.id === tab.id);
+        if (idx >= 0) tabs[idx] = tab;
+        else tabs.push(tab);
+        stateWorkbenchStore.set(s.nodeId, tabs);
+      }
+      // Clean up stale terminal surfaces whose runtime process died with the relay.
+      // Remote agent surfaces (source:'remote') and upstream surfaces are preserved —
+      // agent inventory will revalidate on reconnect.
+      // Kept surfaces are marked orphaned instead of deleted so inventory reconnect
+      // can reclaim them.
+      let staleCount = 0;
+      for (const s of allSurfaces) {
+        if (s.runtimeRef.kind !== 'terminal' || !s.runtimeRef.instanceId) continue;
+        if (s.runtimeRef.instanceId === s.nodeId) continue;
+        if (instanceManager.get(s.runtimeRef.instanceId)) continue;
+        if (typeof s.nodeId === 'string' && s.nodeId.startsWith('upstream:')) continue;
+        const nodeInst = instanceManager.get(s.nodeId);
+        if (nodeInst?.source === 'remote') continue;
+        // Surface is stale (no local instance, no remote agent) — if kept, orphan
+        // for inventory reconnect; otherwise delete.
+        if (s.keep) {
+          stateSurfaceManager.setOrphaned(s.surfaceId);
+        } else {
+          stateSurfaceManager.delete(s.surfaceId);
+          const tabs = stateWorkbenchStore.get(s.nodeId) || [];
+          const filtered = tabs.filter((t: any) => t.id !== s.surfaceId && t._surfaceId !== s.surfaceId);
+          if (filtered.length !== tabs.length) stateWorkbenchStore.set(s.nodeId, filtered);
+        }
+        staleCount++;
+      }
+      if (staleCount > 0) stateBus.flush();
+      console.log(`[relay] Restored ${allSurfaces.length} surface(s)${staleCount > 0 ? `, cleaned ${staleCount} stale terminal(s)` : ''}`);
+    }
+
+    // Start listening
+    return new Promise((resolve, reject) => {
+      httpServer!.listen(this._port, this._bind, () => {
+        const addr = httpServer!.address() as import("net").AddressInfo;
+        this._port = addr.port;
+        console.log(`[relay] Listening on ${addr.port}`);
+        if (!relayToken) {
+          console.warn('');
+          console.warn('  ⚠  SECURITY WARNING: Relay server running without a token.');
+          console.warn('  ⚠  Anyone who can reach this port can control connected agents.');
+          console.warn('  ⚠  Set a token: bridge setup --relay-token <token>');
+          console.warn('');
+        }
+        resolve(addr.port);
+      });
+      httpServer!.once('error', reject);
+    });
+  }
+
+  /** Shut down the relay server gracefully. */
+  async stop(): Promise<void> {
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    sessionPersistence.flush(instanceManager);
+    stateBus.flush();
+    auditLog.log('server.shutdown', 'system', { instanceCount: instanceManager.count });
+    for (const inst of instanceManager.list()) {
+      if (inst.handle) { inst.handle.stop().catch(() => {}); }
+      if (inst.process) { inst.process.kill(); inst.process = null; }
+    }
+    instanceManager.stopAll();
+    if (wss) { for (const ws of wss.clients) ws.close(1001, "Server shutting down"); }
+    return new Promise((resolve) => {
+      if (httpServer) { httpServer.close(() => resolve()); } else { resolve(); }
+    });
+  }
+}
+
+// Auto-start when run directly (not imported)
+if (require.main === module || process.argv[1]?.endsWith("relay-server.js")) {
+  startRelayServer();
+}

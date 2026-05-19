@@ -23,9 +23,11 @@ PROTOCOL.md
 SessionBridge.bat
 SessionBridge.sh
 
+# Playwright test results
+test-results/
+
 # Old backup directories
 dist_old2/
-src/state-bridge_backup/
 
 # Flutter / Dart
 flutter_app/build/
