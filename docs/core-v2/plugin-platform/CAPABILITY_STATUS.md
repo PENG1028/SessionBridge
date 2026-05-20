@@ -27,8 +27,8 @@ The core plugin (`sessionnode-core`) declares 40 capabilities in `AllPluginsCaps
 | `plugin.cache.list` | ✅ implemented | `pluginCacheList` | Returns manifest-declared clearable cache declarations |
 | `plugin.cache.info` | ✅ implemented | `pluginCacheInfo` | Returns detailed cache info per cache entry |
 | `plugin.cache.clear` | ⏳ stub | `pluginCacheClear` | Returns `not_implemented` (bulk clear without plan) |
-| `plugin.cache.clear.plan` | ✅ implemented | `pluginCacheClearPlan` | Lists cache paths, returns planId for approval |
-| `plugin.cache.clear.execute` | ✅ implemented | `pluginCacheClearExecute` | Requires approved planId, deletes specified paths |
+| `plugin.cache.clear.plan` | ✅ implemented | `pluginCacheClearPlan` | Lists cache paths, returns planId for approval. planId is only validated for non-empty — no real plan state storage exists |
+| `plugin.cache.clear.execute` | ✅ implemented | `pluginCacheClearExecute` | Requires approved planId, deletes specified paths. planId is only validated for non-empty — no real plan state storage exists |
 | `plugin.files.list` | ✅ implemented | `pluginFilesList` | Returns manifest-declared file locations (config, data, cache, logs, custom) |
 | `plugin.files.register` | ⏳ stub | `notImplementedStub` | Phase 2 |
 

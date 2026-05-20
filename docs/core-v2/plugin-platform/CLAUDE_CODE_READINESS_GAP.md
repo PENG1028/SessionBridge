@@ -27,7 +27,7 @@ The system is designed around a single-tenant architecture per process. Each nod
 | 6 | stdin save + sensitive data | ✅ Implemented | Two-layer defense-in-depth: default policy skips stdin; Record() redacts `[stdin redacted]` even when explicitly configured |
 | 7 | `~/.claude` cache management | ❌ Missing | No Claude-specific path awareness in `plugin.cache.clear.*` |
 | 8 | Node/npm cache management | ❌ Missing | No npm awareness in cache system |
-| 9 | Plugin cache clear | ✅ `plugin.cache.clear.*` | Minimal — no disk space tracking or size estimation |
+| 9 | Plugin cache clear | ⏳ `plugin.cache.clear` (bulk) is stub; `plugin.cache.clear.plan`/`.execute` implemented | Minimal — no disk space tracking or size estimation; planId only checked for non-empty |
 | 10 | `process.spawn` permission | ✅ Declared | In `AllPluginsCaps` for shell plugin, requires grant |
 | 11 | `fs.read`/`fs.write` permission | ✅ Declared | For file-explorer plugin with path constraints |
 | 12 | `env.read` permission | ✅ Declared | For shell plugin (`env.*` capabilities) |
@@ -114,7 +114,7 @@ Node.js and npm cache directories (`node_modules`, `~/.npm`, `~/.cache`) are not
 
 ### 3.9 Plugin cache clear (existing)
 
-The `plugin.cache.clear.*` capabilities work correctly for declared paths. `plugin.cache.clear.plan` lists paths and returns a `planId`, and `plugin.cache.clear.execute` requires that planId and performs the deletion. However, the system does not estimate the size of paths before clearing, does not show "last accessed" timestamps, and does not support selective clearing (per-file or per-directory within a declared path). A disk space tracking layer would transform this from "delete these paths" to "you can free N MB by clearing these caches."
+The `plugin.cache.clear.plan` and `plugin.cache.clear.execute` capabilities work for declared paths (the bare `plugin.cache.clear` without plan is a stub returning `not_implemented`). `plugin.cache.clear.plan` lists paths and returns a `planId`, and `plugin.cache.clear.execute` requires that planId and performs the deletion. However, the system does not estimate the size of paths before clearing, does not show "last accessed" timestamps, and does not support selective clearing (per-file or per-directory within a declared path). A disk space tracking layer would transform this from "delete these paths" to "you can free N MB by clearing these caches."
 
 ### 3.10-3.12 Permissions: process.spawn, fs.read/write, env.read
 
@@ -122,7 +122,7 @@ These capabilities are declared in `AllPluginsCaps` for their respective plugins
 
 ### 3.13 Network permission
 
-No `network.*` capability exists anywhere in the system: not in `AllPluginsCaps`, not in the permission registry, not in the executor handlers. Claude Code needs network access for API calls to Anthropic, package registry fetches, git operations, and other HTTP interactions. Without a declared network capability, Claude Code has no way to request or be granted network access through the permission system. This is a significant gap: it means either (a) Claude Code bypasses the permission system entirely for network calls, or (b) all network access is silently allowed because there is no capability to check against. The network permission should be declared with constraints for allowed domains, protocols, and ports.
+No `network.*` capability exists anywhere in the system: not in `AllPluginsCaps`, not in the permission registry, not in the executor handlers. Claude Code needs network access for API calls to Anthropic, package registry fetches, git operations, and other HTTP interactions. Without a declared network capability, Claude Code has no way to request or be granted network access through the permission system. This is a significant gap for the permission/audit model: the Claude CLI subprocess can technically make its own network calls as any OS process can, but without a `network.*` declaration the Core cannot enforce domain/port constraints, log outbound access, or present permission prompts. The network permission should be declared with constraints for allowed domains, protocols, and ports.
 
 ### 3.14 Custom React UI adapter
 
@@ -308,7 +308,7 @@ Claude Code's React components need a bidirectional message channel to: (1) send
 | Filesystem | `fs.read`, `fs.write`, `fs.list`, `fs.stat`, `fs.mkdir`, `fs.remove` | ✅ Implemented | None |
 | Environment | `env.get`, `env.list`, `env.checkBinary`, `env.which`, `env.home`, `env.cwd` | ✅ Implemented | `plugin.check` binary/command/env detection (P0 ✅ DONE) |
 | Network | `network.*` | ❌ Not declared | New capability (P1) |
-| Plugin management | `plugin.list`, `plugin.status`, `plugin.cache.*`, `plugin.config.*` | ✅ Partially | Size estimation (P1) |
+| Plugin management | `plugin.list`, `plugin.status`, `plugin.cache.plan/execute`, `plugin.config.*` | ✅ Partially (cache.clear bulk is stub) | Size estimation (P1) |
 | History | `session.history.*` | ✅ Implemented | Stdin redaction (P0) |
 | Permissions | `plugin.permissions.*` | ✅ Partially | Grant persistence (P1) |
 | Notification | `notify.*` | ✅ Implemented | None |
