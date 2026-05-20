@@ -11,7 +11,7 @@ SessionNode's Go Core is a WebSocket-based capability executor that exposes a un
 
 The process management layer (`process.Manager`) supports spawning subprocesses via both pipe-based and PTY-based execution, with stream output pushed to connected WebSocket subscribers via push callbacks. History recording captures stdout/stderr events for replay and tail operations. A permission checking layer (`permission.Checker`) enforces that every capability invocation is both declared (in `AllPluginsCaps`) and granted (in policy store), with support for `allow`, `deny`, and `ask` modes.
 
-The system is designed around a single-tenant architecture per process. Each node runs one Core instance, and remote nodes connect via authenticated WebSocket relays. The plugin platform is in Phase 1/stage of a multi-phase rollout, with core management capabilities implemented (list, get, status, permissions, config, cache plan/execute, and plugin history) and install/uninstall/files.register lifecycle operations still as stubs.
+The system is designed around a single-tenant architecture per process. Each node runs one Core instance, and remote nodes connect via authenticated WebSocket relays. The plugin platform is transitioning from Phase 1 toward Phase 2, with core management capabilities implemented (list, get, status, permissions, config, cache plan/execute, plugin history, and install lifecycle — plan/execute/uninstall/files.register — as a dry-run framework) and only `plugin.cache.clear` (bulk without plan) remaining as a stub. A new `task` package provides in-memory task tracking for install/uninstall/check/cache_clear operations, and the dispatcher's Planner interface wires plan creation, approval, and denial into the execution chain.
 
 ---
 
@@ -136,6 +136,40 @@ The PluginManager and PluginDetail panels exist in the frontend. Tab-based navig
 
 The CLI adapter specification exists in `PLUGIN_ADAPTERS.md` with detailed command declaration format, argument schemas, and output formatting. However, the CLI adapter **runtime** is not implemented. There is no CLI command parser, no argument validator, and no routing from CLI commands to capability invocations. The `adapters.cli` section in manifests is parsed but not acted upon. For Claude Code, which needs CLI commands like `claude start`, `claude review`, `claude check`, the CLI adapter runtime must be built. The spec is ready; the implementation is not.
 
+### 3.17 Plugin install lifecycle
+
+**Status: Implemented (dry-run framework).** The full install lifecycle -- plan, approve, execute, uninstall, and file registration -- operates through a `PlanStore` (in-memory) and the dispatcher's `Planner` interface. Real package manager commands are not executed; this is a dry-run framework that validates the lifecycle flow (plan creation, approval gating, step progression, history recording) without touching the system.
+
+**How it works:**
+
+1. **`plugin.install` / `plugin.install.plan`** (`pluginInstallPlan`): Generates an `InstallPlan` with structured steps (detect binary, detect package manager, install command (DRY-RUN), register files). The plan is stored in `PlanStore` with status `pending_approval`. Risk is assessed per-step and per-plan. A `planId` is returned for the approval flow.
+
+2. **Dispatcher Plan-Before-Apply**: The dispatcher's 8-step chain includes a Plan-Before-Apply step (Step 4.5). When a capability requires a plan (determined by `isHighRiskCapability` matching terms like `install`, `execute`, `grant`, `revoke`, `delete`, `clear`, `uninstall`), the dispatcher either:
+   - Creates a plan if no `planId` is provided, returning `PLAN_REQUIRED` with the new `planId`
+   - Validates the plan if a `planId` is provided, returning `APPROVAL_REQUIRED`, `APPROVAL_DENIED`, or `PLAN_REQUIRED` (not found) as appropriate
+
+3. **`notify.respond` approval**: Plans are approved or denied through `notify.respond`. Approval updates the plan's status to `approved` and records `approvedAt`. Denial updates it to `denied`. The dispatcher uses the `Planner.ValidatePlan` interface to check plan state before allowing execution through the chain.
+
+4. **`plugin.install.execute`** (`pluginInstallExecute`): Requires a planId and that the plan status is `approved`. Steps are marked `running` then `completed` in sequence. No real system commands are executed (DRY-RUN). History records a `plugin.installed` event with `dryRun: true`.
+
+5. **`plugin.uninstall`** (`pluginUninstall`): Looks up files registered via `plugin.files.register`, removes them from `PlanStore`, cleans up install plans for the plugin, and records a `plugin.uninstalled` history event. No real files are deleted (DRY-RUN).
+
+6. **`plugin.files.register`** (`pluginFilesRegister`): Stores file paths per plugin in `PlanStore.PluginFiles`. These are used by the uninstall flow to report what would be removed.
+
+7. **`task.*` tracking**: A new `task` package (`internal/task/task.go`) provides an in-memory `TaskStore` with structured `Task` objects containing steps, events, and lifecycle status (`pending`/`running`/`succeeded`/`failed`/`cancelled`). Task types include `install`, `uninstall`, `check`, and `cache_clear`. `task.list` and `task.info` expose these via the capability API.
+
+**Remaining gaps:**
+- **PlanStore is in-memory only** -- plans and registered files do not survive Core restart. A persistent plan store (disk or DB-backed) is needed for production use.
+- **DRY-RUN only** -- no real system commands are executed. For example, `npm install -g @anthropic-ai/claude-code` would not actually run. A real package manager execution layer must be built, using `process.spawn` with output streaming.
+- **No TTL on plans** -- pending plans remain in memory indefinitely. Plans should expire after a configurable TTL.
+- **No rollback if execution fails** -- the dry-run framework marks all steps as `completed` unconditionally, but a real implementation needs rollback logic on step failure.
+- **`plugin.cache.clear` (bulk without plan)** is still a stub returning `not_implemented`. Only `plugin.cache.clear.plan`/`.execute` with explicit cache IDs work.
+
+**Real package manager integration is the NEXT step.** The dry-run framework validates the lifecycle and dispatcher integration. The next phase should wire `process.spawn` to run real install commands with:
+- Output streaming through `stream.subscribe`
+- Task status updates through `TaskStore.UpdateStatus` and `TaskStore.AddEvent`
+- Honest error propagation from package manager exit codes
+
 ---
 
 ## 4. Implementation Priority
@@ -153,25 +187,25 @@ The CLI adapter specification exists in `PLUGIN_ADAPTERS.md` with detailed comma
 
 | Priority Item | Gap Reference | Effort Estimate | Dependencies |
 |---|---|---|---|
+| **Real package manager execution** | §3.17 | Medium (3-5 days) | `process.spawn` + stream.subscribe for install commands; package manager detection (apt/brew/choco) |
 | **Cache size estimation** | §3.7, §3.9 | Small (1-2 days) | `plugin.cache.clear.plan` extension |
 | **Network permission** | §3.13 | Medium (2-3 days) | New capability declaration + permission constraints |
 | **Background/detached execution** | §3.2 | Medium (3-5 days) | Process Manager spawn mode; OS-specific process flags |
 | **Plugins with size estimation** | §3.8 | Small (1 day) | Additional manifest declarations |
-| **Approval workflow integration** | §3.10-3.12 | Medium (2-3 days) | Approval request/response wiring for high-risk grants |
 
-**Justification:** Cache management without size estimation is a poor user experience — users cannot make informed decisions about what to clear. Network permission is needed for any useful AI interaction but could be temporarily bypassed. Background execution enables long-running tasks to survive Core restart or disconnect. High-risk grants already report that approval is required, but Claude Code needs the approval flow wired through before those operations feel complete.
+**Justification:** The install lifecycle dry-run framework is implemented -- plans, approval gating, and history recording work, but no real packages can be installed yet. Real package manager execution via `process.spawn` is the next step. Cache management without size estimation is a poor user experience -- users cannot make informed decisions about what to clear. Network permission is needed for any useful AI interaction but could be temporarily bypassed. Background execution enables long-running tasks to survive Core restart or disconnect. (Approval workflow integration for high-risk grants is now implemented -- the dispatcher's Planner interface gates execution on plan approval through `notify.respond`.)
 
 ### P2 — Nice to Have
 
 | Priority Item | Gap Reference | Effort Estimate | Dependencies |
 |---|---|---|---|
 | **Full PTY on Windows** | §3.1 | Large (1-2 weeks) | ConPTY API integration |
-| **Sensitive data redaction** | §3.6 | Medium (3-5 days) | Pattern engine + configurable redaction rules |
 | **History size-based rotation** | §3.5 | Small (1-2 days) | History store extension |
 | **CLI adapter runtime** | §3.16 | Large (1-2 weeks) | New package for CLI command parsing/routing |
 | **Capability-aware plugin panels** | §3.15 | Small (1-2 days) | Frontend-only change |
+| **Persistent plan/task store** | §3.17 | Medium (2-3 days) | Disk or DB-backed PlanStore and TaskStore |
 
-**Justification:** These items improve quality of life but are not blockers for initial Claude Code integration. Full PTY on Windows can be deferred if pipe mode is acceptable for initial use. Sensitive data redaction can be added post-launch. The CLI adapter runtime and richer Claude-specific panels are frontend/UX work that can be layered on.
+**Justification:** These items improve quality of life but are not blockers for initial Claude Code integration. Full PTY on Windows can be deferred if pipe mode is acceptable for initial use. The CLI adapter runtime and richer Claude-specific panels are frontend/UX work that can be layered on. A persistent plan/task store becomes important once real install commands are executed, to survive Core restarts.
 
 ---
 
@@ -309,11 +343,13 @@ Claude Code's React components need a bidirectional message channel to: (1) send
 | Environment | `env.get`, `env.list`, `env.checkBinary`, `env.which`, `env.home`, `env.cwd` | ✅ Implemented | `plugin.check` binary/command/env detection (P0 ✅ DONE) |
 | Network | `network.*` | ❌ Not declared | New capability (P1) |
 | Plugin management | `plugin.list`, `plugin.status`, `plugin.cache.plan/execute`, `plugin.config.*` | ✅ Partially (cache.clear bulk is stub) | Size estimation (P1) |
+| Plugin install lifecycle | `plugin.install`, `plugin.install.plan`, `plugin.install.execute`, `plugin.uninstall`, `plugin.files.register` | ✅ Implemented (dry-run framework: PlanStore in-memory, requires approved plan; real package manager integration is NEXT step) | Real package manager execution (P1) |
+| Task management | `task.list`, `task.info` | ✅ Implemented (TaskStore in-memory; tracks install/uninstall/check/cache_clear tasks) | Persistent task storage (P2) |
 | History | `session.history.*` | ✅ Implemented | Stdin redaction (P0) |
 | Permissions | `plugin.permissions.*` | ✅ Partially | Grant persistence (P1) |
 | Notification | `notify.*` | ✅ Implemented | None |
 
 ---
 
-> **Last updated:** 2026-05-20
+> **Last updated:** 2026-05-20 (install lifecycle implemented as dry-run framework: plan/approve/execute/uninstall/files.register; task.list/task.info added; PlanStore in-memory; dispatcher Planner interface gating execution on plan approval; real package manager integration is NEXT step)
 > **Related docs:** [CAPABILITY_STATUS.md](./CAPABILITY_STATUS.md) | [PLUGIN_CORE_API_CONTRACT.md](./PLUGIN_CORE_API_CONTRACT.md) | [PLUGIN_MANIFEST_SPEC.md](./PLUGIN_MANIFEST_SPEC.md) | [PLUGIN_SECURITY_MODEL.md](./PLUGIN_SECURITY_MODEL.md) | [PLUGIN_ADAPTERS.md](./PLUGIN_ADAPTERS.md) | [PLUGIN_LIFECYCLE.md](./PLUGIN_LIFECYCLE.md)

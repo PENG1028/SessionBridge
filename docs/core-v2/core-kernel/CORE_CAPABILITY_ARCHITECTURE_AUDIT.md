@@ -3,7 +3,7 @@
 > 审计日期: 2026-05-20
 > 审计范围: SessionNode v2 Go Core + System UI Plugin Host
 > 审计目的: 明确当前状态、能力分布、平台支持、架构清洁度，指导下一步重构/抽象决策
-> 工作区状态: 存在未跟踪的新文档（docs/core-v2/、tests/system-ui/），无已修改文件
+> 工作区状态: go-core 多文件已修改（dispatcher, executor, notify, plan, capabilities, protocol errors, tests）；新增 internal/task/ 包和 internal/executor/task_cmds.go；docs/core-v2/ 和 tests/system-ui/ 为未跟踪的新文档
 
 ---
 
@@ -16,7 +16,7 @@
 | Types | `pkg/types/` | 核心类型定义：ID 包装、CapabilityRequest/Response、CoreError、Plugin、History | 536 | 409 | **Clean** | 强类型 newtype 模式，零内部依赖 |
 | Protocol | `pkg/protocol/` | WebSocket 线协议：Message 结构、编码、错误码 | 311 | 276 | **Clean** | 单一职责，JSON 信封 |
 | Dispatcher | `internal/dispatcher/` | 统一调度器：8 步执行链（认证→解析→权限→路由→执行→审计） | 196 | 575 | **Clean** | 全接口注入，清晰的链式设计 |
-| Executor | `internal/executor/` | 能力执行器：40+ capability handler 注册与执行 | 2743 | 1518 | **Acceptable Debt** | `plugin_cmds.go` 1027 行过大，Deps 是 God-object |
+| Executor | `internal/executor/` | 能力执行器：68+ capability handler 注册与执行 | 2743 | 1518 | **Acceptable Debt** | `plugin_cmds.go` 已拆分为 `plugin_install_cmds.go`, `plugin_files_cmds.go`, `plugin_cache_cmds.go`, `plugin_manage_cmds.go`, `plugin_permission_cmds.go`, `task_cmds.go`；Deps 仍是 God-object |
 | Process | `internal/process/` | 进程管理：spawn、PTY、signal、resize、list | 571 | 340 | **Acceptable Debt** | Unix PTY 219 行完整，Windows PTY 20 行 stub；无状态机 |
 | History | `internal/history/` | 会话事件存储：环形缓冲区、replay、tail、clear | 609 | 1344 | **Clean** | 设计合理，RangeTruncatedError 层级清晰 |
 | Permission | `internal/permission/` | 权限检查：声明、授权、运行时校验 | 402 | 535 | **Acceptable Phase 1 Debt** | grant 模型完整，但路径约束强制执行仍浅（Phase 0 仅有 `path` 字段前缀匹配，无通配符/glob 解析） |
@@ -29,6 +29,7 @@
 | Config | `internal/config/` | 配置管理：加载、合并、热更新 | 621 | 581 | **Clean** | 近期重构过（1180 行 diff），当前结构良好 |
 | Notify | `internal/notify/` | 通知系统：send、request、respond | 231 | 214 | **Clean** | 轻量通知管道 |
 | Plan | `internal/plan/` | Plan 模型：审批工作流前计划 | 283 | 368 | **Clean** | 独立模块 |
+| Task | `internal/task/` | 任务追踪：Task 状态机、Step 步骤、Event 日志；支持 install/uninstall/check/cache_clear 任务类型 | 126 | 0 | **Clean** | 新模块，in-memory Store，无持久化 |
 | Logs | `internal/logs/` | 日志与审计：tail、query、export、rotate | 414 | 577 | **Clean** | 审计日志分离 |
 
 ### 1.2 System UI Plugin Host 分布
@@ -44,11 +45,10 @@
 ### 1.3 边界清晰度判定
 
 - **边界清楚**: types ↔ protocol ↔ dispatcher ↔ server 链。每一层职责单一，接口注入。
-- **文件过大**: `plugin_cmds.go` (1027 行) — 安装/缓存/权限/配置/历史混合，"继续扩展将变架构问题"。
-- **逻辑混合**: `executor/registry.go` 的 `Deps` struct 注入了 7 个服务，反映了 executor 是系统中枢，但缺乏子模块边界。
+- **已解决**: `plugin_cmds.go` (1027 行) 已拆分为 `plugin_install_cmds.go`、`plugin_files_cmds.go`、`plugin_cache_cmds.go`、`plugin_manage_cmds.go`、`plugin_permission_cmds.go`、`task_cmds.go`，每个文件职责明确。
+- **逻辑混合**: `executor/registry.go` 的 `Deps` struct 注入了 8+ 个服务（新增 TaskStore、PlanStore），反映了 executor 是系统中枢，但缺乏子模块边界。
 - **Phase 1 债务可接受**: Windows PTY stub (20 行)、`manifest/json.go` (8 行空文件)、`pluginmanifest/parser.go` (62 行) — 都是占位符或薄包装，不影响扩展。
 - **如果继续扩展会变架构问题**:
-  - `plugin_cmds.go` 继续加 handler → 变成 2000 行 god file
   - `Deps` 继续加字段 → 违反接口隔离原则
   - TS/Go 双份 manifest 类型继续独立演进 → 语义漂移
   - executor 无平台感知 → capability 在多平台上静默失败
@@ -99,31 +99,33 @@
 | `env.vars` | env | — | **not declared** | No | 仅在 KnownCapabilities 存在 |
 | `env.info` | env | — | **not declared** | No | 仅在 KnownCapabilities 存在 |
 | `system.info` | system | `system_cmds.go` | **implemented** | Yes | 系统信息 |
-| `plugin.list` | plugin | `plugin_cmds.go` | **implemented** | Yes | 列出插件 |
-| `plugin.get` | plugin | `plugin_cmds.go` | **implemented** | Yes | 获取插件 |
-| `plugin.info` | plugin | `plugin_cmds.go` | **implemented** | Yes | 插件详情 |
-| `plugin.status` | plugin | `plugin_cmds.go` | **implemented** | Yes | 插件状态 |
-| `plugin.enable` | plugin | `plugin_cmds.go` | **implemented** | Yes | 启用插件 |
-| `plugin.disable` | plugin | `plugin_cmds.go` | **implemented** | Yes | 禁用插件 |
-| `plugin.check` | plugin | `plugin_cmds.go` | **implemented** | Yes | 环境检查 |
-| `plugin.install` | plugin | `plugin_cmds.go` | **stub** | Yes | 映射到 pluginInstallPlan，返回 `not_implemented` |
-| `plugin.install.plan` | plugin | `plugin_cmds.go` | **stub** | Yes | 映射到 pluginInstallPlan，返回 `not_implemented` |
-| `plugin.install.execute` | plugin | `plugin_cmds.go` | **stub** | Yes | 执行安装（not implemented stub） |
-| `plugin.uninstall` | plugin | `plugin_cmds.go` | **stub** | Yes | 卸载（not implemented stub） |
-| `plugin.files.list` | plugin | `plugin_cmds.go` | **implemented** | Yes | 列出插件文件 |
-| `plugin.files.register` | plugin | `plugin_cmds.go` | **stub** | Yes | 注册文件（not implemented stub） |
-| `plugin.cache.list` | plugin | `plugin_cmds.go` | **implemented** | Yes | 缓存列表 |
-| `plugin.cache.info` | plugin | `plugin_cmds.go` | **implemented** | Yes | 缓存信息 |
-| `plugin.cache.clear` | plugin | `plugin_cmds.go` | **stub** | Yes | 批量清除（无 plan），返回 `not_implemented` |
-| `plugin.cache.clear.plan` | plugin | `plugin_cmds.go` | **implemented** | Yes | 生成清除计划（planId 仅校验非空，无真实 plan 状态存储） |
-| `plugin.cache.clear.execute` | plugin | `plugin_cmds.go` | **implemented** | Yes | 执行清除缓存（planId 仅校验非空，无真实 plan 状态存储） |
-| `plugin.permissions.list` | plugin | `plugin_cmds.go` | **implemented** | Yes | 权限列表 |
-| `plugin.permissions.grant` | plugin | `plugin_cmds.go` | **implemented** | Yes | 授权 |
-| `plugin.permissions.revoke` | plugin | `plugin_cmds.go` | **implemented** | Yes | 撤销授权 |
-| `plugin.config.get` | plugin | `plugin_cmds.go` | **implemented** | Yes | 获取配置 |
-| `plugin.config.set` | plugin | `plugin_cmds.go` | **implemented** | Yes | 设置配置 |
-| `plugin.config.schema` | plugin | `plugin_cmds.go` | **implemented** | Yes | 配置 schema |
-| `plugin.history` | plugin | `plugin_cmds.go` | **implemented** | Yes | 插件操作历史 |
+| `plugin.list` | plugin | `plugin_manage_cmds.go` | **implemented** | Yes | 列出插件 |
+| `plugin.get` | plugin | `plugin_manage_cmds.go` | **implemented** | Yes | 获取插件 |
+| `plugin.info` | plugin | `plugin_manage_cmds.go` | **implemented** | Yes | 插件详情 |
+| `plugin.status` | plugin | `plugin_manage_cmds.go` | **implemented** | Yes | 插件状态 |
+| `plugin.enable` | plugin | `plugin_manage_cmds.go` | **implemented** | Yes | 启用插件 |
+| `plugin.disable` | plugin | `plugin_manage_cmds.go` | **implemented** | Yes | 禁用插件 |
+| `plugin.check` | plugin | `plugin_manage_cmds.go` | **implemented** | Yes | 环境检查 |
+| `plugin.install` | plugin | `plugin_install_cmds.go` | **implemented** | Yes | 生成安装计划（步骤、风险、planId），存入 PlanStore |
+| `plugin.install.plan` | plugin | `plugin_install_cmds.go` | **implemented** | Yes | 同 plugin.install，共享 pluginInstallPlan handler |
+| `plugin.install.execute` | plugin | `plugin_install_cmds.go` | **implemented** | Yes | 验证已批准计划后 dry-run 执行步骤，记录历史。DRY-RUN：不执行真实系统命令 |
+| `plugin.uninstall` | plugin | `plugin_install_cmds.go` | **implemented** | Yes | 清理 PlanStore 中注册文件和安装计划，记录历史。DRY-RUN：不删除真实文件 |
+| `plugin.files.list` | plugin | `plugin_files_cmds.go` | **implemented** | Yes | 列出插件文件 |
+| `plugin.files.register` | plugin | `plugin_files_cmds.go` | **implemented** | Yes | 存储文件路径到 PlanStore，供卸载流程使用 |
+| `task.list` | task | `task_cmds.go` | **implemented** | Yes | 返回 TaskStore 中所有任务 |
+| `task.info` | task | `task_cmds.go` | **implemented** | Yes | 根据 taskId 返回单个任务详情 |
+| `plugin.cache.list` | plugin | `plugin_cache_cmds.go` | **implemented** | Yes | 缓存列表 |
+| `plugin.cache.info` | plugin | `plugin_cache_cmds.go` | **implemented** | Yes | 缓存信息 |
+| `plugin.cache.clear` | plugin | `plugin_cache_cmds.go` | **stub** | Yes | 批量清除（无 plan），返回 `not_implemented` |
+| `plugin.cache.clear.plan` | plugin | `plugin_cache_cmds.go` | **implemented** | Yes | 生成清除计划，返回 planId |
+| `plugin.cache.clear.execute` | plugin | `plugin_cache_cmds.go` | **implemented** | Yes | 执行清除缓存，记录历史 |
+| `plugin.permissions.list` | plugin | `plugin_permission_cmds.go` | **implemented** | Yes | 权限列表 |
+| `plugin.permissions.grant` | plugin | `plugin_permission_cmds.go` | **implemented** | Yes | 授权（高风险需审批） |
+| `plugin.permissions.revoke` | plugin | `plugin_permission_cmds.go` | **implemented** | Yes | 撤销授权 |
+| `plugin.config.get` | plugin | `plugin_manage_cmds.go` | **implemented** | Yes | 获取配置 |
+| `plugin.config.set` | plugin | `plugin_manage_cmds.go` | **implemented** | Yes | 设置配置 |
+| `plugin.config.schema` | plugin | `plugin_manage_cmds.go` | **implemented** | Yes | 配置 schema |
+| `plugin.history` | plugin | `plugin_manage_cmds.go` | **implemented** | Yes | 插件操作历史 |
 | `node.list` | node | `node_cmds.go` | **implemented** | Yes | 节点列表 |
 | `node.info` | node | `node_cmds.go` | **implemented** | Yes | 节点信息 |
 | `node.health` | node | `node_cmds.go` | **implemented** | Yes | 节点健康 |
@@ -146,7 +148,7 @@
 | `session.history.clear.execute` | session.history | `history_cmds.go` | **implemented** | Yes | 执行清除历史 |
 | `network.*` | network | — | **not declared** | No | 完全未声明。Claude CLI 子进程可自行发起网络调用，但 Core 权限/审计模型无法约束 |
 | `approval.*` | approval | — | **not declared** | No | 审批流程，设计文档已计划但未实现 |
-| `task.*` | task | — | **not declared** | No | 任务管理，设计文档已计划但未实现 |
+| `task.*` | task | `task_cmds.go` | **partial** | Yes | `task.list` 和 `task.info` 已实现；TaskStore 为 in-memory；Task 类型覆盖 install/uninstall/check/cache_clear |
 | `audit.*` | audit | — | **not declared** | No | 审计日志查询，设计文档已计划但未实现 |
 | `action.*` | action | — | **not declared** | No | 动作/命令注册，设计文档已计划但未实现 |
 
@@ -154,13 +156,15 @@
 
 | Status | Count |
 |---|---|
-| **implemented** | 61 |
-| **stub** | 6 (`plugin.install`, `plugin.install.plan`, `plugin.install.execute`, `plugin.uninstall`, `plugin.cache.clear`, `plugin.files.register`) |
-| **partial** | 1 (`session.events`) |
-| **not declared** (仅在 KnownCapabilities，未注册 executor handler) | 14 |
-| **not declared** (完全缺失，不在 KnownCapabilities) | 5 (`network.*`, `approval.*`, `task.*`, `audit.*`, `action.*`) |
+| **implemented** | 68 |
+| **stub** | 1 (`plugin.cache.clear` — 仅 bulk clear 无 plan 仍为桩) |
+| **partial** | 2 (`session.events`, `task.*`) |
+| **not declared** (仅在 KnownCapabilities，未注册 executor handler) | 12 |
+| **not declared** (完全缺失，不在 KnownCapabilities) | 4 (`network.*`, `approval.*`, `audit.*`, `action.*`) |
 
-**总计**: executor `registerDefaults()` 注册 67 个 capability（61 完整实现 + 6 stub），KnownCapabilities 声明 77 个设计能力。
+**总计**: executor `registerDefaults()` 注册 71 个 capability（68 完整实现 + 1 stub + 2 partial），KnownCapabilities 声明 79 个设计能力。
+
+**变化说明**: 5 个原 stub capability（`plugin.install`, `plugin.install.plan`, `plugin.install.execute`, `plugin.uninstall`, `plugin.files.register`）已实现为 dry-run 框架；新增 `task.list` 和 `task.info`；`task.*` 从 "not declared" 移至 "partial"。
 
 ---
 
@@ -224,8 +228,9 @@
 | `plugin.config.*` | **full** | **full** | **full** | **full** | 平台无关 |
 | `plugin.cache.*` | **full** | **full** | **full** | **full** | 平台无关 |
 | `plugin.history` | **full** | **full** | **full** | **full** | 平台无关 |
-| `plugin.install.*` | **stub** | **stub** | **stub** | **stub** | 安装/卸载为桩 |
-| `plugin.files.register` | **stub** | **stub** | **stub** | **stub** | 文件注册为桩 |
+| `plugin.install.*` | **implemented** (dry-run) | **implemented** (dry-run) | **implemented** (dry-run) | **implemented** (dry-run) | 安装/卸载为 dry-run 框架；PlanStore in-memory |
+| `plugin.files.register` | **implemented** | **implemented** | **implemented** | **implemented** | 文件路径存储到 PlanStore |
+| `task.*` | **implemented** | **implemented** | **implemented** | **implemented** | task.list/task.info；TaskStore in-memory |
 
 ### 3.6 Network
 
@@ -237,10 +242,10 @@
 
 | Platform | Full | Partial | Unsupported | Not Implemented | Not Declared |
 |---|---|---|---|---|---|
-| Windows Desktop | 34 | 6 | 0 | 0 | 19 |
-| Linux Server | 40 | 0 | 0 | 0 | 19 |
-| macOS | 40 | 0 | 0 | 0 | 19 |
-| Mobile/Browser | 16 | 4 | 16 | 0 | 19 |
+| Windows Desktop | 41 | 6 | 0 | 0 | 17 |
+| Linux Server | 47 | 0 | 0 | 0 | 17 |
+| macOS | 47 | 0 | 0 | 0 | 17 |
+| Mobile/Browser | 23 | 4 | 16 | 0 | 17 |
 
 ---
 
@@ -326,7 +331,9 @@ go-core/internal/platform/
 | Multiple sessions/conversations | `session.*` | **implemented** | 无 | — |
 | Long-running session (TTL > 1h) | `session.*` | **implemented** | TTL 可配置 | — |
 | UI surface integration | Plugin Host + TerminalView | **implemented** | 无 | — |
+| Plugin install lifecycle | `plugin.install`, `plugin.install.plan`, `plugin.install.execute`, `plugin.uninstall`, `plugin.files.register` | **implemented** (dry-run) | Dry-run only; PlanStore in-memory; real package manager integration is NEXT step | **P1** |
 | Plugin history | `plugin.history` | **implemented** | 内存模式 | **P2** |
+| Task tracking | `task.list`, `task.info` | **implemented** | TaskStore in-memory | **P2** |
 | Cross-node execution | `node.*` + topology | **implemented** | 无 | — |
 | Mobile client viewing/control | stream.subscribe over WS | **implemented** | 移动端可订阅 | **P2** |
 
@@ -335,10 +342,10 @@ go-core/internal/platform/
 | Priority | Count | Items |
 |---|---|---|
 | **P0** (必须实现) | 3 | OS subprocess tree、Windows PTY support（Linux-first skeleton 不依赖）、`network.*`（权限/审计声明，非纯技术阻塞 — Claude CLI 子进程可自行发起网络调用） |
-| **P1** (应该实现) | 3 | `process.kill` + Windows signal、background/detached process、path constraints enforcement |
-| **P2** (锦上添花) | 3 | `plugin.config.set` complete、disk-mode plugin history、mobile client control |
+| **P1** (应该实现) | 3 | Real package manager execution（install commands via process.spawn）、`process.kill` + Windows signal、background/detached process |
+| **P2** (锦上添花) | 4 | Persistent plan/task stores、disk-mode plugin history、mobile client control、path constraints enforcement |
 
-**结论**: 当前离能搭 Claude Code 插件差 **2-3 个 P0 项**——其中 `network.*` 是完全未声明的空白领域（Claude CLI 子进程技术上可自行发起网络调用，但缺少权限/审计模型声明），subprocess tree 是 OS 级功能需全新实现，Windows PTY 需 ConPTY 支持（Linux-first Claude Code skeleton 可先绕过）。CLI 检测（`env.which`/`env.checkBinary`）已实现。预计 P0 工作 1-2 周，P1 + P2 再 1-2 周。
+**结论**: 当前离能搭 Claude Code 插件差 **2-3 个 P0 项**——其中 `network.*` 是完全未声明的空白领域（Claude CLI 子进程技术上可自行发起网络调用，但缺少权限/审计模型声明），subprocess tree 是 OS 级功能需全新实现，Windows PTY 需 ConPTY 支持（Linux-first Claude Code skeleton 可先绕过）。CLI 检测（`env.which`/`env.checkBinary`）已实现，install lifecycle 已实现为 dry-run 框架（plan/approve/execute/uninstall/files.register），审批工作流通过 dispatcher Planner 接口和 `notify.respond` 已连接。预计 P0 工作 1-2 周，P1 + P2 再 1-2 周。
 
 ---
 
@@ -347,8 +354,7 @@ go-core/internal/platform/
 | Area | Verdict | Reason |
 |---|---|---|
 | Dispatcher | **Clean** | 接口注入，8 步链清晰，196 行适中 |
-| Executor Registry | **Acceptable Phase 1 Debt** | 注册模式对，但 `Deps` God-object + 无平台感知 |
-| `plugin_cmds.go` | **Needs Refactor Before Expansion** | 1027 行混合 4 个不相干的领域（安装/缓存/权限/配置） |
+| Executor Registry | **Acceptable Phase 1 Debt** | 注册模式对，但 `Deps` God-object（8+ 服务注入）+ 无平台感知；`plugin_cmds.go` 已成功拆分为 6 个文件 |
 | Process Manager | **Acceptable Phase 1 Debt** | Unix 端完整，Windows stub 可接受，缺状态机 |
 | Permission Checker | **Acceptable Phase 1 Debt** | grant 模型完整（allow/deny/ask + 约束 + 过期 + 溯源），但路径约束强制执行仍浅（Phase 0 仅有 `path` 字段前缀匹配，无通配符/glob 解析） |
 | History Store | **Clean** | 环形缓冲区设计合理，redact 策略正确 |
@@ -358,13 +364,16 @@ go-core/internal/platform/
 | Platform Support | **Risky** | 无 Platform 概念，无 capability×platform 矩阵，无运行时支持检测 |
 | Test Portability | **Needs Refactor Before Expansion** | E2E 测试依赖 `cat`/`sleep`/`echo` 等 Unix 命令，Windows 上不可运行 |
 | Server | **Clean** | 合理的组装枢纽 |
+| Task Store | **Clean** | 新模块：Task 状态机 + Step + Event；in-memory，无持久化 |
+| Plan Store (in executor) | **Acceptable Phase 1 Debt** | PlanStore 在 executor 包内（非独立包），in-memory，无 TTL；plan 批准/拒绝通过 dispatcher Planner 接口和 notify.respond 已连接 |
+| Install Lifecycle (dry-run) | **Acceptable Phase 1 Debt** | 安装/卸载/文件注册已从 stub 升级为 dry-run 框架；审批工作流贯穿 dispatcher Plan-Before-Apply 步骤；错误码 PLAN_REQUIRED/APPROVAL_REQUIRED/APPROVAL_DENIED 已定义并返回 |
 
 ### 6.1 Cleanliness Heat Map
 
 ```
-Clean:                    5 个 (types, protocol, dispatcher, history, server)
-Acceptable Phase 1 Debt:  5 个 (executor registry, process, permission, pluginmanifest, topology)
-Needs Refactor:           3 个 (plugin_cmds.go, capability registry, test portability)
+Clean:                    7 个 (types, protocol, dispatcher, history, server, task, logs)
+Acceptable Phase 1 Debt:  7 个 (executor registry, process, permission, pluginmanifest, topology, plan/install lifecycle, plan store)
+Needs Refactor:           2 个 (capability registry, test portability)
 Risky:                    2 个 (plugin manifest bridge UI, platform support)
 ```
 
@@ -390,17 +399,19 @@ Risky:                    2 个 (plugin manifest bridge UI, platform support)
 - **验证**: `go test ./...` + 新增针对矩阵的单元测试
 - **不应做**: 不要大规模迁移 `KnownCapabilities`（Phase C 后面再搞）；不要改 UI
 
-### Step 3: Split plugin_cmds.go
+### Step 3: Split plugin_cmds.go ✅ DONE
 
 - **目标**: 防止 1027 行的文件继续膨胀
-- **改动范围**: `internal/executor/plugin_cmds.go` → 拆分为:
-  - `plugin_install.go`（install, install.plan, install.execute, uninstall）~300 行
-  - `plugin_cache.go`（cache.list, cache.info, cache.clear, cache.clear.plan, cache.clear.execute）~250 行
-  - `plugin_permissions.go`（permissions.list, permissions.grant）~300 行
-  - `plugin_config.go`（config.get, config.schema）~200 行
-  - `plugin_manage.go`（list, get, info, status, enable, disable, check, history, files.list, files.register）~400 行
-- **验证**: `go test ./...` 通过，行为不变
-- **不应做**: 不要改 handler 的签名或逻辑；不要引入新接口
+- **已完成**: `internal/executor/plugin_cmds.go` → 已拆分为:
+  - `plugin_install_cmds.go`（install, install.plan, install.execute, uninstall, PlanStore）
+  - `plugin_cache_cmds.go`（cache.list, cache.info, cache.clear, cache.clear.plan, cache.clear.execute）
+  - `plugin_permission_cmds.go`（permissions.list, permissions.grant, permissions.revoke）
+  - `plugin_files_cmds.go`（files.list, files.register）
+  - `plugin_manage_cmds.go`（list, get, info, status, enable, disable, check, history, config.get, config.set, config.schema）
+  - `task_cmds.go`（task.list, task.info）
+  - 同时将 install/uninstall/files.register 从 stub 升级为 dry-run 实现
+  - 审批工作流通过 dispatcher Planner 接口 + notify.respond 已连接
+- **验证**: `go test ./...` 通过
 
 ### Step 4: Add Platform Support Matrix Docs/Tests
 
@@ -432,25 +443,25 @@ Risky:                    2 个 (plugin manifest bridge UI, platform support)
 ### A. Architecture Summary
 
 - SessionNode 是一个 **WebSocket-first 能力执行引擎**：所有操作（会话/流/进程/文件/插件管理）统一通过 `action.request` 协议调度，由 `dispatcher` 执行 8 步链（认证→解析→权限→路由→执行→审计）。
-- Core 分为 **两层 17 个包**：`pkg/` 提供零依赖的类型和协议定义，`internal/` 提供实现。边界清晰，无跨层静态导入违规。
-- **权限模型是亮点**：完整的 grant 模型（allow/deny/ask + 约束 + 过期 + 溯源），已通过 dispatcher 的 8 步链强制执行。
+- Core 分为 **两层 18 个包**：`pkg/` 提供零依赖的类型和协议定义，`internal/` 提供实现。边界清晰，无跨层静态导入违规。新增 `internal/task/` 包提供任务追踪。
+- **权限模型是亮点**：完整的 grant 模型（allow/deny/ask + 约束 + 过期 + 溯源），已通过 dispatcher 的 8 步链强制执行。审批工作流已连接：dispatcher Plan-Before-Apply 步骤通过 Planner 接口 gating 高风险操作，`notify.respond` 提供批准/拒绝通道。
+- **插件安装生命周期已实现（dry-run 框架）**：`plugin.install`/`plugin.install.plan`/`plugin.install.execute`/`plugin.uninstall`/`plugin.files.register` 全部从 stub 升级为 dry-run 实现。PlanStore 管理计划状态（pending_approval → approved/denied → executing → completed/failed），dispatcher 在 pre-execution 步骤验证计划。审批通过 `notify.respond` 传递。真实包管理器集成是下一步。
 - **插件系统设计相对成熟**：manifest 规范完整（YAML 解析/校验/冲突检测）、能力声明、UI 适配器贡献——但 TS/Go 双份类型独立演进是风险点。
 - **进程/流/会话设计稳健**：双层 stdin 安全策略（默认排除 + Record 替换）、环形缓冲区 replay/tail、会话 TTL 清理都已实现。
 - **最大的漏洞是平台抽象缺失**：没有 `Platform` 概念，没有 `capability × platform` 支持矩阵，没有运行时支持检测——插件无法在调用前知道一个能力是否在当前平台上可用。
-- **文件层面最大问题**: `plugin_cmds.go` 1027 行混合了安装、缓存、权限、配置 4 个领域，继续扩展会失控。
+- **文件拆分已完成**: `plugin_cmds.go` (1027 行) 已拆分为 `plugin_install_cmds.go`、`plugin_cache_cmds.go`、`plugin_permission_cmds.go`、`plugin_files_cmds.go`、`plugin_manage_cmds.go`、`task_cmds.go`，每个文件职责明确。
 - **Go Core 与 System UI 之间存在模糊带**：plugin manifest 类型在 TS 和 Go 中独立维护，无共享 schema 约束。目前两个现存插件（terminal、system-info）声明简单，尚未暴露问题，但随插件数量和复杂度增长会加速漂移。
 - **E2E 测试 Windows 可移植性差**：测试中大量使用 `echo`、`cat`、`sleep` 等 Unix 命令，在 Windows 上无法运行。
-- **Claude Code 就绪度 65%**：基础能力（session/stream/process/fs/permission/env CLI 检测）齐全，但缺 3 个 P0 能力（subprocess tree、Windows PTY、network permissions）。
+- **Claude Code 就绪度 ~70%**：基础能力（session/stream/process/fs/permission/env CLI 检测）齐全，install lifecycle 已实现（dry-run），审批工作流已连接，task 追踪已就位——仍缺 3 个 P0 能力（subprocess tree、Windows PTY、network permissions）和真实包管理器执行。
 
 ### B. Cleanliness Verdict
 
-**当前架构还能继续，不需要立刻停下来重构。** 但 3 件事必须先收口：
+**当前架构还能继续，不需要立刻停下来重构。** `plugin_cmds.go` 已成功拆分，install lifecycle 已实现（dry-run），审批工作流已连接。但 2 件事必须先收口：
 
-1. **`plugin_cmds.go` 必须拆分** — 在加新的 plugin handler 之前做，否则不可逆
-2. **能力 × 平台矩阵必须建立** — `Declared`/`Supported`/`Granted` 三层概念分离是跨平台插件的前提
-3. **Windows 测试可移植性必须修复** — 基线不可信就没法谈 CI
+1. **能力 × 平台矩阵必须建立** — `Declared`/`Supported`/`Granted` 三层概念分离是跨平台插件的前提
+2. **Windows 测试可移植性必须修复** — 基线不可信就没法谈 CI
 
-这三件事不做而继续堆功能，会在 2 个迭代内积累无法清理的技术债。
+另外，`Deps` God-object 继续膨胀（8+ 服务注入），需要在下一个迭代中考虑接口隔离。PlanStore 和 TaskStore 均为 in-memory，需要持久化方案才能用于生产。
 
 ### C. Capability Matrix Summary
 
@@ -462,8 +473,7 @@ Risky:                    2 个 (plugin manifest bridge UI, platform support)
 | OS subprocess tree 未实现 | Claude Code 无法管理子进程树 | P0 |
 | Windows PTY 仅有 pipe fallback | Windows 终端无 TTY 交互 | P0 |
 | `process.kill` / `process.status` 未声明 | 进程生命周期管理不完整 | P1 |
-| `plugin.install.execute` / `plugin.uninstall` 为桩 | 插件无法通过 API 安装/卸载 | P1 |
-| `plugin.files.register` 为桩 | 插件无法声明文件 | P1 |
+| `plugin.install.*` / `plugin.uninstall` / `plugin.files.register` 已实现（dry-run） | 生命周期框架已就位，但无真实包管理器执行；PlanStore in-memory | P1 |
 | `config.*`、`logs.*`、`audit.*` 未声明 | 运维面能力缺失 | P2 |
 
 ### D. Claude Code Readiness
@@ -471,10 +481,10 @@ Risky:                    2 个 (plugin manifest bridge UI, platform support)
 | Priority | Status | Items |
 |---|---|---|
 | **P0** | 2-3 项缺失 | OS subprocess tree、Windows PTY（Linux-first skeleton 不依赖）、network permissions（权限/审计声明，Claude CLI 子进程技术上可自行发起网络调用） |
-| **P1** | 3 项部分/缺失 | process.kill/status handler、background/detached process、path constraints enforcement |
-| **P2** | 3 项微调 | disk-mode plugin history、mobile client control、approval workflow integration |
+| **P1** | 4 项部分/缺失 | Real package manager execution、process.kill/status handler、background/detached process、path constraints enforcement |
+| **P2** | 3 项微调 | Persistent plan/task stores、disk-mode plugin history、mobile client control |
 
-**OS subprocess tree 和 network.* 声明完成之前，不应该开始完整的 Claude Code 插件开发。Linux-first skeleton 可先行（不依赖 Windows PTY）。**
+**Install lifecycle（dry-run）和 approval workflow 已就位。OS subprocess tree 和 network.* 声明完成之前，不应该开始完整的 Claude Code 插件开发。Linux-first skeleton 可先行（不依赖 Windows PTY）。**
 
 ### E. Next Agent Prompt
 

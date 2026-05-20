@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import type { CoreClient } from '../../core/core-types';
+import type { CoreClient, BlockerEntry } from '../../core/core-types';
 import { PageLoading, PageError, PageEmpty, PageOffline, PagePermissionDenied, type PageState } from './page-utils';
 
 interface PluginDetailProps {
@@ -10,11 +10,12 @@ interface PluginDetailProps {
   onBack?: () => void;
 }
 
-type DetailTab = 'overview' | 'environment' | 'permissions' | 'files' | 'cache' | 'settings' | 'logs' | 'history';
+type DetailTab = 'overview' | 'environment' | 'blockers' | 'permissions' | 'files' | 'cache' | 'settings' | 'logs' | 'history';
 
 const TABS: { id: DetailTab; label: string }[] = [
   { id: 'overview', label: 'Overview' },
   { id: 'environment', label: 'Environment' },
+  { id: 'blockers', label: 'Blockers & Status' },
   { id: 'permissions', label: 'Permissions' },
   { id: 'files', label: 'Files' },
   { id: 'cache', label: 'Cache' },
@@ -116,6 +117,7 @@ function TabContent({
   switch (tab) {
     case 'overview': return <OverviewTab manifest={manifest} />;
     case 'environment': return <EnvironmentTab core={core} pluginId={pluginId} />;
+    case 'blockers': return <BlockersStatusTab core={core} pluginId={pluginId} />;
     case 'permissions': return <PermissionsTab core={core} pluginId={pluginId} />;
     case 'files': return <FilesTab core={core} pluginId={pluginId} />;
     case 'cache': return <CacheTab core={core} pluginId={pluginId} />;
@@ -258,6 +260,335 @@ function EnvironmentTab({ core, pluginId }: { core: CoreClient; pluginId: string
               )}
             </div>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Blockers & Status Tab ────────────────────────────────────────────
+
+interface InstallState {
+  plan: Record<string, unknown> | null;
+  planLoading: boolean;
+  planError: string | null;
+  executing: boolean;
+  executionResult: Record<string, unknown> | null;
+}
+
+function BlockersStatusTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
+  const [checkResult, setCheckResult] = useState<{ status: string; blockers: BlockerEntry[] } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
+  // Install plan flow state
+  const [install, setInstall] = useState<InstallState>({
+    plan: null, planLoading: false, planError: null, executing: false, executionResult: null,
+  });
+  const [approvalRequestId, setApprovalRequestId] = useState<string | null>(null);
+  const [approvalStatus, setApprovalStatus] = useState<string | null>(null);
+
+  async function runCheck() {
+    setLoading(true);
+    setFetchError(null);
+    try {
+      const result = await core.call<Record<string, unknown>>('plugin.check', { pluginId });
+      setCheckResult({
+        status: str(result?.status) || 'ok',
+        blockers: Array.isArray(result?.blockers) ? (result!.blockers as BlockerEntry[]) : [],
+      });
+    } catch (err) {
+      setFetchError(err instanceof Error ? err.message : 'Check failed');
+      setCheckResult({ status: 'error', blockers: [] });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function createInstallPlan() {
+    setInstall({ plan: null, planLoading: true, planError: null, executing: false, executionResult: null });
+    setApprovalRequestId(null);
+    setApprovalStatus(null);
+    try {
+      const plan = await core.call<Record<string, unknown>>('plugin.install.plan', { pluginId });
+      setInstall(prev => ({ ...prev, plan, planLoading: false }));
+    } catch (err) {
+      setInstall(prev => ({ ...prev, planError: err instanceof Error ? err.message : 'Failed to create plan', planLoading: false }));
+    }
+  }
+
+  async function requestApproval() {
+    if (!install.plan) return;
+    setApprovalStatus('requesting');
+    try {
+      const res = await core.call<Record<string, unknown>>('notify.request', {
+        title: `Install ${pluginId}`,
+        body: str((install.plan as Record<string, unknown>).summary) || `Install plan for ${pluginId}`,
+        planId: str((install.plan as Record<string, unknown>).planId),
+        actions: [{ id: 'allow', label: 'Approve' }, { id: 'deny', label: 'Deny' }],
+        timeout: 300,
+      });
+      setApprovalRequestId(str(res?.requestId) || null);
+      setApprovalStatus('pending');
+    } catch (err) {
+      setApprovalStatus(null);
+      setInstall(prev => ({ ...prev, planError: err instanceof Error ? err.message : 'Approval request failed' }));
+    }
+  }
+
+  async function approvePlan() {
+    if (!approvalRequestId) return;
+    try {
+      await core.call('notify.respond', { requestId: approvalRequestId, action: 'allow' });
+      setApprovalStatus('approved');
+    } catch (err) {
+      setInstall(prev => ({ ...prev, planError: err instanceof Error ? err.message : 'Approval failed' }));
+    }
+  }
+
+  async function denyPlan() {
+    if (!approvalRequestId) return;
+    try {
+      await core.call('notify.respond', { requestId: approvalRequestId, action: 'deny' });
+      setApprovalStatus('denied');
+    } catch (err) {
+      setInstall(prev => ({ ...prev, planError: err instanceof Error ? err.message : 'Deny failed' }));
+    }
+  }
+
+  async function executePlan() {
+    if (!install.plan) return;
+    setInstall(prev => ({ ...prev, executing: true, executionResult: null, planError: null }));
+    try {
+      const result = await core.call<Record<string, unknown>>('plugin.install.execute', {
+        planId: str((install.plan as Record<string, unknown>).planId),
+      });
+      setInstall(prev => ({ ...prev, executing: false, executionResult: result ?? null }));
+      runCheck(); // Re-check after completion
+    } catch (err) {
+      setInstall(prev => ({
+        ...prev, executing: false,
+        planError: err instanceof Error ? err.message : 'Execution failed',
+      }));
+    }
+  }
+
+  useEffect(() => { runCheck(); }, [core, pluginId]);
+
+  // ── Render ──
+
+  if (loading) return <div className="text-gray-500 text-sm">Checking blockers...</div>;
+  if (fetchError) return (
+    <div>
+      <p className="text-red-400 text-sm mb-2">{fetchError}</p>
+      <button onClick={runCheck} className="text-xs px-3 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-400">Retry</button>
+    </div>
+  );
+
+  if (!checkResult) return null;
+
+  const statusIcon = checkResult.status === 'blocked' ? '\u{1F534}' :
+    checkResult.status === 'incomplete' ? '\u{1F7E1}' : '\u{1F7E2}';
+
+  return (
+    <div className="max-w-2xl space-y-6">
+      {/* Header */}
+      <div className="flex items-center gap-2">
+        <h3 className="text-sm font-medium text-gray-300">Blockers & Status</h3>
+        <button onClick={runCheck} disabled={loading}
+          className="text-xs px-3 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 transition-colors disabled:opacity-50"
+        >
+          {loading ? 'Running...' : 'Run Check Again'}
+        </button>
+        <span className={`text-xs px-2 py-0.5 rounded ${
+          checkResult.status === 'ok' ? 'bg-green-900/50 text-green-400' :
+          checkResult.status === 'blocked' ? 'bg-red-900/50 text-red-400' :
+          'bg-yellow-900/50 text-yellow-400'
+        }`}>
+          {statusIcon} {checkResult.status}
+        </span>
+      </div>
+
+      {/* Blockers list */}
+      {checkResult.blockers.length === 0 ? (
+        <div className="text-gray-500 text-sm">No blockers. All capabilities and dependencies are satisfied.</div>
+      ) : (
+        <div className="space-y-3">
+          {checkResult.blockers.map((b, i) => (
+            <div key={i} className="px-4 py-3 bg-gray-900 rounded-lg border border-gray-800 space-y-2">
+              <div className="flex items-center gap-2">
+                <span className={`text-xs px-1.5 py-0.5 rounded ${
+                  b.kind === 'missing_dependency' ? 'bg-red-900/50 text-red-400' :
+                  b.kind === 'missing_grant' ? 'bg-yellow-900/50 text-yellow-400' :
+                  b.kind === 'unsupported_capability' ? 'bg-red-900/50 text-red-400' :
+                  'bg-orange-900/50 text-orange-400'
+                }`}>
+                  {b.kind}
+                </span>
+                <code className="text-sm text-gray-200 font-mono">
+                  {b.capability || b.dependency || '(unknown)'}
+                </code>
+              </div>
+              <p className="text-xs text-gray-500">Reason: {b.reason}</p>
+
+              {/* Action per blocker kind */}
+              <div className="pt-1">
+                {b.kind === 'missing_dependency' && (
+                  <button
+                    onClick={createInstallPlan}
+                    disabled={install.planLoading}
+                    className="text-xs px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white transition-colors disabled:opacity-50"
+                  >
+                    {install.planLoading ? 'Creating...' : 'Create Install Plan'}
+                  </button>
+                )}
+                {b.kind === 'missing_grant' && (
+                  <button
+                    onClick={() => core.call('plugin.permissions.grant', { pluginId, permissionId: b.capability || '', level: 'allow' }).then(() => runCheck()).catch(() => {})}
+                    className="text-xs px-3 py-1.5 rounded bg-yellow-600 hover:bg-yellow-500 text-white transition-colors"
+                  >
+                    Request Permission
+                  </button>
+                )}
+                {b.kind === 'unsupported_capability' && (
+                  <p className="text-xs text-gray-500 italic">
+                    This capability is not supported on the current platform. It may become available after a system update or on a different platform.
+                  </p>
+                )}
+                {b.kind === 'unknown_capability' && (
+                  <p className="text-xs text-gray-500 italic">
+                    This capability is not recognized by the current Go Core version. Check if the plugin or Core needs an update.
+                  </p>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Install Plan Flow */}
+      {(install.planLoading || install.plan || install.executing || install.executionResult) && (
+        <div className="border-t border-gray-800 pt-4 mt-4">
+          <h4 className="text-sm font-medium text-gray-300 mb-3">Install Plan</h4>
+
+          {install.planLoading && (
+            <div className="text-gray-500 text-sm">Creating install plan...</div>
+          )}
+
+          {install.planError && (
+            <p className="text-red-400 text-sm mb-2">{install.planError}</p>
+          )}
+
+          {install.plan && (
+            <div className="space-y-3">
+              {/* Plan summary */}
+              <div className="px-3 py-2 bg-gray-900 rounded border border-gray-800 space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-500">Plan:</span>
+                  <code className="text-xs text-gray-300">{str((install.plan as Record<string, unknown>).planId)}</code>
+                  <RiskBadge risk={str((install.plan as Record<string, unknown>).risk)} />
+                  <span className={`text-xs px-1.5 py-0.5 rounded ${
+                    str((install.plan as Record<string, unknown>).status) === 'pending_approval' ? 'bg-yellow-900/50 text-yellow-400' :
+                    str((install.plan as Record<string, unknown>).status) === 'approved' ? 'bg-green-900/50 text-green-400' :
+                    'bg-gray-800 text-gray-500'
+                  }`}>
+                    {str((install.plan as Record<string, unknown>).status)}
+                  </span>
+                </div>
+                <p className="text-xs text-gray-400">{str((install.plan as Record<string, unknown>).summary)}</p>
+              </div>
+
+              {/* Steps */}
+              {Array.isArray((install.plan as Record<string, unknown>).steps) && (
+                <div className="space-y-1">
+                  <span className="text-xs text-gray-500">Steps:</span>
+                  {((install.plan as Record<string, unknown>).steps as Array<Record<string, unknown>>).map((step, idx) => (
+                    <div key={idx} className="flex items-center gap-3 px-3 py-2 bg-gray-900 rounded border border-gray-800 text-xs">
+                      <span className="text-gray-600 w-4">{str(step.order)}.</span>
+                      <span className="text-gray-300 flex-1">{str(step.description)}</span>
+                      <RiskBadge risk={str(step.risk)} />
+                      <span className={`${
+                        str(step.status) === 'completed' ? 'text-green-400' :
+                        str(step.status) === 'running' ? 'text-blue-400' :
+                        'text-gray-600'
+                      }`}>{str(step.status)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Action buttons */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* Request Approval */}
+                {!approvalStatus && !install.executing && str((install.plan as Record<string, unknown>).status) === 'pending_approval' && (
+                  <button
+                    onClick={requestApproval}
+                    className="text-xs px-3 py-1.5 rounded bg-yellow-600 hover:bg-yellow-500 text-white transition-colors"
+                  >
+                    Request Approval
+                  </button>
+                )}
+
+                {/* Approval pending: inline approve/deny */}
+                {approvalStatus === 'pending' && approvalRequestId && (
+                  <>
+                    <span className="text-xs text-yellow-400">Awaiting approval ({approvalRequestId})</span>
+                    <button onClick={approvePlan}
+                      className="text-xs px-3 py-1.5 rounded bg-green-600 hover:bg-green-500 text-white transition-colors"
+                    >
+                      Approve
+                    </button>
+                    <button onClick={denyPlan}
+                      className="text-xs px-3 py-1.5 rounded bg-red-600 hover:bg-red-500 text-white transition-colors"
+                    >
+                      Deny
+                    </button>
+                  </>
+                )}
+
+                {/* Requesting */}
+                {approvalStatus === 'requesting' && (
+                  <span className="text-xs text-gray-400">Requesting approval...</span>
+                )}
+
+                {/* Approved: show Execute button */}
+                {approvalStatus === 'approved' && (
+                  <button
+                    onClick={executePlan}
+                    disabled={install.executing}
+                    className="text-xs px-3 py-1.5 rounded bg-green-600 hover:bg-green-500 text-white transition-colors disabled:opacity-50"
+                  >
+                    {install.executing ? 'Executing...' : 'Execute Install'}
+                  </button>
+                )}
+
+                {/* Denied */}
+                {approvalStatus === 'denied' && (
+                  <span className="text-xs text-red-400">Plan denied. Re-run check and try again.</span>
+                )}
+              </div>
+
+              {/* Execution result */}
+              {install.executionResult && (
+                <div className="space-y-1">
+                  <div className={`text-xs px-3 py-2 rounded border ${
+                    str(install.executionResult.status) === 'completed' ? 'bg-green-900/30 border-green-800 text-green-400' :
+                    str(install.executionResult.status) === 'plan_not_approved' ? 'bg-yellow-900/30 border-yellow-800 text-yellow-400' :
+                    'bg-gray-900 border-gray-800 text-gray-400'
+                  }`}>
+                    Status: {str(install.executionResult.status)}
+                    {install.executionResult.steps !== undefined && (
+                      <span className="ml-2">({String(install.executionResult.steps)} steps)</span>
+                    )}
+                    {!!install.executionResult.dryRun && <span className="ml-2 text-gray-500">(dry-run)</span>}
+                  </div>
+                  {str(install.executionResult.status) === 'plan_not_approved' && !!install.executionResult.message && (
+                    <p className="text-xs text-yellow-400">{str(install.executionResult.message)}</p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

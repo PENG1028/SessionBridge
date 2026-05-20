@@ -21,16 +21,16 @@ The core plugin (`sessionnode-core`) declares 40 capabilities in `AllPluginsCaps
 | `plugin.check` | ✅ implemented | `pluginCheck` | Real dependency detection: binary (LookPath), env (os.Getenv), command (run), path/file/directory (os.Stat) |
 | `plugin.enable` | ✅ implemented | `pluginEnable` | Real: writes to `config.DisabledPlugins` |
 | `plugin.disable` | ✅ implemented | `pluginDisable` | Real: writes to `config.DisabledPlugins` |
-| `plugin.install.plan` | ⏳ stub | `pluginInstallPlan` | Returns `not_implemented` |
-| `plugin.install.execute` | ⏳ stub | `notImplementedStub` | Returns `not_implemented` |
-| `plugin.uninstall` | ⏳ stub | `notImplementedStub` | Returns `not_implemented` |
+| `plugin.install.plan` | ✅ implemented | `pluginInstallPlan` | Generates real install plan with steps, risk assessment, planId; stores in PlanStore in-memory |
+| `plugin.install.execute` | ✅ implemented | `pluginInstallExecute` | Validates plan is approved, dry-run executes steps, records history. DRY-RUN: no real system commands are run |
+| `plugin.uninstall` | ✅ implemented | `pluginUninstall` | Removes registered files from PlanStore, cleans up install plans, records plugin.uninstalled history event. DRY-RUN: no real files are deleted |
 | `plugin.cache.list` | ✅ implemented | `pluginCacheList` | Returns manifest-declared clearable cache declarations |
 | `plugin.cache.info` | ✅ implemented | `pluginCacheInfo` | Returns detailed cache info per cache entry |
 | `plugin.cache.clear` | ⏳ stub | `pluginCacheClear` | Returns `not_implemented` (bulk clear without plan) |
-| `plugin.cache.clear.plan` | ✅ implemented | `pluginCacheClearPlan` | Lists cache paths, returns planId for approval. planId is only validated for non-empty — no real plan state storage exists |
-| `plugin.cache.clear.execute` | ✅ implemented | `pluginCacheClearExecute` | Requires approved planId, deletes specified paths. planId is only validated for non-empty — no real plan state storage exists |
+| `plugin.cache.clear.plan` | ✅ implemented | `pluginCacheClearPlan` | Lists cache paths, returns planId for approval |
+| `plugin.cache.clear.execute` | ✅ implemented | `pluginCacheClearExecute` | Requires planId, deletes specified paths, records history |
 | `plugin.files.list` | ✅ implemented | `pluginFilesList` | Returns manifest-declared file locations (config, data, cache, logs, custom) |
-| `plugin.files.register` | ⏳ stub | `notImplementedStub` | Phase 2 |
+| `plugin.files.register` | ✅ implemented | `pluginFilesRegister` | Stores file paths per plugin in PlanStore; tracks artifacts for uninstall lifecycle |
 
 ### Permission Management (3 capabilities)
 
@@ -55,6 +55,13 @@ The core plugin (`sessionnode-core`) declares 40 capabilities in `AllPluginsCaps
 | `node.list` | ✅ implemented | `nodeList` | Returns known peers from topology; fallback to local-only |
 | `node.info` | ✅ implemented | `nodeInfo` | Returns node details enriched with OS/arch/hostname |
 | `node.health` | ✅ implemented | `nodeHealth` | Health check returning `status: "ok"` |
+
+### Task Management (2 capabilities)
+
+| Capability | Status | Handler | Notes |
+|---|---|---|---|
+| `task.list` | ✅ implemented | `taskList` | Returns all tasks tracked in the TaskStore (in-memory) |
+| `task.info` | ✅ implemented | `taskInfo` | Returns a single task by taskId; supports install/uninstall/check/cache_clear task types with step tracking |
 
 ### Other (1 capability)
 
@@ -114,7 +121,7 @@ These capabilities are registered in `AllPluginsCaps` under non-core plugin IDs.
 | `config.*` (non-plugin) | ⏳ Partial | `config.get`/`config.set` mentioned in API contract but no handlers for global config |
 | `logs.*` | 🔜 Planned | `logs.tail`/`logs.query`/`logs.export` in API contract but not implemented |
 | `audit.*` | 🔜 Planned | `audit.list`/`audit.get`/`audit.export` in API contract but not implemented |
-| `task.*` | 🔜 Planned | Async task event system in API contract |
+| `task.*` | ⏳ Partial | `task.list` and `task.info` implemented; TaskStore is in-memory with Task types for install/uninstall/check/cache_clear |
 | `action.*` | 🔜 Planned | Operation execution in API contract |
 
 ---
@@ -185,14 +192,19 @@ Each capability status maps to a specific UI presentation in the Plugin Manager 
 | `node.health` | `TestNodeHealth` | Health check |
 | `plugin.check` | `TestPluginCheck_ReturnsOK` | Status check |
 | `plugin.cache.list` | `TestPluginCacheList_ReturnsEmpty` | Cache list |
-| `plugin.install` | `TestPluginInstallPlan_ReturnsNotImplemented` | Stub verification |
-| `plugin.cache.clear` | `TestPluginCacheClear_ReturnsNotImplemented` | Stub verification |
+| `plugin.install.plan` | `TestPluginInstallPlan_ReturnsPendingApproval`, `TestInstallPlan_UnknownPlugin_ReturnsErrorSafe`, `TestInstallPlan_PlanIdUnique` | Plan generation, error safety, uniqueness |
+| `plugin.install.execute` | `TestInstallExecute_WithoutApproval_Fails`, `TestInstallExecute_WithApprovedPlan_Succeeds`, `TestInstallExecute_DryRunOnly_NoRealCommands`, `TestInstallExecute_MissingPlanId_ReturnsError`, `TestInstallExecute_PlanNotFound_ReturnsError`, `TestInstallExecute_PlanIdFromRequestLevel` | Plan validation, approval gating, dry-run enforcement, error paths |
+| `plugin.uninstall` | `TestUninstall_ReturnsResult`, `TestUninstall_RecordsHistory` | Returns registered files, history recording |
+| `plugin.files.register` | `TestFilesRegister_RegistersFiles`, `TestFilesRegister_ReturnsRegisteredList`, `TestFilesRegister_MissingPluginId_FallsBackToRequest` | File registration, list accumulation, fallback |
+| `plugin.cache.clear` | `TestPluginCacheClear_ReturnsNotImplemented` | Stub verification (bulk clear without plan) |
 | `plugin.enable` / `plugin.disable` | `TestPluginEnable`, `TestPluginDisable`, plus edge-case tests | Writes disabled plugin state and rejects built-in plugin disable |
 | `plugin.config.set` | `TestPluginConfigSet`, `TestPluginConfigSet_WithRevision`, `TestPluginConfigSet_Conflict` | Config writes and optimistic locking |
 | `plugin.permissions.grant` / `plugin.permissions.revoke` | `TestPluginPermissionsGrant*`, `TestPluginPermissionsRevoke*` | Grant/revoke behavior, invalid modes, high-risk approval status |
 | `plugin.cache.clear.plan` / `plugin.cache.clear.execute` | `TestPluginCacheClearPlan_NoCacheId`, `TestPluginCacheClearExecute_NoPlanId` | Plan and execute validation paths |
 | `plugin.history` | `TestPluginHistory_RecordsEvents` | Real plugin event capture |
-| `plugin.install.execute` / `plugin.uninstall` / `plugin.files.register` | `TestNotImplementedStub` | Stub verification |
+| `task.list` / `task.info` | `TestTaskCreate`, `TestTaskList`, `TestTaskInfo`, `TestTaskInfo_MissingTaskId`, `TestTaskInfo_NotFound`, `TestTaskProgress`, `TestTaskFailed` | Task lifecycle: create, list, info, progress, failure |
+| `notify.respond` (approval) | `TestNotifyRespond_Approve_UpdatesRequest`, `TestNotifyRespond_Approve_UpdatesLinkedPlan`, `TestNotifyRespond_Deny_UpdatesLinkedPlan` | Approval/deny updates linked plans and requests |
+| `high-risk grant approval` | `TestHighRiskGrant_WithoutPlan_RequiresApproval`, `TestHighRiskGrant_WithApprovedPlan_Succeeds`, `TestHighRiskGrant_WithDeniedPlan_Fails` | High-risk grant plan/approval/deny lifecycle |
 | `session.history.*` | `TestWSHistoryE2E` | Full history lifecycle E2E |
 
 ### E2E Tests (server/server_test.go)
@@ -226,12 +238,12 @@ Each capability status maps to a specific UI presentation in the Plugin Manager 
 
 | Layer | File | Test Count | Notes |
 |---|---|---|---|
-| Executor unit tests | `executor/executor_test.go` | ~90+ tests | Covers session, stream, process, env, fs, system, node, plugin management (all 40 sessionnode-core caps), 17 `plugin.check` real dependency tests |
+| Executor unit tests | `executor/executor_test.go` | ~110+ tests | Covers session, stream, process, env, fs, system, node, plugin management (all 40 sessionnode-core caps), 17 `plugin.check` real dependency tests, install lifecycle (plan/execute/uninstall), files register, task management, approval workflow |
 | Server E2E tests | `server/server_test.go` | ~18 tests | Full WebSocket round-trip, access control, history |
 | Registry tests | `permission/registry_test.go` | 4 tests | Capability registry, completeness |
 | Process manager tests | `process/manager_test.go` | Additional | Process lifecycle, signals, stdin, cleanup |
 | History store tests | `internal/history/store_test.go` | ~55+ tests | Init, record, replay, tail, truncation, clear, disk mode, concurrent access, stdin redaction (6 tests), edge cases |
-| **Total** | | **~110+ tests** | |
+| **Total** | | **~150+ tests** | |
 
 ### Coverage Gaps
 
@@ -243,7 +255,8 @@ Each capability status maps to a specific UI presentation in the Plugin Manager 
 | `plugin.config.schema` | No focused unit test | Low |
 | `plugin.cache.clear.plan` / `plugin.cache.clear.execute` | No successful filesystem deletion test | Medium |
 | `fs.stat` | No unit test | Low |
-| `notify.*` | No unit test | Low |
+| `notify.send` | No unit test | Low |
+| `task.list` / `task.info` | No tests when TaskStore is nil | Low |
 
 ---
 
@@ -261,13 +274,24 @@ plugin.enable            → pluginEnable
 plugin.disable           → pluginDisable
 plugin.install           → pluginInstallPlan
 plugin.install.plan      → pluginInstallPlan
+plugin.install.execute   → pluginInstallExecute
+plugin.uninstall         → pluginUninstall
+plugin.files.register    → pluginFilesRegister
+plugin.files.list        → pluginFilesList
+plugin.cache.list        → pluginCacheList
+plugin.cache.info        → pluginCacheInfo
+plugin.cache.clear       → pluginCacheClear
+plugin.cache.clear.plan  → pluginCacheClearPlan
+plugin.cache.clear.execute → pluginCacheClearExecute
 plugin.permissions.list  → pluginPermissionsList
+plugin.permissions.grant → pluginPermissionsGrant
+plugin.permissions.revoke → pluginPermissionsRevoke
 plugin.config.get        → pluginConfigGet
+plugin.config.set        → pluginConfigSet
 plugin.config.schema     → pluginConfigSchema
 plugin.history           → pluginHistory
-plugin.cache.list        → pluginCacheList
-plugin.cache.clear       → pluginCacheClear
-plugin.files.list        → pluginFilesList
+task.list                → taskList
+task.info                → taskInfo
 system.info              → systemInfo
 node.list                → nodeList
 node.info                → nodeInfo
@@ -288,7 +312,7 @@ notify.*                 → notify* handlers
 ## Appendix B: AllPluginsCaps by Plugin ID
 
 ```go
-// sessionnode-core — 40 capabilities
+// sessionnode-core — 42 capabilities
 "system.info", "plugin.{list,get,info,status,check,enable,disable}",
 "plugin.install.{plan,execute}", "plugin.uninstall",
 "plugin.cache.{list,info,clear,clear.plan,clear.execute}",
@@ -296,6 +320,7 @@ notify.*                 → notify* handlers
 "plugin.permissions.{list,grant,revoke}",
 "plugin.config.{get,set,schema}", "plugin.history",
 "node.{list,info,health}",
+"task.{list,info}",
 "session.{list,info,get}",
 "session.history.{getPolicy,setPolicy,stats,list,clear.plan,clear.execute}",
 "notify.{send,request,respond}"
@@ -317,5 +342,5 @@ notify.*                 → notify* handlers
 
 ---
 
-> **Last updated:** 2026-05-20 (stdin redaction implemented in history/store.go — stdin data always redacted in replay/tail)
+> **Last updated:** 2026-05-20 (install lifecycle implemented: plan/execute/uninstall/files.register are no longer stubs; task.list/task.info added; PlanStore in-memory; approval workflow wired through dispatcher)
 > **Related docs:** [PLUGIN_CORE_API_CONTRACT.md](./PLUGIN_CORE_API_CONTRACT.md) | [PLUGIN_MANIFEST_SPEC.md](./PLUGIN_MANIFEST_SPEC.md) | [PLUGIN_SECURITY_MODEL.md](./PLUGIN_SECURITY_MODEL.md) | [PLUGIN_ADAPTERS.md](./PLUGIN_ADAPTERS.md)

@@ -235,6 +235,8 @@ When enabling:
 
 ## 8. Dependency Check And Install Scenario
 
+> **Implementation status (2026-05-20):** The full install lifecycle is implemented as a **dry-run framework**. `plugin.install`/`plugin.install.plan` generates a structured plan with steps and risk assessment stored in an in-memory PlanStore. `plugin.install.execute` validates plan approval then dry-run completes all steps (no real system commands). `plugin.uninstall`/`plugin.files.register` operate on the PlanStore. The dispatcher's Plan-Before-Apply step (via Planner interface) gates high-risk operations on plan approval, and `notify.respond` provides the approve/deny channel. Error codes `PLAN_REQUIRED`, `APPROVAL_REQUIRED`, `APPROVAL_DENIED` are returned at appropriate stages. Real package manager integration (actual command execution via `process.spawn`) is the NEXT step.
+
 ### 8.1 Linux Relay Missing Claude Code
 
 User selects `relay-a` and opens Claude Code plugin.
@@ -419,8 +421,9 @@ If not ready:
 | Network declaration | `network.*` | not declared | permission/audit |
 | File access | `fs.*` | implemented, constraints weak | code work |
 | Permissions | `plugin.permissions.*` | implemented, approval incomplete | safety |
-| Install lifecycle | `plugin.install`, `plugin.install.plan`, `plugin.install.execute`, `plugin.uninstall` — all stub | all stub | setup |
-| Cache | `plugin.cache.clear.plan/execute` | implemented (bulk clear stub) | cleanup |
+| Install lifecycle | `plugin.install`, `plugin.install.plan`, `plugin.install.execute`, `plugin.uninstall`, `plugin.files.register` | implemented (dry-run framework with PlanStore, approval flow, history; real package manager execution is NEXT step) | setup |
+| Cache | `plugin.cache.clear.plan/execute` | implemented (bulk clear without plan still stub) | cleanup |
+| Task tracking | `task.list`, `task.info` | implemented (TaskStore in-memory; install/uninstall/check/cache_clear task types) | progress visibility |
 | Multiple sessions | `session.*` | implemented | multi-conversation |
 | Cross-node execution | topology + target node | partial/needs verification | remote work |
 | Mobile control | view over WS | partial | phone operation |
@@ -436,8 +439,8 @@ If not ready:
 | Capability support resolver | UI/Core must know full/partial/unsupported before action |
 | Windows/Linux test portability | baseline must be trustworthy |
 | OS-level subprocess tree tracking | Claude Code can spawn build/test/watch child processes |
-| Install plan/execute lifecycle | missing `claude` must be installable and visible |
-| Approval workflow integration | high-risk grants and install must not bypass approval |
+| ~~Install plan/execute lifecycle~~ | ~~missing `claude` must be installable and visible~~ **Done (dry-run):** plan/approve/execute/uninstall/fils.register all implemented as dry-run framework; real package manager execution is P1 |
+| ~~Approval workflow integration~~ | ~~high-risk grants and install must not bypass approval~~ **Done:** dispatcher Plan-Before-Apply gates high-risk operations; notify.respond provides approve/deny; PLAN_REQUIRED/APPROVAL_REQUIRED/APPROVAL_DENIED error codes returned |
 | Platform-aware Terminal profile | Windows pipe fallback must be explicit |
 
 ### P1 - Needed For Safe Daily Use
@@ -546,15 +549,16 @@ The UI should receive blockers as a list:
 ## 13. Recommended Execution Order
 
 1. Fix Windows Go test portability.
-2. Correct the architecture audit status errors.
-3. Split `plugin_cmds.go` without behavior changes.
-4. Add capability support resolver and platform model.
-5. Extend `plugin.check` to include capability support report.
-6. Implement install plan/execute lifecycle.
-7. Integrate approval workflow for install/high-risk grants.
+2. ~~Correct the architecture audit status errors.~~ **Done:** docs updated to reflect post-Lifecycle+Approval+Task state.
+3. ~~Split `plugin_cmds.go` without behavior changes.~~ **Done:** split into `plugin_install_cmds.go`, `plugin_cache_cmds.go`, `plugin_permission_cmds.go`, `plugin_files_cmds.go`, `plugin_manage_cmds.go`, `task_cmds.go`.
+4. ~~Implement install plan/execute lifecycle.~~ **Done (dry-run):** plan/approve/execute/uninstall/files.register all implemented; TaskStore tracks progress. Real package manager execution is next.
+5. ~~Integrate approval workflow for install/high-risk grants.~~ **Done:** dispatcher Plan-Before-Apply step via Planner interface; notify.respond approve/deny channel; error codes PLAN_REQUIRED/APPROVAL_REQUIRED/APPROVAL_DENIED.
+6. Add capability support resolver and platform model.
+7. Extend `plugin.check` to include capability support report.
 8. Implement OS-level subprocess tree tracking.
 9. Add `network.*` declaration and policy model.
-10. Start Claude Code plugin skeleton.
+10. Implement real package manager execution (wire process.spawn to install commands).
+11. Start Claude Code plugin skeleton.
 
 ---
 

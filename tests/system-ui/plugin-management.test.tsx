@@ -381,6 +381,223 @@ describe('PluginDetail', () => {
   });
 });
 
+// ─── PluginDetail: Blockers & Status Tab ──────────────────────────
+
+describe('PluginDetail: Blockers & Status', () => {
+  it('blockers render in plugin detail', async () => {
+    const mockCheck = {
+      pluginId: 'terminal',
+      status: 'blocked',
+      checkedAt: Date.now(),
+      dependencies: [],
+      capabilities: [],
+      blockers: [
+        { kind: 'missing_dependency', dependency: 'python3', reason: 'binary_missing' },
+        { kind: 'unsupported_capability', capability: 'process.spawn', reason: 'not supported on this platform' },
+      ],
+    };
+    const core = createCore({ 'plugin.get': mockPluginGet, 'plugin.check': mockCheck });
+    render(<PluginDetail core={core} pluginId="terminal" />);
+
+    await waitForDetail();
+    await clickTab('Blockers & Status');
+
+    await waitFor(() => {
+      expect(screen.getByText('missing_dependency')).toBeDefined();
+      expect(screen.getByText('python3')).toBeDefined();
+      expect(screen.getByText('unsupported_capability')).toBeDefined();
+      expect(screen.getByText('process.spawn')).toBeDefined();
+    });
+  });
+
+  it('shows no blockers message when check returns empty', async () => {
+    const mockCheck = {
+      pluginId: 'terminal',
+      status: 'ok',
+      blockers: [],
+    };
+    const core = createCore({ 'plugin.get': mockPluginGet, 'plugin.check': mockCheck });
+    render(<PluginDetail core={core} pluginId="terminal" />);
+
+    await waitForDetail();
+    await clickTab('Blockers & Status');
+
+    await waitFor(() => {
+      expect(screen.getByText(/No blockers/i)).toBeDefined();
+    });
+  });
+
+  it('shows Create Install Plan button for missing_dependency blockers', async () => {
+    const mockCheck = {
+      pluginId: 'terminal',
+      status: 'blocked',
+      blockers: [{ kind: 'missing_dependency', dependency: 'python3', reason: 'binary_missing' }],
+    };
+    const core = createCore({ 'plugin.get': mockPluginGet, 'plugin.check': mockCheck });
+    render(<PluginDetail core={core} pluginId="terminal" />);
+
+    await waitForDetail();
+    await clickTab('Blockers & Status');
+
+    await waitFor(() => {
+      expect(screen.getByText('Create Install Plan')).toBeDefined();
+    });
+  });
+
+  it('install plan renders steps', async () => {
+    const mockCheck = {
+      pluginId: 'terminal',
+      status: 'blocked',
+      blockers: [{ kind: 'missing_dependency', dependency: 'python3', reason: 'binary_missing' }],
+    };
+    const mockPlan = {
+      planId: 'plan-001',
+      pluginId: 'terminal',
+      steps: [
+        { order: 1, description: 'Detect binary availability', commands: ['plugin.check'], risk: 'low', status: 'pending' },
+        { order: 2, description: 'Detect package manager', commands: ['env.which apt'], risk: 'low', status: 'pending' },
+      ],
+      risk: 'high',
+      status: 'pending_approval',
+      summary: 'Installation plan for terminal (dry-run)',
+      createdAt: Date.now(),
+    };
+    const core = createCore({
+      'plugin.get': mockPluginGet,
+      'plugin.check': mockCheck,
+      'plugin.install.plan': mockPlan,
+    });
+    render(<PluginDetail core={core} pluginId="terminal" />);
+
+    await waitForDetail();
+    await clickTab('Blockers & Status');
+
+    await waitFor(() => expect(screen.getByText('Create Install Plan')).toBeDefined());
+    fireEvent.click(screen.getByText('Create Install Plan'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Detect binary availability')).toBeDefined();
+      expect(screen.getByText('Detect package manager')).toBeDefined();
+      expect(screen.getByText('plan-001')).toBeDefined();
+      expect(screen.getByText('Installation plan for terminal (dry-run)')).toBeDefined();
+    });
+  });
+
+  it('execute success updates status', async () => {
+    const mockCheck = {
+      pluginId: 'terminal',
+      status: 'blocked',
+      blockers: [{ kind: 'missing_dependency', dependency: 'python3', reason: 'binary_missing' }],
+    };
+    const mockPlan = {
+      planId: 'plan-exec-001',
+      pluginId: 'terminal',
+      steps: [
+        { order: 1, description: 'Install step', commands: ['echo test'], risk: 'low', status: 'pending' },
+      ],
+      risk: 'low',
+      status: 'pending_approval',
+      summary: 'Test install plan',
+      createdAt: Date.now(),
+    };
+    const mockNotifyReq = { requestId: 'req-001', status: 'pending' };
+    const mockNotifyResp = { requestId: 'req-001', status: 'responded' };
+    const mockExec = { status: 'completed', planId: 'plan-exec-001', pluginId: 'terminal', steps: 1, dryRun: true };
+    const core = createCore({
+      'plugin.get': mockPluginGet,
+      'plugin.check': mockCheck,
+      'plugin.install.plan': mockPlan,
+      'notify.request': mockNotifyReq,
+      'notify.respond': mockNotifyResp,
+      'plugin.install.execute': mockExec,
+    });
+    render(<PluginDetail core={core} pluginId="terminal" />);
+
+    await waitForDetail();
+    await clickTab('Blockers & Status');
+    await waitFor(() => expect(screen.getByText('missing_dependency')).toBeDefined());
+
+    // Create plan
+    fireEvent.click(screen.getByText('Create Install Plan'));
+    await waitFor(() => expect(screen.getByText('Request Approval')).toBeDefined());
+
+    // Request approval
+    fireEvent.click(screen.getByText('Request Approval'));
+    await waitFor(() => expect(screen.getByText('Approve')).toBeDefined());
+
+    // Approve
+    fireEvent.click(screen.getByText('Approve'));
+    await waitFor(() => expect(screen.getByText('Execute Install')).toBeDefined());
+
+    // Execute
+    fireEvent.click(screen.getByText('Execute Install'));
+    await waitFor(() => {
+      expect(screen.getByText(/completed/i)).toBeDefined();
+      expect(screen.getByText('(dry-run)')).toBeDefined();
+      expect(screen.getByText('(1 steps)')).toBeDefined();
+    });
+  });
+
+  it('unsupported capability renders explanation', async () => {
+    const mockCheck = {
+      pluginId: 'terminal',
+      status: 'blocked',
+      blockers: [{ kind: 'unsupported_capability', capability: 'gpu.compute', reason: 'no GPU support on this platform' }],
+    };
+    const core = createCore({ 'plugin.get': mockPluginGet, 'plugin.check': mockCheck });
+    render(<PluginDetail core={core} pluginId="terminal" />);
+
+    await waitForDetail();
+    await clickTab('Blockers & Status');
+
+    await waitFor(() => {
+      expect(screen.getByText('unsupported_capability')).toBeDefined();
+      expect(screen.getByText('gpu.compute')).toBeDefined();
+      expect(screen.getByText(/not supported on the current platform/i)).toBeDefined();
+    });
+  });
+
+  it('unknown capability renders explanation', async () => {
+    const mockCheck = {
+      pluginId: 'terminal',
+      status: 'blocked',
+      blockers: [{ kind: 'unknown_capability', capability: 'magic.wand', reason: 'not in support matrix' }],
+    };
+    const core = createCore({ 'plugin.get': mockPluginGet, 'plugin.check': mockCheck });
+    render(<PluginDetail core={core} pluginId="terminal" />);
+
+    await waitForDetail();
+    await clickTab('Blockers & Status');
+
+    await waitFor(() => {
+      expect(screen.getByText('unknown_capability')).toBeDefined();
+      expect(screen.getByText('magic.wand')).toBeDefined();
+      expect(screen.getByText(/not recognized by the current Go Core version/i)).toBeDefined();
+    });
+  });
+
+  it('shows Request Permission button for missing_grant blocker', async () => {
+    const mockCheck = {
+      pluginId: 'terminal',
+      status: 'blocked',
+      blockers: [{ kind: 'missing_grant', capability: 'session.create', reason: 'not_granted' }],
+    };
+    const core = createCore({
+      'plugin.get': mockPluginGet,
+      'plugin.check': mockCheck,
+    });
+    render(<PluginDetail core={core} pluginId="terminal" />);
+
+    await waitForDetail();
+    await clickTab('Blockers & Status');
+
+    await waitFor(() => {
+      expect(screen.getByText('missing_grant')).toBeDefined();
+      expect(screen.getByText('Request Permission')).toBeDefined();
+    });
+  });
+});
+
 // ─── Host-rendered components ───────────────────────────────────────
 
 describe('Host-rendered components', () => {

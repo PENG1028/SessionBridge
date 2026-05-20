@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { RefreshCw, Search } from 'lucide-react';
-import type { CoreClient, PluginInfo } from '../../core/core-types';
+import type { CoreClient, PluginInfo, BlockerEntry } from '../../core/core-types';
 import { PageHeader, PageLoading, PageError, PageEmpty, PageOffline, type PageState } from './page-utils';
 
 interface PluginManagerProps {
@@ -12,6 +12,12 @@ interface PluginManagerProps {
 
 type StatusFilter = 'all' | 'enabled' | 'disabled' | 'error';
 type TypeFilter = 'all' | 'builtin' | 'feature';
+
+interface EnvCheckResult {
+  status: string;
+  deps: number;
+  blockers: BlockerEntry[];
+}
 
 export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
   const [pageState, setPageState] = useState<PageState>('loading');
@@ -26,7 +32,7 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
 
   // Environment check
-  const [envCheckResults, setEnvCheckResults] = useState<Record<string, { status: string; deps: number }>>({});
+  const [envCheckResults, setEnvCheckResults] = useState<Record<string, EnvCheckResult>>({});
   const [envCheckRunning, setEnvCheckRunning] = useState(false);
 
   async function fetchPlugins() {
@@ -72,13 +78,14 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
 
   async function runAllEnvChecks() {
     setEnvCheckRunning(true);
-    const results: Record<string, { status: string; deps: number }> = {};
+    const results: Record<string, EnvCheckResult> = {};
     for (const p of plugins) {
       try {
-        const res = await core.call<{ status: string; dependencies?: unknown[] }>('plugin.check', { pluginId: p.pluginId });
-        results[p.pluginId] = { status: res?.status || 'ok', deps: res?.dependencies?.length || 0 };
+        const res = await core.call<{ status: string; dependencies?: unknown[]; blockers?: BlockerEntry[] }>('plugin.check', { pluginId: p.pluginId });
+        const blockers = Array.isArray(res?.blockers) ? res.blockers as BlockerEntry[] : [];
+        results[p.pluginId] = { status: res?.status || 'ok', deps: res?.dependencies?.length || 0, blockers };
       } catch {
-        results[p.pluginId] = { status: 'error', deps: 0 };
+        results[p.pluginId] = { status: 'error', deps: 0, blockers: [] };
       }
     }
     setEnvCheckResults(results);
@@ -221,10 +228,22 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
                   )}
                   {/* Env check result inline */}
                   {envCheck && (
-                    <div className={`text-xs mt-1 ${
-                      envCheck.status === 'ok' ? 'text-green-500' : 'text-yellow-500'
-                    }`}>
-                      Env: {envCheck.status} ({envCheck.deps} deps)
+                    <div className="text-xs mt-1 space-y-0.5">
+                      <span className={
+                        envCheck.status === 'ok' ? 'text-green-500' :
+                        envCheck.status === 'blocked' ? 'text-red-500' :
+                        envCheck.status === 'incomplete' ? 'text-yellow-500' :
+                        'text-yellow-500'
+                      }>
+                        {envCheck.status === 'blocked' ? '\u{1F534}' : envCheck.status === 'incomplete' ? '\u{1F7E1}' : '\u{1F7E2}'}{' '}
+                        {envCheck.status} ({envCheck.deps} deps)
+                      </span>
+                      {envCheck.blockers.length > 0 && (
+                        <span className="text-red-400 block">
+                          {envCheck.blockers.length} blocker{envCheck.blockers.length > 1 ? 's' : ''}:{' '}
+                          {envCheck.blockers.map(b => b.kind).join(', ')}
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>
