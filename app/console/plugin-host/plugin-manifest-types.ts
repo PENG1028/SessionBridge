@@ -17,6 +17,9 @@ export interface PluginManifest {
 
   /** Required binaries for this plugin. */
   requiredBinaries?: Array<{ name: string; version?: string; optional?: boolean }>;
+
+  /** Go Core manifest core spec — permissions, env checks, files, tasks, history. */
+  core?: PluginCoreSpec;
 }
 
 export interface PluginContributions {
@@ -86,4 +89,75 @@ export interface PluginApprovalContribution {
   riskLevel: 'low' | 'medium' | 'high' | 'critical';
   description?: string;
   timeout?: number;
+}
+
+// ─── Go Core Manifest Alignment Types ──────────────────────────
+
+/** Core specification — maps to Go Core's CoreSpec. */
+export interface PluginCoreSpec {
+  permissions?: PluginPermissionSpec[];
+  environment?: PluginEnvironmentSpec;
+  files?: PluginFilesSpec;
+  tasks?: PluginTaskSpec[];
+  history?: PluginHistorySpec;
+}
+
+export interface PluginPermissionSpec {
+  id: string;
+  description: string;
+  capabilities: string[];
+  default: 'ask' | 'deny' | 'allow';
+  constraints?: PluginPermissionConstraints;
+}
+
+export interface PluginPermissionConstraints {
+  paths?: { allow?: string[]; deny?: string[] };
+  targetNodes?: string[];
+  env?: string[];
+  network?: string[];
+  resources?: { maxMemory?: string; maxCPU?: string; maxDisk?: string; maxProcess?: number };
+}
+
+export interface PluginEnvironmentSpec {
+  checks: PluginEnvCheckSpec[];
+}
+
+export interface PluginEnvCheckSpec {
+  id: string;
+  type: 'binary' | 'env' | 'path' | 'file' | 'directory' | 'command';
+  required?: boolean;
+  command?: string;
+  args?: string;
+  versionCommand?: string;
+  requiredVersion?: string;
+  installHint?: string;
+}
+
+export interface PluginFilesSpec {
+  config?: string;
+  data?: string;
+  cache?: string;
+  logs?: string;
+  artifacts?: string;
+  declarations?: PluginFileDeclaration[];
+}
+
+export interface PluginFileDeclaration {
+  id: string;
+  path: string;
+  description?: string;
+  clearable: boolean;
+  external?: boolean;
+  risk?: 'low' | 'medium' | 'high';
+}
+
+export interface PluginTaskSpec {
+  id: string;
+  capability: string;
+  planRequired: boolean;
+  risk: 'low' | 'medium' | 'high';
+}
+
+export interface PluginHistorySpec {
+  defaultPolicy?: 'memory' | 'disk' | 'none';
 }

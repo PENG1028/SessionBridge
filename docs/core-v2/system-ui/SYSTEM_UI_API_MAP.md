@@ -1,0 +1,209 @@
+# SessionNode v2 — System UI API Map
+
+> 统一所有 UI 页面、组件、插件合同中的 Core API 命名。
+> 所有 UI 文档必须使用此映射表中的命名，不得混用。
+
+---
+
+## 1. 命名空间约定
+
+```
+notify.*      通知（推送、标记已读）
+approval.*    审批（请求、批准、拒绝）
+logs.*        运行时日志（Core/Plugin diagnostic log）
+audit.*       审计日志（权限变更、安装、配置变更）
+session.*     Session 元数据（CRUD）
+stream.*      标准流（stdout/stderr/stdin）
+plugin.*      插件管理（安装、状态、权限、文件、缓存）
+config.*      配置（读写、schema）
+task.*        异步任务进度
+node.*        节点管理
+action.*      操作审计
+```
+
+---
+
+## 2. 完整 API 映射表
+
+### 2.1 notify — 通知
+
+| 规范命名 | 别名（已废弃） | 参数 | 用途 | 页面 |
+|---------|-------------|------|------|------|
+| `notify.list` | `notification.list` | `{ filter?, since? }` | 通知列表 | Approvals |
+| `notify.markRead` | `notification.markRead` | `{ notificationId }` | 标记已读 | Approvals |
+| `notify.markAllRead` | `notification.markAllRead` | — | 全部已读 | Approvals |
+| WebSocket `notify.event` | `notification.event` | `{ type, title, body }` | 推送通知 | Approvals |
+
+### 2.2 approval — 审批
+
+| 规范命名 | 别名（已废弃） | 参数 | 用途 | 页面 |
+|---------|-------------|------|------|------|
+| `approval.list` | — | `{ status?, type? }` | 审批请求列表 | Approvals |
+| `approval.get` | — | `{ requestId }` | 请求详情 | Approvals |
+| `approval.approve` | `notify.respond` | `{ requestId, note? }` | 批准请求 | Approvals |
+| `approval.deny` | `notify.respond` | `{ requestId, reason? }` | 拒绝请求 | Approvals |
+| `approval.takeOver` | — | `{ requestId }` | 接管请求 | Approvals |
+| WebSocket `approval.request` | — | `{ pluginId, action, detail }` | 新审批请求推送 | Approvals |
+| WebSocket `approval.response` | — | `{ requestId, result }` | 审批结果同步 | Approvals |
+| WebSocket `approval.viewing` | — | `{ requestId, deviceId }` | 多设备查看状态 | Approvals |
+
+### 2.3 logs — 运行时日志
+
+| 规范命名 | 别名（已废弃） | 参数 | 用途 | 页面 |
+|---------|-------------|------|------|------|
+| `logs.tail` | — | `{ source, lines?, level? }` | 获取最近日志 | Logs |
+| `logs.query` | — | `{ source?, level?, timeRange?, search?, nodeId?, pluginId? }` | 带过滤日志查询 | Logs |
+| `logs.export` | — | `{ timeRange, format? }` | 导出日志 | Logs |
+| WebSocket `logs.event` | — | `{ source, level, message, timestamp }` | 实时日志推送 | Logs |
+
+**source 枚举**: `"core"` | `"plugin"` | `"system"` | `"session"`
+
+### 2.4 audit — 审计日志
+
+| 规范命名 | 别名（已废弃） | 参数 | 用途 | 页面 |
+|---------|-------------|------|------|------|
+| `audit.list` | `logs.tail(source: "audit")` | `{ timeRange?, type?, actor?, target? }` | 审计事件列表 | Logs |
+| `audit.get` | — | `{ auditId }` | 审计事件详情 | Logs |
+| `audit.export` | — | `{ timeRange }` | 导出审计日志 | Logs |
+| WebSocket `audit.event` | — | `{ type, actor, target, metadata }` | 实时审计推送 | Logs |
+
+### 2.5 session — Session 元数据
+
+| 规范命名 | 别名（已废弃） | 参数 | 用途 | 页面 |
+|---------|-------------|------|------|------|
+| `session.list` | — | `{ nodeId?, kind?, status? }` | Session 列表 | Sessions, Dashboard, Nodes |
+| `session.get` | — | `{ sessionId }` | Session 详情 | Sessions |
+| `session.create` | — | `{ kind, nodeId?, pluginId?, command?, cwd?, env?, historyPolicy?, config? }` | 创建 session | Sessions |
+| `session.stop` | — | `{ sessionId }` | 停止 session | Sessions |
+| `session.events` | `logs.session` | `{ sessionId }` | Session 事件列表 | Sessions, Logs |
+| WebSocket `session.created` | — | `{ sessionId, kind, nodeId }` | Session 创建事件 | Sessions, Dashboard |
+| WebSocket `session.stopped` | — | `{ sessionId, reason }` | Session 停止事件 | Sessions, Dashboard |
+
+### 2.6 stream — 标准流
+
+| 规范命名 | 别名（已废弃） | 参数 | 用途 | 页面 |
+|---------|-------------|------|------|------|
+| `stream.subscribe` | — | `{ sessionId, streamType }` | 订阅实时流 | Sessions |
+| `stream.replay` | — | `{ sessionId, streamType, fromSeq? }` | 回放历史流 | Sessions |
+| `stream.tail` | — | `{ sessionId, streamType, lines? }` | 获取最近 N 行 | Sessions |
+| `stream.write` | `stream.stdin`, `process.stdin` | `{ sessionId, data, streamType? }` | 写入 stream（默认 stdin） | Sessions |
+
+**streamType 枚举**: `"stdout"` | `"stderr"` | `"stdin"`
+
+### 2.7 plugin — 插件管理
+
+| 规范命名 | 别名（已废弃） | 参数 | 用途 | 页面 |
+|---------|-------------|------|------|------|
+| `plugin.list` | — | `{ nodeId?, status? }` | 插件列表 | Dashboard, Plugins |
+| `plugin.get` | — | `{ pluginId }` | 插件详情 | Plugin Detail |
+| `plugin.status` | — | `{ pluginId }` | 插件状态 | Plugin Detail |
+| `plugin.enable` | — | `{ pluginId }` | 启用插件 | Plugins |
+| `plugin.disable` | — | `{ pluginId }` | 禁用插件 | Plugins |
+| `plugin.check` | — | `{ nodeId?, pluginId }` | 环境检查（本机/VPS 分开） | Plugin Detail |
+| `plugin.install.plan` | — | `{ nodeId?, pluginId }` | 生成安装计划（按节点） | Plugin Detail |
+| `plugin.install.execute` | — | `{ planId }` | 执行安装 | Plugin Detail |
+| `plugin.uninstall` | — | `{ nodeId?, pluginId }` | 卸载插件（按节点） | Plugin Detail |
+| `plugin.files.list` | — | `{ nodeId?, pluginId }` | 文件位置（按节点） | Plugin Detail |
+| `plugin.cache.list` | — | `{ nodeId?, pluginId }` | 缓存列表（按节点） | Plugin Detail |
+| `plugin.cache.clear.plan` | — | `{ nodeId?, pluginId }` | 生成清理计划（按节点） | Plugin Detail |
+| `plugin.cache.clear.execute` | — | `{ planId }` | 执行清理 | Plugin Detail |
+| `plugin.permissions.list` | — | `{ pluginId }` | 权限列表 | Plugin Detail |
+| `plugin.permissions.grant` | — | `{ pluginId, permissionId, level }` | 授予权限 | Plugin Detail |
+| `plugin.permissions.revoke` | — | `{ pluginId, permissionId }` | 撤销权限 | Plugin Detail |
+| `plugin.permissions.reset` | — | `{ pluginId }` | 重置权限 | Plugin Detail |
+| `plugin.config.get` | — | `{ nodeId?, pluginId, key? }` | 读插件配置（按节点） | Plugin Detail |
+| `plugin.config.set` | — | `{ nodeId?, pluginId, key, value }` | 写插件配置（按节点） | Plugin Detail |
+| `plugin.config.schema` | `config.schema` | `{ pluginId }` | 配置 JSON Schema | Plugin Detail |
+| `plugin.history` | — | `{ nodeId?, pluginId }` | 安装历史（按节点） | Plugin Detail |
+| WebSocket `plugin.registered` | — | `{ pluginId, version }` | 插件注册事件 | Dashboard, Plugins |
+| WebSocket `plugin.unregistered` | — | `{ pluginId }` | 插件注销事件 | Dashboard, Plugins |
+
+### 2.8 config — Core 配置
+
+| 规范命名 | 别名（已废弃） | 参数 | 用途 | 页面 |
+|---------|-------------|------|------|------|
+| `config.list` | — | `{ namespace? }` | 配置列表 | Settings |
+| `config.get` | — | `{ key }` | 获取配置（返回 `{ key, value, revision }`） | Settings |
+| `config.set` | — | `{ key, value, expectedRevision? }` | 设置配置（带乐观锁 revision） | Settings |
+| `config.reset` | — | `{ key }` | 重置配置 | Settings |
+| WebSocket `config.changed` | — | `{ key, oldValue, newValue, revision }` | 配置变更推送 | Settings |
+
+### 2.9 task — 异步任务
+
+| 规范命名 | 别名（已废弃） | 参数 | 用途 | 页面 |
+|---------|-------------|------|------|------|
+| WebSocket `task.event` | — | `{ taskId, status, progress?, message? }` | 任务进度推送 | Plugin Detail |
+
+### 2.10 node — 节点
+
+| 规范命名 | 别名（已废弃） | 参数 | 用途 | 页面 |
+|---------|-------------|------|------|------|
+| `node.list` | — | — | 所有节点 | Dashboard, Nodes |
+| `node.get` | `node.info` | `{ nodeId }` | 节点详情 | Nodes |
+| `node.health` | — | `{ nodeId }` | 健康指标 | Nodes |
+| `node.update` | — | `{ nodeId, labels? }` | 更新节点 | Settings |
+| WebSocket `node.health` | — | `{ nodeId, cpu, mem, disk, uptime }` | 健康推送 | Dashboard, Nodes |
+| WebSocket `node.connected` | — | `{ nodeId }` | 节点连接 | Dashboard, Nodes |
+| WebSocket `node.disconnected` | — | `{ nodeId }` | 节点断开 | Dashboard, Nodes |
+
+### 2.11 action — 操作审计
+
+| 规范命名 | 别名（已废弃） | 参数 | 用途 | 页面 |
+|---------|-------------|------|------|------|
+| `action.request` | — | `{ capability, payload }` | 请求执行操作（走 audit） | 所有写操作 |
+
+---
+
+## 3. 日志三分法
+
+所有日志在 UI 中分为三类，各有独立入口：
+
+| 分类 | Core API | 存储位置 | UI 入口 | 用途 |
+|------|---------|---------|---------|------|
+| **Stream History** | `stream.replay`, `stream.tail` | Core 持久化（按 eventSeq） | Sessions → Stream Viewer | stdout/stderr/stdin 内容 |
+| **Diagnostic Logs** | `logs.tail`, `logs.query` | 文件系统 (`~/.sessionnode/logs/`) | Logs → Core/Plugin Logs tab | 运行时调试信息 |
+| **Audit Logs** | `audit.list`, `audit.get` | Core 持久化（append-only） | Logs → Audit Trail tab | 权限/安装/配置变更元信息 |
+
+### UI 三入口
+
+```
+Logs & Audit 页面:
+
+  [Core Logs ▾] [Audit Trail] [Plugin Logs] [Events] [Install]
+
+  Core Logs    → logs.tail / logs.query      → diagnostic logs
+  Audit Trail  → audit.list / audit.get       → audit logs
+  Plugin Logs  → logs.query(source: plugin)   → plugin diagnostic logs
+  Events       → session.events              → session event timeline
+  Install      → plugin.history              → plugin install history
+
+Stream 页面:
+
+  Session Detail → Stream Live View → stream.subscribe → stream history (实时)
+  Session Detail → Stream Replay    → stream.replay    → stream history (回放)
+```
+
+---
+
+## 4. 页面 → API 依赖矩阵
+
+| 页面 | 调用的 Core API |
+|------|----------------|
+| Dashboard | `node.list`, `node.health` (WS), `session.list`, `plugin.list`, `audit.list`, `session.created` (WS), `session.stopped` (WS), `plugin.registered` (WS) |
+| Nodes | `node.list`, `node.get`, `node.health` (WS), `session.list`, `plugin.list`, `node.connected` (WS), `node.disconnected` (WS) |
+| Sessions | `session.list`, `session.get`, `session.stop`, `session.events`, `stream.subscribe`, `stream.replay`, `stream.tail`, `stream.write`, `session.created` (WS), `session.stopped` (WS) |
+| Plugins | `plugin.list`, `plugin.enable`, `plugin.disable`, `plugin.registered` (WS) |
+| Plugin Detail | `plugin.get`, `plugin.status`, `plugin.check`, `plugin.install.plan`, `plugin.install.execute`, `plugin.files.list`, `plugin.cache.list`, `plugin.cache.clear.plan`, `plugin.cache.clear.execute`, `plugin.permissions.list`, `plugin.permissions.grant`, `plugin.permissions.revoke`, `plugin.config.get`, `plugin.config.set`, `plugin.config.schema`, `plugin.history`, `logs.query(source: plugin)`, `task.event` (WS) |
+| Settings | `config.list`, `config.get`, `config.set`, `config.reset`, `node.list`, `node.update`, `plugin.list`, `config.changed` (WS) |
+| Logs & Audit | `logs.tail`, `logs.query`, `logs.export`, `logs.event` (WS), `audit.list`, `audit.get`, `audit.export`, `audit.event` (WS), `session.events`, `plugin.history` |
+| Approvals | `notify.list`, `notify.markRead`, `notify.markAllRead`, `notify.event` (WS), `approval.list`, `approval.get`, `approval.approve`, `approval.deny`, `approval.takeOver`, `approval.request` (WS), `approval.response` (WS), `approval.viewing` (WS) |
+
+---
+
+## 5. 命名迁移注意事项
+
+1. **增量迁移**：现有代码中的旧命名（如 `logs.tail(source: "audit")`）不需要一次性全部修改，可以在 Phase 0-3 中逐步对齐
+2. **Core 实现优先**：新的 Go Core 应直接使用规范命名，不需要实现别名
+3. **插件接入**：Feature Plugin 通过 CoreClient.call() 使用规范命名，Core 根据 `pluginId + method` 做权限校验
+4. **向后兼容**：如果旧 relay server 仍在使用，UI 层可以做一层 thin wrapper 做命名映射
+5. **文档对齐**：所有 wireframe、COMPONENT_CATALOG.md、PLUGIN_UI_CONTRACT.md、SYSTEM_UI_FEATURES.md 中的 API 引用应逐步迁移到此映射表

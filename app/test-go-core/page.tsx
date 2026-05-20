@@ -100,18 +100,25 @@ export default function TestGoCorePage() {
         </span>
       </div>
 
-      {/* Main content */}
-      <div className="flex-1 flex min-h-0">
-        {/* Terminal — left area */}
-        <div className="flex-1 flex flex-col min-w-0 min-h-0">
-          <PluginHost surface={terminalSurface} core={core} />
-        </div>
+      {/* Main content — only render PluginHost after WS connected so
+          component useEffects don't fire calls before WS is ready */}
+      {wsStatus === 'connected' ? (
+        <div className="flex-1 flex min-h-0">
+          {/* Terminal — left area */}
+          <div className="flex-1 flex flex-col min-w-0 min-h-0">
+            <PluginHost surface={terminalSurface} core={core} />
+          </div>
 
-        {/* System Info — right sidebar */}
-        <div className="w-80 flex flex-col min-h-0 border-l border-gray-800 shrink-0">
-          <PluginHost surface={systemInfoSurface} core={core} />
+          {/* System Info — right sidebar */}
+          <div className="w-80 flex flex-col min-h-0 border-l border-gray-800 shrink-0">
+            <PluginHost surface={systemInfoSurface} core={core} />
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="flex-1 flex items-center justify-center text-gray-500 text-sm">
+          Waiting for WebSocket connection to Go Core...
+        </div>
+      )}
     </div>
   );
 }

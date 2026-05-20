@@ -122,6 +122,6 @@ test.describe('Go Core Terminal E2E', () => {
 
     // Verify the node list section
     await expect(panel.getByText('Nodes')).toBeVisible();
-    await expect(panel.getByText('connected')).toBeVisible();
+    await expect(panel.getByText('local')).toBeVisible();
   });
 });

@@ -29,7 +29,8 @@ test-results/
 # Old backup directories
 dist_old2/
 
-# Go Core — compiled binaries
+# Go Core — compiled binaries and build cache
+go-core/.gocache/
 go-core/node.exe
 go-core/node
 go-core/*.exe

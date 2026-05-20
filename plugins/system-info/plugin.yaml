@@ -35,7 +35,7 @@ core:
     defaultPolicy: memory
 
 adapters:
-  systemUi:
+  system-ui:
     panels:
       - id: system-info.panel
         surface: panel.bottom

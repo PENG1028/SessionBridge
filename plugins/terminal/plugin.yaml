@@ -56,7 +56,7 @@ core:
     defaultPolicy: memory
 
 adapters:
-  systemUi:
+  system-ui:
     views:
       - id: terminal.view
         surface: main.editor
