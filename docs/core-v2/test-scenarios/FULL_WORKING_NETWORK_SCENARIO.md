@@ -432,6 +432,7 @@ If not ready:
 | History/replay | `stream.replay`, `stream.tail`, `session.history.*` | implemented | session recovery |
 | Stdin safety | history stdin redaction | implemented | secret protection |
 | Process tree | not yet implemented | missing | child process tracking |
+| Run index | `run.create`, `run.list`, `run.info`, `run.stop`, `run.updatePolicy` | **implemented (Round 8)** | long-lived resource tracking |
 | Network declaration | `network.*` | not declared | permission/audit |
 | File access | `fs.*` | implemented, constraints weak | code work |
 | Permissions | `plugin.permissions.*` | implemented, approval incomplete | safety |
@@ -465,7 +466,7 @@ If not ready:
 |---|---|
 | `network.*` capability declaration | permission/audit for outbound network |
 | Path constraints enforcement | file operations must be scoped |
-| Background/detached process | long-running dev tasks |
+| ~~Background/detached process~~ | ~~long-running dev tasks~~ **Done:** run.create with keep_running policy + run info/stop lifecycle provides long-lived resource index |
 | Disk plugin history | plugin history should survive restart |
 | Cache size estimation | useful cleanup UX |
 | Cross-node plugin.check verification | target node readiness must be trustworthy |

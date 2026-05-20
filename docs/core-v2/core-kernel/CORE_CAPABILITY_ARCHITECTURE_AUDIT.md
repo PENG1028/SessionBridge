@@ -30,6 +30,7 @@
 | Notify | `internal/notify/` | 通知系统：send、request、respond | 231 | 214 | **Clean** | 轻量通知管道 |
 | Plan | `internal/plan/` | Plan 模型：审批工作流前计划 | 283 | 368 | **Clean** | 独立模块 |
 | Task | `internal/task/` | 任务追踪：Task 状态机、Step 步骤、Event 日志；支持 install/uninstall/check/cache_clear 任务类型 | 126 | 0 | **Clean** | 新模块，in-memory Store，无持久化 |
+| Run | `internal/run/` | 长期资源索引：Run 模型、Policy 校验、in-memory Store；5 个 capability（create/list/info/stop/updatePolicy） | 210 | 155 | **Clean** | 新模块，in-memory Store with RWMutex；opaque metadata；状态同步自 ProcessManager |
 | Logs | `internal/logs/` | 日志与审计：tail、query、export、rotate | 414 | 577 | **Clean** | 审计日志分离 |
 
 ### 1.2 System UI Plugin Host 分布
@@ -80,6 +81,11 @@
 | `process.list` | process | `process_cmds.go` | **implemented** | Yes | 列出进程 |
 | `process.kill` | process | — | **not declared** | No | 仅在 KnownCapabilities 存在 |
 | `process.status` | process | — | **not declared** | No | 仅在 KnownCapabilities 存在 |
+| `run.create` | run | `run_cmds.go` | **implemented** | Yes | 创建长期资源记录并 spawn 进程，共享 spawnManagedProcess helper |
+| `run.list` | run | `run_cmds.go` | **implemented** | Yes | 列出 run（支持 kind/pluginId/state 过滤），自动从 ProcessManager 同步状态 |
+| `run.info` | run | `run_cmds.go` | **implemented** | Yes | 获取 run 详情 + 进程快照（pid/state/exitCode/command） |
+| `run.stop` | run | `run_cmds.go` | **implemented** | Yes | 停止 run（向进程发 signal），更新 run 状态为 stopped |
+| `run.updatePolicy` | run | `run_cmds.go` | **implemented** | Yes | 更新 run policy（onDisconnect/onCoreShutdown/persistHistory） |
 | `fs.read` | fs | `fs_cmds.go` | **implemented** | Yes | 读文件 |
 | `fs.write` | fs | `fs_cmds.go` | **implemented** | Yes | 写文件 |
 | `fs.list` | fs | `fs_cmds.go` | **implemented** | Yes | 列目录 |
@@ -156,15 +162,15 @@
 
 | Status | Count |
 |---|---|
-| **implemented** | 68 |
+| **implemented** | 73 |
 | **stub** | 1 (`plugin.cache.clear` — 仅 bulk clear 无 plan 仍为桩) |
 | **partial** | 2 (`session.events`, `task.*`) |
 | **not declared** (仅在 KnownCapabilities，未注册 executor handler) | 12 |
 | **not declared** (完全缺失，不在 KnownCapabilities) | 4 (`network.*`, `approval.*`, `audit.*`, `action.*`) |
 
-**总计**: executor `registerDefaults()` 注册 71 个 capability（68 完整实现 + 1 stub + 2 partial），KnownCapabilities 声明 79 个设计能力。
+**总计**: executor `registerDefaults()` 注册 76 个 capability（73 完整实现 + 1 stub + 2 partial），KnownCapabilities 声明 84 个设计能力。
 
-**变化说明**: 5 个原 stub capability（`plugin.install`, `plugin.install.plan`, `plugin.install.execute`, `plugin.uninstall`, `plugin.files.register`）已实现为 dry-run 框架；新增 `task.list` 和 `task.info`；`task.*` 从 "not declared" 移至 "partial"。
+**变化说明**: Round 7: 5 个原 stub capability（`plugin.install`, `plugin.install.plan`, `plugin.install.execute`, `plugin.uninstall`, `plugin.files.register`）已实现为 dry-run 框架；新增 `task.list` 和 `task.info`。Round 8: 新增 5 个 run 能力（`run.create`, `run.list`, `run.info`, `run.stop`, `run.updatePolicy`）+ `internal/run/` 包。
 
 ---
 
@@ -322,7 +328,7 @@ go-core/internal/platform/
 | Replay/tail | `stream.replay` / `stream.tail` | **implemented** | 无 | — |
 | OS subprocess tree tracking | 进程树追踪 | **not implemented** | 所有平台 | **P0** |
 | Process kill (SIGTERM/SIGKILL) | `process.signal` / `process.kill` | **partial** | Windows signal 受限 | **P1** |
-| Background/detached task | detached process | **not implemented** | 所有平台 | **P1** |
+| Background/detached process | detached process | **implemented** (via run.create + keep_running policy) | 所有平台 | — |
 | File read/write/list | `fs.*` | **implemented** | 无 | — |
 | Permission approval (`ask` grant) | `notify.request` + `permission.*` | **implemented** | 无 | — |
 | Network outbound (HTTP API calls) | `network.*` | **not declared**（Claude CLI 子进程技术上可自行发起网络调用，但权限/审计模型缺失） | 所有平台 | **P0** |
@@ -342,7 +348,7 @@ go-core/internal/platform/
 | Priority | Count | Items |
 |---|---|---|
 | **P0** (必须实现) | 3 | OS subprocess tree、Windows PTY support（Linux-first skeleton 不依赖）、`network.*`（权限/审计声明，非纯技术阻塞 — Claude CLI 子进程可自行发起网络调用） |
-| **P1** (应该实现) | 3 | Real package manager execution（install commands via process.spawn）、`process.kill` + Windows signal、background/detached process |
+| **P1** (应该实现) | 2 | Real package manager execution（install commands via process.spawn）、`process.kill` + Windows signal |
 | **P2** (锦上添花) | 4 | Persistent plan/task stores、disk-mode plugin history、mobile client control、path constraints enforcement |
 
 **结论**: 当前离能搭 Claude Code 插件差 **2-3 个 P0 项**——其中 `network.*` 是完全未声明的空白领域（Claude CLI 子进程技术上可自行发起网络调用，但缺少权限/审计模型声明），subprocess tree 是 OS 级功能需全新实现，Windows PTY 需 ConPTY 支持（Linux-first Claude Code skeleton 可先绕过）。CLI 检测（`env.which`/`env.checkBinary`）已实现，install lifecycle 已实现为 dry-run 框架（plan/approve/execute/uninstall/files.register），审批工作流通过 dispatcher Planner 接口和 `notify.respond` 已连接。预计 P0 工作 1-2 周，P1 + P2 再 1-2 周。
@@ -481,7 +487,7 @@ Risky:                    2 个 (plugin manifest bridge UI, platform support)
 | Priority | Status | Items |
 |---|---|---|
 | **P0** | 2-3 项缺失 | OS subprocess tree、Windows PTY（Linux-first skeleton 不依赖）、network permissions（权限/审计声明，Claude CLI 子进程技术上可自行发起网络调用） |
-| **P1** | 4 项部分/缺失 | Real package manager execution、process.kill/status handler、background/detached process、path constraints enforcement |
+| **P1** | 3 项部分/缺失 | Real package manager execution、process.kill/status handler、path constraints enforcement |
 | **P2** | 3 项微调 | Persistent plan/task stores、disk-mode plugin history、mobile client control |
 
 **Install lifecycle（dry-run）和 approval workflow 已就位。OS subprocess tree 和 network.* 声明完成之前，不应该开始完整的 Claude Code 插件开发。Linux-first skeleton 可先行（不依赖 Windows PTY）。**

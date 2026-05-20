@@ -63,6 +63,16 @@ The core plugin (`sessionnode-core`) declares 40 capabilities in `AllPluginsCaps
 | `task.list` | ✅ implemented | `taskList` | Returns all tasks tracked in the TaskStore (in-memory) |
 | `task.info` | ✅ implemented | `taskInfo` | Returns a single task by taskId; supports install/uninstall/check/cache_clear task types with step tracking |
 
+### Run Index (5 capabilities)
+
+| Capability | Status | Handler | Notes |
+|---|---|---|---|
+| `run.create` | ✅ implemented | `runCreate` | Spawns process + creates run record with policy & metadata; reuses spawnManagedProcess helper |
+| `run.list` | ✅ implemented | `runList` | Lists runs with kind/pluginId/state filters; auto-syncs run state from ProcessManager |
+| `run.info` | ✅ implemented | `runInfo` | Returns run detail + process snapshot (pid/state/exitCode/command) |
+| `run.stop` | ✅ implemented | `runStop` | Stops run by sending signal to process; updates run state to stopped |
+| `run.updatePolicy` | ✅ implemented | `runUpdatePolicy` | Updates run policy (onDisconnect/onCoreShutdown/persistHistory); rejects restartRestore |
+
 ### Other (1 capability)
 
 | Capability | Status | Handler | Notes |
@@ -203,6 +213,13 @@ Each capability status maps to a specific UI presentation in the Plugin Manager 
 | `plugin.cache.clear.plan` / `plugin.cache.clear.execute` | `TestPluginCacheClearPlan_NoCacheId`, `TestPluginCacheClearExecute_NoPlanId` | Plan and execute validation paths |
 | `plugin.history` | `TestPluginHistory_RecordsEvents` | Real plugin event capture |
 | `task.list` / `task.info` | `TestTaskCreate`, `TestTaskList`, `TestTaskInfo`, `TestTaskInfo_MissingTaskId`, `TestTaskInfo_NotFound`, `TestTaskProgress`, `TestTaskFailed` | Task lifecycle: create, list, info, progress, failure |
+| `run.create` | `TestRunCreate`, `TestRunCreate_DefaultKind`, `TestRunCreate_EmptyCommand`, `TestRunCreate_InvalidPolicy`, `TestRunCreate_UnsupportedOnCoreShutdown`, `TestRunCreate_Metadata` | Create with policy validation, kind default, metadata |
+| `run.list` | `TestRunList`, `TestRunList_FilterByKind` | List all + filter by kind |
+| `run.info` | `TestRunInfo`, `TestRunInfo_NotFound` | Detail + process snapshot; not found |
+| `run.stop` | `TestRunStop`, `TestRunStop_NotFound` | Stop + state verification; not found |
+| `run.updatePolicy` | `TestRunUpdatePolicy`, `TestRunUpdatePolicy_RejectsRestartRestore` | Policy update + validation |
+| `run integration` | `TestRunIntegration_ProcessSpawnStillWorks`, `TestRunIntegration_StreamWriteToRunProcess`, `TestRunIntegration_DisconnectDoesNotKillRunProcess` | process.spawn preserved, stream write works, disconnect protection |
+| `run registry` | `TestRegisteredRunCapabilitiesInHandlers` | All 5 run caps registered |
 | `notify.respond` (approval) | `TestNotifyRespond_Approve_UpdatesRequest`, `TestNotifyRespond_Approve_UpdatesLinkedPlan`, `TestNotifyRespond_Deny_UpdatesLinkedPlan` | Approval/deny updates linked plans and requests |
 | `high-risk grant approval` | `TestHighRiskGrant_WithoutPlan_RequiresApproval`, `TestHighRiskGrant_WithApprovedPlan_Succeeds`, `TestHighRiskGrant_WithDeniedPlan_Fails` | High-risk grant plan/approval/deny lifecycle |
 | `session.history.*` | `TestWSHistoryE2E` | Full history lifecycle E2E |
@@ -238,12 +255,12 @@ Each capability status maps to a specific UI presentation in the Plugin Manager 
 
 | Layer | File | Test Count | Notes |
 |---|---|---|---|
-| Executor unit tests | `executor/executor_test.go` | ~110+ tests | Covers session, stream, process, env, fs, system, node, plugin management (all 40 sessionnode-core caps), 17 `plugin.check` real dependency tests, install lifecycle (plan/execute/uninstall), files register, task management, approval workflow |
+| Executor unit tests | `executor/executor_test.go` | ~130+ tests | Covers session, stream, process, env, fs, system, node, plugin management (all 40 sessionnode-core caps), 17 `plugin.check` real dependency tests, install lifecycle (plan/execute/uninstall), files register, task management, approval workflow, run index (18 tests) |
 | Server E2E tests | `server/server_test.go` | ~18 tests | Full WebSocket round-trip, access control, history |
 | Registry tests | `permission/registry_test.go` | 4 tests | Capability registry, completeness |
 | Process manager tests | `process/manager_test.go` | Additional | Process lifecycle, signals, stdin, cleanup |
 | History store tests | `internal/history/store_test.go` | ~55+ tests | Init, record, replay, tail, truncation, clear, disk mode, concurrent access, stdin redaction (6 tests), edge cases |
-| **Total** | | **~150+ tests** | |
+| **Total** | | **~170+ tests** | |
 
 ### Coverage Gaps
 
@@ -292,6 +309,11 @@ plugin.config.schema     → pluginConfigSchema
 plugin.history           → pluginHistory
 task.list                → taskList
 task.info                → taskInfo
+run.create               → runCreate
+run.list                 → runList
+run.info                 → runInfo
+run.stop                 → runStop
+run.updatePolicy         → runUpdatePolicy
 system.info              → systemInfo
 node.list                → nodeList
 node.info                → nodeInfo
@@ -342,5 +364,5 @@ notify.*                 → notify* handlers
 
 ---
 
-> **Last updated:** 2026-05-20 (install lifecycle implemented: plan/execute/uninstall/files.register are no longer stubs; task.list/task.info added; PlanStore in-memory; approval workflow wired through dispatcher)
+> **Last updated:** 2026-05-20 (Round 8: run.create/list/info/stop/updatePolicy added with internal/run package; background/detached process gap addressed via run index)
 > **Related docs:** [PLUGIN_CORE_API_CONTRACT.md](./PLUGIN_CORE_API_CONTRACT.md) | [PLUGIN_MANIFEST_SPEC.md](./PLUGIN_MANIFEST_SPEC.md) | [PLUGIN_SECURITY_MODEL.md](./PLUGIN_SECURITY_MODEL.md) | [PLUGIN_ADAPTERS.md](./PLUGIN_ADAPTERS.md)
