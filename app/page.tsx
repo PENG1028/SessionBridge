@@ -33,6 +33,7 @@ import { useKeyboardShortcuts } from './console/hooks/use-keyboard-shortcuts';
 import { useContextMenu } from './console/hooks/use-context-menu';
 import type { ContextMenuRequest, ContextMenuItemSpec } from './console/menus/context-menu-types';
 import { registerBuiltinCommands } from './console/commands/register-builtin-commands';
+import { registerBuiltinHostComponents, registerPluginManifests, registerPluginHostComponents } from './console/plugin-host';
 import { registerCommand, getCommand } from './console/commands/command-registry';
 import { __coreActionsRegistered } from './console/actions/register-core-actions';
 import { getAction, getActions } from './console/actions/action-registry';
@@ -933,6 +934,13 @@ function PageContent() {
       killInstance,
       reload: () => window.location.reload(),
     });
+
+    // Plugin host initialization: register builtin host components,
+    // plugin manifests (for ContributionRegistry), and plugin host
+    // components (TerminalView, SystemInfoPanel, etc.).
+    registerBuiltinHostComponents();
+    registerPluginManifests();
+    registerPluginHostComponents();
 
     // Sync extension manifest commands into the registry.
     // Each dispatches sendCommand with its ID as the command name.

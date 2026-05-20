@@ -1,0 +1,45 @@
+manifestVersion: "1"
+id: system-info
+name: System Info
+version: 1.0.0
+type: plugin
+trusted: false
+description: System diagnostics, node health, and resource monitoring
+author: SessionNode
+
+core:
+  permissions:
+    - id: system-info.read
+      description: Read system and node diagnostic information
+      capabilities:
+        - system.info
+        - node.list
+        - node.info
+        - node.health
+      default: ask
+      constraints:
+        targetNodes:
+          - self
+
+  environment:
+    checks:
+      - id: host-os
+        type: env
+        required: false
+        command: uname
+
+  files:
+    logs: "${plugin.logsDir}"
+
+  history:
+    defaultPolicy: memory
+
+adapters:
+  systemUi:
+    panels:
+      - id: system-info.panel
+        surface: panel.bottom
+        type: host-rendered
+        componentId: SystemInfoPanel
+        title: System
+        icon: activity

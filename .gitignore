@@ -32,6 +32,9 @@ dist_old2/
 # Go Core — compiled binaries
 go-core/node.exe
 go-core/node
+go-core/*.exe
+go-core/*.exe~
+go-core/node-local-win.json
 
 # Flutter / Dart
 flutter_app/build/

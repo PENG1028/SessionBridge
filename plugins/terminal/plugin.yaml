@@ -1,0 +1,72 @@
+manifestVersion: "1"
+id: terminal
+name: Terminal
+version: 1.0.0
+type: plugin
+trusted: true
+description: Shell session management — create, stream, and replay terminal sessions
+author: SessionNode
+
+core:
+  permissions:
+    - id: terminal.session
+      description: Create and manage shell sessions
+      capabilities:
+        - session.create
+        - session.list
+        - session.get
+        - session.stop
+      default: ask
+      constraints:
+        targetNodes:
+          - self
+
+    - id: terminal.stream
+      description: Read and write terminal I/O streams
+      capabilities:
+        - stream.write
+        - stream.subscribe
+        - stream.replay
+        - stream.tail
+      default: ask
+
+    - id: terminal.node
+      description: Discover available nodes for terminal target selection
+      capabilities:
+        - node.list
+      default: ask
+
+    - id: terminal.process
+      description: Spawn and control shell processes
+      capabilities:
+        - process.spawn
+        - process.signal
+        - process.resize
+      default: deny
+
+  environment:
+    checks:
+      - id: bash
+        type: binary
+        required: false
+        command: bash
+        installHint: "Install bash via your package manager"
+
+  history:
+    defaultPolicy: memory
+
+adapters:
+  systemUi:
+    views:
+      - id: terminal.view
+        surface: main.editor
+        type: host-rendered
+        componentId: TerminalView
+        title: Terminal
+    panels:
+      - id: terminal.sessions
+        surface: panel.bottom
+        type: host-rendered
+        componentId: SessionListPanel
+        title: Sessions
+        icon: terminal

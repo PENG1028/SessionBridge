@@ -35,6 +35,9 @@ export function ViewSelector({ onSelect }: ViewSelectorProps) {
           <button
             key={opt.type}
             onClick={() => onSelect(opt.type)}
+            data-testid={`view-selector-option-${String(opt.type)}`}
+            data-view-type={String(opt.type)}
+            title={opt.label}
             className="flex items-center gap-2 px-2 py-2 rounded bg-[#1a1a1a] border border-gray-700/50 hover:border-purple-600 hover:bg-gray-800 text-left transition-colors"
           >
             <span className="text-[11px] font-mono w-5 text-center text-purple-400">{opt.icon}</span>

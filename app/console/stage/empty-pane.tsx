@@ -30,6 +30,8 @@ export function EmptyPane({ onSelectView }: EmptyPaneProps) {
     <div className="flex-1 flex flex-col items-center justify-center bg-[#0a0a0a] min-h-0 gap-2">
       <button
         onClick={() => setShowPicker(true)}
+        data-testid="empty-pane-open-view-picker"
+        title="Open view picker"
         className="flex items-center justify-center w-10 h-10 rounded-full border-2 border-dashed border-gray-700 text-gray-500 hover:border-purple-500 hover:text-purple-400 transition-colors"
       >
         <Plus className="w-5 h-5" />
