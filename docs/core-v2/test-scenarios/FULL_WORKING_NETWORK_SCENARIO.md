@@ -380,6 +380,20 @@ Terminal-related management must support:
 
 This should be Core-driven, not terminal-plugin hardcoded.
 
+### 9.4 Stream Types: Real-time vs History Query
+
+| Stream | Type | Mechanism | Scope |
+|---|---|---|---|
+| `stream.chunk` | Real-time push | `connRegistry.PushChunk` → WS push; topology `StreamChunkHandler` for cross-node | Live output |
+| `stream.replay` | History query (pull) | `history.Store.Replay` → response payload | Past events by seq range |
+| `stream.tail` | History query (pull) | `history.Store.Tail` → response payload | Last N events |
+
+**Cross-node stream.chunk (fixed 2026-05-20):**
+- Before: `topology.HandleMessage` only handled `action.response`, dropping `stream.chunk` from peers.
+- After: `PeerTopology.SetStreamChunkHandler` callback routes peer chunks to local `connRegistry.PushChunk`.
+- Server registers local subscription on cross-node `stream.subscribe` so forwarded chunks reach the client.
+- `stream.replay` and `stream.tail` were never broken — they are request/response, handled by `action.request`/`action.response` forwarding.
+
 ---
 
 ## 10. Claude Code Scenario
@@ -425,7 +439,8 @@ If not ready:
 | Cache | `plugin.cache.clear.plan/execute` | implemented (bulk clear without plan still stub) | cleanup |
 | Task tracking | `task.list`, `task.info` | implemented (TaskStore in-memory; install/uninstall/check/cache_clear task types) | progress visibility |
 | Multiple sessions | `session.*` | implemented | multi-conversation |
-| Cross-node execution | topology + target node | partial/needs verification | remote work |
+| Cross-node execution | topology + target node | action.request/response works | remote work |
+| Cross-node live stream | topology HandleMessage + stream.chunk handler | **done (2026-05-20)** | real-time terminal output |
 | Mobile control | view over WS | partial | phone operation |
 
 ---
@@ -442,6 +457,7 @@ If not ready:
 | ~~Install plan/execute lifecycle~~ | ~~missing `claude` must be installable and visible~~ **Done (dry-run):** plan/approve/execute/uninstall/fils.register all implemented as dry-run framework; real package manager execution is P1 |
 | ~~Approval workflow integration~~ | ~~high-risk grants and install must not bypass approval~~ **Done:** dispatcher Plan-Before-Apply gates high-risk operations; notify.respond provides approve/deny; PLAN_REQUIRED/APPROVAL_REQUIRED/APPROVAL_DENIED error codes returned |
 | Platform-aware Terminal profile | Windows pipe fallback must be explicit |
+| ~~Cross-node real-time stream forwarding~~ | ~~topology HandleMessage dropped stream.chunk — terminal live output broken~~ **Done (2026-05-20):** topology.HandleMessage handles stream.chunk + session.event via StreamChunkHandler callback; server registers local subscriptions for cross-node stream.subscribe; wired in main.go and test helpers |
 
 ### P1 - Needed For Safe Daily Use
 
