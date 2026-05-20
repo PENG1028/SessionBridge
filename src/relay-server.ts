@@ -38,6 +38,28 @@ import { createStateBus, getStateBus } from "./state-bridge";
 import { stateKey } from "./state-bridge/types";
 import { StateRelaySurfaceManager, StateRelayWorkbenchStore, StateRelayShellRouter } from "./state-bridge/relay-integration";
 
+// ─── Browser capability whitelist ──────────────────────────────
+// Only these capabilities may be requested by browser WebSocket connections.
+// Dangerous capabilities (process.spawn, fs.write, session.exec, etc.) are
+// blocked at the relay layer and never reach the Go Core dispatcher.
+const BROWSER_ALLOWED_CAPABILITIES = new Set([
+  // Read-only system
+  'node.list', 'node.info', 'node.health',
+  'session.list', 'session.get', 'session.info',
+  'stream.subscribe', 'stream.replay', 'stream.tail',
+  'plugin.list', 'plugin.get', 'plugin.info', 'plugin.status',
+  // Read-only FS
+  'fs.read', 'fs.list', 'fs.stat',
+  // Read-only env
+  'env.get', 'env.list', 'env.which', 'env.checkBinary', 'env.home', 'env.cwd',
+  // System info
+  'system.info',
+  // Session history (read)
+  'session.history.getPolicy', 'session.history.stats', 'session.history.list',
+  // Notify
+  'notify.respond',
+]);
+
 // ─── Session provider helper — first adapter that provides SessionProvider ──
 function sessionProvider() {
   for (const adapter of adapterRegistry.list()) {
@@ -2671,6 +2693,30 @@ function setupWssHandlers(): void {
       send(ws, envelope("error", { code: "UNAUTHORIZED", message: "Authentication required — send hello first" }));
       setTimeout(() => ws.close(4001, "Unauthorized"), 100);
       return;
+    }
+
+    // ── Browser capability whitelist ──────────────────────────
+    // Intercept action.request from browser WebSocket connections.
+    // Dangerous capabilities are rejected immediately; agent connections
+    // and allowed browser capabilities pass through unaffected.
+    if (msg.type === "action.request") {
+      const capability = msg.capability || "";
+      const isBrowser = !(ws as any)._isAgent;
+
+      if (isBrowser && !BROWSER_ALLOWED_CAPABILITIES.has(capability)) {
+        send(ws, envelope("action.response", {
+          requestId: msg.requestId || "",
+          ok: false,
+          error: {
+            code: "CAPABILITY_NOT_ALLOWED_FOR_BROWSER",
+            message: `Capability "${capability}" is not allowed for browser connections`,
+          },
+        }));
+        return;
+      }
+
+      // Allowed browser capability or agent request — fall through
+      // so the message continues to the Go Core dispatcher.
     }
 
     // ── Agent registration ────────────────────────────────
