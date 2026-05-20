@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { getDefaultAdapterId } from '../../../extensions/registry';
 import { useWorkbench } from '../workbench/workbench-context';
 
 // ── Logs Panel ──────────────────────────────────────────────
@@ -136,7 +135,7 @@ export function ProcessesPanel(props: { instances?: any[]; activeInstanceId?: st
               inst.status === 'running' ? 'bg-green-500' : inst.status === 'error' ? 'bg-red-500' : 'bg-gray-600'
             }`} />
             <span className="truncate flex-1">{inst.label || inst.id?.slice(0, 8)}</span>
-            <span className="text-gray-600">{inst.adapterId || getDefaultAdapterId()}</span>
+            <span className="text-gray-600">{inst.adapterId || ''}</span>
           </div>
         ))}
       </div>

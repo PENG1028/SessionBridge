@@ -3,7 +3,6 @@
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import type { WhenContext } from '../../../lib/evaluate-when';
 import { getAdapterViewId, getAllAdapterTypes } from '../main/view-registry';
-import { getDefaultAdapterId } from '../../../extensions/registry';
 
 // ── Focus State ───────────────────────────────────────────────
 

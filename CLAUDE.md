@@ -50,6 +50,9 @@ extensions/ → src/ 的反向依赖（不应增加新实例）:
   agent-core/relay-connection.ts  → src/crypto-layer
   agent-core/relay-connection.ts  → src/identity-manager
   agent-core/node-runtime.ts      → src/relay-server (dynamic import)
+  agent-core/node-runtime.ts      → src/admin-auth (dynamic import)
+  agent-core/node-runtime.ts      → src/configuration/host-config (dynamic import)
+  agent-core/node-runtime.ts      → src/configuration/registry (dynamic import)
 ```
 
 这些都是工具/加密类依赖，不算架构违规，但新增类似 import 时需要论证合理性。
