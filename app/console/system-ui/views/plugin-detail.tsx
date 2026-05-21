@@ -446,9 +446,9 @@ function BlockersStatusTab({ core, pluginId }: { core: CoreClient; pluginId: str
     setGrantErrors(prev => ({ ...prev, [capability]: null }));
     try {
       await core.call('notify.respond', { requestId: state.requestId, action: 'allow' });
-      // Step 4: Re-call grant — the plan is now approved
+      // Step 4: Re-call grant with the approved planId
       const result = await core.call<Record<string, unknown>>('plugin.permissions.grant', {
-        pluginId, capability, mode: 'allow',
+        pluginId, capability, mode: 'allow', planId: state.planId,
       });
       const status = str(result?.status);
       if (status === 'ok') {

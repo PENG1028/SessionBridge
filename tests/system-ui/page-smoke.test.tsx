@@ -182,7 +182,7 @@ describe('Logs page', () => {
 
 describe('Approvals page', () => {
   it('renders with empty state', async () => {
-    const client = createMockClient({ 'approval.list': [] });
+    const client = createMockClient({ 'approval.list': { approvals: [] } });
     render(<Approvals core={client} />);
 
     await vi.waitFor(() => {

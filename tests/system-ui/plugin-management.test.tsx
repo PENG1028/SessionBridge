@@ -724,4 +724,75 @@ describe('Plugin Permission Grant', () => {
     expect((result as Record<string, unknown>).status).toBe('requires_approval');
     expect((result as Record<string, unknown>).planId).toBe('plan-test-123');
   });
+
+  // Bug 1 fix: approval.list returns { approvals: [...] } object, not array
+  it('reads approval.list as object with approvals array', async () => {
+    const mockApprovals = {
+      approvals: [
+        { requestId: 'req-001', pluginId: 'test-plugin', action: 'Grant fs.write', detail: 'High risk', status: 'pending', createdAt: '2026-01-01' },
+      ],
+    };
+    const core = createCore({ 'approval.list': mockApprovals });
+
+    const result = await core.call<{ approvals?: Array<Record<string, unknown>> }>('approval.list', {});
+    expect(result).toBeDefined();
+    expect(result).toHaveProperty('approvals');
+    expect(Array.isArray(result!.approvals)).toBe(true);
+    expect(result!.approvals!.length).toBe(1);
+    expect(result!.approvals![0].requestId).toBe('req-001');
+  });
+
+  // Bug 2 fix: approveGrant re-calls plugin.permissions.grant with planId in payload
+  it('re-calls plugin.permissions.grant with planId after approval', async () => {
+    const calls: Array<{ method: string; params?: Record<string, unknown> }> = [];
+    const core = createCore(undefined);
+    vi.spyOn(core, 'call').mockImplementation(async (method: string, params?: Record<string, unknown>) => {
+      calls.push({ method, params: params ? { ...params } : undefined });
+      if (method === 'plugin.permissions.grant') {
+        // First call: no planId → requires_approval
+        if (!params?.planId) {
+          return Promise.resolve({ status: 'requires_approval', planId: 'plan-full-flow-1', message: 'High-risk operation requires approval' });
+        }
+        // Second call: with planId → ok
+        return Promise.resolve({ status: 'ok', pluginId: params?.pluginId, capability: params?.capability, mode: params?.mode });
+      }
+      if (method === 'notify.request') {
+        return Promise.resolve({ requestId: 'req-full-flow-1', status: 'pending' });
+      }
+      if (method === 'notify.respond') {
+        return Promise.resolve({ requestId: params?.requestId, action: params?.action, status: 'responded' });
+      }
+      if (method === 'plugin.check') {
+        return Promise.resolve({ status: 'ok', blockers: [], capabilities: [], dependencies: [] });
+      }
+      return Promise.resolve(undefined);
+    });
+
+    // Step 1: First grant (no planId)
+    const result1 = await core.call<Record<string, unknown>>('plugin.permissions.grant', {
+      pluginId: 'test', capability: 'plugin.uninstall', mode: 'allow',
+    });
+    expect(result1.status).toBe('requires_approval');
+    const planId = result1.planId as string;
+
+    // Step 2: notify.request with planId
+    const result2 = await core.call<Record<string, unknown>>('notify.request', {
+      title: 'Grant approval', body: '...', planId, timeout: 300,
+    });
+    const requestId = result2.requestId as string;
+
+    // Step 3: notify.respond approve
+    await core.call('notify.respond', { requestId, action: 'allow' });
+
+    // Step 4: Second grant WITH planId
+    const result4 = await core.call<Record<string, unknown>>('plugin.permissions.grant', {
+      pluginId: 'test', capability: 'plugin.uninstall', mode: 'allow', planId,
+    });
+    expect(result4.status).toBe('ok');
+
+    // Verify the second grant call included planId
+    const grantCalls = calls.filter(c => c.method === 'plugin.permissions.grant');
+    expect(grantCalls.length).toBe(2);
+    expect(grantCalls[1].params).toHaveProperty('planId', planId);
+  });
 });

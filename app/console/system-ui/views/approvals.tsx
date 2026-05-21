@@ -16,6 +16,10 @@ interface ApprovalRequest {
   approvedBy?: string;
 }
 
+interface ApprovalListResponse {
+  approvals?: ApprovalRequest[];
+}
+
 interface ApprovalsProps {
   core: CoreClient;
 }
@@ -43,9 +47,10 @@ export function Approvals({ core }: ApprovalsProps) {
 
     try {
       const params = filter === 'all' ? {} : { status: filter };
-      const result = await core.call<ApprovalRequest[]>('approval.list', params);
-      setRequests(result || []);
-      setPageState((result?.length ?? 0) > 0 ? 'ready' : 'empty');
+      const result = await core.call<ApprovalListResponse>('approval.list', params);
+      const approvals = Array.isArray(result?.approvals) ? result.approvals : [];
+      setRequests(approvals);
+      setPageState(approvals.length > 0 ? 'ready' : 'empty');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load approvals');
       setPageState('error');
