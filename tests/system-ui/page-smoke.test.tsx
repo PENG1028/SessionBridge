@@ -196,16 +196,18 @@ describe('Approvals page', () => {
 // ─── ApprovalCenter tests ──────────────────────────────────────
 // Helper: creates a mock client that captures event handlers so we can emit events
 
-function createApprovalCenterMock() {
+function createApprovalCenterMock(mockData?: Record<string, unknown>) {
   const listeners = new Map<string, Set<(data: CoreEvent) => void>>();
-  const call = vi.fn(async (method: string, _params?: Record<string, unknown>) => {
-    if (method === 'notify.respond') return { status: 'responded', requestId: (_params as Record<string, unknown>)?.requestId };
+  let connected = true;
+  const call = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    if (mockData?.[method] !== undefined) return mockData[method];
+    if (method === 'notify.respond') return { status: 'responded', requestId: (params as Record<string, unknown>)?.requestId };
     return {};
   });
 
-  const client: CoreClient & { emit: (event: string, data: CoreEvent) => void } = {
+  const client: CoreClient & { emit: (event: string, data: CoreEvent) => void; setConnected: (v: boolean) => void } = {
     pluginId: 'test-core',
-    isConnected: true,
+    get isConnected() { return connected; },
     call,
     on: vi.fn((event: string, handler: (data: CoreEvent) => void) => {
       if (!listeners.has(event)) listeners.set(event, new Set());
@@ -217,6 +219,10 @@ function createApprovalCenterMock() {
     disconnect: vi.fn(),
     emit: (event: string, data: CoreEvent) => {
       listeners.get(event)?.forEach(h => h(data));
+    },
+    setConnected: (v: boolean) => {
+      connected = v;
+      listeners.get('connectionStatus')?.forEach(h => h({ type: 'connectionStatus' } as CoreEvent));
     },
   };
 
@@ -349,6 +355,73 @@ describe('ApprovalCenter', () => {
     await vi.waitFor(() => expect(screen.getByText('Test Approval')).toBeDefined());
     // Should show "1 pending approval" not "2"
     expect(screen.getByText('1 pending approval')).toBeDefined();
+  });
+
+  it('hydrates existing pending approvals from approval.list on mount', async () => {
+    const { client, call } = createApprovalCenterMock({
+      'approval.list': {
+        approvals: [
+          { requestId: 'hydrate-001', pluginId: 'existing-plugin', action: 'Grant fs.write', detail: 'Pending from previous session', createdAt: Date.now() },
+        ],
+      },
+    });
+    render(<ApprovalCenter core={client} />);
+
+    await vi.waitFor(() => {
+      expect(call).toHaveBeenCalledWith('approval.list', {});
+      expect(screen.getByText('existing-plugin')).toBeDefined();
+      expect(screen.getByText('Grant fs.write')).toBeDefined();
+    });
+  });
+
+  it('re-hydrates on connectionStatus connected event', async () => {
+    const { client, call } = createApprovalCenterMock({
+      'approval.list': {
+        approvals: [
+          { requestId: 'reconn-001', pluginId: 'reconn-plugin', action: 'Grant network.connect', createdAt: Date.now() },
+        ],
+      },
+    });
+
+    // Start disconnected
+    client.setConnected(false);
+    render(<ApprovalCenter core={client} />);
+
+    // First hydration attempt fails silently (not connected yet, but the call still goes through since mock returns data)
+    // Clear calls and simulate reconnect
+    call.mockClear();
+    client.setConnected(true);
+
+    await vi.waitFor(() => {
+      expect(call).toHaveBeenCalledWith('approval.list', {});
+    });
+  });
+
+  it('deduplicates hydrated approvals with existing WS approvals', async () => {
+    const { client } = createApprovalCenterMock({
+      'approval.list': {
+        approvals: [
+          { requestId: 'req-001', pluginId: 'test-plugin', action: 'From hydration', createdAt: Date.now() },
+        ],
+      },
+    });
+
+    render(<ApprovalCenter core={client} />);
+
+    await vi.waitFor(() => expect(screen.getByText('From hydration')).toBeDefined());
+
+    // Same requestId arrives via WS — should NOT duplicate
+    client.emit('notify.approval.request', makeApprovalRequest({
+      requestId: 'req-001',
+      payload: JSON.stringify({ title: 'From WS event', body: 'Should be dropped' }),
+    }));
+
+    // Should still show "1 pending approval" not "2"
+    await vi.waitFor(() => {
+      expect(screen.getByText('1 pending approval')).toBeDefined();
+    });
+    // Title should remain from hydration (not overwritten by WS event)
+    expect(screen.getByText('From hydration')).toBeDefined();
   });
 
   it('parses payload from JSON string', async () => {

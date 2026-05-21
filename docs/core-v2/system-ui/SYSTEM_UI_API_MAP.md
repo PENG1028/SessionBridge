@@ -42,16 +42,13 @@ action.*      操作审计
 
 | 规范命名 | 别名（已废弃） | 参数 | 用途 | 页面 |
 |---------|-------------|------|------|------|
-| `approval.list` | — | `{ status? }` | 审批请求列表（R13 thin facade，仅返回 pending，底层委托 notify manager） | Approvals |
-| `approval.get` | — | `{ requestId }` | 请求详情 | Approvals |
-| `approval.takeOver` | — | `{ requestId }` | 接管请求 | Approvals |
+| `approval.list` | — | `{ status? }` | 审批请求列表（R13 thin facade，仅返回 pending，底层委托 notify manager） | Approvals, ApprovalCenter (hydration) |
 | WebSocket `notify.approval.request` | `approval.request` | `{ type, requestId, pluginId, payload }` | 新审批请求推送（Go Core 实际事件名，UI 监听此事件） | ApprovalCenter, Approvals |
 | WebSocket `notify.approval.result` | `approval.response` | `{ type, requestId, action, respondedBy }` | 审批结果同步（Go Core 实际事件名） | ApprovalCenter, Approvals |
-| WebSocket `approval.viewing` | — | `{ requestId, deviceId }` | 多设备查看状态 | Approvals |
 
-> **注意**: `approval.approve` 和 `approval.deny` **没有单独实现**。审批/拒绝操作统一走 `notify.respond`（见 2.1 节），action 字段为 `"allow"` | `"deny"`。`approval.list` 是 R13 实现的 thin facade，直接委托给 notify manager 的 `ListApprovals()`，仅返回 pending 状态的请求（无 approved/denied 过滤器）。
+> **注意**: `approval.approve`、`approval.deny`、`approval.get`、`approval.takeOver`、`approval.viewing` **没有实现**。审批/拒绝操作统一走 `notify.respond`（见 2.1 节），action 字段为 `"allow"` | `"deny"`。`approval.list` 是 R13 实现的 thin facade，仅返回 pending 状态的请求。
 
-> **ApprovalCenter 全局面板**: `app/console/system-ui/approval-center.tsx` 是一个固定在右下角（`z-[200]`）的可折叠全局审批面板，无需导航到 Approvals 页面即可查看和处理审批。它监听 `notify.approval.request` 获取新请求，监听 `notify.approval.result` 自动移除已处理的请求。通过 `AppShell` 的 `core` prop 挂载。
+> **ApprovalCenter 全局面板**: `app/console/system-ui/approval-center.tsx` 是一个固定在右下角（`z-[200]`）的可折叠全局审批面板，无需导航到 Approvals 页面即可查看和处理审批。挂载时通过 `approval.list` 拉取已有 pending approvals（hydration），WS 重连后自动重新 hydration。同时监听 `notify.approval.request` 接收新推送，监听 `notify.approval.result` 自动移除已处理的请求。通过 `AppShell` 的 `core` prop 挂载。
 
 ### 2.3 logs — 运行时日志
 
@@ -202,8 +199,8 @@ Stream 页面:
 | Plugin Detail | `plugin.get`, `plugin.status`, `plugin.check`, `plugin.install.plan`, `plugin.install.execute`, `plugin.files.list`, `plugin.cache.list`, `plugin.cache.clear.plan`, `plugin.cache.clear.execute`, `plugin.permissions.list`, `plugin.permissions.grant`, `plugin.permissions.revoke`, `plugin.config.get`, `plugin.config.set`, `plugin.config.schema`, `plugin.history`, `logs.query(source: plugin)`, `task.event` (WS) |
 | Settings | `config.list`, `config.get`, `config.set`, `config.reset`, `node.list`, `node.update`, `plugin.list`, `config.changed` (WS) |
 | Logs & Audit | `logs.tail`, `logs.query`, `logs.export`, `logs.event` (WS), `audit.list`, `audit.get`, `audit.export`, `audit.event` (WS), `session.events`, `plugin.history` |
-| Approvals | `notify.list`, `notify.markRead`, `notify.markAllRead`, `notify.event` (WS), `notify.request`, `notify.respond`, `approval.list`, `approval.get`, `approval.takeOver`, `notify.approval.request` (WS), `notify.approval.result` (WS), `approval.viewing` (WS) |
-| ApprovalCenter (global overlay) | `notify.approval.request` (WS — triggers new approval card), `notify.approval.result` (WS — auto-removes resolved), `notify.respond` (Approve/Deny actions) |
+| Approvals | `notify.list`, `notify.markRead`, `notify.markAllRead`, `notify.event` (WS), `notify.request`, `notify.respond`, `approval.list`, `notify.approval.request` (WS), `notify.approval.result` (WS) |
+| ApprovalCenter (global overlay) | `approval.list` (hydration on mount/reconnect), `notify.approval.request` (WS — new approval), `notify.approval.result` (WS — auto-remove resolved), `notify.respond` (Approve/Deny), `connectionStatus` (WS — re-hydrate on reconnect) |
 
 ---
 

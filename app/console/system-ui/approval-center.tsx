@@ -31,6 +31,49 @@ export function ApprovalCenter({ core }: ApprovalCenterProps) {
   const [acting, setActing] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  // Hydrate existing pending approvals on mount and reconnect
+  const hydrateFromCore = useCallback(async () => {
+    try {
+      const result = await core.call<{ approvals?: Array<Record<string, unknown>> }>('approval.list', {});
+      const list = Array.isArray(result?.approvals) ? result.approvals : [];
+      setApprovals(prev => {
+        const existing = new Set(prev.map(a => a.requestId));
+        const incoming: PendingApproval[] = [];
+        for (const item of list) {
+          if (existing.has(item.requestId as string)) continue;
+          incoming.push({
+            requestId: (item.requestId || '') as string,
+            pluginId: (item.pluginId || '') as string,
+            title: (item.action || item.title || 'Approval Request') as string,
+            body: (item.detail || item.body || '') as string,
+            detail: (item.detail) as string | undefined,
+            planId: (item.planId) as string | undefined,
+            createdAt: (item.createdAt || Date.now()) as number,
+          });
+        }
+        if (incoming.length > 0) {
+          setExpanded(true);
+          return [...prev, ...incoming];
+        }
+        return prev;
+      });
+    } catch {
+      // Server may not support approval.list yet — ignore
+    }
+  }, [core]);
+
+  useEffect(() => {
+    hydrateFromCore();
+  }, [hydrateFromCore]);
+
+  // Re-hydrate on reconnect
+  useEffect(() => {
+    const unsubConn = core.on('connectionStatus', () => {
+      if (core.isConnected) hydrateFromCore();
+    });
+    return unsubConn;
+  }, [core, hydrateFromCore]);
+
   // Listen for pushed approval events
   useEffect(() => {
     const unsub = core.on('notify.approval.request', (event) => {
