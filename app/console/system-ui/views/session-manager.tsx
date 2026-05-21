@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { RefreshCw } from 'lucide-react';
 import type { CoreClient, SessionInfo } from '../../core/core-types';
 import { PageHeader, PageLoading, PageError, PageEmpty, PageOffline, type PageState } from './page-utils';
+import { listFromResponse, normalizeSessionInfo } from './core-response-utils';
 
 interface SessionManagerProps {
   core: CoreClient;
@@ -36,9 +37,10 @@ export function SessionManager({ core }: SessionManagerProps) {
     setError(null);
 
     try {
-      const result = await core.call<SessionInfo[]>('session.list');
-      setSessions(result || []);
-      setPageState((result?.length ?? 0) > 0 ? 'ready' : 'empty');
+      const result = await core.call<unknown>('session.list');
+      const normalized = listFromResponse<Partial<SessionInfo> & Record<string, unknown>>(result, 'sessions').map(normalizeSessionInfo);
+      setSessions(normalized);
+      setPageState(normalized.length > 0 ? 'ready' : 'empty');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load sessions');
       setPageState('error');

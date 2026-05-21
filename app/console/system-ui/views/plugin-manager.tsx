@@ -4,6 +4,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { RefreshCw, Search } from 'lucide-react';
 import type { CoreClient, PluginInfo, BlockerEntry } from '../../core/core-types';
 import { PageHeader, PageLoading, PageError, PageEmpty, PageOffline, type PageState } from './page-utils';
+import { listFromResponse } from './core-response-utils';
 
 interface PluginManagerProps {
   core: CoreClient;
@@ -45,9 +46,10 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
     setError(null);
 
     try {
-      const result = await core.call<PluginInfo[]>('plugin.list');
-      setPlugins(result || []);
-      setPageState((result?.length ?? 0) > 0 ? 'ready' : 'empty');
+      const result = await core.call<unknown>('plugin.list');
+      const normalized = listFromResponse<PluginInfo>(result, 'plugins');
+      setPlugins(normalized);
+      setPageState(normalized.length > 0 ? 'ready' : 'empty');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load plugins');
       setPageState('error');

@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { RefreshCw } from 'lucide-react';
 import type { CoreClient, ConfigEntry } from '../../core/core-types';
 import { PageLoading, PageError, PageOffline, type PageState } from './page-utils';
+import { listFromResponse } from './core-response-utils';
 
 type SettingsCategory = 'general' | 'core' | 'node' | 'plugins' | 'access-control';
 
@@ -47,8 +48,8 @@ export function Settings({ core }: SettingsProps) {
     setError(null);
 
     try {
-      const result = await core.call<ConfigEntry[]>('config.list');
-      setConfigs(result || []);
+      const result = await core.call<unknown>('config.list');
+      setConfigs(listFromResponse<ConfigEntry>(result, 'configs'));
       setPageState('ready');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load settings');
@@ -94,6 +95,30 @@ export function Settings({ core }: SettingsProps) {
     }
   }
 
+  async function handleReset(key: string) {
+    const config = configs.find(c => c.key === key);
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await core.call('config.reset', { key, expectedRevision: config?.revision ?? 0 });
+      setDirtyValues(prev => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      fetchConfigs();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Reset failed';
+      if (msg.includes('CONFIG_CONFLICT') || msg.includes('conflict') || msg.includes('revision')) {
+        setSaveError(`CONFIG_CONFLICT: "${key}" was modified by another device. Refresh and try again.`);
+      } else {
+        setSaveError(msg);
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function handleValueChange(key: string, value: unknown) {
     const config = configs.find(c => c.key === key);
     setDirtyValues(prev => ({
@@ -108,10 +133,10 @@ export function Settings({ core }: SettingsProps) {
 
   const categoryConfigs = configs.filter(c => {
     if (activeCategory === 'general') return c.key.startsWith('ui.') || c.key.startsWith('app.');
-    if (activeCategory === 'core') return c.key.startsWith('host.') || c.key.startsWith('log.') || c.key.startsWith('session.') || c.key.startsWith('relay.') || c.key.startsWith('crypto.');
+    if (activeCategory === 'core') return c.key.startsWith('core.') || c.key.startsWith('topology.');
     if (activeCategory === 'node') return c.key.startsWith('node.');
     if (activeCategory === 'plugins') return c.key.startsWith('plugin.');
-    if (activeCategory === 'access-control') return c.key.startsWith('auth.') || c.key.startsWith('access.');
+    if (activeCategory === 'access-control') return c.key.startsWith('core.auth.') || c.key.startsWith('auth.') || c.key.startsWith('access.');
     return true;
   });
 
@@ -193,7 +218,8 @@ export function Settings({ core }: SettingsProps) {
                       </button>
                     )}
                     <button
-                      onClick={() => core.call('config.reset', { key: config.key })}
+                      onClick={() => handleReset(config.key)}
+                      disabled={saving}
                       className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-400 text-xs rounded transition-colors"
                     >
                       Reset

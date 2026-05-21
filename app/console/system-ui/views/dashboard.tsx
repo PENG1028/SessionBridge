@@ -5,6 +5,7 @@ import { RefreshCw } from 'lucide-react';
 import type { CoreClient } from '../../core/core-types';
 import type { NodeInfo, SessionInfo, PluginInfo } from '../../core/core-types';
 import { PageHeader, PageLoading, PageError, PageEmpty, PageOffline, type PageState } from './page-utils';
+import { listFromResponse, normalizeNodeInfo, normalizeSessionInfo } from './core-response-utils';
 
 // ─── Dashboard Props ───────────────────────────────────────────
 interface DashboardProps {
@@ -38,18 +39,21 @@ export function Dashboard({ core, onNavigate }: DashboardProps) {
 
     try {
       const [nodeResult, sessionResult, pluginResult] = await Promise.all([
-        core.call<NodeInfo[]>('node.list'),
-        core.call<SessionInfo[]>('session.list'),
-        core.call<PluginInfo[]>('plugin.list'),
+        core.call<unknown>('node.list'),
+        core.call<unknown>('session.list'),
+        core.call<unknown>('plugin.list'),
       ]);
+      const normalizedNodes = listFromResponse<Partial<NodeInfo> & Record<string, unknown>>(nodeResult, 'nodes').map(normalizeNodeInfo);
+      const normalizedSessions = listFromResponse<Partial<SessionInfo> & Record<string, unknown>>(sessionResult, 'sessions').map(normalizeSessionInfo);
+      const normalizedPlugins = listFromResponse<PluginInfo>(pluginResult, 'plugins');
 
-      setNodes(nodeResult || []);
-      setSessions(sessionResult || []);
-      setPlugins(pluginResult || []);
+      setNodes(normalizedNodes);
+      setSessions(normalizedSessions);
+      setPlugins(normalizedPlugins);
 
-      const hasData = (nodeResult?.length ?? 0) > 0
-        || (sessionResult?.length ?? 0) > 0
-        || (pluginResult?.length ?? 0) > 0;
+      const hasData = normalizedNodes.length > 0
+        || normalizedSessions.length > 0
+        || normalizedPlugins.length > 0;
 
       setPageState(hasData ? 'ready' : 'empty');
     } catch (err) {

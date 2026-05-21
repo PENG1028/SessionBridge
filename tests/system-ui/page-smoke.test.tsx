@@ -9,6 +9,7 @@ import type { CoreClient } from '../../app/console/core/core-types';
 import { Dashboard } from '../../app/console/system-ui/views/dashboard';
 import { SessionManager } from '../../app/console/system-ui/views/session-manager';
 import { PluginManager } from '../../app/console/system-ui/views/plugin-manager';
+import { NodeManager } from '../../app/console/system-ui/views/node-manager';
 import { Settings } from '../../app/console/system-ui/views/settings';
 import { LogsViewer } from '../../app/console/system-ui/views/logs-viewer';
 import { Approvals } from '../../app/console/system-ui/views/approvals';
@@ -37,15 +38,15 @@ function createMockClient(mockData: Record<string, unknown>): CoreClient {
 describe('Dashboard page', () => {
   it('renders with mock node/session/plugin data', async () => {
     const client = createMockClient({
-      'node.list': [
+      'node.list': { nodes: [
         { nodeId: 'n1', name: 'node-main', status: 'online', role: 'relay' },
         { nodeId: 'n2', name: 'node-vps', status: 'online', role: 'leaf' },
         { nodeId: 'n3', name: 'node-staging', status: 'offline', role: 'leaf' },
-      ],
-      'session.list': [
+      ] },
+      'session.list': { sessions: [
         { sessionId: 's1', kind: 'shell', status: 'running', uptime: '30m' },
         { sessionId: 's2', kind: 'claude-code', status: 'stopped', uptime: '2h' },
-      ],
+      ] },
       'plugin.list': [
         { pluginId: 'claude-code', version: '1.0.0', status: 'enabled', type: 'feature' },
         { pluginId: 'shell', version: '1.0.0', status: 'enabled', type: 'feature' },
@@ -77,9 +78,9 @@ describe('Dashboard page', () => {
 describe('Sessions page', () => {
   it('can replay stream', async () => {
     const client = createMockClient({
-      'session.list': [
+      'session.list': { sessions: [
         { sessionId: 'sess_test', kind: 'shell', pluginId: 'shell', nodeId: 'n1', status: 'running', uptime: '5m' },
-      ],
+      ] },
       'stream.replay': { lines: ['line 1', 'line 2', 'line 3'] },
     });
 
@@ -93,9 +94,9 @@ describe('Sessions page', () => {
 
   it('uses stream.write for input (not process.stdin)', async () => {
     const client = createMockClient({
-      'session.list': [
+      'session.list': { sessions: [
         { sessionId: 'sess_test', kind: 'shell', status: 'running' },
-      ],
+      ] },
     });
 
     render(<SessionManager core={client} />);
@@ -110,18 +111,18 @@ describe('Sessions page', () => {
 describe('Settings page', () => {
   it('handles CONFIG_CONFLICT error', async () => {
     const client = createMockClient({
-      'config.list': [
+      'config.list': { configs: [
         { key: 'host.name', value: 'test', revision: 1 },
         { key: 'host.port', value: 8080, revision: 1 },
-      ],
+      ] },
     });
 
     // Mock config.set to throw CONFIG_CONFLICT
     (client.call as ReturnType<typeof vi.fn>).mockImplementation(async (method: string, params?: Record<string, unknown>) => {
-      if (method === 'config.list') return [
+      if (method === 'config.list') return { configs: [
         { key: 'host.name', value: 'test', revision: 1 },
         { key: 'host.port', value: 8080, revision: 1 },
-      ];
+      ] };
       if (method === 'config.set') {
         throw new Error('CONFIG_CONFLICT: key was modified by another device');
       }
@@ -137,9 +138,9 @@ describe('Settings page', () => {
 
   it('uses config.set with expectedRevision', async () => {
     const client = createMockClient({
-      'config.list': [
+      'config.list': { configs: [
         { key: 'test.key', value: 'old', revision: 3 },
-      ],
+      ] },
     });
 
     render(<Settings core={client} />);
@@ -162,6 +163,38 @@ describe('Plugins page', () => {
 
     await vi.waitFor(() => {
       expect(client.call).toHaveBeenCalledWith('plugin.list');
+    });
+  });
+});
+
+describe('Nodes page', () => {
+  it('unwraps node.list response and uses node.info for details', async () => {
+    const client = createMockClient({
+      'node.list': {
+        nodes: [
+          { nodeId: 'peer-1', name: 'Peer 1', status: 'connected', address: 'ws://peer/peer/ws' },
+        ],
+      },
+      'node.info': {
+        nodeId: 'peer-1',
+        name: 'Peer 1',
+        status: 'connected',
+        os: 'linux',
+        arch: 'amd64',
+      },
+    });
+
+    render(<NodeManager core={client} />);
+
+    await vi.waitFor(() => {
+      expect(screen.getByText('Peer 1')).toBeDefined();
+    });
+
+    fireEvent.click(screen.getByText('Peer 1'));
+
+    await vi.waitFor(() => {
+      expect(client.call).toHaveBeenCalledWith('node.info', { nodeId: 'peer-1' });
+      expect(screen.getByText('linux amd64')).toBeDefined();
     });
   });
 });

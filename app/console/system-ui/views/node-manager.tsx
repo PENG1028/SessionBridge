@@ -4,14 +4,15 @@ import React, { useState, useEffect } from 'react';
 import { RefreshCw } from 'lucide-react';
 import type { CoreClient, NodeInfo } from '../../core/core-types';
 import { PageHeader, PageLoading, PageError, PageEmpty, PageOffline, type PageState } from './page-utils';
+import { listFromResponse, normalizeNodeInfo } from './core-response-utils';
 
 interface NodeManagerProps {
   core: CoreClient;
 }
 
 /**
- * Node Manager — view all nodes and their health status.
- * Calls: node.list, node.get, node.health
+ * Node Manager - view all nodes and their health status.
+ * Calls: node.list, node.info, node.health
  * Events: node.health (WS), node.connected (WS), node.disconnected (WS)
  */
 export function NodeManager({ core }: NodeManagerProps) {
@@ -30,9 +31,10 @@ export function NodeManager({ core }: NodeManagerProps) {
     setError(null);
 
     try {
-      const result = await core.call<NodeInfo[]>('node.list');
-      setNodes(result || []);
-      setPageState((result?.length ?? 0) > 0 ? 'ready' : 'empty');
+      const result = await core.call<unknown>('node.list');
+      const normalized = listFromResponse<Partial<NodeInfo> & Record<string, unknown>>(result, 'nodes').map(normalizeNodeInfo);
+      setNodes(normalized);
+      setPageState(normalized.length > 0 ? 'ready' : 'empty');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load nodes');
       setPageState('error');
@@ -41,10 +43,10 @@ export function NodeManager({ core }: NodeManagerProps) {
 
   async function fetchNodeDetail(nodeId: string) {
     try {
-      const detail = await core.call<NodeInfo>('node.get', { nodeId });
-      setSelectedNode(detail);
-    } catch {
-      // Keep selection but show error in detail panel
+      const detail = await core.call<Partial<NodeInfo> & Record<string, unknown>>('node.info', { nodeId });
+      setSelectedNode(normalizeNodeInfo(detail));
+    } catch (err) {
+      setSelectedNode(prev => prev ? { ...prev, status: 'error', address: err instanceof Error ? err.message : prev.address } : prev);
     }
   }
 
@@ -90,37 +92,37 @@ export function NodeManager({ core }: NodeManagerProps) {
               <span className={`w-3 h-3 rounded-full flex-shrink-0 ${
                 node.status === 'online' ? 'bg-green-500' :
                 node.status === 'connecting' ? 'bg-yellow-500' :
+                node.status === 'error' ? 'bg-red-500' :
                 'bg-gray-600'
               }`} />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="font-medium text-gray-200">{node.name}</span>
-                  <span className="text-xs text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded">{node.role || '—'}</span>
+                  <span className="text-xs text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded">{node.role || '-'}</span>
                   <span className="text-xs text-gray-600">{node.version || ''}</span>
                 </div>
                 <div className="text-xs text-gray-500 mt-0.5">
                   {node.address || ''}
-                  {node.uptime ? ` · up ${node.uptime}` : ''}
+                  {node.uptime ? ` - up ${node.uptime}` : ''}
                 </div>
               </div>
               <span className="text-xs text-gray-500 flex-shrink-0">
-                CPU {node.cpu || '—'}
+                CPU {node.cpu || '-'}
               </span>
             </button>
           ))}
         </div>
 
-        {/* Node detail panel (simplified drawer) */}
         {selectedNode && (
           <div className="mt-6 p-4 bg-gray-900 rounded-lg border border-gray-800">
             <h3 className="text-sm font-medium text-gray-200 mb-3">Node Detail: {selectedNode.name}</h3>
             <div className="grid grid-cols-2 gap-3 text-sm">
               <DetailRow label="ID" value={selectedNode.nodeId} />
-              <DetailRow label="Role" value={selectedNode.role || '—'} />
+              <DetailRow label="Role" value={selectedNode.role || '-'} />
               <DetailRow label="Status" value={selectedNode.status} />
-              <DetailRow label="Version" value={selectedNode.version || '—'} />
-              <DetailRow label="Uptime" value={selectedNode.uptime || '—'} />
-              <DetailRow label="Address" value={selectedNode.address || '—'} />
+              <DetailRow label="Version" value={selectedNode.version || '-'} />
+              <DetailRow label="Uptime" value={selectedNode.uptime || '-'} />
+              <DetailRow label="Address" value={selectedNode.address || '-'} />
               {selectedNode.os && <DetailRow label="OS" value={`${selectedNode.os} ${selectedNode.arch || ''}`} />}
               {selectedNode.memory && <DetailRow label="Memory" value={selectedNode.memory} />}
               {selectedNode.disk && <DetailRow label="Disk" value={selectedNode.disk} />}
