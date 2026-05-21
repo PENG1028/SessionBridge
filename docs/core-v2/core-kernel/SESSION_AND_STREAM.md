@@ -97,6 +97,89 @@ Tab 不是 session 的"所有者"
 localStorage 不能保存 session 真相
 ```
 
+### Run Index — 高于 Session 的资源层
+
+Run 是比 Session 更高一层的资源抽象，为长期运行的进程提供结构化索引：
+
+```
+Run = 长期资源 ID (runId)
+  - runId 是资源的长期标识符，存活时间跨越多轮 UI 挂载/卸载
+  - 包含 sessionId (实际进程引用)
+  - 包含 kind (terminal | claude-code | ...)
+  - 包含 label (人类可读名称)
+  - 包含 policy (onDisconnect, persistHistory, restartRestore 等)
+  - 包含 metadata (来源标记等，Core 存储但不解释)
+
+Session = 进程实例
+  - sessionId 绑定到 OS 进程
+  - runId → sessionId 是一对一映射
+  - session 可能因进程退出而失效，但 run 记录保留
+```
+
+**UI tab 是 Run 的投影，不是 Session 的直接投影：**
+
+```
+┌────────────────────────────────────────────┐
+│               UI Tab (投影)                │
+│                                            │
+│  runId: run_abc123                         │
+│  label: "bash"                             │
+│  state: running                            │
+│                                            │
+│  ┌──────────────────────────────────────┐  │
+│  │  xterm.js 终端画面                    │  │
+│  │  (通过 sessionId 获取 stream 数据)    │  │
+│  └──────────────────────────────────────┘  │
+│                                            │
+│  [Stop] 按钮 → run.stop(runId)             │
+│  关闭 Tab → 仅取消订阅，不调用 run.stop    │
+└────────────────────────────────────────────┘
+```
+
+**Run 生命周期操作：**
+
+| 操作 | API | 说明 |
+|---|---|---|
+| 创建 | `run.create` | 创建 run + session + process，返回 runId + sessionId |
+| 列表 | `run.list` | 按 kind/state 列出所有 run，用于恢复/attach |
+| 信息 | `run.info` | 查询单个 run 的完整信息（含 sessionId、process 状态） |
+| 停止 | `run.stop` | 停止 run（发送信号给进程，更新 run 状态） |
+| 策略更新 | `run.updatePolicy` | 运行时更新 run 的持久化/重连策略 |
+
+**Terminal 启动路径（Round 9+）：**
+
+```
+用户点击 Start
+  → run.create({ kind:'terminal', command, pty, policy, metadata })
+  → 获得 runId + sessionId
+  → stream.subscribe(sessionId, 'stdout')
+  → stream.subscribe(sessionId, 'stderr')
+  → stream.replay(sessionId)  // 回放已有历史
+  → stream.chunk 事件实时输出到 xterm.js
+```
+
+**Terminal 恢复路径：**
+
+```
+页面加载 / Tab 恢复
+  → run.list({ kind:'terminal' })
+  → 用户看到现有 run 列表
+  → 用户点击 Attach
+  → run.info(runId) → 获得 sessionId
+  → stream.subscribe + stream.replay
+```
+
+**关键原则：**
+
+```
+runId 是长期资源 ID    — 比 UI tab 生命周期更长
+UI tab 是投影          — tab 关闭不停止 run
+sessionId 是进程引用    — 通过 runId 间接访问
+stream.write 是唯一 stdin 入口 — 所有输入经过 stream 通道
+metadata 是不透明透传  — Core 存储但从不解释
+policy 控制生命周期    — onDisconnect: keep_running 确保 tab 关闭后 run 继续
+```
+
 ---
 
 ## 二、Session 生命周期

@@ -5,7 +5,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import type { HostComponentProps } from './host-component-registry';
-import type { NodeInfo } from '../core/core-types';
+import type { NodeInfo, RunInfo } from '../core/core-types';
 import { hostComponentRegistry } from './host-component-registry';
 
 // ─── TerminalView ────────────────────────────────────────────────
@@ -14,23 +14,29 @@ import { hostComponentRegistry } from './host-component-registry';
  * TerminalView — plugin-host-rendered terminal with xterm.js.
  *
  * Protocol:
- *  - process.spawn  { command, pty: true, cols, rows, targetNodeId? } → stream.chunk events
- *  - stream.replay   { sessionId, streamType, fromSeq }                → replay history
- *  - stream.write    { sessionId, streamType: "stdin", data }          → user input
- *  - process.resize  { sessionId, cols, rows }                         → PTY resize
- *  - process.signal  { sessionId, signal: "SIGTERM" }                  → terminate
+ *  - run.create     { kind, command, pty: true, cols, rows, policy, metadata, targetNodeId? }
+ *  - run.list       { kind: 'terminal' }                                → existing runs for restore
+ *  - run.info       { runId }                                           → sessionId for attach
+ *  - run.stop       { runId, signal: 'SIGTERM' }                        → terminate
+ *  - stream.subscribe / stream.replay / stream.write / process.resize   → unchanged
+ *
+ * UI tab is a projection; Core runId is the long-term resource ID.
+ * Close tab / unmount only cancels subscriptions, does NOT call run.stop.
  *
  * targetNodeId routing: CoreClient._callAs extracts targetNodeId from params
  * and places it at the action.request message level for topology routing.
- * Empty targetNodeId = local session.
  */
 export function TerminalView({ core, config }: HostComponentProps) {
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [runId, setRunId] = useState<string | null>(null);
   const [command, setCommand] = useState('bash');
   const [status, setStatus] = useState<'idle' | 'running' | 'error'>('idle');
   const [error, setError] = useState<string | null>(null);
   const [nodes, setNodes] = useState<NodeInfo[]>([]);
   const [targetNodeId, setTargetNodeId] = useState('');
+  const [existingRuns, setExistingRuns] = useState<RunInfo[]>([]);
+  const [refreshingRuns, setRefreshingRuns] = useState(false);
+  const [showRuns, setShowRuns] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -39,14 +45,17 @@ export function TerminalView({ core, config }: HostComponentProps) {
   const unsubStopRef = useRef<(() => void) | null>(null);
   const unsubConnectedRef = useRef<(() => void) | null>(null);
   const sessionIdRef = useRef<string | null>(null);
+  const runIdRef = useRef<string | null>(null);
   // Track last seen seq per stream type for replay-after-reconnect
   const lastSeqRef = useRef<{ stdout: number; stderr: number }>({ stdout: 0, stderr: 0 });
 
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
+  useEffect(() => { runIdRef.current = runId; }, [runId]);
 
-  // Fetch node list for targetNodeId selector
+  // Fetch node list for targetNodeId selector + initial runs
   useEffect(() => {
     core.call<{ nodes?: NodeInfo[] }>('node.list').then(r => setNodes(r?.nodes || [])).catch(() => {});
+    handleRefreshRuns();
   }, [core]);
 
   // Initialize xterm.js once
@@ -241,42 +250,109 @@ export function TerminalView({ core, config }: HostComponentProps) {
     setError(null);
     setStatus('running');
     try {
-      // Get initial terminal dimensions from fit addon
       const dims = fitRef.current?.proposeDimensions();
-      const result = await core.call<{ sessionId: string; state: string }>('process.spawn', {
+      const params: Record<string, unknown> = {
+        kind: 'terminal',
+        label: command,
+        pluginId: 'terminal',
         command,
         pty: true,
         cols: dims?.cols ?? 80,
         rows: dims?.rows ?? 24,
-        ...(targetNodeId ? { targetNodeId } : {}),
-      });
+        policy: {
+          onDisconnect: 'keep_running',
+          onCoreShutdown: 'terminate',
+          persistHistory: true,
+          restartRestore: false,
+        },
+        metadata: { source: 'system-ui-terminal' },
+      };
+      if (targetNodeId) params.targetNodeId = targetNodeId;
+
+      const result = await core.call<RunInfo>('run.create', params);
+      const rid = result.runId;
       const sid = result.sessionId;
+      setRunId(rid);
       setSessionId(sid);
-      termRef.current?.writeln(`\r\n\x1b[32mSession ${sid.slice(0, 12)} started\x1b[0m`);
+      termRef.current?.writeln(`\r\n\x1b[32mSession ${sid.slice(0, 12)} started (run: ${rid.slice(0, 12)})\x1b[0m`);
       subscribeSession(sid);
     } catch (err) {
       setStatus('error');
       setError(String(err));
       termRef.current?.writeln(`\r\n\x1b[91m[Error: ${err}]\x1b[0m`);
       setSessionId(null);
+      setRunId(null);
     }
   }
 
   async function handleStop() {
     const sid = sessionIdRef.current;
+    const rid = runIdRef.current;
     if (!sid) return;
-    try {
-      await core.call('process.signal', { sessionId: sid, signal: 'SIGTERM' });
-      termRef.current?.writeln(`\r\n\x1b[90m[Session terminated]\x1b[0m`);
-    } catch (err) {
-      termRef.current?.writeln(`\r\n\x1b[91m[Stop error: ${err}]\x1b[0m`);
+
+    // Prefer run.stop when runId is available; fallback to process.signal for legacy sessions
+    if (rid) {
+      try {
+        await core.call('run.stop', { runId: rid, signal: 'SIGTERM', ...(targetNodeId ? { targetNodeId } : {}) });
+        termRef.current?.writeln(`\r\n\x1b[90m[Run stopped]\x1b[0m`);
+      } catch (err) {
+        // Best-effort: fallback to process.signal
+        try {
+          await core.call('process.signal', { sessionId: sid, signal: 'SIGTERM', ...(targetNodeId ? { targetNodeId } : {}) });
+        } catch { /* best-effort */ }
+        termRef.current?.writeln(`\r\n\x1b[91m[Stop error: ${err}]\x1b[0m`);
+      }
+    } else {
+      // Legacy fallback: no runId, use process.signal directly
+      try {
+        await core.call('process.signal', { sessionId: sid, signal: 'SIGTERM', ...(targetNodeId ? { targetNodeId } : {}) });
+        termRef.current?.writeln(`\r\n\x1b[90m[Session terminated]\x1b[0m`);
+      } catch (err) {
+        termRef.current?.writeln(`\r\n\x1b[91m[Stop error: ${err}]\x1b[0m`);
+      }
     }
+
     unsubChunkRef.current?.();
     unsubChunkRef.current = null;
     unsubStopRef.current?.();
     unsubStopRef.current = null;
     setSessionId(null);
+    setRunId(null);
     setStatus('idle');
+  }
+
+  // ── attach ──
+  async function handleAttach(rid: string) {
+    setError(null);
+    setStatus('running');
+    try {
+      const info = await core.call<RunInfo>('run.info', { runId: rid, ...(targetNodeId ? { targetNodeId } : {}) });
+      const sid = info.sessionId;
+      setRunId(rid);
+      setSessionId(sid);
+      termRef.current?.writeln(`\r\n\x1b[32mAttached to run ${rid.slice(0, 12)} (session: ${sid.slice(0, 12)})\x1b[0m`);
+      subscribeSession(sid);
+    } catch (err) {
+      setStatus('error');
+      setError(String(err));
+      termRef.current?.writeln(`\r\n\x1b[91m[Attach error: ${err}]\x1b[0m`);
+      setSessionId(null);
+      setRunId(null);
+    }
+  }
+
+  // ── refresh existing runs ──
+  async function handleRefreshRuns() {
+    setRefreshingRuns(true);
+    try {
+      const params: Record<string, unknown> = { kind: 'terminal' };
+      if (targetNodeId) params.targetNodeId = targetNodeId;
+      const result = await core.call<{ runs: RunInfo[] }>('run.list', params);
+      setExistingRuns(result?.runs || []);
+    } catch {
+      // silent
+    }
+    setRefreshingRuns(false);
   }
 
   const nodeOptions = [
@@ -311,14 +387,24 @@ export function TerminalView({ core, config }: HostComponentProps) {
         </select>
 
         {status === 'idle' && (
-          <button onClick={handleStart} className="px-2 py-0.5 rounded bg-green-800 text-green-200 hover:bg-green-700 cursor-pointer">
-            Start
-          </button>
+          <>
+            <button onClick={handleStart} className="px-2 py-0.5 rounded bg-green-800 text-green-200 hover:bg-green-700 cursor-pointer">
+              Start
+            </button>
+            <button
+              onClick={() => { setShowRuns(!showRuns); if (!showRuns) handleRefreshRuns(); }}
+              className="px-2 py-0.5 rounded bg-gray-800 text-gray-400 hover:bg-gray-700 cursor-pointer"
+            >
+              {showRuns ? 'Hide Runs' : `Runs${existingRuns.length > 0 ? ` (${existingRuns.length})` : ''}`}
+            </button>
+          </>
         )}
         {status === 'running' && (
           <>
             <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
-            <span className="text-green-400 font-mono">{sessionId?.slice(0, 8)}</span>
+            <span className="text-green-400 font-mono" title={runId || sessionId || ''}>
+              run: {(runId || sessionId)?.slice(0, 8)}
+            </span>
             <button onClick={handleStop} className="px-2 py-0.5 rounded bg-red-800 text-red-200 hover:bg-red-700 cursor-pointer">
               Stop
             </button>
@@ -328,6 +414,46 @@ export function TerminalView({ core, config }: HostComponentProps) {
           <span className="text-red-400 truncate max-w-[200px]">{error}</span>
         )}
       </div>
+
+      {/* Existing runs dropdown */}
+      {showRuns && status === 'idle' && (
+        <div className="px-3 py-2 border-b border-gray-800 bg-gray-900/50 max-h-[200px] overflow-y-auto">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[10px] text-gray-500">
+              {existingRuns.length > 0 ? `${existingRuns.length} existing run(s)` : 'No existing terminal runs'}
+            </span>
+            <button
+              onClick={handleRefreshRuns}
+              disabled={refreshingRuns}
+              className="text-[10px] px-2 py-0.5 rounded bg-gray-800 text-gray-400 hover:bg-gray-700"
+            >
+              {refreshingRuns ? '...' : 'Refresh'}
+            </button>
+          </div>
+          {existingRuns.length > 0 && (
+            <div className="space-y-1">
+              {existingRuns.map(r => (
+                <div key={r.runId} className="flex items-center justify-between text-[11px] px-2 py-1 bg-gray-900 rounded">
+                  <span className="text-gray-400 truncate flex-1">
+                    {r.label || r.process?.command || r.runId?.slice(0, 8) || 'untitled'}
+                    <span className={`ml-2 ${r.state === 'running' ? 'text-green-500' : 'text-gray-500'}`}>
+                      [{r.state}]
+                    </span>
+                  </span>
+                  {r.state === 'running' && (
+                    <button
+                      onClick={() => handleAttach(r.runId)}
+                      className="px-2 py-0.5 rounded bg-gray-700 text-gray-200 hover:bg-gray-600 ml-2"
+                    >
+                      Attach
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* xterm container */}
       <div ref={containerRef} className="flex-1 min-h-0" />
