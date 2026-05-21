@@ -11,7 +11,7 @@ SessionNode's Go Core is a WebSocket-based capability executor that exposes a un
 
 The process management layer (`process.Manager`) supports spawning subprocesses via both pipe-based and PTY-based execution, with stream output pushed to connected WebSocket subscribers via push callbacks. History recording captures stdout/stderr events for replay and tail operations. A permission checking layer (`permission.Checker`) enforces that every capability invocation is both declared (in `AllPluginsCaps`) and granted (in policy store), with support for `allow`, `deny`, and `ask` modes.
 
-The system is designed around a single-tenant architecture per process. Each node runs one Core instance, and remote nodes connect via authenticated WebSocket relays. The plugin platform is transitioning from Phase 1 toward Phase 2, with core management capabilities implemented (list, get, status, permissions, config, cache plan/execute, plugin history, and install lifecycle — plan/execute/uninstall/files.register — as a dry-run framework) and only `plugin.cache.clear` (bulk without plan) remaining as a stub. A new `task` package provides in-memory task tracking for install/uninstall/check/cache_clear operations, and the dispatcher's Planner interface wires plan creation, approval, and denial into the execution chain.
+The system is designed around a single-tenant architecture per process. Each node runs one Core instance, and remote nodes connect via authenticated WebSocket relays. The plugin platform is transitioning from Phase 1 toward Phase 2, with core management capabilities implemented (list, get, status, permissions, config, cache plan/execute, plugin history, and install lifecycle -- plan/execute/uninstall/files.register -- as a dry-run framework) and only `plugin.cache.clear` (bulk without plan) remaining as a stub. A new `task` package provides in-memory task tracking for install/uninstall/check/cache_clear operations, and the dispatcher's Planner interface wires plan creation, approval, and denial into the execution chain. Five `network.*` capabilities have been declared (R12) as DangerousCapability with policy/audit boundaries, though Core does not yet sandbox or proxy OS child process network traffic.
 
 ---
 
@@ -31,7 +31,7 @@ The system is designed around a single-tenant architecture per process. Each nod
 | 10 | `process.spawn` permission | ✅ Declared | In `AllPluginsCaps` for shell plugin, requires grant |
 | 11 | `fs.read`/`fs.write` permission | ✅ Declared | For file-explorer plugin with path constraints |
 | 12 | `env.read` permission | ✅ Declared | For shell plugin (`env.*` capabilities) |
-| 13 | Network permission | ❌ Not declared | No `network.*` capability in `AllPluginsCaps` or permission system |
+| 13 | Network permission | ✅ Declared (R12) | 5 `network.*` capabilities declared (connect/listen/dns full declaration; proxy/fetch partial not_implemented). All are DangerousCapability. Policy/audit boundaries exist but Core does NOT sandbox/proxy OS child process network traffic. |
 | 14 | Custom React UI adapter | ⏳ Partial | `system-ui` adapter declared; host rendering works for panels/views |
 | 15 | Plugin management panel | ✅ `PluginManager` / `PluginDetail` | Basic capability status, grants, cache plan/execute, and settings save work; Claude-specific remediation UI remains |
 | 16 | CLI adapter | ❌ Not implemented | CLI adapter spec exists (`PLUGIN_ADAPTERS.md`) but not wired into Core |
@@ -122,7 +122,25 @@ These capabilities are declared in `AllPluginsCaps` for their respective plugins
 
 ### 3.13 Network permission
 
-No `network.*` capability exists anywhere in the system: not in `AllPluginsCaps`, not in the permission registry, not in the executor handlers. Claude Code needs network access for API calls to Anthropic, package registry fetches, git operations, and other HTTP interactions. Without a declared network capability, Claude Code has no way to request or be granted network access through the permission system. This is a significant gap for the permission/audit model: the Claude CLI subprocess can technically make its own network calls as any OS process can, but without a `network.*` declaration the Core cannot enforce domain/port constraints, log outbound access, or present permission prompts. The network permission should be declared with constraints for allowed domains, protocols, and ports.
+**Status: Resolved (R12) -- Declaration and policy boundaries in place.**
+
+Five `network.*` capabilities have been declared in the system: `network.connect`, `network.listen`, `network.dns`, `network.proxy`, and `network.fetch`. All are registered as `DangerousCapability` (default must be `ask` or `deny`, never `allow`). The permission registry and executor handlers are wired. `plugin.check` returns structured blockers: `missing_grant` for connect/listen/dns on desktop platforms without an explicit grant, and `unsupported_capability` for proxy/fetch (marked `not_implemented`) and all network.* on mobile.
+
+**What this enables:**
+- Claude Code and other plugins can declare `network.*` permissions in their manifests
+- The permission system requires explicit grants for network access (no default allow)
+- Audit events can be logged on network capability invocations
+- Permission prompts ("This plugin wants network access") can be presented in UI
+- The dispatcher's 8-step chain enforces that network capability calls go through plan/approve if needed
+
+**What this does NOT do:**
+- Core does NOT sandbox or proxy OS child process network traffic
+- The `claude` CLI subprocess can still make its own HTTP calls at the OS level without Core interception
+- No domain/port constraint enforcement at the network layer
+- No traffic logging or inspection beyond what the audit system records at capability invocation level
+- `network.proxy` and `network.fetch` return `not_implemented` -- there is no Core-managed proxy, tunnel, or HTTP client yet
+
+**Remaining work (P1):** Core-managed proxy/sandbox, domain/port constraints, traffic logging/inspection. These are infrastructure features that can be layered on top of the declaration boundaries established in R12.
 
 ### 3.14 Custom React UI adapter
 
@@ -178,10 +196,10 @@ The CLI adapter specification exists in `PLUGIN_ADAPTERS.md` with detailed comma
 
 | Priority Item | Gap Reference | Effort Estimate | Status |
 |---|---|---|---|
-| **Subprocess tree tracking** | §3.4 | Medium (2-3 days) | ❌ Not implemented |
-| **Stdin security policy** | §3.6 | Small (1-2 days) | ✅ Implemented — two-layer defense-in-depth: default policy excludes stdin; Record() redacts even if explicitly configured |
+| **Subprocess tree tracking** | §3.4 | Medium (2-3 days) | ✅ Done (R11) -- OS-level best-effort: Windows taskkill /T, Unix pgrep+/proc |
+| **Stdin security policy** | §3.6 | Small (1-2 days) | ✅ Implemented -- two-layer defense-in-depth: default policy excludes stdin; Record() redacts even if explicitly configured |
 
-**Justification:** Without subprocess tree tracking, Claude Code cannot properly manage long-running child processes spawned by its commands (build tools, test runners, watchers). Stdin security policy is now implemented — sensitive data entered through Claude Code sessions is always redacted before history storage. (Claude CLI detection, plugin.check real resolution, and stdin security policy are now implemented and no longer P0 blockers.)
+**Justification:** Subprocess tree tracking is now implemented (R11) as best-effort OS-level termination. Stdin security policy is now implemented -- sensitive data entered through Claude Code sessions is always redacted before history storage.
 
 ### P1 — Should Have
 
@@ -189,17 +207,17 @@ The CLI adapter specification exists in `PLUGIN_ADAPTERS.md` with detailed comma
 |---|---|---|---|
 | **Real package manager execution** | §3.17 | Medium (3-5 days) | `process.spawn` + stream.subscribe for install commands; package manager detection (apt/brew/choco) |
 | **Cache size estimation** | §3.7, §3.9 | Small (1-2 days) | `plugin.cache.clear.plan` extension |
-| **Network permission** | §3.13 | Medium (2-3 days) | New capability declaration + permission constraints |
+| **Network proxy/sandbox (Core-managed)** | §3.13 | Large (1-2 weeks) | New proxy/sandbox infrastructure; domain/port constraints; traffic logging. **Declaration done (R12); enforcement is next.** |
 | **Background/detached execution** | §3.2 | Medium (3-5 days) | Process Manager spawn mode; OS-specific process flags |
 | **Plugins with size estimation** | §3.8 | Small (1 day) | Additional manifest declarations |
 
-**Justification:** The install lifecycle dry-run framework is implemented -- plans, approval gating, and history recording work, but no real packages can be installed yet. Real package manager execution via `process.spawn` is the next step. Cache management without size estimation is a poor user experience -- users cannot make informed decisions about what to clear. Network permission is needed for any useful AI interaction but could be temporarily bypassed. Background execution enables long-running tasks to survive Core restart or disconnect. (Approval workflow integration for high-risk grants is now implemented -- the dispatcher's Planner interface gates execution on plan approval through `notify.respond`.)
+**Justification:** The install lifecycle dry-run framework is implemented -- plans, approval gating, and history recording work, but no real packages can be installed yet. Real package manager execution via `process.spawn` is the next step. Cache management without size estimation is a poor user experience -- users cannot make informed decisions about what to clear. Network permission declarations exist (R12) but Core-managed proxy/sandbox enforcement for domain/port constraints and traffic inspection is still needed. Background execution enables long-running tasks to survive Core restart or disconnect. (Approval workflow integration for high-risk grants is now implemented -- the dispatcher's Planner interface gates execution on plan approval through `notify.respond`.)
 
 ### P2 — Nice to Have
 
 | Priority Item | Gap Reference | Effort Estimate | Dependencies |
 |---|---|---|---|
-| **Full PTY on Windows** | §3.1 | Large (1-2 weeks) | ConPTY API integration |
+| **Full PTY on Windows (ConPTY)** | §3.1 | Large (1-2 weeks) | ConPTY API integration |
 | **History size-based rotation** | §3.5 | Small (1-2 days) | History store extension |
 | **CLI adapter runtime** | §3.16 | Large (1-2 weeks) | New package for CLI command parsing/routing |
 | **Capability-aware plugin panels** | §3.15 | Small (1-2 days) | Frontend-only change |
@@ -341,7 +359,7 @@ Claude Code's React components need a bidirectional message channel to: (1) send
 | Stream I/O | `stream.subscribe`, `stream.write`, `stream.replay`, `stream.tail`, `stream.list` | ✅ Implemented | None |
 | Filesystem | `fs.read`, `fs.write`, `fs.list`, `fs.stat`, `fs.mkdir`, `fs.remove` | ✅ Implemented | None |
 | Environment | `env.get`, `env.list`, `env.checkBinary`, `env.which`, `env.home`, `env.cwd` | ✅ Implemented | `plugin.check` binary/command/env detection (P0 ✅ DONE) |
-| Network | `network.*` | ❌ Not declared | New capability (P1) |
+| Network | `network.*` | ✅ Declared (R12) -- 5 caps declared; connect/listen/dns full declaration; proxy/fetch partial not_implemented; policy/audit boundaries exist; Core does NOT sandbox OS child process traffic | Core-managed proxy/sandbox (P1) |
 | Plugin management | `plugin.list`, `plugin.status`, `plugin.cache.plan/execute`, `plugin.config.*` | ✅ Partially (cache.clear bulk is stub) | Size estimation (P1) |
 | Plugin install lifecycle | `plugin.install`, `plugin.install.plan`, `plugin.install.execute`, `plugin.uninstall`, `plugin.files.register` | ✅ Implemented (dry-run framework: PlanStore in-memory, requires approved plan; real package manager integration is NEXT step) | Real package manager execution (P1) |
 | Task management | `task.list`, `task.info` | ✅ Implemented (TaskStore in-memory; tracks install/uninstall/check/cache_clear tasks) | Persistent task storage (P2) |
@@ -351,5 +369,5 @@ Claude Code's React components need a bidirectional message channel to: (1) send
 
 ---
 
-> **Last updated:** 2026-05-20 (install lifecycle implemented as dry-run framework: plan/approve/execute/uninstall/files.register; task.list/task.info added; PlanStore in-memory; dispatcher Planner interface gating execution on plan approval; real package manager integration is NEXT step)
+> **Last updated:** 2026-05-21 (R12: network.* declaration complete -- 5 caps with policy/audit boundaries; DangerousCapability; connect/listen/dns full declaration on desktop; proxy/fetch partial not_implemented; mobile all unsupported; Core does NOT sandbox OS child process traffic; Core-managed proxy/sandbox remains P1 gap)
 > **Related docs:** [CAPABILITY_STATUS.md](./CAPABILITY_STATUS.md) | [PLUGIN_CORE_API_CONTRACT.md](./PLUGIN_CORE_API_CONTRACT.md) | [PLUGIN_MANIFEST_SPEC.md](./PLUGIN_MANIFEST_SPEC.md) | [PLUGIN_SECURITY_MODEL.md](./PLUGIN_SECURITY_MODEL.md) | [PLUGIN_ADAPTERS.md](./PLUGIN_ADAPTERS.md) | [PLUGIN_LIFECYCLE.md](./PLUGIN_LIFECYCLE.md)

@@ -1,9 +1,9 @@
 # Core Capability Architecture Audit
 
-> 审计日期: 2026-05-20
+> 审计日期: 2026-05-20 (updated 2026-05-21 — R12 network capability declarations)
 > 审计范围: SessionNode v2 Go Core + System UI Plugin Host
 > 审计目的: 明确当前状态、能力分布、平台支持、架构清洁度，指导下一步重构/抽象决策
-> 工作区状态: go-core 多文件已修改（dispatcher, executor, notify, plan, capabilities, protocol errors, tests）；新增 internal/task/ 包和 internal/executor/task_cmds.go；docs/core-v2/ 和 tests/system-ui/ 为未跟踪的新文档
+> 工作区状态: go-core 多文件已修改（dispatcher, executor, notify, plan, capabilities, protocol errors, tests）；新增 internal/task/ 包和 internal/executor/task_cmds.go；R12 新增 network.* 5 个 capability 声明（connect/listen/dns/proxy/fetch）
 
 ---
 
@@ -152,7 +152,11 @@
 | `session.history.list` | session.history | `history_cmds.go` | **implemented** | Yes | 列出历史 |
 | `session.history.clear.plan` | session.history | `history_cmds.go` | **implemented** | Yes | 清除历史计划 |
 | `session.history.clear.execute` | session.history | `history_cmds.go` | **implemented** | Yes | 执行清除历史 |
-| `network.*` | network | — | **not declared** | No | 完全未声明。Claude CLI 子进程可自行发起网络调用，但 Core 权限/审计模型无法约束 |
+| `network.connect` | network | `network_cmds.go` | **declared (R12)** | Yes | 声明 + 策略/审计边界。声明为 DangerousCapability（默认 deny），`plugin.check` 返回 `missing_grant`。桌面平台 OS 子进程可自行发起网络连接，但 Core 不拦截/代理流量 |
+| `network.listen` | network | `network_cmds.go` | **declared (R12)** | Yes | 声明 + 策略/审计边界。桌面平台完整支持（CLI 子进程可绑定端口）。声明为 DangerousCapability，`plugin.check` 返回 `missing_grant` |
+| `network.dns` | network | `network_cmds.go` | **declared (R12)** | Yes | 声明 + 策略/审计边界。桌面平台完整支持（OS 级别 DNS 解析）。声明为 DangerousCapability，`plugin.check` 返回 `missing_grant` |
+| `network.proxy` | network | `network_cmds.go` | **declared (R12), partial** | Yes | 声明为 `not_implemented`。无 Core 管理的代理/隧道。声明为 DangerousCapability。移动端不支持 |
+| `network.fetch` | network | `network_cmds.go` | **declared (R12), partial** | Yes | 声明为 `not_implemented`。无 Core 管理的 HTTP 客户端。声明为 DangerousCapability。移动端不支持 |
 | `approval.*` | approval | — | **not declared** | No | 审批流程，设计文档已计划但未实现 |
 | `task.*` | task | `task_cmds.go` | **partial** | Yes | `task.list` 和 `task.info` 已实现；TaskStore 为 in-memory；Task 类型覆盖 install/uninstall/check/cache_clear |
 | `audit.*` | audit | — | **not declared** | No | 审计日志查询，设计文档已计划但未实现 |
@@ -166,11 +170,13 @@
 | **stub** | 1 (`plugin.cache.clear` — 仅 bulk clear 无 plan 仍为桩) |
 | **partial** | 2 (`session.events`, `task.*`) |
 | **not declared** (仅在 KnownCapabilities，未注册 executor handler) | 12 |
-| **not declared** (完全缺失，不在 KnownCapabilities) | 4 (`network.*`, `approval.*`, `audit.*`, `action.*`) |
+| **not declared** (完全缺失，不在 KnownCapabilities) | 3 (`approval.*`, `audit.*`, `action.*`) |
+| **declared + partial (not_implemented)** | 2 (`network.proxy`, `network.fetch`) |
+| **declared (declaration/policy only)** | 3 (`network.connect`, `network.listen`, `network.dns`) |
 
-**总计**: executor `registerDefaults()` 注册 76 个 capability（73 完整实现 + 1 stub + 2 partial），KnownCapabilities 声明 84 个设计能力。
+**总计**: executor `registerDefaults()` 注册 81 个 capability（73 完整实现 + 1 stub + 2 partial + 5 network declared），KnownCapabilities 声明 89 个设计能力。
 
-**变化说明**: Round 7: 5 个原 stub capability（`plugin.install`, `plugin.install.plan`, `plugin.install.execute`, `plugin.uninstall`, `plugin.files.register`）已实现为 dry-run 框架；新增 `task.list` 和 `task.info`。Round 8: 新增 5 个 run 能力（`run.create`, `run.list`, `run.info`, `run.stop`, `run.updatePolicy`）+ `internal/run/` 包。
+**变化说明**: Round 7: 5 个原 stub capability（`plugin.install`, `plugin.install.plan`, `plugin.install.execute`, `plugin.uninstall`, `plugin.files.register`）已实现为 dry-run 框架；新增 `task.list` 和 `task.info`。Round 8: 新增 5 个 run 能力（`run.create`, `run.list`, `run.info`, `run.stop`, `run.updatePolicy`）+ `internal/run/` 包。Round 12: 新增 5 个 `network.*` capability 声明（`network.connect`, `network.listen`, `network.dns`, `network.proxy`, `network.fetch`）——全部为 DangerousCapability，桌面平台 connect/listen/dns 为 declaration 级别 full，proxy/fetch 为 partial (not_implemented)，移动端全部 unsupported。
 
 ---
 
@@ -240,18 +246,24 @@
 
 ### 3.6 Network
 
+> **Important**: Core does NOT sandbox arbitrary OS child process network traffic. The `network.*` capabilities provide **declaration, policy, and audit boundaries only**. OS child processes (e.g., Claude CLI, npm, git) can make network calls at the OS level without going through any Core proxy or interception layer. The capability declarations exist so the permission system can require explicit grants, log audit events, and present permission prompts -- but they do not enforce network isolation.
+
 | Capability | Windows Desktop | Linux Server | macOS | Mobile/Browser | Current Implementation | Gap |
 |---|---|---|---|---|---|---|
-| `network.*` | **not declared** | **not declared** | **not declared** | **not declared** | 完全未声明。Claude CLI 子进程可自行发起网络调用，但 Core 权限/审计模型需要声明 | Claude Code 调用 API 缺少权限/审计约束 |
+| `network.connect` | **full** (declaration) | **full** (declaration) | **full** (declaration) | **unsupported** | 声明为 DangerousCapability。桌面平台 OS 子进程可自行发起出站连接，Core 不拦截/代理流量。`plugin.check` 返回 `missing_grant` | 无 Core 代理/沙箱。移动端不支持 |
+| `network.listen` | **full** (declaration) | **full** (declaration) | **full** (declaration) | **unsupported** | 声明为 DangerousCapability。桌面平台 OS 子进程可绑定端口。`plugin.check` 返回 `missing_grant` | 移动端不支持 |
+| `network.dns` | **full** (declaration) | **full** (declaration) | **full** (declaration) | **unsupported** | 声明为 DangerousCapability。桌面平台 OS 级别 DNS 解析。`plugin.check` 返回 `missing_grant` | 移动端不支持 |
+| `network.proxy` | **partial** (not_implemented) | **partial** (not_implemented) | **partial** (not_implemented) | **unsupported** | 声明为 DangerousCapability。无 Core 管理的代理/隧道实现。`plugin.check` 返回 `unsupported_capability` | 所有平台均缺失 Core 代理 |
+| `network.fetch` | **partial** (not_implemented) | **partial** (not_implemented) | **partial** (not_implemented) | **unsupported** | 声明为 DangerousCapability。无 Core 管理的 HTTP 客户端。`plugin.check` 返回 `unsupported_capability` | 所有平台均缺失 Core fetch 实现 |
 
 ### 3.7 Summary — Platform Gap Count
 
 | Platform | Full | Partial | Unsupported | Not Implemented | Not Declared |
 |---|---|---|---|---|---|
-| Windows Desktop | 41 | 6 | 0 | 0 | 17 |
-| Linux Server | 47 | 0 | 0 | 0 | 17 |
-| macOS | 47 | 0 | 0 | 0 | 17 |
-| Mobile/Browser | 23 | 4 | 16 | 0 | 17 |
+| Windows Desktop | 44 | 8 | 0 | 0 | 16 |
+| Linux Server | 50 | 2 | 0 | 0 | 16 |
+| macOS | 50 | 2 | 0 | 0 | 16 |
+| Mobile/Browser | 23 | 4 | 21 | 0 | 16 |
 
 ---
 
@@ -331,7 +343,7 @@ go-core/internal/platform/
 | Background/detached process | detached process | **implemented** (via run.create + keep_running policy) | 所有平台 | — |
 | File read/write/list | `fs.*` | **implemented** | 无 | — |
 | Permission approval (`ask` grant) | `notify.request` + `permission.*` | **implemented** | 无 | — |
-| Network outbound (HTTP API calls) | `network.*` | **not declared**（Claude CLI 子进程技术上可自行发起网络调用，但权限/审计模型缺失） | 所有平台 | **P0** |
+| Network outbound (HTTP API calls) | `network.*` | **declared (R12)** — 5 capabilities declared with DangerousCapability status; desktop connect/listen/dns full (declaration); proxy/fetch partial (not_implemented)。Core 不拦截 OS 子进程流量。移动端全部 unsupported | 所有平台 | **P1** (declaration done, Core proxy/sandbox pending) |
 | Cache management (`~/.claude`) | `plugin.cache.*` | **implemented** | 无 | — |
 | Config management | `plugin.config.*` | **implemented** | `config.set` not declared | **P2** |
 | Multiple sessions/conversations | `session.*` | **implemented** | 无 | — |
@@ -347,11 +359,11 @@ go-core/internal/platform/
 
 | Priority | Count | Items |
 |---|---|---|
-| **P0** (必须实现) | 2 | Windows PTY support（Linux-first skeleton 不依赖）、`network.*`（权限/审计声明，非纯技术阻塞 — Claude CLI 子进程可自行发起网络调用） |
-| **P1** (应该实现) | 2 | Real package manager execution（install commands via process.spawn）、`process.kill` + Windows signal |
+| **P0** (必须实现) | 1 | Windows PTY support（Linux-first skeleton 不依赖） |
+| **P1** (应该实现) | 3 | `network.*` Core proxy/sandbox（声明已完成 R12，策略/审计边界已建立）、Real package manager execution（install commands via process.spawn）、`process.kill` + Windows signal |
 | **P2** (锦上添花) | 4 | Persistent plan/task stores、disk-mode plugin history、mobile client control、path constraints enforcement |
 
-**结论**: 当前离能搭 Claude Code 插件差 **2 个 P0 项**——`network.*` 是完全未声明的空白领域（Claude CLI 子进程技术上可自行发起网络调用，但缺少权限/审计模型声明），Windows PTY 需 ConPTY 支持（Linux-first Claude Code skeleton 可先绕过）。OS subprocess tree tracking 已在 R11 (2026-05-21) 以 best-effort 方式实现：`process.signal(tree=true)` 和 `run.stop(tree=true)` 终止完整 OS 进程树（Windows: taskkill /T, Unix: /proc traversal with pgrep -P fallback）。CLI 检测（`env.which`/`env.checkBinary`）已实现，install lifecycle 已实现为 dry-run 框架（plan/approve/execute/uninstall/files.register），审批工作流通过 dispatcher Planner 接口和 `notify.respond` 已连接。预计 P0 工作 1 周，P1 + P2 再 1-2 周。
+**结论**: 当前离能搭 Claude Code 插件差 **1 个 P0 项**——Windows PTY 需 ConPTY 支持（Linux-first Claude Code skeleton 可先绕过）。`network.*` 已在 R12 (2026-05-21) 完成声明（5 个 capability：connect/listen/dns full declaration + proxy/fetch partial not_implemented），权限/审计边界已建立，但 Core 仍不拦截 OS 子进程网络流量。OS subprocess tree tracking 已在 R11 (2026-05-21) 以 best-effort 方式实现：`process.signal(tree=true)` 和 `run.stop(tree=true)` 终止完整 OS 进程树（Windows: taskkill /T, Unix: /proc traversal with pgrep -P fallback）。CLI 检测（`env.which`/`env.checkBinary`）已实现，install lifecycle 已实现为 dry-run 框架（plan/approve/execute/uninstall/files.register），审批工作流通过 dispatcher Planner 接口和 `notify.respond` 已连接。预计 P0 工作 1 周，P1 + P2 再 1-2 周。
 
 ---
 
@@ -447,7 +459,7 @@ The OS-level process tree termination is **best-effort**, NOT a full process sup
 - **tree=false (default)**: Behavior is completely unchanged from pre-R11. Only the directly-spawned process receives the signal.
 - **Core restart restore**: Still NOT supported. If Go Core restarts, run state is lost, OS processes do not survive, and previous process trees are not re-trackable.
 - **Cross-node process trees**: Not supported. Tree termination applies only to the local node's process hierarchy.
-- **Claude Code production**: Still NOT ready. Requires `network.*` capability declaration and Windows PTY support (Linux-first skeleton can proceed without PTY).
+- **Claude Code production**: Still NOT ready. Requires Windows PTY support (Linux-first skeleton can proceed without PTY). `network.*` capability declarations are now complete (R12) but Core does not sandbox/proxy OS child process network traffic.
 - **Real package manager install**: Still dry-run only. The PlanStore, approval flow, and task tracking framework are in place but `process.spawn` is not wired to package manager commands.
 
 ### Step 6: Only Then — Claude Code Plugin Skeleton
@@ -472,7 +484,7 @@ The OS-level process tree termination is **best-effort**, NOT a full process sup
 - **文件拆分已完成**: `plugin_cmds.go` (1027 行) 已拆分为 `plugin_install_cmds.go`、`plugin_cache_cmds.go`、`plugin_permission_cmds.go`、`plugin_files_cmds.go`、`plugin_manage_cmds.go`、`task_cmds.go`，每个文件职责明确。
 - **Go Core 与 System UI 之间存在模糊带**：plugin manifest 类型在 TS 和 Go 中独立维护，无共享 schema 约束。目前两个现存插件（terminal、system-info）声明简单，尚未暴露问题，但随插件数量和复杂度增长会加速漂移。
 - **E2E 测试 Windows 可移植性差**：测试中大量使用 `echo`、`cat`、`sleep` 等 Unix 命令，在 Windows 上无法运行。
-- **Claude Code 就绪度 ~80%**：基础能力（session/stream/process/fs/permission/env CLI 检测）齐全，install lifecycle 已实现（dry-run），审批工作流已连接，task 追踪已就位，OS subprocess tree 已实现（R11, best-effort）——仍缺 2 个 P0 能力（Windows PTY、network permissions）和真实包管理器执行。
+- **Claude Code 就绪度 ~85%**：基础能力（session/stream/process/fs/permission/env CLI 检测）齐全，install lifecycle 已实现（dry-run），审批工作流已连接，task 追踪已就位，OS subprocess tree 已实现（R11, best-effort），`network.*` 已声明（R12, 5 capabilities with policy/audit boundaries）——仍缺 1 个 P0 能力（Windows PTY）和真实包管理器执行。
 
 ### B. Cleanliness Verdict
 
@@ -489,7 +501,7 @@ The OS-level process tree termination is **best-effort**, NOT a full process sup
 
 | Gap | Impact | Priority |
 |---|---|---|
-| `network.*` 完全未声明 | 权限/审计模型缺失（Claude CLI 子进程技术上可自行发起网络调用，但 Core 无法约束/审计） | P0 |
+| `network.*` 声明完成 (R12) | 5 个 capability 已声明（connect/listen/dns full; proxy/fetch partial not_implemented）。策略/审计边界已建立，但 Core 代理/沙箱未实现，OS 子进程网络流量不受拦截 | P1 |
 | OS subprocess tree | R11 (2026-05-21) 已实现 best-effort 方案：`process.signal(tree=true)` 和 `run.stop(tree=true)` 终止完整 OS 进程树。Windows: taskkill /T, Unix: /proc traversal with pgrep -P fallback。不再阻塞 Claude Code 开发。 | — |
 | Windows PTY 仅有 pipe fallback | Windows 终端无 TTY 交互 | P0 |
 | `process.kill` / `process.status` 未声明 | 进程生命周期管理不完整 | P1 |
@@ -500,11 +512,11 @@ The OS-level process tree termination is **best-effort**, NOT a full process sup
 
 | Priority | Status | Items |
 |---|---|---|
-| **P0** | 2 项缺失 | Windows PTY（Linux-first skeleton 不依赖）、network permissions（权限/审计声明，Claude CLI 子进程技术上可自行发起网络调用） |
-| **P1** | 3 项部分/缺失 | Real package manager execution、process.kill/status handler、path constraints enforcement |
+| **P0** | 1 项缺失 | Windows PTY（Linux-first skeleton 不依赖） |
+| **P1** | 4 项部分/缺失 | `network.*` Core proxy/sandbox（声明已完成 R12）、Real package manager execution、process.kill/status handler、path constraints enforcement |
 | **P2** | 3 项微调 | Persistent plan/task stores、disk-mode plugin history、mobile client control |
 
-**Install lifecycle（dry-run）和 approval workflow 已就位。OS subprocess tree 已在 R11 (2026-05-21) 以 best-effort 方式实现（`process.signal(tree=true)` / `run.stop(tree=true)`）。`network.*` 声明完成之前，不应该开始完整的 Claude Code 插件开发。Linux-first skeleton 可先行（不依赖 Windows PTY）。**
+**Install lifecycle（dry-run）和 approval workflow 已就位。OS subprocess tree 已在 R11 (2026-05-21) 以 best-effort 方式实现（`process.signal(tree=true)` / `run.stop(tree=true)`）。`network.*` 声明已在 R12 (2026-05-21) 完成（5 个 capability：connect/listen/dns full declaration + proxy/fetch partial not_implemented），权限/审计边界已建立。Linux-first skeleton 可先行（不依赖 Windows PTY）。**
 
 ### E. Next Agent Prompt
 

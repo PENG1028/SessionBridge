@@ -194,7 +194,7 @@ For selected target node, the Plugin Manager shows:
 | Plugin | Status | Platform Support | Dependencies | Permissions | Actions |
 |---|---|---|---|---|---|
 | Terminal | enabled | partial/full | ok | granted | Open / Disable |
-| Claude Code | missing deps | partial/full | `claude` missing | needs grants | Check / Install / Configure |
+| Claude Code | missing deps | partial/full | `claude` missing | needs grants (network.* requires explicit grant) | Check / Install / Configure |
 | System Info | enabled | full | ok | granted | Open |
 
 ### 7.2 Plugin Detail
@@ -252,7 +252,7 @@ Platform: linux/amd64
 Checks:
   - claude binary: missing
   - node/npm: ok
-  - network outbound: unsupported/not declared or pending grant
+  - network.*: declared (R12) but requires explicit grant (DangerousCapability); proxy/fetch not_implemented
   - cache path ~/.claude: accessible
 
 Actions:
@@ -504,7 +504,7 @@ If not ready:
 | Stdin safety | history stdin redaction | implemented | secret protection |
 | Process tree | `process.signal(tree=true)`, `run.stop(tree=true)` | **R11: partial OS tree (2026-05-21)** — tree=false unchanged on Unix; tree=true kills descendants first then parent. Windows: taskkill /T /F (kernel-mode, no enumeration). Windows wmic childrenOf is unreliable; tree=false also /T /F (platform limitation). | child process tracking |
 | Run index | `run.create`, `run.list`, `run.info`, `run.stop`, `run.updatePolicy` | **verified in R10 with disconnect/reconnect (2026-05-21)** | long-lived resource tracking |
-| Network declaration | `network.*` | not declared | permission/audit |
+| Network declaration | `network.*` | **declared (R12)** — 5 caps: connect/listen/dns (full declaration), proxy/fetch (partial not_implemented); DangerousCapability; policy/audit boundaries exist; Core does NOT sandbox OS child process traffic | permission/audit |
 | File access | `fs.*` | implemented, constraints weak | code work |
 | Permissions | `plugin.permissions.*` | implemented, approval incomplete | safety |
 | Install lifecycle | `plugin.install`, `plugin.install.plan`, `plugin.install.execute`, `plugin.uninstall`, `plugin.files.register` | implemented (dry-run framework with PlanStore, approval flow, history; real package manager execution is NEXT step) | setup |
@@ -535,7 +535,7 @@ If not ready:
 
 | Gap | Why It Matters |
 |---|---|
-| `network.*` capability declaration | permission/audit for outbound network |
+| `network.*` Core proxy/sandbox enforcement | declaration done (R12), but Core does not intercept/proxy OS child process network traffic; domain/port constraints and traffic inspection are P1 |
 | Path constraints enforcement | file operations must be scoped |
 | ~~Background/detached process~~ | ~~long-running dev tasks~~ **Done:** run.create with keep_running policy + run info/stop lifecycle provides long-lived resource index |
 | Disk plugin history | plugin history should survive restart |
@@ -551,7 +551,47 @@ If not ready:
 | Mobile optimized plugin manager | phone workflow quality |
 | Structured Claude Code adapter | richer UI than terminal text |
 
-### 11.4 Explicitly Not Supported (as of Round 10, 2026-05-21)
+### 11.4 Network Capability Declarations (R12, 2026-05-21)
+
+**What was added:** Five `network.*` capability declarations:
+
+| Capability | Desktop Status | Mobile Status | Handler Behavior |
+|---|---|---|---|
+| `network.connect` | full (declaration) | unsupported | Returns success; `plugin.check` returns `missing_grant` without explicit grant |
+| `network.listen` | full (declaration) | unsupported | Returns success; `plugin.check` returns `missing_grant` without explicit grant |
+| `network.dns` | full (declaration) | unsupported | Returns success; `plugin.check` returns `missing_grant` without explicit grant |
+| `network.proxy` | partial (not_implemented) | unsupported | Returns `not_implemented`; `plugin.check` returns `unsupported_capability` |
+| `network.fetch` | partial (not_implemented) | unsupported | Returns `not_implemented`; `plugin.check` returns `unsupported_capability` |
+
+**Key design decisions:**
+- All `network.*` capabilities are `DangerousCapability` -- default must be `ask` or `deny`, never `allow`
+- `plugin.check` returns structured blockers: `missing_grant` for connect/listen/dns without explicit grant, `unsupported_capability` for proxy/fetch and all network.* on mobile
+- The dispatcher's 8-step chain enforces permission checks on network capability invocations
+- Audit events are logged on network capability calls
+
+**What this enables:**
+- Plugins (e.g., Claude Code) can declare `network.*` permissions in their manifests
+- The permission system requires explicit grants for network access
+- Permission prompts can be presented in UI for network capability requests
+- The plan/approve workflow can gate high-risk network operations
+
+**What this does NOT do (still needed):**
+- Core does NOT sandbox, proxy, or intercept OS child process network traffic
+- OS child processes (Claude CLI, npm, git, etc.) can make network calls at the OS level without Core awareness
+- No domain/port constraint enforcement at the network layer
+- No traffic logging or deep packet inspection
+- `network.proxy` and `network.fetch` are `not_implemented` stubs (no Core-managed proxy/tunnel/HTTP client)
+- No network isolation between plugins
+
+**Remaining network work (future rounds):**
+1. Core-managed proxy/sandbox: optional intercept layer for OS child process network traffic
+2. Domain/port constraint enforcement in policy
+3. Network traffic logging and audit integration
+4. `network.proxy` implementation: Core-managed tunnel/proxy service
+5. `network.fetch` implementation: Core-managed HTTP client with policy constraints
+6. Per-plugin network isolation
+
+### 11.5 Explicitly Not Supported (as of Round 12, 2026-05-21)
 
 These items are explicitly out of scope for the current implementation and are documented to set clear expectations:
 
@@ -561,6 +601,7 @@ These items are explicitly out of scope for the current implementation and are d
 | OS-level subprocess tree tracking | **Best-effort, PARTIAL on Windows (R11, 2026-05-21)** | `process.signal(tree=true)` and `run.stop(tree=true)` now terminate the full OS process tree. This is best-effort, NOT a full process supervisor. Windows: `killProcessTree` uses `taskkill /T /F` (kernel-mode, no wmic dependency); `childrenOf` via wmic is unreliable and tests are marked partial when enumeration fails. Windows `signalByPID` always uses /T /F — tree=false also kills children (platform limitation). Unix: pgrep-based /proc traversal. Core restart restore is NOT supported. |
 | Claude Code production readiness | **Not supported** | The Claude Code plugin is still a skeleton. Real CLI binary detection, spawn, stream-json parsing, tool-use approval UI, and session management are not yet implemented end-to-end. |
 | Real package manager install execution | **Not supported** | `plugin.install.execute` is a dry-run framework. Actual `apt`, `npm`, `pip`, or other package manager commands are not wired to `process.spawn`. The PlanStore, approval flow, and task tracking are in place but execute no real system commands. |
+| Network proxy/sandbox | **Not supported** | `network.*` capabilities are declared (R12) with policy/audit boundaries, but Core does NOT sandbox, proxy, or intercept OS child process network traffic. `network.proxy` and `network.fetch` return `not_implemented`. No domain/port constraint enforcement or traffic inspection exists. OS child processes (e.g., Claude CLI, npm, git) can make network calls at the OS level without Core awareness. |
 
 ---
 
@@ -655,7 +696,7 @@ The UI should receive blockers as a list:
 6. Add capability support resolver and platform model. *(not yet done)*
 7. Extend `plugin.check` to include capability support report.
 8. ~~Implement OS-level subprocess tree tracking.~~ **Done (R11, 2026-05-21) — PARTIAL on Windows:** `process.signal(tree=true)` / `run.stop(tree=true)` terminate the OS process tree. Windows: `killProcessTree` uses `taskkill /T /F` (kernel-mode, no wmic dependency); `childrenOf` via wmic is unreliable. Unix: pgrep-based /proc traversal. Windows tree=false also /T /F (platform limitation).
-9. Add `network.*` declaration and policy model. *(not yet done)*
+9. Add `network.*` declaration and policy model. **Done (R12, 2026-05-21)** -- 5 capabilities declared (connect/listen/dns full; proxy/fetch partial not_implemented); DangerousCapability; policy/audit boundaries exist. Core proxy/sandbox enforcement remains future work.
 10. Implement real package manager execution (wire process.spawn to install commands).
 11. Start Claude Code plugin skeleton.
 

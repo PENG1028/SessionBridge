@@ -79,6 +79,18 @@ The core plugin (`sessionnode-core`) declares 40 capabilities in `AllPluginsCaps
 |---|---|---|---|
 | `plugin.history` | ✅ implemented | `pluginHistory` | Returns real plugin management events from the history store; Phase 1 is memory-only unless the store is configured for disk |
 
+### Network (5 capabilities) — R12
+
+> **Declaration and policy only.** Core does NOT sandbox or proxy OS child process network traffic. These capabilities provide permission gating, audit logging, and policy boundaries. Desktop OS child processes can still make network calls at the OS level without going through Core.
+
+| Capability | Status | Handler | Desktop | Mobile | Notes |
+|---|---|---|---|---|---|
+| `network.connect` | ✅ declared | `networkConnect` | full (declaration) | unsupported | DangerousCapability. `plugin.check` returns `missing_grant` without explicit grant. OS child processes can already connect at OS level — core does not intercept. |
+| `network.listen` | ✅ declared | `networkListen` | full (declaration) | unsupported | DangerousCapability. `plugin.check` returns `missing_grant` without explicit grant. OS child processes can already bind ports at OS level. |
+| `network.dns` | ✅ declared | `networkDns` | full (declaration) | unsupported | DangerousCapability. `plugin.check` returns `missing_grant` without explicit grant. OS-level DNS resolution already available. |
+| `network.proxy` | ⏳ partial (not_implemented) | `networkProxy` | partial (not_implemented) | unsupported | DangerousCapability. No Core-managed proxy/tunnel implementation. `plugin.check` returns `unsupported_capability`. |
+| `network.fetch` | ⏳ partial (not_implemented) | `networkFetch` | partial (not_implemented) | unsupported | DangerousCapability. No Core-managed HTTP client. `plugin.check` returns `unsupported_capability`. |
+
 ---
 
 ## 2. Status Legend
@@ -126,7 +138,7 @@ These capabilities are registered in `AllPluginsCaps` under non-core plugin IDs.
 
 | Capability | GAP | Notes |
 |---|---|---|
-| `network.*` | ❌ Not declared | No network capability exists in the permission system. Needed for Claude Code API calls. |
+| `network.*` | ✅ Declared (R12) | 5 capabilities declared: `connect`, `listen`, `dns` (full declaration on desktop), `proxy`, `fetch` (partial, `not_implemented`). All are DangerousCapability. Desktop: declaration + policy/audit boundaries; Core does NOT intercept OS child process network traffic. Mobile: unsupported. |
 | `approval.*` | 🔜 Planned | Declared in API contract docs but not in `AllPluginsCaps` |
 | `config.*` (non-plugin) | ⏳ Partial | `config.get`/`config.set` mentioned in API contract but no handlers for global config |
 | `logs.*` | 🔜 Planned | `logs.tail`/`logs.query`/`logs.export` in API contract but not implemented |
@@ -329,6 +341,11 @@ process.*                → process* handlers
 env.*                    → env* handlers
 fs.*                     → fs* handlers
 notify.*                 → notify* handlers
+network.connect          → networkConnect
+network.listen           → networkListen
+network.dns              → networkDns
+network.proxy            → networkProxy
+network.fetch            → networkFetch
 ```
 
 ## Appendix B: AllPluginsCaps by Plugin ID
@@ -360,9 +377,13 @@ notify.*                 → notify* handlers
 "session.{create,destroy,list,info,get}",
 "stream.{subscribe,write,list,replay,tail}",
 "session.history.{getPolicy,setPolicy,stats,list,clear.plan,clear.execute}"
+
+// network — 5 capabilities (R12, declaration + policy only)
+"network.{connect,listen,dns}",
+"network.{proxy,fetch}" // partial (not_implemented)
 ```
 
 ---
 
-> **Last updated:** 2026-05-20 (Round 8: run.create/list/info/stop/updatePolicy added with internal/run package; background/detached process gap addressed via run index)
+> **Last updated:** 2026-05-21 (Round 12: network.* 5 capabilities declared — connect/listen/dns/proxy/fetch; DangerousCapability with declaration/policy boundaries; proxy/fetch are partial not_implemented; mobile unsupported; no Core sandbox/proxy)
 > **Related docs:** [PLUGIN_CORE_API_CONTRACT.md](./PLUGIN_CORE_API_CONTRACT.md) | [PLUGIN_MANIFEST_SPEC.md](./PLUGIN_MANIFEST_SPEC.md) | [PLUGIN_SECURITY_MODEL.md](./PLUGIN_SECURITY_MODEL.md) | [PLUGIN_ADAPTERS.md](./PLUGIN_ADAPTERS.md)
