@@ -189,6 +189,20 @@ describe('Legacy process.signal fallback', () => {
     expect(body.payload.sessionId).toBe('legacy-session');
     expect(body.payload.signal).toBe('SIGTERM');
   });
+
+  it('extracts targetNodeId from params to routing level for process.signal', async () => {
+    const { sentBodies } = injectMockWs(client);
+
+    const promise = client.call('process.signal', { sessionId: 'legacy-session', signal: 'SIGTERM', targetNodeId: 'remote-node-fallback' });
+    resolveAllPending(client, { ok: true });
+    await promise;
+
+    const body = JSON.parse(sentBodies[0]);
+    expect(body.capability).toBe('process.signal');
+    expect(body.targetNodeId).toBe('remote-node-fallback');
+    expect(body.payload.targetNodeId).toBeUndefined();
+    expect(body.payload.sessionId).toBe('legacy-session');
+  });
 });
 
 // ─── Test 4: run.list protocol ────────────────────────────────────
@@ -220,6 +234,19 @@ describe('CoreClient run.list protocol', () => {
     expect(body.capability).toBe('run.list');
     expect(body.payload.kind).toBe('terminal');
   });
+
+  it('extracts targetNodeId from params to routing level for run.list', async () => {
+    const { sentBodies } = injectMockWs(client);
+
+    const promise = client.call('run.list', { kind: 'terminal', targetNodeId: 'remote-node-2' });
+    resolveAllPending(client, { runs: [] });
+    await promise;
+
+    const body = JSON.parse(sentBodies[0]);
+    expect(body.capability).toBe('run.list');
+    expect(body.targetNodeId).toBe('remote-node-2');
+    expect(body.payload.targetNodeId).toBeUndefined();
+  });
 });
 
 // ─── Test 5: run.info protocol ────────────────────────────────────
@@ -244,6 +271,20 @@ describe('CoreClient run.info protocol', () => {
 
     const body = JSON.parse(sentBodies[0]);
     expect(body.capability).toBe('run.info');
+    expect(body.payload.runId).toBe('run_001');
+  });
+
+  it('extracts targetNodeId from params to routing level for run.info', async () => {
+    const { sentBodies } = injectMockWs(client);
+
+    const promise = client.call('run.info', { runId: 'run_001', targetNodeId: 'remote-node-3' });
+    resolveAllPending(client, { runId: 'run_001', kind: 'terminal', state: 'running', sessionId: 'sess_001' });
+    await promise;
+
+    const body = JSON.parse(sentBodies[0]);
+    expect(body.capability).toBe('run.info');
+    expect(body.targetNodeId).toBe('remote-node-3');
+    expect(body.payload.targetNodeId).toBeUndefined();
     expect(body.payload.runId).toBe('run_001');
   });
 });

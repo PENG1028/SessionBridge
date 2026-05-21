@@ -316,6 +316,8 @@ export function TerminalView({ core, config }: HostComponentProps) {
     unsubChunkRef.current = null;
     unsubStopRef.current?.();
     unsubStopRef.current = null;
+    unsubConnectedRef.current?.();
+    unsubConnectedRef.current = null;
     setSessionId(null);
     setRunId(null);
     setStatus('idle');

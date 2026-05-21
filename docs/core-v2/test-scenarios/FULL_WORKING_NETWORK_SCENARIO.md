@@ -394,6 +394,77 @@ This should be Core-driven, not terminal-plugin hardcoded.
 - Server registers local subscription on cross-node `stream.subscribe` so forwarded chunks reach the client.
 - `stream.replay` and `stream.tail` were never broken — they are request/response, handled by `action.request`/`action.response` forwarding.
 
+### 9.5 Disconnect/Reconnect Lifecycle (Round 10 Acceptance Contract)
+
+> **Verified in Round 10 (2026-05-21)**
+
+The terminal disconnect/reconnect lifecycle verifies that a run survives UI/client disconnection and can be recovered, reattached, written to, and explicitly stopped.
+
+**Acceptance contract:**
+
+| Step | Operation | Expected Behavior | Verdict |
+|---|---|---|---|
+| a | UI/browser disconnect does NOT stop the run | `run.create` with `policy.onDisconnect: keep_running`. Closing the browser tab or losing WebSocket connection leaves the OS process running and the run record intact. | Verified |
+| b | `run.list` recovers existing runs after reconnect | After reconnecting, `run.list({ kind: 'terminal' })` returns all runs including those created before disconnect. The UI can rebuild its tab state from this list. | Verified |
+| c | `run.info` returns `sessionId` for attach | `run.info(runId)` response includes the `sessionId` of the underlying process, which the client uses to subscribe to streams. | Verified |
+| d | `stream.replay`/`stream.tail` recovers missed output during disconnect | Output produced while the client was disconnected is persisted in the history store. After reconnect, `stream.replay` (by seq range) and `stream.tail` (last N events) return all missed chunks. | Verified |
+| e | `stream.write` works after reattach | After calling `stream.subscribe` on the recovered `sessionId`, `stream.write` to `stdin` is accepted and forwarded to the process. | Verified |
+| f | `run.stop` is the explicit stop boundary | Only `run.stop(runId)` terminates the run and the underlying process. Tab close, WebSocket disconnect, or stream unsubscribe do NOT stop the run. | Verified |
+
+**Data flow:**
+
+```text
+Client A                    Go Core                    OS Process
+   │                          │                           │
+   │ run.create               │                           │
+   │ ───────────────────────▶ │ spawn                     │
+   │ runId + sessionId        │ ───────────────────────▶  │
+   │ ◀─────────────────────── │                           │
+   │                          │                           │
+   │ stream.subscribe         │                           │
+   │ ───────────────────────▶ │                           │
+   │ stream.chunk (seq:1..N)  │ stdout                    │
+   │ ◀─────────────────────── │ ◀───────────────────────  │
+   │                          │                           │
+   │ ~~~ WS DISCONNECT ~~~    │                           │
+   │                          │ process keeps running     │
+   │                          │ history keeps recording   │
+   │                          │                           │
+   │ ~~~ WS RECONNECT  ~~~    │                           │
+   │ run.list                 │                           │
+   │ ───────────────────────▶ │                           │
+   │ [run_abc] (still active) │                           │
+   │ ◀─────────────────────── │                           │
+   │                          │                           │
+   │ run.info(run_abc)        │                           │
+   │ ───────────────────────▶ │                           │
+   │ { sessionId, status }    │                           │
+   │ ◀─────────────────────── │                           │
+   │                          │                           │
+   │ stream.replay/stream.tail│                           │
+   │ ───────────────────────▶ │ missed events from disk   │
+   │ events (seq:N+1..M)      │                           │
+   │ ◀─────────────────────── │                           │
+   │                          │                           │
+   │ stream.subscribe         │                           │
+   │ ───────────────────────▶ │                           │
+   │ stream.write(stdin)      │                           │
+   │ ───────────────────────▶ │ ───────────────────────▶  │
+   │                          │                           │
+   │ run.stop(run_abc)        │                           │
+   │ ───────────────────────▶ │ kill                      │
+   │ run.stopped              │ ◀───────────────────────  │
+   │ ◀─────────────────────── │                           │
+```
+
+**Key principles enforced:**
+
+- `runId` is the long-lived resource identifier — it outlives UI tabs and WebSocket connections.
+- `sessionId` is the process reference, accessed indirectly via `runId`.
+- Tab close/unsubscribe is NOT a stop signal.
+- `policy.onDisconnect: keep_running` is the default for terminal runs.
+- History persistence bridges the gap between disconnect and reconnect.
+
 ---
 
 ## 10. Claude Code Scenario
@@ -432,7 +503,7 @@ If not ready:
 | History/replay | `stream.replay`, `stream.tail`, `session.history.*` | implemented | session recovery |
 | Stdin safety | history stdin redaction | implemented | secret protection |
 | Process tree | not yet implemented | missing | child process tracking |
-| Run index | `run.create`, `run.list`, `run.info`, `run.stop`, `run.updatePolicy` | **implemented (Round 8)** | long-lived resource tracking |
+| Run index | `run.create`, `run.list`, `run.info`, `run.stop`, `run.updatePolicy` | **verified in R10 with disconnect/reconnect (2026-05-21)** | long-lived resource tracking |
 | Network declaration | `network.*` | not declared | permission/audit |
 | File access | `fs.*` | implemented, constraints weak | code work |
 | Permissions | `plugin.permissions.*` | implemented, approval incomplete | safety |
@@ -479,6 +550,17 @@ If not ready:
 | Shared Go/TS manifest schema | prevent UI/Core drift |
 | Mobile optimized plugin manager | phone workflow quality |
 | Structured Claude Code adapter | richer UI than terminal text |
+
+### 11.4 Explicitly Not Supported (as of Round 10, 2026-05-21)
+
+These items are explicitly out of scope for the current implementation and are documented to set clear expectations:
+
+| Item | Status | Notes |
+|---|---|---|
+| Core restart restore | **Not supported** | Run and session state is lost when Go Core restarts. OS processes do not survive Core restart. On restart, all previously-running runs are marked as stopped; the client must create new runs. The `restartRestore` policy field is declared in the schema but has no runtime effect. |
+| OS-level subprocess tree tracking | **Not supported** | Claude Code and other tools can spawn child processes (build, test, watch) that are not tracked by the process manager. Only the directly-spawned process is managed. |
+| Claude Code production readiness | **Not supported** | The Claude Code plugin is still a skeleton. Real CLI binary detection, spawn, stream-json parsing, tool-use approval UI, and session management are not yet implemented end-to-end. |
+| Real package manager install execution | **Not supported** | `plugin.install.execute` is a dry-run framework. Actual `apt`, `npm`, `pip`, or other package manager commands are not wired to `process.spawn`. The PlanStore, approval flow, and task tracking are in place but execute no real system commands. |
 
 ---
 
@@ -570,10 +652,10 @@ The UI should receive blockers as a list:
 3. ~~Split `plugin_cmds.go` without behavior changes.~~ **Done:** split into `plugin_install_cmds.go`, `plugin_cache_cmds.go`, `plugin_permission_cmds.go`, `plugin_files_cmds.go`, `plugin_manage_cmds.go`, `task_cmds.go`.
 4. ~~Implement install plan/execute lifecycle.~~ **Done (dry-run):** plan/approve/execute/uninstall/files.register all implemented; TaskStore tracks progress. Real package manager execution is next.
 5. ~~Integrate approval workflow for install/high-risk grants.~~ **Done:** dispatcher Plan-Before-Apply step via Planner interface; notify.respond approve/deny channel; error codes PLAN_REQUIRED/APPROVAL_REQUIRED/APPROVAL_DENIED.
-6. Add capability support resolver and platform model.
+6. Add capability support resolver and platform model. *(not yet done)*
 7. Extend `plugin.check` to include capability support report.
-8. Implement OS-level subprocess tree tracking.
-9. Add `network.*` declaration and policy model.
+8. Implement OS-level subprocess tree tracking. *(not yet done)*
+9. Add `network.*` declaration and policy model. *(not yet done)*
 10. Implement real package manager execution (wire process.spawn to install commands).
 11. Start Claude Code plugin skeleton.
 
