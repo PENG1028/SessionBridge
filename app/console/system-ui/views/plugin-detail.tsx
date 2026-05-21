@@ -490,8 +490,8 @@ function BlockersStatusTab({ core, pluginId }: { core: CoreClient; pluginId: str
 
   if (!checkResult) return null;
 
-  const statusIcon = checkResult.status === 'blocked' ? '\u{1F534}' :
-    checkResult.status === 'incomplete' ? '\u{1F7E1}' : '\u{1F7E2}';
+  const statusIcon = checkResult.status === 'blocked' ? '[BLOCKED]' :
+    checkResult.status === 'incomplete' ? '[WARN]' : '[OK]';
 
   return (
     <div className="max-w-2xl space-y-6">

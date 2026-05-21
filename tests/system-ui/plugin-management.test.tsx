@@ -140,6 +140,113 @@ describe('PluginManager', () => {
 
     expect(onSelect).toHaveBeenCalled();
   });
+
+  // ── Blocker Summary ──
+
+  it('shows categorized blocker summary after Check All (permission, unsupported, deps)', async () => {
+    const core = createCore({
+      'plugin.list': [mockPluginList[0]], // sessionnode-core
+      'plugin.check': {
+        status: 'blocked',
+        blockers: [
+          { kind: 'missing_grant', capability: 'network.connect', reason: 'not_granted' },
+          { kind: 'missing_grant', capability: 'process.spawn', reason: 'not_granted' },
+          { kind: 'unsupported_capability', capability: 'gpu.compute', reason: 'no GPU support' },
+          { kind: 'missing_dependency', dependency: 'python3', reason: 'binary_missing' },
+        ],
+      },
+    });
+
+    render(<PluginManager core={core} />);
+
+    await waitFor(() => expect(screen.getByText('sessionnode-core')).toBeDefined());
+
+    // Click "Check All" button
+    fireEvent.click(screen.getByText('Check All'));
+
+    await waitFor(() => {
+      // Should show categorized blocker summary
+      expect(screen.getByText(/\[BLOCKED\]/)).toBeDefined();
+      expect(screen.getByText(/permission:2/)).toBeDefined();
+      expect(screen.getByText(/unsupported:1/)).toBeDefined();
+      expect(screen.getByText(/deps:1/)).toBeDefined();
+    });
+  });
+
+  it('shows [OK] and ok status when check returns clean', async () => {
+    const core = createCore({
+      'plugin.list': [{ pluginId: 'clean-plugin', version: '1.0.0', status: 'enabled', type: 'feature' }],
+      'plugin.check': { status: 'ok', blockers: [], capabilities: [], dependencies: [] },
+    });
+
+    render(<PluginManager core={core} />);
+
+    await waitFor(() => expect(screen.getByText('clean-plugin')).toBeDefined());
+
+    fireEvent.click(screen.getByText('Check All'));
+
+    await waitFor(() => {
+      expect(screen.getByText('[OK] ok')).toBeDefined();
+    });
+  });
+
+  it('shows [WARN] and incomplete status when check returns incomplete', async () => {
+    const core = createCore({
+      'plugin.list': [{ pluginId: 'warn-plugin', version: '1.0.0', status: 'enabled', type: 'feature' }],
+      'plugin.check': { status: 'incomplete', blockers: [], capabilities: [], dependencies: [] },
+    });
+
+    render(<PluginManager core={core} />);
+
+    await waitFor(() => expect(screen.getByText('warn-plugin')).toBeDefined());
+
+    fireEvent.click(screen.getByText('Check All'));
+
+    await waitFor(() => {
+      expect(screen.getByText('[WARN] incomplete')).toBeDefined();
+    });
+  });
+
+  it('shows capability hints for network and process capabilities without env check', async () => {
+    const core = createCore({
+      'plugin.list': [{
+        pluginId: 'net-plugin', version: '1.0.0', status: 'enabled', type: 'feature',
+        capabilities: ['network.connect', 'network.listen', 'process.spawn'],
+      }],
+    });
+
+    const { container } = render(<PluginManager core={core} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('net-plugin')).toBeDefined();
+    });
+    // Text may be split across elements; use container textContent
+    expect(container.textContent).toContain('3 declared capability');
+    expect(screen.getByText('[network]')).toBeDefined();
+    expect(screen.getByText('[process]')).toBeDefined();
+  });
+
+  it('shows unknown blocker kind in summary', async () => {
+    const core = createCore({
+      'plugin.list': [mockPluginList[0]],
+      'plugin.check': {
+        status: 'blocked',
+        blockers: [
+          { kind: 'unknown_capability', capability: 'magic.wand', reason: 'not in support matrix' },
+        ],
+      },
+    });
+
+    render(<PluginManager core={core} />);
+
+    await waitFor(() => expect(screen.getByText('sessionnode-core')).toBeDefined());
+
+    fireEvent.click(screen.getByText('Check All'));
+
+    await waitFor(() => {
+      expect(screen.getByText(/unknown:1/)).toBeDefined();
+    });
+  });
 });
 
 // ─── PluginDetail ───────────────────────────────────────────────────

@@ -226,7 +226,7 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
                   {plugin.description && (
                     <div className="text-xs text-gray-500 mt-0.5">{plugin.description}</div>
                   )}
-                  {/* Env check result inline */}
+                  {/* Capability & blocker summary */}
                   {envCheck && (
                     <div className="text-xs mt-1 space-y-0.5">
                       <span className={
@@ -235,14 +235,34 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
                         envCheck.status === 'incomplete' ? 'text-yellow-500' :
                         'text-yellow-500'
                       }>
-                        {envCheck.status === 'blocked' ? '\u{1F534}' : envCheck.status === 'incomplete' ? '\u{1F7E1}' : '\u{1F7E2}'}{' '}
-                        {envCheck.status} ({envCheck.deps} deps)
+                        {envCheck.status === 'blocked' ? '[BLOCKED]' : envCheck.status === 'incomplete' ? '[WARN]' : '[OK]'}{' '}
+                        {envCheck.status}
                       </span>
                       {envCheck.blockers.length > 0 && (
                         <span className="text-red-400 block">
-                          {envCheck.blockers.length} blocker{envCheck.blockers.length > 1 ? 's' : ''}:{' '}
-                          {envCheck.blockers.map(b => b.kind).join(', ')}
+                          {(() => {
+                            const byKind: Record<string, number> = {};
+                            envCheck.blockers.forEach(b => { byKind[b.kind] = (byKind[b.kind] || 0) + 1; });
+                            const parts: string[] = [];
+                            if (byKind.missing_grant) parts.push(`permission:${byKind.missing_grant}`);
+                            if (byKind.unsupported_capability) parts.push(`unsupported:${byKind.unsupported_capability}`);
+                            if (byKind.missing_dependency) parts.push(`deps:${byKind.missing_dependency}`);
+                            if (byKind.unknown_capability) parts.push(`unknown:${byKind.unknown_capability}`);
+                            return parts.length > 0 ? parts.join(' ') : `${envCheck.blockers.length} blocker${envCheck.blockers.length > 1 ? 's' : ''}`;
+                          })()}
                         </span>
+                      )}
+                    </div>
+                  )}
+                  {/* Capability indicators when no check results yet */}
+                  {!envCheck && plugin.capabilities && plugin.capabilities.length > 0 && (
+                    <div className="text-xs mt-1 text-gray-600">
+                      {plugin.capabilities.length} declared capability{plugin.capabilities.length > 1 ? 's' : ''}
+                      {plugin.capabilities.some(c => c.startsWith('network.')) && (
+                        <span className="text-yellow-500 ml-1">[network]</span>
+                      )}
+                      {plugin.capabilities.some(c => c.startsWith('process.')) && (
+                        <span className="text-yellow-500 ml-1">[process]</span>
                       )}
                     </div>
                   )}

@@ -4,7 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import type { CoreClient } from '../../app/console/core/core-types';
 import { Dashboard } from '../../app/console/system-ui/views/dashboard';
 import { SessionManager } from '../../app/console/system-ui/views/session-manager';
@@ -12,6 +12,8 @@ import { PluginManager } from '../../app/console/system-ui/views/plugin-manager'
 import { Settings } from '../../app/console/system-ui/views/settings';
 import { LogsViewer } from '../../app/console/system-ui/views/logs-viewer';
 import { Approvals } from '../../app/console/system-ui/views/approvals';
+import { ApprovalCenter } from '../../app/console/system-ui/approval-center';
+import type { CoreEvent } from '../../app/console/core/core-types';
 
 // Helper to create a mock CoreClient with canned responses
 function createMockClient(mockData: Record<string, unknown>): CoreClient {
@@ -187,6 +189,199 @@ describe('Approvals page', () => {
 
     await vi.waitFor(() => {
       expect(client.call).toHaveBeenCalledWith('approval.list', { status: 'pending' });
+    });
+  });
+});
+
+// ─── ApprovalCenter tests ──────────────────────────────────────
+// Helper: creates a mock client that captures event handlers so we can emit events
+
+function createApprovalCenterMock() {
+  const listeners = new Map<string, Set<(data: CoreEvent) => void>>();
+  const call = vi.fn(async (method: string, _params?: Record<string, unknown>) => {
+    if (method === 'notify.respond') return { status: 'responded', requestId: (_params as Record<string, unknown>)?.requestId };
+    return {};
+  });
+
+  const client: CoreClient & { emit: (event: string, data: CoreEvent) => void } = {
+    pluginId: 'test-core',
+    isConnected: true,
+    call,
+    on: vi.fn((event: string, handler: (data: CoreEvent) => void) => {
+      if (!listeners.has(event)) listeners.set(event, new Set());
+      listeners.get(event)!.add(handler);
+      return () => listeners.get(event)?.delete(handler);
+    }),
+    once: vi.fn(),
+    off: vi.fn(),
+    disconnect: vi.fn(),
+    emit: (event: string, data: CoreEvent) => {
+      listeners.get(event)?.forEach(h => h(data));
+    },
+  };
+
+  return { client, call };
+}
+
+// Helper to create a mock notify.approval.request event
+function makeApprovalRequest(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    type: 'notify.approval.request',
+    requestId: overrides.requestId as string || 'req-001',
+    pluginId: overrides.pluginId as string || 'test-plugin',
+    payload: overrides.payload !== undefined ? overrides.payload : JSON.stringify({
+      title: 'Test Approval',
+      body: 'Approve this test action',
+      detail: 'High risk operation',
+      planId: 'plan-001',
+    }),
+  };
+}
+
+describe('ApprovalCenter', () => {
+  beforeEach(() => {
+    cleanup();
+  });
+
+  it('renders nothing when no approvals are pending', () => {
+    const { client } = createApprovalCenterMock();
+    const { container } = render(<ApprovalCenter core={client} />);
+    expect(container.innerHTML).toBe('');
+  });
+
+  it('shows approval when notify.approval.request event fires', async () => {
+    const { client } = createApprovalCenterMock();
+    render(<ApprovalCenter core={client} />);
+
+    // Emit approval request event
+    client.emit('notify.approval.request', makeApprovalRequest());
+
+    await vi.waitFor(() => {
+      expect(screen.getByText('Test Approval')).toBeDefined();
+    });
+  });
+
+  it('displays pluginId and title from event', async () => {
+    const { client } = createApprovalCenterMock();
+    render(<ApprovalCenter core={client} />);
+
+    client.emit('notify.approval.request', makeApprovalRequest());
+
+    await vi.waitFor(() => {
+      expect(screen.getByText('test-plugin')).toBeDefined();
+      expect(screen.getByText('Test Approval')).toBeDefined();
+    });
+  });
+
+  it('calls notify.respond with action: allow on Approve click', async () => {
+    const { client, call } = createApprovalCenterMock();
+    render(<ApprovalCenter core={client} />);
+
+    client.emit('notify.approval.request', makeApprovalRequest());
+
+    await vi.waitFor(() => expect(screen.getByText('Approve')).toBeDefined());
+    fireEvent.click(screen.getByText('Approve'));
+
+    await vi.waitFor(() => {
+      expect(call).toHaveBeenCalledWith('notify.respond', { requestId: 'req-001', action: 'allow' });
+    });
+  });
+
+  it('calls notify.respond with action: deny on Deny click', async () => {
+    const { client, call } = createApprovalCenterMock();
+    render(<ApprovalCenter core={client} />);
+
+    client.emit('notify.approval.request', makeApprovalRequest());
+
+    await vi.waitFor(() => expect(screen.getByText('Deny')).toBeDefined());
+    fireEvent.click(screen.getByText('Deny'));
+
+    await vi.waitFor(() => {
+      expect(call).toHaveBeenCalledWith('notify.respond', { requestId: 'req-001', action: 'deny' });
+    });
+  });
+
+  it('shows multiple pending approvals', async () => {
+    const { client } = createApprovalCenterMock();
+    render(<ApprovalCenter core={client} />);
+
+    client.emit('notify.approval.request', makeApprovalRequest({ requestId: 'req-001' }));
+    client.emit('notify.approval.request', makeApprovalRequest({
+      requestId: 'req-002',
+      payload: JSON.stringify({ title: 'Second Approval', body: 'Another request' }),
+    }));
+
+    await vi.waitFor(() => {
+      expect(screen.getByText('Test Approval')).toBeDefined();
+      expect(screen.getByText('Second Approval')).toBeDefined();
+      expect(screen.getByText('2 pending approvals')).toBeDefined();
+    });
+  });
+
+  it('removes approval on notify.approval.result event', async () => {
+    const { client } = createApprovalCenterMock();
+    render(<ApprovalCenter core={client} />);
+
+    client.emit('notify.approval.request', makeApprovalRequest({ requestId: 'req-001' }));
+    await vi.waitFor(() => expect(screen.getByText('Test Approval')).toBeDefined());
+
+    // Emit result event — should remove the approval
+    client.emit('notify.approval.result', {
+      type: 'notify.approval.result',
+      requestId: 'req-001',
+      action: 'allow',
+      respondedBy: 'admin',
+    });
+
+    await vi.waitFor(() => {
+      expect(screen.queryByText('Test Approval')).toBeNull();
+    });
+  });
+
+  it('deduplicates by requestId', async () => {
+    const { client } = createApprovalCenterMock();
+    render(<ApprovalCenter core={client} />);
+
+    // Emit same requestId twice
+    client.emit('notify.approval.request', makeApprovalRequest({ requestId: 'req-001' }));
+    client.emit('notify.approval.request', makeApprovalRequest({ requestId: 'req-001' }));
+
+    await vi.waitFor(() => expect(screen.getByText('Test Approval')).toBeDefined());
+    // Should show "1 pending approval" not "2"
+    expect(screen.getByText('1 pending approval')).toBeDefined();
+  });
+
+  it('parses payload from JSON string', async () => {
+    const { client } = createApprovalCenterMock();
+    render(<ApprovalCenter core={client} />);
+
+    client.emit('notify.approval.request', {
+      type: 'notify.approval.request',
+      requestId: 'req-json',
+      pluginId: 'json-plugin',
+      payload: JSON.stringify({ title: 'JSON Parsed', body: 'From JSON string' }),
+    });
+
+    await vi.waitFor(() => {
+      expect(screen.getByText('JSON Parsed')).toBeDefined();
+      expect(screen.getByText('From JSON string')).toBeDefined();
+    });
+  });
+
+  it('parses payload from object directly', async () => {
+    const { client } = createApprovalCenterMock();
+    render(<ApprovalCenter core={client} />);
+
+    client.emit('notify.approval.request', {
+      type: 'notify.approval.request',
+      requestId: 'req-obj',
+      pluginId: 'obj-plugin',
+      payload: { title: 'Object Payload', body: 'From object' },
+    });
+
+    await vi.waitFor(() => {
+      expect(screen.getByText('Object Payload')).toBeDefined();
+      expect(screen.getByText('From object')).toBeDefined();
     });
   });
 });

@@ -27,14 +27,14 @@ interface ApprovalsProps {
 /**
  * Approvals — approval request management center.
  * Calls: approval.list, notify.respond
- * Events: approval.request (WS), approval.response (WS), approval.viewing (WS)
+ * Events: notify.approval.request (WS)
  */
 export function Approvals({ core }: ApprovalsProps) {
   const [pageState, setPageState] = useState<PageState>('loading');
   const [requests, setRequests] = useState<ApprovalRequest[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<'all' | 'pending' | 'approved' | 'denied'>('pending');
+  const [filter, setFilter] = useState<'all' | 'pending'>('pending');
 
   async function fetchRequests() {
     if (!core.isConnected) {
@@ -84,7 +84,7 @@ export function Approvals({ core }: ApprovalsProps) {
   }, [core, filter]);
 
   useEffect(() => {
-    const unsub = core.on('approval.request', () => {
+    const unsub = core.on('notify.approval.request', () => {
       fetchRequests();
     });
     return unsub;
@@ -109,9 +109,6 @@ export function Approvals({ core }: ApprovalsProps) {
               className="px-2 py-1 bg-gray-800 border border-gray-700 rounded text-xs text-gray-300 focus:outline-none"
             >
               <option value="pending">Pending</option>
-              <option value="all">All</option>
-              <option value="approved">Approved</option>
-              <option value="denied">Denied</option>
             </select>
             <button
               onClick={fetchRequests}

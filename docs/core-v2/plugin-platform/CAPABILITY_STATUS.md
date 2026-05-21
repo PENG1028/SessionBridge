@@ -93,7 +93,25 @@ The core plugin (`sessionnode-core`) declares 40 capabilities in `AllPluginsCaps
 
 ---
 
-## 2. Status Legend
+## 2. Blocker Categories
+
+`plugin.check` returns blockers when a plugin cannot operate. Blockers are categorized by `kind`:
+
+| Blocker Kind | UI Label | Meaning | Example |
+|---|---|---|---|
+| `missing_grant` | `permission:N` | Plugin needs an explicit permission grant for a dangerous capability | `network.connect` requires user approval |
+| `unsupported_capability` | `unsupported:N` | Capability is declared but not supported on current platform | `gpu.compute` on a headless server |
+| `missing_dependency` | `deps:N` | Required binary, library, or env var not found | `python3` binary missing |
+| `unknown_capability` | `unknown:N` | Capability not recognized by the current Go Core version | `magic.wand` not in support matrix |
+
+**Plugin Manager summary**: After Check All, each plugin card shows a condensed blocker summary line:
+- `[BLOCKED] blocked` + `permission:2 unsupported:1 deps:1` (counts grouped by kind)
+- `[WARN] incomplete` — non-blocking issues found
+- `[OK] ok` — all checks passed
+
+**Plugin Detail → Blockers & Status tab**: Full blocker detail including kind, target (capability/dependency), reason, and actionable resolution buttons (Request Permission, Create Install Plan).
+
+## 3. Status Legend
 
 | Status | Meaning | Color Convention |
 |---|---|---|
@@ -109,7 +127,7 @@ The core plugin (`sessionnode-core`) declares 40 capabilities in `AllPluginsCaps
 
 ---
 
-## 3. Capabilities Declared in AllPluginsCaps — Not in Main Matrix
+## 4. Capabilities Declared in AllPluginsCaps — Not in Main Matrix
 
 The following capabilities are declared in `AllPluginsCaps` for `sessionnode-core` but are grouped under other plugin domains. They are included here for completeness.
 
@@ -148,7 +166,7 @@ These capabilities are registered in `AllPluginsCaps` under non-core plugin IDs.
 
 ---
 
-## 4. UI Behavior by Status
+## 5. UI Behavior by Status
 
 Each capability status maps to a specific UI presentation in the Plugin Manager and Detail panels.
 
@@ -181,7 +199,7 @@ Each capability status maps to a specific UI presentation in the Plugin Manager 
 
 ---
 
-## 5. Test Coverage
+## 6. Test Coverage
 
 ### Unit Tests (executor/executor_test.go)
 
@@ -385,5 +403,5 @@ network.fetch            → networkFetch
 
 ---
 
-> **Last updated:** 2026-05-21 (Round 12: network.* 5 capabilities declared — connect/listen/dns/proxy/fetch; DangerousCapability with declaration/policy boundaries; proxy/fetch are partial not_implemented; mobile unsupported; no Core sandbox/proxy)
+> **Last updated:** 2026-05-21 (Round 13: Added Section 2 Blocker Categories — missing_grant, unsupported_capability, missing_dependency, unknown_capability with UI labels and Plugin Manager summary behavior; ApprovalCenter global overlay; approval.list pending-only facade)
 > **Related docs:** [PLUGIN_CORE_API_CONTRACT.md](./PLUGIN_CORE_API_CONTRACT.md) | [PLUGIN_MANIFEST_SPEC.md](./PLUGIN_MANIFEST_SPEC.md) | [PLUGIN_SECURITY_MODEL.md](./PLUGIN_SECURITY_MODEL.md) | [PLUGIN_ADAPTERS.md](./PLUGIN_ADAPTERS.md)

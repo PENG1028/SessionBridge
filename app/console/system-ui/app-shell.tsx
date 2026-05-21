@@ -5,7 +5,8 @@ import { Sidebar } from './sidebar';
 import { AppHeader } from './app-header';
 import { StatusBar } from './status-bar';
 import { OfflineBanner } from './offline-banner';
-import type { CoreConnectionStatus } from '../core/core-types';
+import { ApprovalCenter } from './approval-center';
+import type { CoreConnectionStatus, CoreClient } from '../core/core-types';
 
 // ─── AppShell Props ────────────────────────────────────────────
 interface AppShellProps {
@@ -17,6 +18,8 @@ interface AppShellProps {
   sidebarExtra?: ReactNode;
   /** Bottom panel content. */
   bottomPanel?: ReactNode;
+  /** CoreClient for global features (approval center, etc). */
+  core?: CoreClient;
 }
 
 /**
@@ -32,6 +35,7 @@ export function AppShell({
   onNavigate,
   sidebarExtra,
   bottomPanel,
+  core,
 }: AppShellProps) {
   return (
     <div className="h-screen w-screen flex flex-col bg-gray-950 text-gray-100 overflow-hidden">
@@ -62,6 +66,9 @@ export function AppShell({
           {bottomPanel}
         </div>
       ) : null}
+
+      {/* Global approval overlay */}
+      {core ? <ApprovalCenter core={core} /> : null}
 
       {/* Status bar */}
       <StatusBar connectionStatus={connectionStatus} />

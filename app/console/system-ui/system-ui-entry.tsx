@@ -109,6 +109,7 @@ export function SystemUIEntry({ core, connectionStatus, defaultRoute = '/dashboa
       connectionStatus={connectionStatus}
       activeRoute={activeRoute}
       onNavigate={handleNavigate}
+      core={core}
     >
       {renderPage()}
     </AppShell>
