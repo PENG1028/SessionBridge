@@ -36,7 +36,9 @@
 ### Node Identity
 - Generated on first startup: `~/.sessionnode/identity.json`
 - ed25519 key pair (stdlib crypto/ed25519)
-- Private key NEVER serialized to JSON, NEVER appears in logs, NEVER returned by API
+- Private key is persisted to identity.json alongside the public key (file permissions 0600)
+- Private key is NEVER returned by API, NEVER appears in logs
+- On restart, the loaded identity is validated (key lengths, key-pair consistency, fingerprint match)
 - Fingerprint: SHA-256 of public key (hex)
 - NodeID defaults to first 12 hex chars of fingerprint
 
@@ -71,7 +73,7 @@
 | Spoofed actorType=node on /ws | Blocked -- server rejects client-supplied actorType=node |
 | Unauthenticated peer connection | /peer/ws requires challenge-response handshake |
 | Replay attack on handshake | Timestamp check with small window |
-| Private key theft | Key never leaves node, never in API responses |
+| Private key theft | Key stored with 0600 permissions on disk, never in API responses |
 | Rogue node impersonation | Trust store validates public key fingerprint |
 | Invite code replay | Single-use code, expired after TTL |
 | Trust expiration | Expired peers rejected during handshake |
