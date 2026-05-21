@@ -32,20 +32,22 @@ action.*      操作审计
 | `notify.list` | `notification.list` | `{ filter?, since? }` | 通知列表 | Approvals |
 | `notify.markRead` | `notification.markRead` | `{ notificationId }` | 标记已读 | Approvals |
 | `notify.markAllRead` | `notification.markAllRead` | — | 全部已读 | Approvals |
+| `notify.request` | — | `{ pluginId?, capability?, action, detail? }` | 发起审批请求（primary approval flow） | Approvals, Plugin Detail |
+| `notify.respond` | — | `{ requestId, response: "approve"|"deny", note?, reason? }` | 批准/拒绝审批请求（替代 approval.approve/deny） | Approvals, Plugin Detail |
 | WebSocket `notify.event` | `notification.event` | `{ type, title, body }` | 推送通知 | Approvals |
 
 ### 2.2 approval — 审批
 
 | 规范命名 | 别名（已废弃） | 参数 | 用途 | 页面 |
 |---------|-------------|------|------|------|
-| `approval.list` | — | `{ status?, type? }` | 审批请求列表 | Approvals |
+| `approval.list` | — | `{ status?, type? }` | 审批请求列表（R13 薄 facade，底层委托 notify manager） | Approvals |
 | `approval.get` | — | `{ requestId }` | 请求详情 | Approvals |
-| `approval.approve` | `notify.respond` | `{ requestId, note? }` | 批准请求 | Approvals |
-| `approval.deny` | `notify.respond` | `{ requestId, reason? }` | 拒绝请求 | Approvals |
 | `approval.takeOver` | — | `{ requestId }` | 接管请求 | Approvals |
 | WebSocket `approval.request` | — | `{ pluginId, action, detail }` | 新审批请求推送 | Approvals |
 | WebSocket `approval.response` | — | `{ requestId, result }` | 审批结果同步 | Approvals |
 | WebSocket `approval.viewing` | — | `{ requestId, deviceId }` | 多设备查看状态 | Approvals |
+
+> **注意**: `approval.approve` 和 `approval.deny` **没有单独实现**。审批/拒绝操作统一走 `notify.respond`（见 2.1 节）。`approval.list` 是 R13 实现的薄层 facade，直接委托给 notify manager 的 `ListApprovals()`。
 
 ### 2.3 logs — 运行时日志
 
@@ -108,7 +110,7 @@ action.*      操作审计
 | `plugin.cache.clear.plan` | — | `{ nodeId?, pluginId }` | 生成清理计划（按节点） | Plugin Detail |
 | `plugin.cache.clear.execute` | — | `{ planId }` | 执行清理 | Plugin Detail |
 | `plugin.permissions.list` | — | `{ pluginId }` | 权限列表 | Plugin Detail |
-| `plugin.permissions.grant` | — | `{ pluginId, permissionId, level }` | 授予权限 | Plugin Detail |
+| `plugin.permissions.grant` | — | `{ pluginId, capability, mode }` | 授予权限（高危险操作走 notify.request/respond 审批流） | Plugin Detail |
 | `plugin.permissions.revoke` | — | `{ pluginId, permissionId }` | 撤销权限 | Plugin Detail |
 | `plugin.permissions.reset` | — | `{ pluginId }` | 重置权限 | Plugin Detail |
 | `plugin.config.get` | — | `{ nodeId?, pluginId, key? }` | 读插件配置（按节点） | Plugin Detail |
@@ -196,7 +198,7 @@ Stream 页面:
 | Plugin Detail | `plugin.get`, `plugin.status`, `plugin.check`, `plugin.install.plan`, `plugin.install.execute`, `plugin.files.list`, `plugin.cache.list`, `plugin.cache.clear.plan`, `plugin.cache.clear.execute`, `plugin.permissions.list`, `plugin.permissions.grant`, `plugin.permissions.revoke`, `plugin.config.get`, `plugin.config.set`, `plugin.config.schema`, `plugin.history`, `logs.query(source: plugin)`, `task.event` (WS) |
 | Settings | `config.list`, `config.get`, `config.set`, `config.reset`, `node.list`, `node.update`, `plugin.list`, `config.changed` (WS) |
 | Logs & Audit | `logs.tail`, `logs.query`, `logs.export`, `logs.event` (WS), `audit.list`, `audit.get`, `audit.export`, `audit.event` (WS), `session.events`, `plugin.history` |
-| Approvals | `notify.list`, `notify.markRead`, `notify.markAllRead`, `notify.event` (WS), `approval.list`, `approval.get`, `approval.approve`, `approval.deny`, `approval.takeOver`, `approval.request` (WS), `approval.response` (WS), `approval.viewing` (WS) |
+| Approvals | `notify.list`, `notify.markRead`, `notify.markAllRead`, `notify.event` (WS), `notify.request`, `notify.respond`, `approval.list`, `approval.get`, `approval.takeOver`, `approval.request` (WS), `approval.response` (WS), `approval.viewing` (WS) |
 
 ---
 

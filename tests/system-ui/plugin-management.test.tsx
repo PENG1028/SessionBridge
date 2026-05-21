@@ -677,3 +677,51 @@ describe('Host-rendered components', () => {
     });
   });
 });
+
+// ─── Plugin Permission Grant ─────────────────────────────────────────
+
+describe('Plugin Permission Grant', () => {
+  it('uses capability and mode params (not permissionId/level)', async () => {
+    const core = createCore({ 'plugin.check': { status: 'ok', blockers: [], capabilities: [], dependencies: [] } });
+
+    // Spy on call to capture the params sent to the mock
+    const calls: Array<Record<string, unknown>> = [];
+    vi.spyOn(core, 'call').mockImplementation(async (method: string, params?: Record<string, unknown>) => {
+      calls.push(params ?? {});
+      if (method === 'plugin.permissions.grant') {
+        return Promise.resolve({ status: 'ok', pluginId: params?.pluginId, capability: params?.capability, mode: params?.mode });
+      }
+      if (method === 'plugin.check') {
+        return Promise.resolve({ status: 'ok', blockers: [], capabilities: [], dependencies: [] });
+      }
+      return Promise.resolve(undefined);
+    });
+
+    await core.call('plugin.permissions.grant', {
+      pluginId: 'test', capability: 'network.connect', mode: 'allow'
+    });
+
+    expect(calls.length).toBeGreaterThanOrEqual(1);
+    expect(calls[0]).toHaveProperty('capability', 'network.connect');
+    expect(calls[0]).toHaveProperty('mode', 'allow');
+    expect(calls[0]).not.toHaveProperty('permissionId');
+    expect(calls[0]).not.toHaveProperty('level');
+  });
+
+  it('shows approval state when grant returns requires_approval', async () => {
+    const core = createCore({
+      'plugin.permissions.grant': {
+        status: 'requires_approval',
+        message: 'High-risk operation requires approval',
+        planId: 'plan-test-123',
+      },
+    });
+
+    const result = await core.call('plugin.permissions.grant', {
+      pluginId: 'test', capability: 'process.spawn', mode: 'allow'
+    });
+
+    expect((result as Record<string, unknown>).status).toBe('requires_approval');
+    expect((result as Record<string, unknown>).planId).toBe('plan-test-123');
+  });
+});

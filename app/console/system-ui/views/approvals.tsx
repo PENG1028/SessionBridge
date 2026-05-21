@@ -22,13 +22,14 @@ interface ApprovalsProps {
 
 /**
  * Approvals — approval request management center.
- * Calls: approval.list, approval.approve, approval.deny
+ * Calls: approval.list, notify.respond
  * Events: approval.request (WS), approval.response (WS), approval.viewing (WS)
  */
 export function Approvals({ core }: ApprovalsProps) {
   const [pageState, setPageState] = useState<PageState>('loading');
   const [requests, setRequests] = useState<ApprovalRequest[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'pending' | 'approved' | 'denied'>('pending');
 
   async function fetchRequests() {
@@ -52,25 +53,36 @@ export function Approvals({ core }: ApprovalsProps) {
   }
 
   async function handleApprove(requestId: string) {
+    setActionError(null);
     try {
-      await core.call('approval.approve', { requestId });
+      await core.call('notify.respond', { requestId, action: 'allow' });
       fetchRequests();
     } catch (err) {
-      console.error('Failed to approve:', err);
+      const msg = err instanceof Error ? err.message : 'Failed to approve';
+      setActionError(msg);
     }
   }
 
   async function handleDeny(requestId: string) {
+    setActionError(null);
     try {
-      await core.call('approval.deny', { requestId, reason: 'Denied by user' });
+      await core.call('notify.respond', { requestId, action: 'deny' });
       fetchRequests();
     } catch (err) {
-      console.error('Failed to deny:', err);
+      const msg = err instanceof Error ? err.message : 'Failed to deny';
+      setActionError(msg);
     }
   }
 
   useEffect(() => {
     fetchRequests();
+  }, [core, filter]);
+
+  useEffect(() => {
+    const unsub = core.on('approval.request', () => {
+      fetchRequests();
+    });
+    return unsub;
   }, [core, filter]);
 
   if (pageState === 'loading') return <div className="flex-1"><PageLoading rows={5} /></div>;
@@ -144,19 +156,24 @@ export function Approvals({ core }: ApprovalsProps) {
               </div>
 
               {req.status === 'pending' && (
-                <div className="flex gap-2 ml-4 flex-shrink-0">
-                  <button
-                    onClick={() => handleApprove(req.requestId)}
-                    className="px-4 py-2 bg-green-700 hover:bg-green-600 text-white text-sm rounded transition-colors"
-                  >
-                    Approve
-                  </button>
-                  <button
-                    onClick={() => handleDeny(req.requestId)}
-                    className="px-4 py-2 bg-red-700 hover:bg-red-600 text-white text-sm rounded transition-colors"
-                  >
-                    Deny
-                  </button>
+                <div className="flex flex-col items-end gap-1 ml-4 flex-shrink-0">
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleApprove(req.requestId)}
+                      className="px-4 py-2 bg-green-700 hover:bg-green-600 text-white text-sm rounded transition-colors"
+                    >
+                      Approve
+                    </button>
+                    <button
+                      onClick={() => handleDeny(req.requestId)}
+                      className="px-4 py-2 bg-red-700 hover:bg-red-600 text-white text-sm rounded transition-colors"
+                    >
+                      Deny
+                    </button>
+                  </div>
+                  {actionError && (
+                    <p className="text-xs text-red-400">{actionError}</p>
+                  )}
                 </div>
               )}
             </div>

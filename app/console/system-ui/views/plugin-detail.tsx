@@ -276,8 +276,16 @@ interface InstallState {
   executionResult: Record<string, unknown> | null;
 }
 
+interface CapabilityEntry {
+  capability: string;
+  supported: boolean;
+  level: string;
+  reason?: string;
+  detail?: string;
+}
+
 function BlockersStatusTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
-  const [checkResult, setCheckResult] = useState<{ status: string; blockers: BlockerEntry[] } | null>(null);
+  const [checkResult, setCheckResult] = useState<{ status: string; blockers: BlockerEntry[]; capabilities: CapabilityEntry[] } | null>(null);
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
@@ -288,6 +296,10 @@ function BlockersStatusTab({ core, pluginId }: { core: CoreClient; pluginId: str
   const [approvalRequestId, setApprovalRequestId] = useState<string | null>(null);
   const [approvalStatus, setApprovalStatus] = useState<string | null>(null);
 
+  // Grant approval flow state (per capability)
+  const [grantApprovals, setGrantApprovals] = useState<Record<string, { status: string; planId?: string; requestId?: string; message?: string } | null>>({});
+  const [grantErrors, setGrantErrors] = useState<Record<string, string | null>>({});
+
   async function runCheck() {
     setLoading(true);
     setFetchError(null);
@@ -296,10 +308,19 @@ function BlockersStatusTab({ core, pluginId }: { core: CoreClient; pluginId: str
       setCheckResult({
         status: str(result?.status) || 'ok',
         blockers: Array.isArray(result?.blockers) ? (result!.blockers as BlockerEntry[]) : [],
+        capabilities: Array.isArray(result?.capabilities)
+          ? (result!.capabilities as Array<Record<string, unknown>>).map(c => ({
+              capability: str(c.capability),
+              supported: !!c.supported,
+              level: str(c.level),
+              reason: str(c.reason) || undefined,
+              detail: str(c.detail) || undefined,
+            }))
+          : [],
       });
     } catch (err) {
       setFetchError(err instanceof Error ? err.message : 'Check failed');
-      setCheckResult({ status: 'error', blockers: [] });
+      setCheckResult({ status: 'error', blockers: [], capabilities: [] });
     } finally {
       setLoading(false);
     }
@@ -373,6 +394,88 @@ function BlockersStatusTab({ core, pluginId }: { core: CoreClient; pluginId: str
     }
   }
 
+  // ─── Grant Approval Flow ───────────────────────────────────────
+
+  /** Step 1: Call plugin.permissions.grant and handle response. */
+  async function handleGrantRequest(capability: string) {
+    setGrantErrors(prev => ({ ...prev, [capability]: null }));
+    try {
+      const result = await core.call<Record<string, unknown>>('plugin.permissions.grant', {
+        pluginId, capability, mode: 'allow',
+      });
+      const status = str(result?.status);
+      if (status === 'ok') {
+        setGrantApprovals(prev => ({ ...prev, [capability]: null }));
+        await runCheck();
+      } else if (status === 'requires_approval') {
+        const planId = str(result?.planId);
+        setGrantApprovals(prev => ({ ...prev, [capability]: { status: 'requires_approval', planId: planId || undefined } }));
+      } else if (status === 'approval_denied') {
+        setGrantApprovals(prev => ({ ...prev, [capability]: { status: 'denied', message: str(result?.message) || 'Approval denied' } }));
+      } else {
+        setGrantErrors(prev => ({ ...prev, [capability]: `Unexpected status: ${status}` }));
+      }
+    } catch (err) {
+      setGrantErrors(prev => ({ ...prev, [capability]: err instanceof Error ? err.message : 'Grant failed' }));
+    }
+  }
+
+  /** Step 2: Create a notify.request for plan-based approval. */
+  async function requestGrantApproval(capability: string, planId: string) {
+    setGrantErrors(prev => ({ ...prev, [capability]: null }));
+    try {
+      const res = await core.call<Record<string, unknown>>('notify.request', {
+        title: `Grant ${capability} for ${pluginId}`,
+        body: `High-risk capability "${capability}" requires approval before it can be granted.`,
+        planId,
+        actions: [{ id: 'allow', label: 'Approve' }, { id: 'deny', label: 'Deny' }],
+        timeout: 300,
+      });
+      const requestId = str(res?.requestId);
+      setGrantApprovals(prev => ({ ...prev, [capability]: { status: 'pending', planId, requestId: requestId || undefined } }));
+    } catch (err) {
+      setGrantErrors(prev => ({ ...prev, [capability]: err instanceof Error ? err.message : 'Approval request failed' }));
+      setGrantApprovals(prev => ({ ...prev, [capability]: { status: 'requires_approval', planId } }));
+    }
+  }
+
+  /** Step 3: Approve the plan via notify.respond, then step 4: re-call grant. */
+  async function approveGrant(capability: string) {
+    const state = grantApprovals[capability];
+    if (!state?.requestId) return;
+    setGrantErrors(prev => ({ ...prev, [capability]: null }));
+    try {
+      await core.call('notify.respond', { requestId: state.requestId, action: 'allow' });
+      // Step 4: Re-call grant — the plan is now approved
+      const result = await core.call<Record<string, unknown>>('plugin.permissions.grant', {
+        pluginId, capability, mode: 'allow',
+      });
+      const status = str(result?.status);
+      if (status === 'ok') {
+        setGrantApprovals(prev => ({ ...prev, [capability]: null }));
+        setGrantErrors(prev => ({ ...prev, [capability]: null }));
+        await runCheck();
+      } else {
+        setGrantApprovals(prev => ({ ...prev, [capability]: { status: str(result?.status) || 'error', message: str(result?.message) || 'Grant returned non-ok status' } }));
+      }
+    } catch (err) {
+      setGrantErrors(prev => ({ ...prev, [capability]: err instanceof Error ? err.message : 'Approval or grant failed' }));
+    }
+  }
+
+  /** Deny the grant approval request. */
+  async function denyGrant(capability: string) {
+    const state = grantApprovals[capability];
+    if (!state?.requestId) return;
+    setGrantErrors(prev => ({ ...prev, [capability]: null }));
+    try {
+      await core.call('notify.respond', { requestId: state.requestId, action: 'deny' });
+      setGrantApprovals(prev => ({ ...prev, [capability]: { status: 'denied', message: 'Approval denied by user' } }));
+    } catch (err) {
+      setGrantErrors(prev => ({ ...prev, [capability]: err instanceof Error ? err.message : 'Deny failed' }));
+    }
+  }
+
   useEffect(() => { runCheck(); }, [core, pluginId]);
 
   // ── Render ──
@@ -432,7 +535,7 @@ function BlockersStatusTab({ core, pluginId }: { core: CoreClient; pluginId: str
               <p className="text-xs text-gray-500">Reason: {b.reason}</p>
 
               {/* Action per blocker kind */}
-              <div className="pt-1">
+              <div className="pt-1 space-y-2">
                 {b.kind === 'missing_dependency' && (
                   <button
                     onClick={createInstallPlan}
@@ -443,12 +546,79 @@ function BlockersStatusTab({ core, pluginId }: { core: CoreClient; pluginId: str
                   </button>
                 )}
                 {b.kind === 'missing_grant' && (
-                  <button
-                    onClick={() => core.call('plugin.permissions.grant', { pluginId, permissionId: b.capability || '', level: 'allow' }).then(() => runCheck()).catch(() => {})}
-                    className="text-xs px-3 py-1.5 rounded bg-yellow-600 hover:bg-yellow-500 text-white transition-colors"
-                  >
-                    Request Permission
-                  </button>
+                  <>
+                    {(() => {
+                      const cap = b.capability || '';
+                      const approvalState = grantApprovals[cap];
+                      const errMsg = grantErrors[cap];
+
+                      if (!approvalState) {
+                        return (
+                          <button
+                            onClick={() => handleGrantRequest(cap)}
+                            className="text-xs px-3 py-1.5 rounded bg-yellow-600 hover:bg-yellow-500 text-white transition-colors"
+                          >
+                            Request Permission
+                          </button>
+                        );
+                      }
+
+                      if (approvalState.status === 'requires_approval') {
+                        return (
+                          <div className="space-y-2">
+                            <p className="text-xs text-yellow-400">
+                              Requires approval{approvalState.planId ? ` — plan: ${approvalState.planId}` : ''}
+                            </p>
+                            <button
+                              onClick={() => requestGrantApproval(cap, approvalState.planId || '')}
+                              className="text-xs px-3 py-1.5 rounded bg-yellow-600 hover:bg-yellow-500 text-white transition-colors"
+                            >
+                              Request Approval
+                            </button>
+                          </div>
+                        );
+                      }
+
+                      if (approvalState.status === 'pending') {
+                        return (
+                          <div className="space-y-2">
+                            <p className="text-xs text-yellow-400">
+                              Awaiting approval{approvalState.requestId ? ` (${approvalState.requestId})` : ''}
+                            </p>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => approveGrant(cap)}
+                                className="text-xs px-3 py-1.5 rounded bg-green-600 hover:bg-green-500 text-white transition-colors"
+                              >
+                                Approve
+                              </button>
+                              <button
+                                onClick={() => denyGrant(cap)}
+                                className="text-xs px-3 py-1.5 rounded bg-red-600 hover:bg-red-500 text-white transition-colors"
+                              >
+                                Deny
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      if (approvalState.status === 'denied') {
+                        return (
+                          <p className="text-xs text-red-400">
+                            {approvalState.message || 'Approval denied'}
+                          </p>
+                        );
+                      }
+
+                      return null;
+                    })()}
+                    {(() => {
+                      const cap = b.capability || '';
+                      const errMsg = grantErrors[cap];
+                      return errMsg ? <p className="text-xs text-red-400">{errMsg}</p> : null;
+                    })()}
+                  </>
                 )}
                 {b.kind === 'unsupported_capability' && (
                   <p className="text-xs text-gray-500 italic">
@@ -463,6 +633,89 @@ function BlockersStatusTab({ core, pluginId }: { core: CoreClient; pluginId: str
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Capability Status Table */}
+      {checkResult.capabilities.length > 0 && (
+        <div className="border-t border-gray-800 pt-4 mt-4">
+          <h4 className="text-sm font-medium text-gray-300 mb-3">Capability Status</h4>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-gray-500 border-b border-gray-800">
+                  <th className="pb-2 pr-4">Capability</th>
+                  <th className="pb-2 pr-4">Support Level</th>
+                  <th className="pb-2 pr-4">Supported</th>
+                  <th className="pb-2 pr-4">Reason</th>
+                  <th className="pb-2 pr-4">Grant Status</th>
+                  <th className="pb-2">Blocker</th>
+                </tr>
+              </thead>
+              <tbody>
+                {checkResult.capabilities.map((cap, idx) => {
+                  const capBlockers = checkResult.blockers.filter(
+                    bl => bl.capability === cap.capability
+                  );
+                  const grantBlocker = capBlockers.find(bl => bl.kind === 'missing_grant');
+                  const otherBlocker = capBlockers.find(bl => bl.kind !== 'missing_grant');
+                  const grantApprovalState = grantApprovals[cap.capability];
+
+                  return (
+                    <tr key={idx} className="border-b border-gray-800/50 text-gray-300">
+                      <td className="py-2 pr-4 font-mono text-xs text-gray-200">{cap.capability}</td>
+                      <td className="py-2 pr-4">
+                        <span className={`text-xs px-1.5 py-0.5 rounded ${
+                          cap.level === 'full' ? 'bg-green-900/50 text-green-400' :
+                          cap.level === 'partial' ? 'bg-yellow-900/50 text-yellow-400' :
+                          cap.level === 'none' ? 'bg-red-900/50 text-red-400' :
+                          'bg-gray-800 text-gray-500'
+                        }`}>{cap.level}</span>
+                      </td>
+                      <td className="py-2 pr-4">
+                        <span className={`text-xs ${cap.supported ? 'text-green-400' : 'text-red-400'}`}>
+                          {cap.supported ? 'Yes' : 'No'}
+                        </span>
+                      </td>
+                      <td className="py-2 pr-4 text-xs text-gray-500 max-w-xs truncate">
+                        {cap.reason || cap.detail || '—'}
+                      </td>
+                      <td className="py-2 pr-4">
+                        {grantApprovalState ? (
+                          <span className={`text-xs px-1.5 py-0.5 rounded ${
+                            grantApprovalState.status === 'requires_approval' ? 'bg-yellow-900/50 text-yellow-400' :
+                            grantApprovalState.status === 'pending' ? 'bg-blue-900/50 text-blue-400' :
+                            grantApprovalState.status === 'denied' ? 'bg-red-900/50 text-red-400' :
+                            'bg-gray-800 text-gray-500'
+                          }`}>
+                            {grantApprovalState.status === 'requires_approval' ? 'needs approval' :
+                             grantApprovalState.status === 'pending' ? 'awaiting...' :
+                             grantApprovalState.status}
+                          </span>
+                        ) : grantBlocker ? (
+                          <span className="text-xs px-1.5 py-0.5 rounded bg-yellow-900/50 text-yellow-400">not granted</span>
+                        ) : (
+                          <span className="text-xs px-1.5 py-0.5 rounded bg-green-900/50 text-green-400">granted</span>
+                        )}
+                      </td>
+                      <td className="py-2">
+                        {otherBlocker ? (
+                          <span className={`text-xs px-1.5 py-0.5 rounded ${
+                            otherBlocker.kind === 'unsupported_capability' ? 'bg-red-900/50 text-red-400' :
+                            'bg-orange-900/50 text-orange-400'
+                          }`}>
+                            {otherBlocker.kind}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-gray-600">{'—'}</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
