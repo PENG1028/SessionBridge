@@ -11,7 +11,7 @@ relay.log
 memory/
 content/
 components/
-core/
+/core/
 .env
 .env.local
 .sessionbridge/

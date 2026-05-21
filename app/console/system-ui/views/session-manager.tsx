@@ -12,7 +12,7 @@ interface SessionManagerProps {
 
 /**
  * Session Manager — view all sessions, stream replay, send input.
- * Calls: session.list, session.get, session.stop, stream.replay, stream.tail, stream.write
+ * Calls: session.list, session.get, session.destroy, stream.replay, stream.tail, stream.write
  * Events: session.created (WS), session.stopped (WS)
  *
  * Core truth: session list from Core. No localStorage persistence of session data.
@@ -49,7 +49,7 @@ export function SessionManager({ core }: SessionManagerProps) {
 
   async function handleSessionStop(sessionId: string) {
     try {
-      await core.call('session.stop', { sessionId });
+      await core.call('session.destroy', { sessionId });
       fetchSessions();
     } catch (err) {
       console.error('Failed to stop session:', err);
@@ -58,11 +58,11 @@ export function SessionManager({ core }: SessionManagerProps) {
 
   async function handleStreamReplay(sessionId: string) {
     try {
-      const result = await core.call<{ lines?: string[] }>('stream.replay', {
+      const result = await core.call<{ events?: Array<{ data: string }> }>('stream.replay', {
         sessionId,
         streamType: 'stdout',
       });
-      setStreamContent(result?.lines || []);
+      setStreamContent((result?.events || []).map(e => e.data));
     } catch (err) {
       setStreamContent([`[Error: Failed to replay stream — ${err instanceof Error ? err.message : 'unknown error'}]`]);
     }
@@ -70,12 +70,12 @@ export function SessionManager({ core }: SessionManagerProps) {
 
   async function handleStreamTail(sessionId: string) {
     try {
-      const result = await core.call<{ lines?: string[] }>('stream.tail', {
+      const result = await core.call<{ events?: Array<{ data: string }> }>('stream.tail', {
         sessionId,
         streamType: 'stdout',
         lines: 50,
       });
-      setStreamContent(result?.lines || []);
+      setStreamContent((result?.events || []).map(e => e.data));
     } catch (err) {
       setStreamContent([`[Error: Failed to tail stream — ${err instanceof Error ? err.message : 'unknown error'}]`]);
     }

@@ -15,7 +15,7 @@ interface DashboardProps {
 
 /**
  * Dashboard — system overview page.
- * Calls: node.list, session.list, plugin.list, logs.tail
+ * Calls: node.list, session.list, plugin.list
  * Events: node.health (WS), session.created/stopped (WS), plugin.registered (WS)
  *
  * Core truth: All data from Core. No caching. 30s auto-refresh or WS push.

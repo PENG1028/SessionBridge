@@ -1009,7 +1009,7 @@ function CacheTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
       }
 
       // Step 3: Execute the plan
-      await core.call('plugin.cache.clear.execute', { pluginId, planId: plan.planId });
+      await core.call('plugin.cache.clear.execute', { pluginId, cacheId, planId: plan.planId });
       setClearMsg('Cleared');
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed';
