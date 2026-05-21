@@ -35,6 +35,8 @@ function createMockClient(mockData: Record<string, unknown>): CoreClient {
   };
 }
 
+
+beforeEach(cleanup);
 describe('Dashboard page', () => {
   it('renders with mock node/session/plugin data', async () => {
     const client = createMockClient({
@@ -199,21 +201,102 @@ describe('Nodes page', () => {
   });
 });
 
-describe('Logs page', () => {
-  it('separates logs.query and audit.list', async () => {
-    const client = createMockClient({
-      'logs.tail': { lines: [] },
-      'audit.list': { entries: [] },
-    });
+	describe('Logs page', () => {
+		it('calls logs.tail on Core Logs tab', async () => {
+			const client = createMockClient({
+				'logs.tail': { lines: [] },
+				'audit.list': { entries: [] },
+			});
 
-    render(<LogsViewer core={client} />);
+			render(<LogsViewer core={client} />);
 
-    await vi.waitFor(() => {
-      // By default, Core Logs tab is active, which calls logs.tail
-      expect(client.call).toHaveBeenCalled();
-    });
-  });
-});
+			await vi.waitFor(() => {
+				expect(client.call).toHaveBeenCalledWith('logs.tail', expect.objectContaining({ source: 'core' }));
+			});
+		});
+
+		it('renders empty state when logs.tail returns { lines: [] }', async () => {
+			const client = createMockClient({ 'logs.tail': { lines: [] } });
+			render(<LogsViewer core={client} />);
+
+			await vi.waitFor(() => {
+				expect(screen.getByText('No log entries.')).toBeTruthy();
+			});
+		});
+
+		it('renders log lines when logs.tail returns data', async () => {
+			const client = createMockClient({
+				'logs.tail': {
+					lines: [
+						{ timestamp: '2026-05-21T10:00:00Z', level: 'INFO', source: 'core', message: 'started' },
+						{ timestamp: '2026-05-21T10:00:01Z', level: 'WARN', source: 'core', message: 'warning' },
+					],
+				},
+			});
+			render(<LogsViewer core={client} />);
+
+			await vi.waitFor(() => {
+				expect(screen.getByText('started')).toBeTruthy();
+				expect(screen.getByText('warning')).toBeTruthy();
+			});
+		});
+
+		it('shows log lines with level styling', async () => {
+			const client = createMockClient({
+				'logs.tail': { lines: [{ timestamp: '2026-05-21T10:00:00Z', level: 'ERROR', source: 'core', message: 'oops' }] },
+			});
+			render(<LogsViewer core={client} />);
+
+			await vi.waitFor(() => {
+				expect(screen.getByText('oops')).toBeTruthy();
+				expect(screen.getByText('ERROR')).toBeTruthy();
+			});
+		});
+
+		it('calls audit.list on Audit Trail tab', async () => {
+			const client = createMockClient({
+				'logs.tail': { lines: [] },
+				'audit.list': { entries: [] },
+			});
+			render(<LogsViewer core={client} />);
+
+			const auditTab = await screen.findByRole('button', { name: 'Audit Trail' });
+			fireEvent.click(auditTab);
+
+			await vi.waitFor(() => {
+				const called = (client.call as any).mock.calls.some((c: any[]) => c[0] === 'audit.list'); expect(called).toBe(true);
+			});
+		});
+
+		it('audit tab renders empty state without crash', async () => {
+			const client = createMockClient({ 'audit.list': { entries: [] } });
+			render(<LogsViewer core={client} />);
+
+			fireEvent.click(await screen.findByRole('button', { name: 'Audit Trail' }));
+
+			await vi.waitFor(() => {
+				expect(screen.getByText('No audit entries.')).toBeTruthy();
+			});
+		});
+
+		it('audit tab renders entries from audit.list', async () => {
+			const client = createMockClient({
+				'audit.list': {
+					entries: [
+						{ timestamp: '2026-05-21T10:00:00Z', type: 'capability.call', actor: 'user', target: 'plugin:terminal' },
+					],
+				},
+			});
+			render(<LogsViewer core={client} />);
+
+			fireEvent.click(await screen.findByRole('button', { name: 'Audit Trail' }));
+
+			await vi.waitFor(() => {
+				expect(screen.getByText('capability.call')).toBeTruthy();
+				expect(screen.getByText('user')).toBeTruthy();
+			});
+		});
+	});
 
 describe('Approvals page', () => {
   it('renders with empty state', async () => {
