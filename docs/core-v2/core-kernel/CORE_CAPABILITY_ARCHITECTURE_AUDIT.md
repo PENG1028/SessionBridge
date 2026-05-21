@@ -76,7 +76,7 @@
 | `stream.replay` | stream | `history_cmds.go` | **implemented** | Yes | 历史回放 |
 | `stream.tail` | stream | `history_cmds.go` | **implemented** | Yes | 历史尾部查询 |
 | `process.spawn` | process | `process_cmds.go` | **implemented** | Yes | 创建进程，Unix PTY / Windows pipe |
-| `process.signal` | process | `process_cmds.go` | **implemented** | Yes | 发信号 |
+| `process.signal` (tree=true) | process | `process_cmds.go` | **implemented (R11)** | Yes | OS-level best-effort tree termination. Windows: taskkill /T /PID; Unix: /proc traversal with pgrep -P fallback. tree=false behavior unchanged. |
 | `process.resize` | process | `process_cmds.go` | **implemented** | Yes | 调整 PTY 窗口（Windows no-op） |
 | `process.list` | process | `process_cmds.go` | **implemented** | Yes | 列出进程 |
 | `process.kill` | process | — | **not declared** | No | 仅在 KnownCapabilities 存在 |
@@ -184,7 +184,7 @@
 | `process.signal` | **partial** | **full** | **full** | **unsupported** | `manager.go` Signal() | Windows signal 语义受限 |
 | `process.resize` | **no-op** | **full** | **full** | **unsupported** | `pty_windows.go` no-op | Windows 需要 ConPTY 支持 resize |
 | `process.list` | **full** | **full** | **full** | **unsupported** | `manager.go` List() | 平台无关 |
-| OS subprocess tree | **not implemented** | **not implemented** | **not implemented** | **not implemented** | 无 | 所有平台均缺失，Claude Code P0 |
+| OS subprocess tree | **partial** (taskkill /T) | **partial** (/proc traversal) | **partial** (/proc traversal) | **unsupported** | `process_cmds.go` signal handler | R11: best-effort tree termination. Try kill children, always kill parent. Enumeration failure logs warning but does not block parent signal. |
 | Background/detached process | **not implemented** | **not implemented** | **not implemented** | **not implemented** | 无 | 所有平台均缺失 |
 
 ### 3.2 PTY / Stream
@@ -326,7 +326,7 @@ go-core/internal/platform/
 | Stdin redaction | 双层深度防御 | **implemented** | 无 | — |
 | Stdout/stderr history | `session.history.*` | **partial** | 无 | **P1** |
 | Replay/tail | `stream.replay` / `stream.tail` | **implemented** | 无 | — |
-| OS subprocess tree tracking | 进程树追踪 | **not implemented** | 所有平台 | **P0** |
+| OS subprocess tree tracking | 进程树追踪 | **implemented (R11)** best-effort | Windows taskkill /T, Unix /proc traversal | — |
 | Process kill (SIGTERM/SIGKILL) | `process.signal` / `process.kill` | **partial** | Windows signal 受限 | **P1** |
 | Background/detached process | detached process | **implemented** (via run.create + keep_running policy) | 所有平台 | — |
 | File read/write/list | `fs.*` | **implemented** | 无 | — |
@@ -347,11 +347,11 @@ go-core/internal/platform/
 
 | Priority | Count | Items |
 |---|---|---|
-| **P0** (必须实现) | 3 | OS subprocess tree、Windows PTY support（Linux-first skeleton 不依赖）、`network.*`（权限/审计声明，非纯技术阻塞 — Claude CLI 子进程可自行发起网络调用） |
+| **P0** (必须实现) | 2 | Windows PTY support（Linux-first skeleton 不依赖）、`network.*`（权限/审计声明，非纯技术阻塞 — Claude CLI 子进程可自行发起网络调用） |
 | **P1** (应该实现) | 2 | Real package manager execution（install commands via process.spawn）、`process.kill` + Windows signal |
 | **P2** (锦上添花) | 4 | Persistent plan/task stores、disk-mode plugin history、mobile client control、path constraints enforcement |
 
-**结论**: 当前离能搭 Claude Code 插件差 **2-3 个 P0 项**——其中 `network.*` 是完全未声明的空白领域（Claude CLI 子进程技术上可自行发起网络调用，但缺少权限/审计模型声明），subprocess tree 是 OS 级功能需全新实现，Windows PTY 需 ConPTY 支持（Linux-first Claude Code skeleton 可先绕过）。CLI 检测（`env.which`/`env.checkBinary`）已实现，install lifecycle 已实现为 dry-run 框架（plan/approve/execute/uninstall/files.register），审批工作流通过 dispatcher Planner 接口和 `notify.respond` 已连接。预计 P0 工作 1-2 周，P1 + P2 再 1-2 周。
+**结论**: 当前离能搭 Claude Code 插件差 **2 个 P0 项**——`network.*` 是完全未声明的空白领域（Claude CLI 子进程技术上可自行发起网络调用，但缺少权限/审计模型声明），Windows PTY 需 ConPTY 支持（Linux-first Claude Code skeleton 可先绕过）。OS subprocess tree tracking 已在 R11 (2026-05-21) 以 best-effort 方式实现：`process.signal(tree=true)` 和 `run.stop(tree=true)` 终止完整 OS 进程树（Windows: taskkill /T, Unix: /proc traversal with pgrep -P fallback）。CLI 检测（`env.which`/`env.checkBinary`）已实现，install lifecycle 已实现为 dry-run 框架（plan/approve/execute/uninstall/files.register），审批工作流通过 dispatcher Planner 接口和 `notify.respond` 已连接。预计 P0 工作 1 周，P1 + P2 再 1-2 周。
 
 ---
 
@@ -427,14 +427,28 @@ Risky:                    2 个 (plugin manifest bridge UI, platform support)
 - **验证**: 新测试验证矩阵与 executor 注册一致性
 - **不应做**: 不要改已有 capability 行为
 
-### Step 5: Implement OS-Level Subprocess Tree Tracking
+### Step 5: Implement OS-Level Subprocess Tree Tracking ✅ DONE (R11, 2026-05-21)
 
 - **目标**: Claude Code P0 — 追踪 `claude` 进程及其子进程
 - **改动范围**: `internal/process/manager.go` + 平台文件
-- **方案**: Unix 用 `/proc` + `pgid`，Windows 用 `CreateToolhelp32Snapshot`
+- **方案**: Windows 用 `taskkill /T`，Unix 用 `/proc` 遍历（pgrep -P 作为 fallback）
 - **前置依赖**: Step 2（capability support resolver）— 需要在矩阵中标记此能力
 - **验证**: `go test ./...` + E2E 测试 spawn 嵌套进程后 verify 进程树
 - **不应做**: 不要支持跨节点进程树（Phase 2）
+- **完成状态**: 已实现 best-effort 方案。`process.signal(tree=true)` 和 `run.stop(tree=true)` 终止完整 OS 进程树。tree=false (default) 行为完全不变。所有树操作均为 best-effort：先尝试终止子进程，始终终止父进程。如果子进程枚举失败，父进程仍然被 signal。
+
+### Step 5a: Process Tree Design Constraints (R11, 2026-05-21)
+
+The OS-level process tree termination is **best-effort**, NOT a full process supervisor. Key design constraints:
+
+- **Windows**: Uses `taskkill /T /PID` without admin privileges. This restricts termination to processes owned by the same user. System-level or other-user child processes will not be terminated.
+- **Unix**: Uses `/proc` traversal to enumerate child PIDs, with `pgrep -P` as fallback. If `/proc` is not mounted or the process exits mid-enumeration, child enumeration may fail.
+- **If enumeration fails**: The parent process is still signaled. The operation does not fail — it warns and proceeds. This is intentional: a partial tree termination is better than no termination at all.
+- **tree=false (default)**: Behavior is completely unchanged from pre-R11. Only the directly-spawned process receives the signal.
+- **Core restart restore**: Still NOT supported. If Go Core restarts, run state is lost, OS processes do not survive, and previous process trees are not re-trackable.
+- **Cross-node process trees**: Not supported. Tree termination applies only to the local node's process hierarchy.
+- **Claude Code production**: Still NOT ready. Requires `network.*` capability declaration and Windows PTY support (Linux-first skeleton can proceed without PTY).
+- **Real package manager install**: Still dry-run only. The PlanStore, approval flow, and task tracking framework are in place but `process.spawn` is not wired to package manager commands.
 
 ### Step 6: Only Then — Claude Code Plugin Skeleton
 
@@ -458,7 +472,7 @@ Risky:                    2 个 (plugin manifest bridge UI, platform support)
 - **文件拆分已完成**: `plugin_cmds.go` (1027 行) 已拆分为 `plugin_install_cmds.go`、`plugin_cache_cmds.go`、`plugin_permission_cmds.go`、`plugin_files_cmds.go`、`plugin_manage_cmds.go`、`task_cmds.go`，每个文件职责明确。
 - **Go Core 与 System UI 之间存在模糊带**：plugin manifest 类型在 TS 和 Go 中独立维护，无共享 schema 约束。目前两个现存插件（terminal、system-info）声明简单，尚未暴露问题，但随插件数量和复杂度增长会加速漂移。
 - **E2E 测试 Windows 可移植性差**：测试中大量使用 `echo`、`cat`、`sleep` 等 Unix 命令，在 Windows 上无法运行。
-- **Claude Code 就绪度 ~70%**：基础能力（session/stream/process/fs/permission/env CLI 检测）齐全，install lifecycle 已实现（dry-run），审批工作流已连接，task 追踪已就位——仍缺 3 个 P0 能力（subprocess tree、Windows PTY、network permissions）和真实包管理器执行。
+- **Claude Code 就绪度 ~80%**：基础能力（session/stream/process/fs/permission/env CLI 检测）齐全，install lifecycle 已实现（dry-run），审批工作流已连接，task 追踪已就位，OS subprocess tree 已实现（R11, best-effort）——仍缺 2 个 P0 能力（Windows PTY、network permissions）和真实包管理器执行。
 
 ### B. Cleanliness Verdict
 
@@ -476,7 +490,7 @@ Risky:                    2 个 (plugin manifest bridge UI, platform support)
 | Gap | Impact | Priority |
 |---|---|---|
 | `network.*` 完全未声明 | 权限/审计模型缺失（Claude CLI 子进程技术上可自行发起网络调用，但 Core 无法约束/审计） | P0 |
-| OS subprocess tree 未实现 | Claude Code 无法管理子进程树 | P0 |
+| OS subprocess tree | R11 (2026-05-21) 已实现 best-effort 方案：`process.signal(tree=true)` 和 `run.stop(tree=true)` 终止完整 OS 进程树。Windows: taskkill /T, Unix: /proc traversal with pgrep -P fallback。不再阻塞 Claude Code 开发。 | — |
 | Windows PTY 仅有 pipe fallback | Windows 终端无 TTY 交互 | P0 |
 | `process.kill` / `process.status` 未声明 | 进程生命周期管理不完整 | P1 |
 | `plugin.install.*` / `plugin.uninstall` / `plugin.files.register` 已实现（dry-run） | 生命周期框架已就位，但无真实包管理器执行；PlanStore in-memory | P1 |
@@ -486,11 +500,11 @@ Risky:                    2 个 (plugin manifest bridge UI, platform support)
 
 | Priority | Status | Items |
 |---|---|---|
-| **P0** | 2-3 项缺失 | OS subprocess tree、Windows PTY（Linux-first skeleton 不依赖）、network permissions（权限/审计声明，Claude CLI 子进程技术上可自行发起网络调用） |
+| **P0** | 2 项缺失 | Windows PTY（Linux-first skeleton 不依赖）、network permissions（权限/审计声明，Claude CLI 子进程技术上可自行发起网络调用） |
 | **P1** | 3 项部分/缺失 | Real package manager execution、process.kill/status handler、path constraints enforcement |
 | **P2** | 3 项微调 | Persistent plan/task stores、disk-mode plugin history、mobile client control |
 
-**Install lifecycle（dry-run）和 approval workflow 已就位。OS subprocess tree 和 network.* 声明完成之前，不应该开始完整的 Claude Code 插件开发。Linux-first skeleton 可先行（不依赖 Windows PTY）。**
+**Install lifecycle（dry-run）和 approval workflow 已就位。OS subprocess tree 已在 R11 (2026-05-21) 以 best-effort 方式实现（`process.signal(tree=true)` / `run.stop(tree=true)`）。`network.*` 声明完成之前，不应该开始完整的 Claude Code 插件开发。Linux-first skeleton 可先行（不依赖 Windows PTY）。**
 
 ### E. Next Agent Prompt
 
