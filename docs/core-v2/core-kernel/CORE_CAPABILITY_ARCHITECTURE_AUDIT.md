@@ -76,7 +76,7 @@
 | `stream.replay` | stream | `history_cmds.go` | **implemented** | Yes | 历史回放 |
 | `stream.tail` | stream | `history_cmds.go` | **implemented** | Yes | 历史尾部查询 |
 | `process.spawn` | process | `process_cmds.go` | **implemented** | Yes | 创建进程，Unix PTY / Windows pipe |
-| `process.signal` (tree=true) | process | `process_cmds.go` | **implemented (R11)** | Yes | OS-level best-effort tree termination. Windows: taskkill /T /PID; Unix: /proc traversal with pgrep -P fallback. tree=false behavior unchanged. |
+| `process.signal` (tree=true) | process | `process_cmds.go` | **partial (R11)** | Yes | OS-level best-effort tree termination. Windows: taskkill /T /F (kernel-mode, no enumeration). Unix: /proc traversal with pgrep -P fallback. Windows childrenOf via wmic is UNRELIABLE (partial). tree=false behavior unchanged. |
 | `process.resize` | process | `process_cmds.go` | **implemented** | Yes | 调整 PTY 窗口（Windows no-op） |
 | `process.list` | process | `process_cmds.go` | **implemented** | Yes | 列出进程 |
 | `process.kill` | process | — | **not declared** | No | 仅在 KnownCapabilities 存在 |
@@ -184,7 +184,7 @@
 | `process.signal` | **partial** | **full** | **full** | **unsupported** | `manager.go` Signal() | Windows signal 语义受限 |
 | `process.resize` | **no-op** | **full** | **full** | **unsupported** | `pty_windows.go` no-op | Windows 需要 ConPTY 支持 resize |
 | `process.list` | **full** | **full** | **full** | **unsupported** | `manager.go` List() | 平台无关 |
-| OS subprocess tree | **partial** (taskkill /T) | **partial** (/proc traversal) | **partial** (/proc traversal) | **unsupported** | `process_cmds.go` signal handler | R11: best-effort tree termination. Try kill children, always kill parent. Enumeration failure logs warning but does not block parent signal. |
+| OS subprocess tree | **partial** (taskkill /T /F, no enum) | **partial** (/proc traversal) | **partial** (/proc traversal) | **unsupported** | `process_cmds.go` signal handler | R11: best-effort tree termination. Windows uses taskkill /T /F (kernel-mode, no wmic dependency). Unix enumerates via pgrep then signals. tree=false behavior unchanged (except Windows where all signals are /T /F). |
 | Background/detached process | **not implemented** | **not implemented** | **not implemented** | **not implemented** | 无 | 所有平台均缺失 |
 
 ### 3.2 PTY / Stream
@@ -326,7 +326,7 @@ go-core/internal/platform/
 | Stdin redaction | 双层深度防御 | **implemented** | 无 | — |
 | Stdout/stderr history | `session.history.*` | **partial** | 无 | **P1** |
 | Replay/tail | `stream.replay` / `stream.tail` | **implemented** | 无 | — |
-| OS subprocess tree tracking | 进程树追踪 | **implemented (R11)** best-effort | Windows taskkill /T, Unix /proc traversal | — |
+| OS subprocess tree tracking | 进程树追踪 | **partial (R11)** best-effort | Windows: taskkill /T /F (kernel-mode, no children enumeration). Unix: pgrep-based /proc traversal. Windows childrenOf/wmic is unreliable. tree=false is also /T /F on Windows. | — |
 | Process kill (SIGTERM/SIGKILL) | `process.signal` / `process.kill` | **partial** | Windows signal 受限 | **P1** |
 | Background/detached process | detached process | **implemented** (via run.create + keep_running policy) | 所有平台 | — |
 | File read/write/list | `fs.*` | **implemented** | 无 | — |
@@ -441,7 +441,7 @@ Risky:                    2 个 (plugin manifest bridge UI, platform support)
 
 The OS-level process tree termination is **best-effort**, NOT a full process supervisor. Key design constraints:
 
-- **Windows**: Uses `taskkill /T /PID` without admin privileges. This restricts termination to processes owned by the same user. System-level or other-user child processes will not be terminated.
+- **Windows (PARTIAL)**: `killProcessTree` uses `taskkill /T /F` directly (kernel-mode, no wmic dependency). `childrenOf` via wmic is unreliable — may return 0 children even when children exist. Tests are marked partial on Windows when wmic enumeration fails. `signalByPID` always uses `/T /F` (Windows cannot signal a single PID without affecting children). tree=false and tree=true are therefore equivalent on Windows — this is a platform limitation, not a bug. `taskkill` operates without admin privileges and is restricted to processes owned by the same user. System-level or other-user child processes will not be terminated.
 - **Unix**: Uses `/proc` traversal to enumerate child PIDs, with `pgrep -P` as fallback. If `/proc` is not mounted or the process exits mid-enumeration, child enumeration may fail.
 - **If enumeration fails**: The parent process is still signaled. The operation does not fail — it warns and proceeds. This is intentional: a partial tree termination is better than no termination at all.
 - **tree=false (default)**: Behavior is completely unchanged from pre-R11. Only the directly-spawned process receives the signal.

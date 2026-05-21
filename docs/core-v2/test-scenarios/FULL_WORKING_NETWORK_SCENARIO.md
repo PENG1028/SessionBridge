@@ -502,7 +502,7 @@ If not ready:
 | Stream write/read | `stream.write`, `stream.subscribe` | implemented | conversation |
 | History/replay | `stream.replay`, `stream.tail`, `session.history.*` | implemented | session recovery |
 | Stdin safety | history stdin redaction | implemented | secret protection |
-| Process tree | `process.signal(tree=true)`, `run.stop(tree=true)` | **R11: best-effort OS tree (2026-05-21)** — tree=false unchanged; tree=true kills descendants first then parent. Windows: taskkill /T; Unix: /proc traversal | child process tracking |
+| Process tree | `process.signal(tree=true)`, `run.stop(tree=true)` | **R11: partial OS tree (2026-05-21)** — tree=false unchanged on Unix; tree=true kills descendants first then parent. Windows: taskkill /T /F (kernel-mode, no enumeration). Windows wmic childrenOf is unreliable; tree=false also /T /F (platform limitation). | child process tracking |
 | Run index | `run.create`, `run.list`, `run.info`, `run.stop`, `run.updatePolicy` | **verified in R10 with disconnect/reconnect (2026-05-21)** | long-lived resource tracking |
 | Network declaration | `network.*` | not declared | permission/audit |
 | File access | `fs.*` | implemented, constraints weak | code work |
@@ -525,7 +525,7 @@ If not ready:
 |---|---|
 | Capability support resolver | UI/Core must know full/partial/unsupported before action |
 | Windows/Linux test portability | baseline must be trustworthy |
-| ~~OS-level subprocess tree tracking~~ | ~~Claude Code can spawn build/test/watch child processes~~ **Done (R11, 2026-05-21):** best-effort OS-level process tree termination via `process.signal(tree=true)` and `run.stop(tree=true)`. Windows: taskkill /T, Unix: /proc traversal or pgrep -P fallback. If enumeration fails, parent is still signaled. tree=false (default) unchanged. |
+| ~~OS-level subprocess tree tracking~~ | ~~Claude Code can spawn build/test/watch child processes~~ **Done (R11, 2026-05-21) — PARTIAL on Windows:** `process.signal(tree=true)` and `run.stop(tree=true)` terminate the OS process tree. Windows: `taskkill /T /F` (kernel-mode, no wmic dependency). Windows `childrenOf` via wmic is unreliable (tests skip when enumeration returns 0). Unix: pgrep-based /proc traversal. Windows tree=false also /T /F (platform limitation). |
 | ~~Install plan/execute lifecycle~~ | ~~missing `claude` must be installable and visible~~ **Done (dry-run):** plan/approve/execute/uninstall/fils.register all implemented as dry-run framework; real package manager execution is P1 |
 | ~~Approval workflow integration~~ | ~~high-risk grants and install must not bypass approval~~ **Done:** dispatcher Plan-Before-Apply gates high-risk operations; notify.respond provides approve/deny; PLAN_REQUIRED/APPROVAL_REQUIRED/APPROVAL_DENIED error codes returned |
 | Platform-aware Terminal profile | Windows pipe fallback must be explicit |
@@ -558,7 +558,7 @@ These items are explicitly out of scope for the current implementation and are d
 | Item | Status | Notes |
 |---|---|---|
 | Core restart restore | **Not supported** | Run and session state is lost when Go Core restarts. OS processes do not survive Core restart. On restart, all previously-running runs are marked as stopped; the client must create new runs. The `restartRestore` policy field is declared in the schema but has no runtime effect. |
-| OS-level subprocess tree tracking | **Best-effort (R11, 2026-05-21)** | `process.signal(tree=true)` and `run.stop(tree=true)` now terminate the full OS process tree. This is best-effort, NOT a full process supervisor: Windows uses taskkill /T (user-owned processes only, no admin), Unix uses /proc traversal with pgrep -P fallback. If enumeration fails, the parent is still signaled. Core restart restore is NOT supported. |
+| OS-level subprocess tree tracking | **Best-effort, PARTIAL on Windows (R11, 2026-05-21)** | `process.signal(tree=true)` and `run.stop(tree=true)` now terminate the full OS process tree. This is best-effort, NOT a full process supervisor. Windows: `killProcessTree` uses `taskkill /T /F` (kernel-mode, no wmic dependency); `childrenOf` via wmic is unreliable and tests are marked partial when enumeration fails. Windows `signalByPID` always uses /T /F — tree=false also kills children (platform limitation). Unix: pgrep-based /proc traversal. Core restart restore is NOT supported. |
 | Claude Code production readiness | **Not supported** | The Claude Code plugin is still a skeleton. Real CLI binary detection, spawn, stream-json parsing, tool-use approval UI, and session management are not yet implemented end-to-end. |
 | Real package manager install execution | **Not supported** | `plugin.install.execute` is a dry-run framework. Actual `apt`, `npm`, `pip`, or other package manager commands are not wired to `process.spawn`. The PlanStore, approval flow, and task tracking are in place but execute no real system commands. |
 
@@ -654,7 +654,7 @@ The UI should receive blockers as a list:
 5. ~~Integrate approval workflow for install/high-risk grants.~~ **Done:** dispatcher Plan-Before-Apply step via Planner interface; notify.respond approve/deny channel; error codes PLAN_REQUIRED/APPROVAL_REQUIRED/APPROVAL_DENIED.
 6. Add capability support resolver and platform model. *(not yet done)*
 7. Extend `plugin.check` to include capability support report.
-8. ~~Implement OS-level subprocess tree tracking.~~ **Done (R11, 2026-05-21):** best-effort OS-level process tree termination via `process.signal(tree=true)` and `run.stop(tree=true)`. Windows: taskkill /T, Unix: /proc traversal or pgrep -P fallback. tree=false behavior unchanged.
+8. ~~Implement OS-level subprocess tree tracking.~~ **Done (R11, 2026-05-21) — PARTIAL on Windows:** `process.signal(tree=true)` / `run.stop(tree=true)` terminate the OS process tree. Windows: `killProcessTree` uses `taskkill /T /F` (kernel-mode, no wmic dependency); `childrenOf` via wmic is unreliable. Unix: pgrep-based /proc traversal. Windows tree=false also /T /F (platform limitation).
 9. Add `network.*` declaration and policy model. *(not yet done)*
 10. Implement real package manager execution (wire process.spawn to install commands).
 11. Start Claude Code plugin skeleton.
