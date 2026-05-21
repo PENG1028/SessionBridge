@@ -17,7 +17,7 @@ stream.*      标准流（stdout/stderr/stdin）
 plugin.*      插件管理（安装、状态、权限、文件、缓存）
 config.*      配置（读写、schema）
 task.*        异步任务进度
-node.*        节点管理
+node.*        节点管理（发现、健康、identity、invite 配对、peer 信任网格）
 action.*      操作审计
 ```
 
@@ -154,6 +154,22 @@ action.*      操作审计
 | 规范命名 | 别名（已废弃） | 参数 | 用途 | 页面 |
 |---------|-------------|------|------|------|
 | `action.request` | — | `{ capability, payload }` | 请求执行操作（走 audit） | 所有写操作 |
+
+### 2.12 node — Mesh Security
+
+| 规范命名 | 参数 | 用途 |
+|---------|------|------|
+| `node.identity.get` | — | 返回本地节点的 nodeId, publicKey, fingerprint（不返回 privateKey） |
+| `node.invite.create` | `{ ttlSeconds?, trustDurationSeconds?, roleHint?, nameHint? }` | 创建短期 invite code |
+| `node.invite.list` | — | 列出未过期 invite（不含 code） |
+| `node.invite.revoke` | `{ inviteId }` | 撤销 invite |
+| `node.invite.accept` | `{ peerUrl, code, nameHint? }` | 接受 invite，建立信任 |
+| `node.peer.list` | — | 信任 peer 列表 + 运行时连接状态 |
+| `node.peer.info` | `{ nodeId }` | 单个 peer 详情 |
+| `node.peer.reconnect` | `{ nodeId }` | 触发立即重连 |
+| `node.peer.disconnect` | `{ nodeId }` | 断开连接，保留信任 |
+| `node.peer.revoke` | `{ nodeId }` | 撤销信任并断开连接 |
+| `node.reachability.check` | — | 可公网访问性检查 |
 
 ---
 

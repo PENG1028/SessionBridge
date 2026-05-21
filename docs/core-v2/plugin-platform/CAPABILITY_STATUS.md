@@ -91,6 +91,24 @@ The core plugin (`sessionnode-core`) declares 40 capabilities in `AllPluginsCaps
 | `network.proxy` | ⏳ partial (not_implemented) | `networkProxy` | partial (not_implemented) | unsupported | DangerousCapability. No Core-managed proxy/tunnel implementation. `plugin.check` returns `unsupported_capability`. |
 | `network.fetch` | ⏳ partial (not_implemented) | `networkFetch` | partial (not_implemented) | unsupported | DangerousCapability. No Core-managed HTTP client. `plugin.check` returns `unsupported_capability`. |
 
+### Mesh Security (11 capabilities) -- R14
+
+> **Identity, trust, invite pairing, and peer management.** Enables secure node-to-node mesh connections with ed25519 challenge-response handshake over `/peer/ws`.
+
+| Capability | Status | Handler | Notes |
+|---|---|---|---|
+| `node.identity.get` | ✅ implemented | `nodeIdentityGet` | Returns nodeId, publicKey, fingerprint (no private key) |
+| `node.invite.create` | ✅ implemented | `nodeInviteCreate` | Creates short-lived invite code (10s-10m TTL) |
+| `node.invite.list` | ✅ implemented | `nodeInviteList` | Lists non-expired invites (no codes exposed) |
+| `node.invite.revoke` | ✅ implemented | `nodeInviteRevoke` | Revokes invite by ID |
+| `node.invite.accept` | ✅ implemented | `nodeInviteAccept` | Validates code, adds peer to trust store |
+| `node.peer.list` | ✅ implemented | `nodePeerList` | Trust store + runtime connection status |
+| `node.peer.info` | ✅ implemented | `nodePeerInfo` | Single peer detail |
+| `node.peer.reconnect` | ✅ implemented | `nodePeerReconnect` | Triggers immediate reconnect attempt |
+| `node.peer.disconnect` | ✅ implemented | `nodePeerDisconnect` | Disconnects but keeps trust record |
+| `node.peer.revoke` | ✅ implemented | `nodePeerRevoke` | Removes trust + disconnects |
+| `node.reachability.check` | ✅ implemented | `nodeReachabilityCheck` | Returns publicReachable, inboundPeerAllowed, reason |
+
 ---
 
 ## 2. Blocker Categories
@@ -163,6 +181,10 @@ These capabilities are registered in `AllPluginsCaps` under non-core plugin IDs.
 | `audit.*` | 🔜 Planned | `audit.list`/`audit.get`/`audit.export` in API contract but not implemented |
 | `task.*` | ⏳ Partial | `task.list` and `task.info` implemented; TaskStore is in-memory with Task types for install/uninstall/check/cache_clear |
 | `action.*` | 🔜 Planned | Operation execution in API contract |
+| `node.identity.*` | ✅ Declared (R14) | `node.identity.get` implemented |
+| `node.invite.*` | ✅ Declared (R14) | `node.invite.create/list/revoke/accept` all implemented |
+| `node.peer.*` | ✅ Declared (R14) | `node.peer.list/info/reconnect/disconnect/revoke` all implemented |
+| `node.reachability.*` | ✅ Declared (R14) | `node.reachability.check` implemented |
 
 ---
 
@@ -403,5 +425,5 @@ network.fetch            → networkFetch
 
 ---
 
-> **Last updated:** 2026-05-21 (Round 13: Added Section 2 Blocker Categories — missing_grant, unsupported_capability, missing_dependency, unknown_capability with UI labels and Plugin Manager summary behavior; ApprovalCenter global overlay; approval.list pending-only facade)
+> **Last updated:** 2026-05-21 (Round 14: Added Mesh Security capability section — node.identity.get, node.invite.create/list/revoke/accept, node.peer.list/info/reconnect/disconnect/revoke, node.reachability.check; updated Known Gaps to note mesh security caps declared)
 > **Related docs:** [PLUGIN_CORE_API_CONTRACT.md](./PLUGIN_CORE_API_CONTRACT.md) | [PLUGIN_MANIFEST_SPEC.md](./PLUGIN_MANIFEST_SPEC.md) | [PLUGIN_SECURITY_MODEL.md](./PLUGIN_SECURITY_MODEL.md) | [PLUGIN_ADAPTERS.md](./PLUGIN_ADAPTERS.md)
