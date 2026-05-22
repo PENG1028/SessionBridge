@@ -1,10 +1,11 @@
 'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { RefreshCw, Search } from 'lucide-react';
-import type { CoreClient, PluginInfo, BlockerEntry } from '../../core/core-types';
+import { RefreshCw, Search, Play, Power, PowerOff } from 'lucide-react';
+import type { CoreClient, PluginInfo, BlockerEntry, RunInfo } from '../../core/core-types';
 import { PageHeader, PageLoading, PageError, PageEmpty, PageOffline, type PageState } from './page-utils';
 import { listFromResponse } from './core-response-utils';
+import { getAllViewEntries } from '../../main/view-registry';
 
 interface PluginManagerProps {
   core: CoreClient;
@@ -20,6 +21,28 @@ interface EnvCheckResult {
   blockers: BlockerEntry[];
 }
 
+/** Check if a plugin has any launchable/direct view registered. */
+function hasLaunchableView(pluginId: string): boolean {
+  for (const [, entry] of getAllViewEntries()) {
+    if (entry.meta.launchable && entry.meta.launchMode !== 'hidden' && entry.meta.launchMode !== 'runtime') {
+      return true;
+    }
+  }
+  return false;
+}
+
+function blockerSummary(blockers: BlockerEntry[]): string {
+  if (blockers.length === 0) return '';
+  const byKind: Record<string, number> = {};
+  blockers.forEach(b => { byKind[b.kind] = (byKind[b.kind] || 0) + 1; });
+  const parts: string[] = [];
+  if (byKind.missing_grant) parts.push(`perm:${byKind.missing_grant}`);
+  if (byKind.unsupported_capability) parts.push(`unsup:${byKind.unsupported_capability}`);
+  if (byKind.missing_dependency) parts.push(`deps:${byKind.missing_dependency}`);
+  if (byKind.unknown_capability) parts.push(`unk:${byKind.unknown_capability}`);
+  return parts.join(' ') || `${blockers.length} blockers`;
+}
+
 export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
   const [pageState, setPageState] = useState<PageState>('loading');
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
@@ -27,14 +50,16 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
   const [togglingIds, setTogglingIds] = useState<Set<string>>(new Set());
   const [toggleError, setToggleError] = useState<string | null>(null);
 
-  // Search & filters
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
 
-  // Environment check
   const [envCheckResults, setEnvCheckResults] = useState<Record<string, EnvCheckResult>>({});
   const [envCheckRunning, setEnvCheckRunning] = useState(false);
+  const [checkingIds, setCheckingIds] = useState<Set<string>>(new Set());
+
+  // Run counts per plugin (from run.list)
+  const [runCounts, setRunCounts] = useState<Record<string, number>>({});
 
   async function fetchPlugins() {
     if (!core.isConnected) {
@@ -46,9 +71,24 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
     setError(null);
 
     try {
-      const result = await core.call<unknown>('plugin.list');
-      const normalized = listFromResponse<PluginInfo>(result, 'plugins');
+      const [pluginResult, runResult] = await Promise.all([
+        core.call<unknown>('plugin.list'),
+        core.call<unknown>('run.list'),
+      ]);
+
+      const normalized = listFromResponse<PluginInfo>(pluginResult, 'plugins');
       setPlugins(normalized);
+
+      // Count runs by pluginId
+      const runs = listFromResponse<RunInfo>(runResult, 'runs');
+      const counts: Record<string, number> = {};
+      for (const r of runs) {
+        if (r.pluginId) {
+          counts[r.pluginId] = (counts[r.pluginId] || 0) + 1;
+        }
+      }
+      setRunCounts(counts);
+
       setPageState(normalized.length > 0 ? 'ready' : 'empty');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load plugins');
@@ -100,14 +140,35 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
     setEnvCheckRunning(false);
   }
 
-  // WS event subscription for live updates
+  async function runSingleCheck(pluginId: string) {
+    setCheckingIds(prev => new Set(prev).add(pluginId));
+    try {
+      const res = await core.call<{ status: string; dependencies?: unknown[]; blockers?: BlockerEntry[] }>('plugin.check', { pluginId });
+      const blockers = Array.isArray(res?.blockers) ? res.blockers as BlockerEntry[] : [];
+      setEnvCheckResults(prev => ({
+        ...prev,
+        [pluginId]: { status: res?.status || 'ok', deps: res?.dependencies?.length || 0, blockers },
+      }));
+    } catch {
+      setEnvCheckResults(prev => ({
+        ...prev,
+        [pluginId]: { status: 'error', deps: 0, blockers: [] },
+      }));
+    } finally {
+      setCheckingIds(prev => {
+        const next = new Set(prev);
+        next.delete(pluginId);
+        return next;
+      });
+    }
+  }
+
   useEffect(() => {
     const unsubRegistered = core.on('plugin.registered', () => fetchPlugins());
     const unsubUnregistered = core.on('plugin.unregistered', () => fetchPlugins());
     const unsubStatus = core.on('connectionStatus', () => {
       if (core.isConnected) fetchPlugins();
     });
-
     return () => {
       unsubRegistered();
       unsubUnregistered();
@@ -119,7 +180,6 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
     fetchPlugins();
   }, [core]);
 
-  // Filtered list
   const filteredPlugins = useMemo(() => {
     return plugins.filter(p => {
       if (statusFilter !== 'all' && p.status !== statusFilter) return false;
@@ -210,109 +270,125 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
         )}
       </div>
 
+      {/* Plugin list */}
       <div className="p-6">
         <div className="space-y-2">
           {filteredPlugins.map(plugin => {
             const envCheck = envCheckResults[plugin.pluginId];
+            const launchable = hasLaunchableView(plugin.pluginId);
+            const capCount = plugin.capabilities?.length ?? 0;
+            const runCount = runCounts[plugin.pluginId] ?? 0;
+            const isChecking = checkingIds.has(plugin.pluginId);
+            const isToggling = togglingIds.has(plugin.pluginId);
+            const isBuiltin = plugin.type === 'builtin';
+
             return (
               <div
                 key={plugin.pluginId}
-                className="flex items-center gap-4 px-4 py-3 rounded-lg border border-gray-800 bg-gray-900"
+                className="px-4 py-3 rounded-lg border border-gray-800 bg-gray-900"
               >
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
+                {/* Row 1: identity + status + actions */}
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 min-w-0 flex items-center gap-2">
+                    <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                      plugin.status === 'enabled' ? 'bg-green-500' :
+                      plugin.status === 'error' ? 'bg-red-500' :
+                      'bg-gray-600'
+                    }`} />
                     <span className="font-medium text-gray-200">{plugin.pluginId}</span>
                     {plugin.type && (
-                      <span className={`text-xs px-1.5 py-0.5 rounded ${
-                        plugin.type === 'builtin' ? 'bg-gray-800 text-gray-400' : 'bg-blue-900/50 text-blue-400'
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                        isBuiltin ? 'bg-gray-800 text-gray-400' : 'bg-blue-900/50 text-blue-400'
                       }`}>
                         {plugin.type}
                       </span>
                     )}
-                    <span className="text-xs text-gray-600">{plugin.version}</span>
+                    <span className="text-[10px] text-gray-600">{plugin.version}</span>
+                    {plugin.status === 'error' && plugin.error && (
+                      <span className="text-[10px] text-red-400 truncate max-w-40" title={plugin.error}>
+                        {plugin.error}
+                      </span>
+                    )}
                   </div>
-                  {plugin.description && (
-                    <div className="text-xs text-gray-500 mt-0.5">{plugin.description}</div>
-                  )}
-                  {/* Capability & blocker summary */}
-                  {envCheck && (
-                    <div className="text-xs mt-1 space-y-0.5">
+
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => runSingleCheck(plugin.pluginId)}
+                      disabled={isChecking}
+                      className="text-[10px] px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 transition-colors disabled:opacity-50"
+                      title={`Check ${plugin.pluginId}`}
+                    >
+                      {isChecking ? '...' : 'Check'}
+                    </button>
+                    <button
+                      onClick={() => onPluginSelect?.(plugin.pluginId)}
+                      className="text-[10px] px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 transition-colors"
+                    >
+                      Detail
+                    </button>
+                    {!isBuiltin && (
+                      <button
+                        onClick={() => handleToggle(plugin.pluginId, plugin.status)}
+                        disabled={isToggling}
+                        className={`text-[10px] px-2 py-1 rounded transition-colors disabled:opacity-50 ${
+                          plugin.status === 'enabled'
+                            ? 'bg-red-900/50 hover:bg-red-800/50 text-red-400'
+                            : 'bg-green-900/50 hover:bg-green-800/50 text-green-400'
+                        }`}
+                        title={isToggling ? 'Toggling...' : (plugin.status === 'enabled' ? 'Disable' : 'Enable')}
+                      >
+                        {isToggling ? '...' : (plugin.status === 'enabled' ? 'Disable' : 'Enable')}
+                      </button>
+                    )}
+                    {isBuiltin && (
+                      <span className="text-[10px] text-gray-600">builtin</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Row 2: summary line — launchable / caps / deps / perms / runs */}
+                <div className="flex items-center gap-3 mt-1.5 text-[10px] text-gray-500">
+                  <span className={launchable ? 'text-green-400' : 'text-gray-600'}>
+                    launchable: {launchable ? 'yes' : 'no'}
+                  </span>
+                  <span>caps: {capCount}</span>
+
+                  {envCheck ? (
+                    <>
                       <span className={
-                        envCheck.status === 'ok' ? 'text-green-500' :
-                        envCheck.status === 'blocked' ? 'text-red-500' :
-                        envCheck.status === 'incomplete' ? 'text-yellow-500' :
-                        'text-yellow-500'
+                        envCheck.status === 'ok' ? 'text-green-400' :
+                        envCheck.status === 'blocked' ? 'text-red-400' :
+                        'text-yellow-400'
                       }>
-                        {envCheck.status === 'blocked' ? '[BLOCKED]' : envCheck.status === 'incomplete' ? '[WARN]' : '[OK]'}{' '}
-                        {envCheck.status}
+                        check: {envCheck.status}
                       </span>
                       {envCheck.blockers.length > 0 && (
-                        <span className="text-red-400 block">
-                          {(() => {
-                            const byKind: Record<string, number> = {};
-                            envCheck.blockers.forEach(b => { byKind[b.kind] = (byKind[b.kind] || 0) + 1; });
-                            const parts: string[] = [];
-                            if (byKind.missing_grant) parts.push(`permission:${byKind.missing_grant}`);
-                            if (byKind.unsupported_capability) parts.push(`unsupported:${byKind.unsupported_capability}`);
-                            if (byKind.missing_dependency) parts.push(`deps:${byKind.missing_dependency}`);
-                            if (byKind.unknown_capability) parts.push(`unknown:${byKind.unknown_capability}`);
-                            return parts.length > 0 ? parts.join(' ') : `${envCheck.blockers.length} blocker${envCheck.blockers.length > 1 ? 's' : ''}`;
-                          })()}
-                        </span>
+                        <span className="text-red-400/80">{blockerSummary(envCheck.blockers)}</span>
                       )}
-                    </div>
+                    </>
+                  ) : (
+                    <span className="text-gray-600">check: not run</span>
                   )}
-                  {/* Capability indicators when no check results yet */}
-                  {!envCheck && plugin.capabilities && plugin.capabilities.length > 0 && (
-                    <div className="text-xs mt-1 text-gray-600">
-                      {plugin.capabilities.length} declared capability{plugin.capabilities.length > 1 ? 's' : ''}
-                      {plugin.capabilities.some(c => c.startsWith('network.')) && (
-                        <span className="text-yellow-500 ml-1">[network]</span>
-                      )}
-                      {plugin.capabilities.some(c => c.startsWith('process.')) && (
-                        <span className="text-yellow-500 ml-1">[process]</span>
-                      )}
-                    </div>
+
+                  <span>runs: {runCount}</span>
+
+                  {plugin.description && (
+                    <span className="text-gray-600 truncate hidden md:inline">— {plugin.description}</span>
                   )}
                 </div>
 
-                {/* Status indicator */}
-                <span className={`w-2 h-2 rounded-full ${
-                  plugin.status === 'enabled' ? 'bg-green-500' :
-                  plugin.status === 'error' ? 'bg-red-500' :
-                  'bg-gray-600'
-                }`} />
-
-                {/* Error message inline */}
-                {plugin.status === 'error' && plugin.error && (
-                  <span className="text-xs text-red-400 max-w-40 truncate" title={plugin.error}>
-                    {plugin.error}
-                  </span>
-                )}
-
-                <button
-                  onClick={() => onPluginSelect?.(plugin.pluginId)}
-                  className="text-xs px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 transition-colors"
-                >
-                  Detail
-                </button>
-
-                {plugin.type !== 'builtin' && (
-                  <button
-                    onClick={() => handleToggle(plugin.pluginId, plugin.status)}
-                    disabled={togglingIds.has(plugin.pluginId)}
-                    className={`text-xs px-3 py-1.5 rounded transition-colors ${
-                      plugin.status === 'enabled'
-                        ? 'bg-red-900/50 hover:bg-red-800/50 text-red-400'
-                        : 'bg-green-900/50 hover:bg-green-800/50 text-green-400'
-                    } disabled:opacity-50`}
-                    title={toggleError ? 'Not supported by Core' : ''}
-                  >
-                    {togglingIds.has(plugin.pluginId) ? '...' : (plugin.status === 'enabled' ? 'Disable' : 'Enable')}
-                  </button>
-                )}
-                {plugin.type === 'builtin' && (
-                  <span className="text-xs text-gray-600">builtin — always on</span>
+                {/* Row 3: capability tags (collapsed when many) */}
+                {capCount > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {(plugin.capabilities || []).slice(0, 8).map((cap: string) => (
+                      <span key={cap} className="text-[9px] px-1.5 py-0.5 bg-gray-800/50 text-gray-500 rounded">
+                        {cap}
+                      </span>
+                    ))}
+                    {capCount > 8 && (
+                      <span className="text-[9px] text-gray-600">+{capCount - 8} more</span>
+                    )}
+                  </div>
                 )}
               </div>
             );

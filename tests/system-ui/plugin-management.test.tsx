@@ -165,15 +165,13 @@ describe('PluginManager', () => {
     fireEvent.click(screen.getByText('Check All'));
 
     await waitFor(() => {
-      // Should show categorized blocker summary
-      expect(screen.getByText(/\[BLOCKED\]/)).toBeDefined();
-      expect(screen.getByText(/permission:2/)).toBeDefined();
-      expect(screen.getByText(/unsupported:1/)).toBeDefined();
-      expect(screen.getByText(/deps:1/)).toBeDefined();
+      // Should show categorized blocker summary (compact format: perm:N unsup:N deps:N)
+      expect(screen.getByText(/check: blocked/)).toBeDefined();
+      expect(screen.getByText(/perm:2 unsup:1 deps:1/)).toBeDefined();
     });
   });
 
-  it('shows [OK] and ok status when check returns clean', async () => {
+  it('shows check: ok status when check returns clean', async () => {
     const core = createCore({
       'plugin.list': [{ pluginId: 'clean-plugin', version: '1.0.0', status: 'enabled', type: 'feature' }],
       'plugin.check': { status: 'ok', blockers: [], capabilities: [], dependencies: [] },
@@ -186,11 +184,11 @@ describe('PluginManager', () => {
     fireEvent.click(screen.getByText('Check All'));
 
     await waitFor(() => {
-      expect(screen.getByText('[OK] ok')).toBeDefined();
+      expect(screen.getByText(/check: ok/)).toBeDefined();
     });
   });
 
-  it('shows [WARN] and incomplete status when check returns incomplete', async () => {
+  it('shows check: incomplete status when check returns incomplete', async () => {
     const core = createCore({
       'plugin.list': [{ pluginId: 'warn-plugin', version: '1.0.0', status: 'enabled', type: 'feature' }],
       'plugin.check': { status: 'incomplete', blockers: [], capabilities: [], dependencies: [] },
@@ -203,11 +201,11 @@ describe('PluginManager', () => {
     fireEvent.click(screen.getByText('Check All'));
 
     await waitFor(() => {
-      expect(screen.getByText('[WARN] incomplete')).toBeDefined();
+      expect(screen.getByText(/check: incomplete/)).toBeDefined();
     });
   });
 
-  it('shows capability hints for network and process capabilities without env check', async () => {
+  it('shows capability count and tags for capabilities without env check', async () => {
     const core = createCore({
       'plugin.list': [{
         pluginId: 'net-plugin', version: '1.0.0', status: 'enabled', type: 'feature',
@@ -220,10 +218,10 @@ describe('PluginManager', () => {
     await waitFor(() => {
       expect(screen.getByText('net-plugin')).toBeDefined();
     });
-    // Text may be split across elements; use container textContent
-    expect(container.textContent).toContain('3 declared capability');
-    expect(screen.getByText('[network]')).toBeDefined();
-    expect(screen.getByText('[process]')).toBeDefined();
+    // New format: summary row shows "caps: 3", tags row shows capability names
+    expect(container.textContent).toContain('caps: 3');
+    expect(screen.getByText('network.connect')).toBeDefined();
+    expect(screen.getByText('process.spawn')).toBeDefined();
   });
 
   it('shows unknown blocker kind in summary', async () => {
@@ -244,7 +242,7 @@ describe('PluginManager', () => {
     fireEvent.click(screen.getByText('Check All'));
 
     await waitFor(() => {
-      expect(screen.getByText(/unknown:1/)).toBeDefined();
+      expect(screen.getByText(/unk:1/)).toBeDefined();
     });
   });
 });
@@ -338,7 +336,7 @@ describe('PluginDetail', () => {
     });
   });
 
-  it('shows Settings tab data', async () => {
+  it('shows Config tab data', async () => {
     const mockSchema = {
       pluginId: 'terminal',
       schema: { type: 'object', properties: { debug: { type: 'boolean', description: 'Enable debug' } } },
@@ -351,7 +349,7 @@ describe('PluginDetail', () => {
     render(<PluginDetail core={core} pluginId="terminal" />);
 
     await waitForDetail();
-    await clickTab('Settings');
+    await clickTab('Config');
 
     await waitFor(() => {
       expect(screen.getByText('debug')).toBeDefined();
@@ -380,7 +378,7 @@ describe('PluginDetail', () => {
     await clickTab('Logs');
 
     await waitFor(() => {
-      expect(screen.getByText('No log entries found.')).toBeDefined();
+      expect(screen.getByText(/No log entries found/i)).toBeDefined();
     });
   });
 
@@ -470,7 +468,7 @@ describe('PluginDetail', () => {
     });
   });
 
-  it('shows Settings save button and handles save', async () => {
+  it('shows Config save button and handles save', async () => {
     const mockSchema = {
       pluginId: 'terminal',
       schema: { type: 'object', properties: { debug: { type: 'boolean', description: 'Enable debug' } } },
@@ -484,7 +482,7 @@ describe('PluginDetail', () => {
     render(<PluginDetail core={core} pluginId="terminal" />);
 
     await waitForDetail();
-    await clickTab('Settings');
+    await clickTab('Config');
 
     await waitFor(() => {
       expect(screen.getByText('Save to Core')).toBeDefined();
@@ -509,9 +507,9 @@ describe('PluginDetail', () => {
   });
 });
 
-// ─── PluginDetail: Blockers & Status Tab ──────────────────────────
+// ─── PluginDetail: Capabilities & Install Tabs ───────────────────
 
-describe('PluginDetail: Blockers & Status', () => {
+describe('PluginDetail: Capabilities & Install', () => {
   it('blockers render in plugin detail', async () => {
     const mockCheck = {
       pluginId: 'terminal',
@@ -528,7 +526,7 @@ describe('PluginDetail: Blockers & Status', () => {
     render(<PluginDetail core={core} pluginId="terminal" />);
 
     await waitForDetail();
-    await clickTab('Blockers & Status');
+    await clickTab('Capabilities');
 
     await waitFor(() => {
       expect(screen.getByText('missing_dependency')).toBeDefined();
@@ -548,24 +546,19 @@ describe('PluginDetail: Blockers & Status', () => {
     render(<PluginDetail core={core} pluginId="terminal" />);
 
     await waitForDetail();
-    await clickTab('Blockers & Status');
+    await clickTab('Capabilities');
 
     await waitFor(() => {
-      expect(screen.getByText(/No blockers/i)).toBeDefined();
+      expect(screen.getByText(/All declared capabilities are supported/i)).toBeDefined();
     });
   });
 
-  it('shows Create Install Plan button for missing_dependency blockers', async () => {
-    const mockCheck = {
-      pluginId: 'terminal',
-      status: 'blocked',
-      blockers: [{ kind: 'missing_dependency', dependency: 'python3', reason: 'binary_missing' }],
-    };
-    const core = createCore({ 'plugin.get': mockPluginGet, 'plugin.check': mockCheck });
+  it('shows Create Install Plan button in Install tab', async () => {
+    const core = createCore({ 'plugin.get': mockPluginGet });
     render(<PluginDetail core={core} pluginId="terminal" />);
 
     await waitForDetail();
-    await clickTab('Blockers & Status');
+    await clickTab('Install');
 
     await waitFor(() => {
       expect(screen.getByText('Create Install Plan')).toBeDefined();
@@ -573,11 +566,6 @@ describe('PluginDetail: Blockers & Status', () => {
   });
 
   it('install plan renders steps', async () => {
-    const mockCheck = {
-      pluginId: 'terminal',
-      status: 'blocked',
-      blockers: [{ kind: 'missing_dependency', dependency: 'python3', reason: 'binary_missing' }],
-    };
     const mockPlan = {
       planId: 'plan-001',
       pluginId: 'terminal',
@@ -592,13 +580,12 @@ describe('PluginDetail: Blockers & Status', () => {
     };
     const core = createCore({
       'plugin.get': mockPluginGet,
-      'plugin.check': mockCheck,
       'plugin.install.plan': mockPlan,
     });
     render(<PluginDetail core={core} pluginId="terminal" />);
 
     await waitForDetail();
-    await clickTab('Blockers & Status');
+    await clickTab('Install');
 
     await waitFor(() => expect(screen.getByText('Create Install Plan')).toBeDefined());
     fireEvent.click(screen.getByText('Create Install Plan'));
@@ -612,11 +599,6 @@ describe('PluginDetail: Blockers & Status', () => {
   });
 
   it('execute success updates status', async () => {
-    const mockCheck = {
-      pluginId: 'terminal',
-      status: 'blocked',
-      blockers: [{ kind: 'missing_dependency', dependency: 'python3', reason: 'binary_missing' }],
-    };
     const mockPlan = {
       planId: 'plan-exec-001',
       pluginId: 'terminal',
@@ -633,7 +615,6 @@ describe('PluginDetail: Blockers & Status', () => {
     const mockExec = { status: 'completed', planId: 'plan-exec-001', pluginId: 'terminal', steps: 1, dryRun: true };
     const core = createCore({
       'plugin.get': mockPluginGet,
-      'plugin.check': mockCheck,
       'plugin.install.plan': mockPlan,
       'notify.request': mockNotifyReq,
       'notify.respond': mockNotifyResp,
@@ -642,10 +623,10 @@ describe('PluginDetail: Blockers & Status', () => {
     render(<PluginDetail core={core} pluginId="terminal" />);
 
     await waitForDetail();
-    await clickTab('Blockers & Status');
-    await waitFor(() => expect(screen.getByText('missing_dependency')).toBeDefined());
+    await clickTab('Install');
 
     // Create plan
+    await waitFor(() => expect(screen.getByText('Create Install Plan')).toBeDefined());
     fireEvent.click(screen.getByText('Create Install Plan'));
     await waitFor(() => expect(screen.getByText('Request Approval')).toBeDefined());
 
@@ -676,12 +657,12 @@ describe('PluginDetail: Blockers & Status', () => {
     render(<PluginDetail core={core} pluginId="terminal" />);
 
     await waitForDetail();
-    await clickTab('Blockers & Status');
+    await clickTab('Capabilities');
 
     await waitFor(() => {
       expect(screen.getByText('unsupported_capability')).toBeDefined();
       expect(screen.getByText('gpu.compute')).toBeDefined();
-      expect(screen.getByText(/not supported on the current platform/i)).toBeDefined();
+      expect(screen.getByText(/no GPU support on this platform/i)).toBeDefined();
     });
   });
 
@@ -695,16 +676,16 @@ describe('PluginDetail: Blockers & Status', () => {
     render(<PluginDetail core={core} pluginId="terminal" />);
 
     await waitForDetail();
-    await clickTab('Blockers & Status');
+    await clickTab('Capabilities');
 
     await waitFor(() => {
       expect(screen.getByText('unknown_capability')).toBeDefined();
       expect(screen.getByText('magic.wand')).toBeDefined();
-      expect(screen.getByText(/not recognized by the current Go Core version/i)).toBeDefined();
+      expect(screen.getByText(/not in support matrix/i)).toBeDefined();
     });
   });
 
-  it('shows Request Permission button for missing_grant blocker', async () => {
+  it('shows missing_grant blocker info in Capabilities tab', async () => {
     const mockCheck = {
       pluginId: 'terminal',
       status: 'blocked',
@@ -717,11 +698,11 @@ describe('PluginDetail: Blockers & Status', () => {
     render(<PluginDetail core={core} pluginId="terminal" />);
 
     await waitForDetail();
-    await clickTab('Blockers & Status');
+    await clickTab('Capabilities');
 
     await waitFor(() => {
       expect(screen.getByText('missing_grant')).toBeDefined();
-      expect(screen.getByText('Request Permission')).toBeDefined();
+      expect(screen.getByText('session.create')).toBeDefined();
     });
   });
 });

@@ -12,7 +12,6 @@ import { Settings } from './views/settings';
 import { LogsViewer } from './views/logs-viewer';
 import { Approvals } from './views/approvals';
 import { AccessControl } from './views/access-control';
-import { AIManager } from './views/ai-manager';
 
 // ─── System UI entry point ─────────────────────────────────────
 // This is the main entry for the System UI plugin.
@@ -34,8 +33,7 @@ export type SystemRoute =
   | '/settings'
   | '/logs'
   | '/approvals'
-  | '/access-control'
-  | '/ai';
+  | '/access-control';
 
 interface SystemUIEntryProps {
   core: CoreClient;
@@ -101,8 +99,6 @@ export function SystemUIEntry({ core, connectionStatus, defaultRoute = '/dashboa
         return <Approvals core={core} />;
       case '/access-control':
         return <AccessControl core={core} />;
-      case '/ai':
-        return <AIManager core={core} onNavigate={handleNavigate} />;
       default:
         return <Dashboard core={core} />;
     }
