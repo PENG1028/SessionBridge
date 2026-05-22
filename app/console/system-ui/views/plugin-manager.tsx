@@ -6,6 +6,7 @@ import type { CoreClient, PluginInfo, BlockerEntry, RunInfo } from '../../core/c
 import { PageHeader, PageLoading, PageError, PageEmpty, PageOffline, type PageState } from './page-utils';
 import { listFromResponse } from './core-response-utils';
 import { getAllViewEntries, getAdapterIdForView } from '../../main/view-registry';
+import { isViewLaunchable } from '../../plugin-host/launchability';
 
 interface PluginManagerProps {
   core: CoreClient;
@@ -21,18 +22,14 @@ interface EnvCheckResult {
   blockers: BlockerEntry[];
 }
 
-/** Check if a plugin has any launchable/direct view registered. */
+/** Check if a plugin has any launchable/direct view registered.
+ *  Uses the shared isViewLaunchable helper to keep parity with ViewSelector. */
 function hasLaunchableView(pluginId: string): boolean {
   for (const [viewId, entry] of getAllViewEntries()) {
-    // Determine the plugin that owns this view:
-    // - Adapter views have an adapter mapping (e.g. 'claude-chat' -> 'claude-code')
-    // - Core views (dashboard, logs, agent-monitor) have no mapping; they belong to sessionnode-core
     const adapterId = getAdapterIdForView(viewId);
     const ownerId = adapterId ?? 'sessionnode-core';
     if (ownerId !== pluginId) continue;
-    if (entry.meta.launchable && entry.meta.launchMode !== 'hidden' && entry.meta.launchMode !== 'runtime') {
-      return true;
-    }
+    if (isViewLaunchable(entry.meta)) return true;
   }
   return false;
 }

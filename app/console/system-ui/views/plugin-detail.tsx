@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import type { CoreClient, BlockerEntry } from '../../core/core-types';
 import { PageLoading, PageError, PageEmpty, PageOffline, PagePermissionDenied, type PageState } from './page-utils';
 import { getAllViewEntries } from '../../main/view-registry';
+import { isViewLaunchable } from '../../plugin-host/launchability';
 
 interface PluginDetailProps {
   core: CoreClient;
@@ -211,14 +212,15 @@ function OverviewTab({ pluginId, manifest }: { pluginId: string; manifest: Recor
   // Build a set of view IDs declared by this plugin's manifest
   const pluginViewIds = new Set(manifestViews.map((v: Record<string, unknown>) => str(v.id)));
 
-  // Check launchable from manifest contributes, cross-referenced with view registry
+  // Check launchable from manifest contributes, cross-referenced with view registry.
+  // Uses the shared isViewLaunchable helper to keep parity with ViewSelector and PluginManager.
   let launchable = false;
   let launchableViews: string[] = [];
   const otherViews: string[] = [];
   for (const [vid, entry] of getAllViewEntries()) {
     // Only consider views declared by THIS plugin's manifest
     if (!pluginViewIds.has(vid)) continue;
-    if (entry.meta.launchable && entry.meta.launchMode !== 'hidden' && entry.meta.launchMode !== 'runtime') {
+    if (isViewLaunchable(entry.meta)) {
       launchable = true;
       launchableViews.push(vid);
     } else if (vid !== 'empty') {

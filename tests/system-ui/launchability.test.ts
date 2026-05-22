@@ -1,7 +1,7 @@
 'use client';
 
 import { describe, it, expect } from 'vitest';
-import { isViewLaunchable, filterLaunchableViews, firstLaunchableViewId } from '../../app/console/plugin-host/launchability';
+import { isViewLaunchable, filterLaunchableViews, firstLaunchableViewId, hasLaunchableViewForPlugin } from '../../app/console/plugin-host/launchability';
 
 // ─── isViewLaunchable unit tests ─────────────────────────────────
 
@@ -74,6 +74,16 @@ describe('isViewLaunchable', () => {
 
   it('returns false for launchMode:runtime alone', () => {
     expect(isViewLaunchable({ launchMode: 'runtime', viewType: 'main.editor' })).toBe(false);
+  });
+
+  // ── session launchMode (should never be launchable) ──────────
+
+  it('returns false for launchMode:session even with launchable:true', () => {
+    expect(isViewLaunchable({ launchable: true, launchMode: 'session', viewType: 'main.editor' })).toBe(false);
+  });
+
+  it('returns false for launchMode:session alone', () => {
+    expect(isViewLaunchable({ launchMode: 'session', viewType: 'main.editor' })).toBe(false);
   });
 
   // ── Undefined/missing properties ────────────────────────────
@@ -161,5 +171,140 @@ describe('firstLaunchableViewId', () => {
     ];
 
     expect(firstLaunchableViewId(entries)).toBe('dashboard');
+  });
+});
+
+// ─── hasLaunchableViewForPlugin unit tests ────────────────────────
+
+describe('hasLaunchableViewForPlugin', () => {
+  // Simulate getAdapterIdForView: maps viewId -> adapter pluginId, or undefined
+  const adapterMap: Record<string, string> = {
+    'terminal.view': 'terminal',
+    'claude-chat': 'claude-code',
+    'system-info.panel': 'system-info',
+  };
+  const ownerResolver = (viewId: string) => adapterMap[viewId];
+
+  const entries: Array<[string, { meta: { launchable?: boolean; launchMode?: string; viewType?: string } }]> = [
+    ['empty', { meta: {} }],
+    ['dashboard', { meta: { launchable: true, launchMode: 'direct', viewType: 'main.editor' } }],
+    ['terminal.view', { meta: { launchable: true, launchMode: 'direct', viewType: 'main.editor' } }],
+    ['claude-chat', { meta: { viewType: 'main.editor' } }],
+    ['system-info.panel', { meta: { launchable: true, viewType: 'panel.bottom' } }],
+    ['hidden-task', { meta: { launchable: true, launchMode: 'hidden', viewType: 'main.editor' } }],
+    ['runtime-view', { meta: { launchMode: 'runtime', viewType: 'main.editor' } }],
+    ['session-view', { meta: { launchable: true, launchMode: 'session', viewType: 'main.editor' } }],
+  ];
+
+  it('returns true for terminal plugin (has direct launchable main.editor view)', () => {
+    expect(hasLaunchableViewForPlugin('terminal', entries, ownerResolver)).toBe(true);
+  });
+
+  it('returns false for claude-code plugin (adapter-only, no launchable flag)', () => {
+    expect(hasLaunchableViewForPlugin('claude-code', entries, ownerResolver)).toBe(false);
+  });
+
+  it('returns false for system-info plugin (panel-only, not launchable)', () => {
+    expect(hasLaunchableViewForPlugin('system-info', entries, ownerResolver)).toBe(false);
+  });
+
+  it('returns true for sessionnode-core (dashboard is launchable, no adapter mapping → defaults to core)', () => {
+    expect(hasLaunchableViewForPlugin('sessionnode-core', entries, ownerResolver)).toBe(true);
+  });
+
+  it('returns false for unknown plugin with no views', () => {
+    expect(hasLaunchableViewForPlugin('nonexistent', entries, ownerResolver)).toBe(false);
+  });
+
+  it('returns false for plugin whose only view is hidden', () => {
+    const hiddenOnly: Array<[string, { meta: { launchable?: boolean; launchMode?: string; viewType?: string } }]> = [
+      ['hidden-task', { meta: { launchable: true, launchMode: 'hidden', viewType: 'main.editor' } }],
+    ];
+    const map: Record<string, string> = { 'hidden-task': 'stealth-plugin' };
+    expect(hasLaunchableViewForPlugin('stealth-plugin', hiddenOnly, (vid) => map[vid])).toBe(false);
+  });
+
+  it('returns false for plugin whose only view has runtime launchMode', () => {
+    const runtimeOnly: Array<[string, { meta: { launchable?: boolean; launchMode?: string; viewType?: string } }]> = [
+      ['runtime-view', { meta: { launchMode: 'runtime', viewType: 'main.editor' } }],
+    ];
+    const map: Record<string, string> = { 'runtime-view': 'bg-plugin' };
+    expect(hasLaunchableViewForPlugin('bg-plugin', runtimeOnly, (vid) => map[vid])).toBe(false);
+  });
+
+  it('returns false for plugin whose only view has session launchMode', () => {
+    const sessionOnly: Array<[string, { meta: { launchable?: boolean; launchMode?: string; viewType?: string } }]> = [
+      ['session-view', { meta: { launchable: true, launchMode: 'session', viewType: 'main.editor' } }],
+    ];
+    const map: Record<string, string> = { 'session-view': 'session-plugin' };
+    expect(hasLaunchableViewForPlugin('session-plugin', sessionOnly, (vid) => map[vid])).toBe(false);
+  });
+});
+
+// ─── Cross-consistency: ViewSelector + PluginManager + PluginDetail ──
+// All three use the same isViewLaunchable helper. These tests verify
+// that the rules produce consistent results for representative scenarios.
+
+describe('Launchability cross-consistency (ViewSelector / PluginManager / PluginDetail)', () => {
+  // Meta shapes mirror the three consumers' entry patterns
+  const terminalMeta    = { launchable: true, launchMode: 'direct' as const, viewType: 'main.editor' as const };
+  const panelMeta       = { launchable: true, viewType: 'panel.bottom' as const };
+  const adapterOnlyMeta = { viewType: 'main.editor' as const };
+  const hiddenMeta      = { launchable: true, launchMode: 'hidden' as const, viewType: 'main.editor' as const };
+  const runtimeMeta     = { launchMode: 'runtime' as const, viewType: 'main.editor' as const };
+  const sessionMeta     = { launchable: true, launchMode: 'session' as const, viewType: 'main.editor' as const };
+
+  describe('terminal direct main.editor view', () => {
+    it('isViewLaunchable → true (ViewSelector shows it)', () => {
+      expect(isViewLaunchable(terminalMeta)).toBe(true);
+    });
+    it('hasLaunchableViewForPlugin → true (PluginManager shows launchable: yes)', () => {
+      const entries: Array<[string, { meta: typeof terminalMeta }]> = [['terminal.view', { meta: terminalMeta }]];
+      const map: Record<string, string> = { 'terminal.view': 'terminal' };
+      expect(hasLaunchableViewForPlugin('terminal', entries, (vid) => map[vid])).toBe(true);
+    });
+    it('isViewLaunchable → true (PluginDetail Overview shows "Can open as tab: Yes")', () => {
+      expect(isViewLaunchable(terminalMeta)).toBe(true);
+    });
+  });
+
+  describe('system-info panel-only view', () => {
+    it('isViewLaunchable → false (ViewSelector does NOT show it)', () => {
+      expect(isViewLaunchable(panelMeta)).toBe(false);
+    });
+    it('hasLaunchableViewForPlugin → false (PluginManager shows launchable: no)', () => {
+      const entries: Array<[string, { meta: typeof panelMeta }]> = [['system-info.panel', { meta: panelMeta }]];
+      const map: Record<string, string> = { 'system-info.panel': 'system-info' };
+      expect(hasLaunchableViewForPlugin('system-info', entries, (vid) => map[vid])).toBe(false);
+    });
+    it('isViewLaunchable → false (PluginDetail Overview shows "Can open as tab: No")', () => {
+      expect(isViewLaunchable(panelMeta)).toBe(false);
+    });
+  });
+
+  describe('adapter mapping only / no launchable flag', () => {
+    it('isViewLaunchable → false (ViewSelector does NOT show it)', () => {
+      expect(isViewLaunchable(adapterOnlyMeta)).toBe(false);
+    });
+    it('hasLaunchableViewForPlugin → false (PluginManager shows launchable: no)', () => {
+      const entries: Array<[string, { meta: typeof adapterOnlyMeta }]> = [['claude-chat', { meta: adapterOnlyMeta }]];
+      const map: Record<string, string> = { 'claude-chat': 'claude-code' };
+      expect(hasLaunchableViewForPlugin('claude-code', entries, (vid) => map[vid])).toBe(false);
+    });
+    it('isViewLaunchable → false (PluginDetail Overview shows "Can open as tab: No")', () => {
+      expect(isViewLaunchable(adapterOnlyMeta)).toBe(false);
+    });
+  });
+
+  describe('hidden / runtime / session launchMode', () => {
+    it('hidden → isViewLaunchable false', () => {
+      expect(isViewLaunchable(hiddenMeta)).toBe(false);
+    });
+    it('runtime → isViewLaunchable false', () => {
+      expect(isViewLaunchable(runtimeMeta)).toBe(false);
+    });
+    it('session → isViewLaunchable false', () => {
+      expect(isViewLaunchable(sessionMeta)).toBe(false);
+    });
   });
 });

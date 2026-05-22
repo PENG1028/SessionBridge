@@ -32,8 +32,8 @@ export function isViewLaunchable(meta: LaunchabilityMeta): boolean {
   // for backward compatibility with views registered before viewType existed.
   if (meta.viewType && meta.viewType !== 'main.editor') return false;
 
-  // hidden and runtime modes are never launchable
-  if (meta.launchMode === 'hidden' || meta.launchMode === 'runtime') return false;
+  // hidden, runtime, and session modes are never launchable
+  if (meta.launchMode === 'hidden' || meta.launchMode === 'runtime' || meta.launchMode === 'session') return false;
 
   // Explicitly launchable
   if (meta.launchable === true || meta.launchMode === 'direct') return true;
@@ -66,4 +66,28 @@ export function firstLaunchableViewId<E extends { meta: LaunchabilityMeta }>(
     return isViewLaunchable(entry.meta);
   });
   return match ? match[0] : null;
+}
+
+/**
+ * Check whether a specific plugin has at least one launchable/direct view
+ * among the given entries.
+ *
+ * @param pluginId   The plugin to check for.
+ * @param entries    View registry entries as [[viewId, entry], ...].
+ * @param ownerResolver  Function that maps a viewId to its owning pluginId.
+ *                       Adapter views map to their adapter plugin; core views
+ *                       with no mapping default to 'sessionnode-core'.
+ * @returns true if at least one entry owned by pluginId passes isViewLaunchable.
+ */
+export function hasLaunchableViewForPlugin<E extends { meta: LaunchabilityMeta }>(
+  pluginId: string,
+  entries: Array<[string, E]>,
+  ownerResolver: (viewId: string) => string | undefined,
+): boolean {
+  for (const [viewId, entry] of entries) {
+    const ownerId = ownerResolver(viewId) ?? 'sessionnode-core';
+    if (ownerId !== pluginId) continue;
+    if (isViewLaunchable(entry.meta)) return true;
+  }
+  return false;
 }
