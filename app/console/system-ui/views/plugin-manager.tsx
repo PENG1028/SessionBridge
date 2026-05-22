@@ -46,6 +46,23 @@ function blockerSummary(blockers: BlockerEntry[]): string {
   return parts.join(' ') || `${blockers.length} blockers`;
 }
 
+function blockerNextStepHint(blockers: BlockerEntry[]): string | null {
+  const depsBlocker = blockers.find(b => b.kind === 'missing_dependency');
+  if (depsBlocker?.dependency) {
+    return `Install "${depsBlocker.dependency}" to resolve this.`;
+  }
+  const permBlocker = blockers.find(b => b.kind === 'missing_grant');
+  if (permBlocker) {
+    return `Grant the required capability in Plugin Detail → Permissions.`;
+  }
+  const unsupBlocker = blockers.find(b => b.kind === 'unsupported_capability');
+  if (unsupBlocker) {
+    return `This plugin needs capabilities not provided by the current Core version.`;
+  }
+  if (blockers.length > 0) return `Run "Check All" for details, or see Plugin Detail.`;
+  return null;
+}
+
 export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
   const [pageState, setPageState] = useState<PageState>('loading');
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
@@ -393,7 +410,13 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
                         check: {envCheck.status}
                       </span>
                       {envCheck.blockers.length > 0 && (
-                        <span className="text-red-400/80">{blockerSummary(envCheck.blockers)}</span>
+                        <>
+                          <span className="text-red-400/80">{blockerSummary(envCheck.blockers)}</span>
+                          {(() => {
+                            const hint = blockerNextStepHint(envCheck.blockers);
+                            return hint ? <span className="text-yellow-400/70 ml-1">{hint}</span> : null;
+                          })()}
+                        </>
                       )}
                     </>
                   ) : (

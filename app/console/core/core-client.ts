@@ -17,7 +17,7 @@ export interface CoreClientConfig {
 // ─── CoreClient Implementation ──────────────────────────────────
 export class CoreClientImpl implements CoreClient {
   readonly pluginId: string;
-  private _wsUrl: string;
+  readonly wsUrl: string;
   private _callTimeout: number;
   private _reconnectInterval: number;
   private _maxReconnectAttempts: number;
@@ -31,10 +31,11 @@ export class CoreClientImpl implements CoreClient {
 
   private _connectionStatus: CoreConnectionStatus = 'disconnected';
   private _statusListeners = new Set<(status: CoreConnectionStatus) => void>();
+  private _lastError: string | null = null;
 
   constructor(config: CoreClientConfig) {
     this.pluginId = config.pluginId;
-    this._wsUrl = config.wsUrl || (typeof window !== 'undefined' ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws` : 'ws://localhost:8080/ws');
+    this.wsUrl = config.wsUrl || (typeof window !== 'undefined' ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws` : 'ws://localhost:8080/ws');
     this._callTimeout = config.callTimeout ?? 10_000;
     this._reconnectInterval = config.reconnectInterval ?? 5_000;
     this._maxReconnectAttempts = config.maxReconnectAttempts ?? -1;
@@ -48,6 +49,10 @@ export class CoreClientImpl implements CoreClient {
     return this._connectionStatus;
   }
 
+  get lastError(): string | null {
+    return this._lastError;
+  }
+
   onStatusChange(handler: (status: CoreConnectionStatus) => void): () => void {
     this._statusListeners.add(handler);
     return () => this._statusListeners.delete(handler);
@@ -58,12 +63,6 @@ export class CoreClientImpl implements CoreClient {
     return this._callAs(this.pluginId, method, params);
   }
 
-  /**
-   * Send an action.request with a specific pluginId (used by scoped clients).
-   * Protocol: { type: 'action.request', requestId, capability, payload, pluginId, actorType, actorId, targetNodeId? }
-   * Routing: targetNodeId extracted from params if present.
-   * Transport: WebSocket only (no HTTP fallback).
-   */
   private async _callAs<T>(pluginId: string, method: string, params?: Record<string, unknown>): Promise<T> {
     const requestId = `req_${++this._requestIdCounter}_${Date.now()}`;
 
@@ -101,21 +100,13 @@ export class CoreClientImpl implements CoreClient {
     });
   }
 
-  /**
-   * Create a plugin-scoped CoreClient that shares this instance's WebSocket
-   * transport but uses a different pluginId for all action.request messages.
-   *
-   * The scoped client's pluginId is immutable — call() always uses the scoped
-   * pluginId, and there is no way to override it from the params payload.
-   *
-   * Events are shared across all scoped clients (one WS connection per page).
-   * disconnect() is a no-op — the plugin does not own the connection.
-   */
   createScopedClient(pluginId: string): CoreClient {
     const host = this;
     return {
       pluginId,
       get isConnected() { return host.isConnected; },
+      get wsUrl() { return host.wsUrl; },
+      get lastError() { return host.lastError; },
       call: <T>(method: string, params?: Record<string, unknown>) => host._callAs(pluginId, method, params),
       on: (event: string, handler: (data: CoreEvent) => void) => host.on(event, handler),
       once: (event: string, handler: (data: CoreEvent) => void) => host.once(event, handler),
@@ -173,38 +164,31 @@ export class CoreClientImpl implements CoreClient {
     this._setStatus('connecting');
 
     try {
-      const ws = new WebSocket(this._wsUrl);
+      const ws = new WebSocket(this.wsUrl);
       ws.onopen = () => {
         this._reconnectAttempts = 0;
+        this._lastError = null;
         this._setStatus('connected');
-        // Emit connected event for reconnection-aware consumers (e.g. TerminalView)
         this._emit("connected", { type: "connected", pluginId: this.pluginId });
       };
 
       ws.onmessage = (event: MessageEvent) => {
         try {
           const msg = JSON.parse(event.data as string);
-
-          // action.response — match pending call by requestId
           if (msg.type === 'action.response' && msg.requestId && this._pendingCalls.has(msg.requestId)) {
             const pending = this._pendingCalls.get(msg.requestId)!;
             clearTimeout(pending.timer);
             this._pendingCalls.delete(msg.requestId);
-
-            // Error: ok:false or error field present
             if (msg.ok === false || msg.error != null) {
               const errMsg = msg.error
                 ? (typeof msg.error === 'string' ? msg.error : (msg.error.message || JSON.stringify(msg.error)))
                 : 'Core action failed';
               pending.reject(new Error(errMsg));
             } else {
-              // payload can be object, array, string (raw message), etc.
               pending.resolve(msg.payload);
             }
             return;
           }
-
-          // Event (any type that isn't action.response)
           if (msg.type) {
             this._emit(msg.type as string, msg as CoreEvent);
           }
@@ -213,34 +197,36 @@ export class CoreClientImpl implements CoreClient {
         }
       };
 
-      ws.onclose = () => {
+      ws.onclose = (ev: CloseEvent) => {
+        if (!ev.wasClean) {
+          this._lastError = `Connection closed unexpectedly (code=${ev.code}${ev.reason ? ': ' + ev.reason : ''})`;
+        }
         this._setStatus('disconnected');
         this._ws = null;
-        // Reject any pending calls
         for (const [id, pending] of this._pendingCalls) {
           clearTimeout(pending.timer);
           pending.reject(new Error('WebSocket disconnected'));
           this._pendingCalls.delete(id);
         }
-        // Auto-reconnect
         if (!this._disconnected) {
           if (this._maxReconnectAttempts < 0 || this._reconnectAttempts < this._maxReconnectAttempts) {
             this._reconnectAttempts++;
             setTimeout(() => this._connect(), this._reconnectInterval);
           } else {
+            this._lastError = `Failed to connect after ${this._maxReconnectAttempts} attempts`;
             this._setStatus('error');
           }
         }
       };
 
       ws.onerror = () => {
-        // onclose will fire after this
+        this._lastError = 'WebSocket connection error — check that the Go Core server is running and the port is not occupied';
       };
 
       this._ws = ws;
     } catch (err) {
+      this._lastError = err instanceof Error ? err.message : 'Failed to create WebSocket';
       this._setStatus('error');
-      // Retry
       if (!this._disconnected) {
         if (this._maxReconnectAttempts < 0 || this._reconnectAttempts < this._maxReconnectAttempts) {
           this._reconnectAttempts++;
@@ -250,7 +236,6 @@ export class CoreClientImpl implements CoreClient {
     }
   }
 
-  /** Connect explicitly (can also be triggered by on()). */
   connect(): void {
     this._disconnected = false;
     this._connect();
@@ -272,7 +257,6 @@ export class CoreClientImpl implements CoreClient {
         try { fn(data); } catch { /* handler error */ }
       });
     }
-    // Also emit to 'all' listeners
     const allHandlers = this._eventListeners.get('*');
     if (allHandlers) {
       allHandlers.forEach(fn => {
@@ -281,7 +265,6 @@ export class CoreClientImpl implements CoreClient {
     }
   }
 
-  /** Number of active event listeners. */
   get listenerCount(): number {
     let count = 0;
     this._eventListeners.forEach(s => count += s.size);
@@ -290,7 +273,6 @@ export class CoreClientImpl implements CoreClient {
 }
 
 // ─── Factory ─────────────────────────────────────────────────────
-/** Create a CoreClient instance for use in system-ui pages. */
 export function createCoreClient(config?: Partial<CoreClientConfig>): CoreClientImpl {
   return new CoreClientImpl({
     pluginId: 'sessionnode-core',
@@ -306,6 +288,8 @@ export function createMockCoreClient(mockData?: Record<string, unknown>, pluginI
 class MockCoreClient implements CoreClient {
   readonly pluginId: string;
   readonly isConnected: boolean;
+  readonly wsUrl: string = 'ws://localhost:8080/ws';
+  readonly lastError: string | null = null;
   private _listeners = new Map<string, Set<(data: CoreEvent) => void>>();
 
   constructor(mockData?: Record<string, unknown>, pluginId = 'sessionnode-core', connected = false) {
@@ -324,7 +308,6 @@ class MockCoreClient implements CoreClient {
       return mockResult as T;
     }
 
-    // Return sensible defaults based on method name
     if (method.endsWith('.list')) return [] as T;
     if (method.endsWith('.get')) return null as T;
     if (method.includes('check')) return { checks: [] } as T;
@@ -334,7 +317,6 @@ class MockCoreClient implements CoreClient {
     if (method === 'run.updatePolicy') return { runId: 'run_mock_001', policy: { onDisconnect: 'keep_running', onCoreShutdown: 'terminate', persistHistory: true } } as T;
     if (method === 'run.attach') return { runId: 'run_mock_001', sessionId: 'sess_mock_001', kind: 'terminal', pluginId: 'terminal', state: 'running', processId: 'sess_mock_001', streamSubscriptions: [{ streamType: 'stdout', subscribed: false, reason: 'call stream.subscribe after attach' }, { streamType: 'stderr', subscribed: false, reason: 'call stream.subscribe after attach' }], process: { sessionId: 'sess_mock_001', pid: 12345, state: 'running', exitCode: 0, command: 'bash' } } as T;
 
-    // ─── update mock defaults ─────────────────────────────────
     if (method === 'update.status') return { status: 'unknown', currentCommit: '', remoteCommit: '', behindBy: 0, dirty: false, source: { type: 'git', remote: 'origin', branch: 'main', repoUrl: '', mode: 'manual' }, lastCheckedAt: 0, lastCheckError: '', requiresRestart: false } as T;
     if (method === 'update.source.get') return { type: 'git', remote: 'origin', branch: 'main', repoUrl: '', mode: 'manual' } as T;
     if (method === 'update.source.set') return { type: 'git', remote: 'origin', branch: 'main', repoUrl: '', mode: 'manual' } as T;

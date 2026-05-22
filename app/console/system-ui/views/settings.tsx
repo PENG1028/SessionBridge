@@ -21,6 +21,20 @@ interface SettingsProps {
   core: CoreClient;
 }
 
+function renderBlockerMessage(blocker: Record<string, unknown>): string {
+  const kind = blocker.kind as string || '';
+  switch (kind) {
+    case 'dirty_worktree':
+      return 'Working tree has uncommitted changes. Commit or stash them first, or enable "Allow Dirty Worktree" in Update Policy.';
+    case 'active_runs':
+      return `One or more runs are still active. Stop active runs before updating, or enable "Allow When Runs Active" in Update Policy.`;
+    case 'no_git_runner':
+      return 'Git is not available. Ensure the Core is running in a git repository with git installed.';
+    default:
+      return blocker.message as string || `Unknown blocker: ${kind || JSON.stringify(blocker)}`;
+  }
+}
+
 /**
  * Settings — configuration management page.
  * Calls: config.list, config.get (with revision), config.set (with expectedRevision)
@@ -412,9 +426,28 @@ export function Settings({ core }: SettingsProps) {
               {updatePlanResult && (
                 <section className="p-4 bg-gray-900 rounded-lg border border-gray-800">
                   <h3 className="text-sm font-semibold text-gray-200 mb-3">Update Plan</h3>
-                  <pre className="text-xs text-gray-400 font-mono whitespace-pre-wrap overflow-x-auto max-h-64">
-                    {JSON.stringify(updatePlanResult, null, 2)}
-                  </pre>
+                  {updatePlanResult.canUpdate ? (
+                    <div className="text-sm text-green-400 mb-2">Ready to update — no blockers.</div>
+                  ) : (
+                    <div className="mb-3">
+                      <div className="text-sm text-yellow-400 mb-2">Update blocked — the following conditions must be resolved:</div>
+                      <ul className="space-y-2">
+                        {(Array.isArray(updatePlanResult.blockers) ? updatePlanResult.blockers as Array<Record<string, unknown>> : []).map((b: Record<string, unknown>, i: number) => (
+                          <li key={i} className="text-xs text-gray-300 bg-gray-800 rounded p-2 border border-gray-700">
+                            <span className="font-mono text-yellow-400">{b.kind as string || 'unknown'}</span>
+                            <span className="mx-2 text-gray-600">—</span>
+                            <span>{renderBlockerMessage(b)}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  <details>
+                    <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-400">Raw response</summary>
+                    <pre className="text-xs text-gray-500 font-mono whitespace-pre-wrap overflow-x-auto max-h-32 mt-2">
+                      {JSON.stringify(updatePlanResult, null, 2)}
+                    </pre>
+                  </details>
                 </section>
               )}
             </div>

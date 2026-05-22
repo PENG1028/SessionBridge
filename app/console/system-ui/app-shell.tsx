@@ -41,7 +41,11 @@ export function AppShell({
     <div className="h-screen w-screen flex flex-col bg-gray-950 text-gray-100 overflow-hidden">
       {/* Offline banner — shown when WS disconnects */}
       {connectionStatus === 'disconnected' || connectionStatus === 'error' ? (
-        <OfflineBanner status={connectionStatus} />
+        <OfflineBanner
+          status={connectionStatus}
+          wsUrl={core?.wsUrl}
+          errorDetail={core?.lastError ?? undefined}
+        />
       ) : null}
 
       {/* Header */}

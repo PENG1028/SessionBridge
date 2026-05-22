@@ -287,6 +287,8 @@ export interface CoreClient {
   disconnect(): void;
   readonly pluginId: string;
   readonly isConnected: boolean;
+  readonly wsUrl: string;
+  readonly lastError: string | null;
 }
 
 // ─── CoreClient status ──────────────────────────────────────────
