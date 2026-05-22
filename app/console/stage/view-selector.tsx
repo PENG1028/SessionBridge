@@ -2,7 +2,7 @@
 
 import { type ViewType } from './workbench-state';
 import { getAllViewEntries, getViewEntry } from '../main/view-registry';
-import { isViewLaunchable } from '../plugin-host/launchability';
+import { filterLaunchableViews } from '../plugin-host/launchability';
 
 interface ViewSelectorProps {
   onSelect: (viewType: ViewType) => void;
@@ -19,8 +19,7 @@ export function ViewSelector({ onSelect }: ViewSelectorProps) {
   const allViews = getAllViewEntries();
   // Only show directly launchable editor views.
   // Adapter-only mappings (no launchable/direct) do NOT appear.
-  const options = allViews
-    .filter(([id, entry]) => isViewLaunchable(entry.meta))
+  const options = filterLaunchableViews(allViews)
     .map(([id, entry]) => ({
       type: id as ViewType,
       label: entry.meta.title,

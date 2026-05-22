@@ -50,7 +50,7 @@ export interface WorkbenchState {
 }
 
 import { getAllViewEntries } from '../main/view-registry';
-import { isViewLaunchable } from '../plugin-host/launchability';
+import { firstLaunchableViewId } from '../plugin-host/launchability';
 
 /** Collect all non-empty tabs from a workbench state (flat list). */
 export function collectAllTabs(state: WorkbenchState): PaneTab[] {
@@ -99,8 +99,7 @@ export function genTabId(): string {
  *  If no direct launchable view exists, returns 'empty'. */
 export function getDefaultViewType(): string {
   const entries = getAllViewEntries();
-  const first = entries.find(([, entry]) => isViewLaunchable(entry.meta));
-  return first?.[0] || 'empty';
+  return firstLaunchableViewId(entries) || 'empty';
 }
 
 // ─── Tree helpers ──────────────────────────────────────────────

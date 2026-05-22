@@ -245,7 +245,11 @@ export function PluginConfigForm({ core, config }: HostComponentProps) {
     setSaving(true);
     setSaveMsg(null);
     try {
-      await core.call('plugin.config.set', { pluginId: config.pluginId, config: values });
+      // Core plugin.config.set expects { key, value } per entry.
+      const entries = Object.entries(values);
+      for (const [key, value] of entries) {
+        await core.call('plugin.config.set', { pluginId: config.pluginId, key, value });
+      }
       setSaveMsg('Saved');
       // Refresh values
       const configRes = await core.call<Record<string, unknown>>('plugin.config.get', { pluginId: config.pluginId });

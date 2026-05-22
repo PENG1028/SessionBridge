@@ -27,7 +27,7 @@ interface EnvCheckResult {
 function hasLaunchableView(pluginId: string): boolean {
   for (const [viewId, entry] of getAllViewEntries()) {
     const adapterId = getAdapterIdForView(viewId);
-    const ownerId = adapterId ?? 'sessionnode-core';
+    const ownerId = adapterId ?? entry.meta.pluginId ?? 'sessionnode-core';
     if (ownerId !== pluginId) continue;
     if (isViewLaunchable(entry.meta)) return true;
   }

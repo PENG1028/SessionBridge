@@ -177,8 +177,8 @@ These capabilities are registered in `AllPluginsCaps` under non-core plugin IDs.
 | `network.*` | ✅ Declared (R12) | 5 capabilities declared: `connect`, `listen`, `dns` (full declaration on desktop), `proxy`, `fetch` (partial, `not_implemented`). All are DangerousCapability. Desktop: declaration + policy/audit boundaries; Core does NOT intercept OS child process network traffic. Mobile: unsupported. |
 | `approval.*` | ⏳ Partial (R13) | `approval.list` 已实现（R13 thin facade over notify manager）。`approval.approve`/`approval.deny` 故意不实现，统一走 `notify.respond` |
 | `config.*` (non-plugin) | ⏳ Partial | `config.get`/`config.set` mentioned in API contract but no handlers for global config |
-| `logs.*` | 🔜 Planned | `logs.tail`/`logs.query`/`logs.export` in API contract but not implemented |
-| `audit.*` | 🔜 Planned | `audit.list`/`audit.get`/`audit.export` in API contract but not implemented |
+| `logs.*` | ✅ Implemented | `logs.tail` and `logs.query` are implemented. `logs.export` is planned but not yet registered. |
+| `audit.*` | ✅ Partial | `audit.list` is implemented (returns events from history store). `audit.get` and `audit.export` are planned but not yet registered. |
 | `task.*` | ⏳ Partial | `task.list` and `task.info` implemented; TaskStore is in-memory with Task types for install/uninstall/check/cache_clear |
 | `action.*` | 🔜 Planned | Operation execution in API contract |
 | `node.identity.*` | ✅ Declared (R14) | `node.identity.get` implemented |

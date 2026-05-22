@@ -533,15 +533,15 @@ function CapabilitiesTab({ core, pluginId }: { core: CoreClient; pluginId: strin
 
 // ─── Permissions ──────────────────────────────────────────────────
 
-/** Normalize plugin.permissions.list response: [], { permissions: [] }, { grants: [] } */
-function listFromResponse(result: Record<string, unknown> | unknown, primaryKey: string, fallbackKey?: string): Record<string, unknown>[] {
+/** Normalize response shapes: [], { primaryKey: [] }, { fallbackKey1: [] }, { fallbackKey2: [] }, etc. */
+function listFromResponse(result: Record<string, unknown> | unknown, primaryKey: string, ...fallbackKeys: string[]): Record<string, unknown>[] {
   if (Array.isArray(result)) return result as Record<string, unknown>[];
   const obj = result as Record<string, unknown> | null | undefined;
   if (!obj) return [];
   const primary = obj[primaryKey];
   if (Array.isArray(primary)) return primary as Record<string, unknown>[];
-  if (fallbackKey) {
-    const fb = obj[fallbackKey];
+  for (const key of fallbackKeys) {
+    const fb = obj[key];
     if (Array.isArray(fb)) return fb as Record<string, unknown>[];
   }
   return [];
@@ -554,7 +554,13 @@ function PermissionsTab({ core, pluginId }: { core: CoreClient; pluginId: string
   const [permDenied, setPermDenied] = useState(false);
   const [notImpl, setNotImpl] = useState(false);
   // Per-row grant/revoke state: keyed by permission id
-  const [grantState, setGrantState] = useState<Record<string, { loading: boolean; error: string | null }>>({});
+  const [grantState, setGrantState] = useState<Record<string, {
+    loading: boolean;
+    error: string | null;
+    approvalStatus?: string | null; // 'requires_approval' | 'requesting' | 'pending' | 'approved' | 'denied'
+    planId?: string | null;
+    requestId?: string | null;
+  }>>({});
 
   async function fetchPermissions() {
     setLoading(true);
@@ -583,11 +589,23 @@ function PermissionsTab({ core, pluginId }: { core: CoreClient; pluginId: string
   }
 
   async function handleGrant(permId: string, perm: Record<string, unknown>) {
-    setGrantState(prev => ({ ...prev, [permId]: { loading: true, error: null } }));
+    setGrantState(prev => ({ ...prev, [permId]: { loading: true, error: null, approvalStatus: null, planId: null, requestId: null } }));
     try {
       const caps = Array.isArray(perm.capabilities) ? (perm.capabilities as string[]) : [];
       const capability = caps[0] || str(perm.id);
-      await core.call('plugin.permissions.grant', { pluginId, capability, mode: 'allow' });
+      const result = await core.call<Record<string, unknown>>('plugin.permissions.grant', { pluginId, capability, mode: 'allow' });
+
+      if ((result?.status as string) === 'requires_approval') {
+        const planId = (result?.planId as string) || null;
+        if (!planId) {
+          setGrantState(prev => ({ ...prev, [permId]: { loading: false, error: 'Approval required but no planId returned from Core.' } }));
+          return;
+        }
+        setGrantState(prev => ({ ...prev, [permId]: { loading: false, error: null, approvalStatus: 'requires_approval', planId } }));
+        return;
+      }
+
+      // Immediate grant success (status: "granted" or undefined/other)
       await fetchPermissions();
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Grant failed';
@@ -595,8 +613,72 @@ function PermissionsTab({ core, pluginId }: { core: CoreClient; pluginId: string
     }
   }
 
+  async function handleRequestApproval(permId: string) {
+    const state = grantState[permId];
+    if (!state?.planId) {
+      setGrantState(prev => ({ ...prev, [permId]: { ...prev[permId], error: 'Missing planId — cannot request approval.' } }));
+      return;
+    }
+    setGrantState(prev => ({ ...prev, [permId]: { ...prev[permId], loading: true, approvalStatus: 'requesting', error: null } }));
+    try {
+      const res = await core.call<Record<string, unknown>>('notify.request', {
+        title: `Grant permission ${permId} for ${pluginId}`,
+        body: `Permission grant requires approval for ${pluginId}`,
+        planId: state.planId,
+        kind: 'approval',
+        timeout: 300,
+      });
+      const requestId = (res?.requestId as string) || null;
+      if (!requestId) {
+        setGrantState(prev => ({ ...prev, [permId]: { ...prev[permId], loading: false, error: 'notify.request succeeded but no requestId returned.' } }));
+        return;
+      }
+      setGrantState(prev => ({ ...prev, [permId]: { ...prev[permId], loading: false, approvalStatus: 'pending', requestId, error: null } }));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Approval request failed';
+      setGrantState(prev => ({ ...prev, [permId]: { ...prev[permId], loading: false, error: msg } }));
+    }
+  }
+
+  async function handleApproveGrant(permId: string, perm: Record<string, unknown>) {
+    const state = grantState[permId];
+    if (!state?.requestId) {
+      setGrantState(prev => ({ ...prev, [permId]: { ...prev[permId], error: 'Missing requestId — cannot approve.' } }));
+      return;
+    }
+    setGrantState(prev => ({ ...prev, [permId]: { ...prev[permId], loading: true, error: null } }));
+    try {
+      await core.call('notify.respond', { requestId: state.requestId, action: 'allow' });
+      // Re-call grant with planId to complete the approved grant
+      const caps = Array.isArray(perm.capabilities) ? (perm.capabilities as string[]) : [];
+      const capability = caps[0] || str(perm.id);
+      await core.call('plugin.permissions.grant', { pluginId, capability, mode: 'allow', planId: state.planId });
+      setGrantState(prev => ({ ...prev, [permId]: { ...prev[permId], loading: false, approvalStatus: 'approved' } }));
+      await fetchPermissions();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Approval failed';
+      setGrantState(prev => ({ ...prev, [permId]: { ...prev[permId], loading: false, error: msg } }));
+    }
+  }
+
+  async function handleDenyGrant(permId: string) {
+    const state = grantState[permId];
+    if (!state?.requestId) {
+      setGrantState(prev => ({ ...prev, [permId]: { ...prev[permId], error: 'Missing requestId — cannot deny.' } }));
+      return;
+    }
+    setGrantState(prev => ({ ...prev, [permId]: { ...prev[permId], loading: true, error: null } }));
+    try {
+      await core.call('notify.respond', { requestId: state.requestId, action: 'deny' });
+      setGrantState(prev => ({ ...prev, [permId]: { ...prev[permId], loading: false, approvalStatus: 'denied' } }));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Deny failed';
+      setGrantState(prev => ({ ...prev, [permId]: { ...prev[permId], loading: false, error: msg } }));
+    }
+  }
+
   async function handleRevoke(permId: string, perm: Record<string, unknown>) {
-    setGrantState(prev => ({ ...prev, [permId]: { loading: true, error: null } }));
+    setGrantState(prev => ({ ...prev, [permId]: { loading: true, error: null, approvalStatus: null, planId: null, requestId: null } }));
     try {
       const caps = Array.isArray(perm.capabilities) ? (perm.capabilities as string[]) : [];
       const capability = caps[0] || str(perm.id);
@@ -639,8 +721,52 @@ function PermissionsTab({ core, pluginId }: { core: CoreClient; pluginId: string
                 ))}
               </div>
             )}
-            <div className="flex items-center gap-2">
-              {canGrant && (
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Approval flow UI */}
+              {rowState.approvalStatus === 'requires_approval' && (
+                <>
+                  <span className="text-xs text-yellow-400">Requires approval</span>
+                  {rowState.planId && <span className="text-xs text-gray-500">{rowState.planId}</span>}
+                  <button
+                    onClick={() => handleRequestApproval(pid)}
+                    disabled={rowState.loading}
+                    className="text-xs px-2 py-1 rounded bg-yellow-900/50 hover:bg-yellow-800/50 text-yellow-400 transition-colors disabled:opacity-50"
+                  >
+                    {rowState.loading ? '...' : 'Request Approval'}
+                  </button>
+                </>
+              )}
+              {rowState.approvalStatus === 'requesting' && (
+                <span className="text-xs text-gray-400">Requesting approval...</span>
+              )}
+              {rowState.approvalStatus === 'pending' && (
+                <>
+                  <span className="text-xs text-yellow-400">Awaiting approval</span>
+                  {rowState.requestId && <span className="text-xs text-gray-600">({rowState.requestId})</span>}
+                  <button
+                    onClick={() => handleApproveGrant(pid, p)}
+                    disabled={rowState.loading}
+                    className="text-xs px-2 py-1 rounded bg-green-700 hover:bg-green-600 text-white transition-colors disabled:opacity-50"
+                  >
+                    {rowState.loading ? '...' : 'Approve'}
+                  </button>
+                  <button
+                    onClick={() => handleDenyGrant(pid)}
+                    disabled={rowState.loading}
+                    className="text-xs px-2 py-1 rounded bg-red-700 hover:bg-red-600 text-white transition-colors disabled:opacity-50"
+                  >
+                    {rowState.loading ? '...' : 'Deny'}
+                  </button>
+                </>
+              )}
+              {rowState.approvalStatus === 'approved' && (
+                <span className="text-xs px-1.5 py-0.5 rounded bg-green-900/50 text-green-400">Grant approved</span>
+              )}
+              {rowState.approvalStatus === 'denied' && (
+                <span className="text-xs px-1.5 py-0.5 rounded bg-red-900/50 text-red-400">Grant denied</span>
+              )}
+              {/* Default grant/revoke buttons (when no approval flow active) */}
+              {!rowState.approvalStatus && canGrant && (
                 <button
                   onClick={() => handleGrant(pid, p)}
                   disabled={rowState.loading}
@@ -649,7 +775,7 @@ function PermissionsTab({ core, pluginId }: { core: CoreClient; pluginId: string
                   {rowState.loading ? '...' : 'Grant Allow'}
                 </button>
               )}
-              {canRevoke && (
+              {!rowState.approvalStatus && canRevoke && (
                 <button
                   onClick={() => handleRevoke(pid, p)}
                   disabled={rowState.loading}
@@ -842,7 +968,11 @@ function InstallTab({ core, pluginId }: { core: CoreClient; pluginId: string }) 
     setInstall(prev => ({ ...prev, executing: true, executionResult: null, planError: null }));
     try {
       const result = await core.call<Record<string, unknown>>('plugin.install.execute', { planId });
-      setInstall(prev => ({ ...prev, executing: false, executionResult: result ?? null }));
+      if (str(result?.status) === 'not_implemented') {
+        setInstall(prev => ({ ...prev, executing: false, planError: 'Execution not implemented by Core yet' }));
+      } else {
+        setInstall(prev => ({ ...prev, executing: false, executionResult: result ?? null }));
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Execution failed';
       setInstall(prev => ({
@@ -1000,8 +1130,23 @@ function ConfigTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
     setSaving(true);
     setSaveMsg(null);
     try {
-      await core.call('plugin.config.set', { pluginId, config });
-      setSaveMsg('Saved');
+      // Core plugin.config.set expects { key, value } per entry, not entire config object.
+      // Save each key individually; batch errors are collected but best-effort.
+      const entries = Object.entries(config);
+      let firstError: string | null = null;
+      for (const [key, value] of entries) {
+        try {
+          await core.call('plugin.config.set', { pluginId, key, value });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : 'Save failed';
+          if (!firstError) firstError = msg.includes('not_implemented') ? 'Save not supported by Go Core' : msg;
+        }
+      }
+      if (firstError) {
+        setSaveMsg(firstError);
+      } else {
+        setSaveMsg('Saved');
+      }
       const configRes = await core.call<Record<string, unknown>>('plugin.config.get', { pluginId });
       setConfig((configRes?.config as Record<string, unknown>) || {});
     } catch (err) {
@@ -1209,6 +1354,7 @@ function CacheTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
 function RunsTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
   const [runs, setRuns] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   // Per-run stop state: keyed by runId
   const [stopState, setStopState] = useState<Record<string, { loading: boolean; error: string | null }>>({});
 
@@ -1216,13 +1362,17 @@ function RunsTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
     let cancelled = false;
     async function load() {
       setLoading(true);
+      setFetchError(null);
       try {
         const result = await core.call<Record<string, unknown>>('run.list', { pluginId });
         if (cancelled) return;
-        const allRuns = Array.isArray(result?.runs) ? result!.runs as Record<string, unknown>[] : [];
+        const allRuns = listFromResponse(result, 'runs', 'entries');
         setRuns(allRuns);
-      } catch {
-        if (!cancelled) setRuns([]);
+      } catch (err) {
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : 'Failed to load runs';
+        setFetchError(msg);
+        setRuns([]);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -1235,9 +1385,15 @@ function RunsTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
     setStopState(prev => ({ ...prev, [runId]: { loading: true, error: null } }));
     try {
       await core.call('run.stop', { runId });
+      // Clear stop state for this run on success, then refresh
+      setStopState(prev => {
+        const next = { ...prev };
+        delete next[runId];
+        return next;
+      });
       // Refresh runs after stop
       const result = await core.call<Record<string, unknown>>('run.list', { pluginId });
-      const allRuns = Array.isArray(result?.runs) ? result!.runs as Record<string, unknown>[] : [];
+      const allRuns = listFromResponse(result, 'runs', 'entries');
       setRuns(allRuns);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Stop failed';
@@ -1246,6 +1402,7 @@ function RunsTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
   }
 
   if (loading) return <div className="text-gray-500 text-sm">Loading runs...</div>;
+  if (fetchError) return <p className="text-red-400 text-sm">{fetchError}</p>;
   if (runs.length === 0) return <div className="text-gray-500 text-sm">No active runs for this plugin.</div>;
 
   return (
@@ -1384,8 +1541,8 @@ function HistoryTab({ core, pluginId }: { core: CoreClient; pluginId: string }) 
         setNotImpl(true);
         setEvents([]);
       } else {
-        // Normalize: { events: [...] }, { history: [...] }, or [...] directly
-        const items = listFromResponse(result, 'events', 'history');
+        // Normalize: { events: [...] }, { history: [...] }, { list: [...] }, or [...] directly
+        const items = listFromResponse(result, 'events', 'history', 'list');
         setEvents(items);
       }
     } catch (err) {

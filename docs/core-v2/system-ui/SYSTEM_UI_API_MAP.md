@@ -112,10 +112,10 @@ action.*      操作审计
 | `plugin.cache.clear.execute` | — | `{ planId }` | 执行清理 | Plugin Detail |
 | `plugin.permissions.list` | — | `{ pluginId }` | 权限列表 | Plugin Detail |
 | `plugin.permissions.grant` | — | `{ pluginId, capability, mode }` | 授予权限（高危险操作走 notify.request/respond 审批流） | Plugin Detail |
-| `plugin.permissions.revoke` | — | `{ pluginId, permissionId }` | 撤销权限 | Plugin Detail |
+| `plugin.permissions.revoke` | — | `{ pluginId, capability }` | 撤销权限 | Plugin Detail |
 | `plugin.permissions.reset` | — | `{ pluginId }` | 重置权限 | Plugin Detail |
 | `plugin.config.get` | — | `{ nodeId?, pluginId, key? }` | 读插件配置（按节点） | Plugin Detail |
-| `plugin.config.set` | — | `{ nodeId?, pluginId, key, value }` | 写插件配置（按节点） | Plugin Detail |
+| `plugin.config.set` | — | `{ pluginId, key, value, expectedRevision? }` | 写插件配置（单键值对，非整对象） | Plugin Detail |
 | `plugin.config.schema` | `config.schema` | `{ pluginId }` | 配置 JSON Schema | Plugin Detail |
 | `plugin.history` | — | `{ nodeId?, pluginId }` | 安装历史（按节点） | Plugin Detail |
 | WebSocket `plugin.registered` | — | `{ pluginId, version }` | 插件注册事件 | Dashboard, Plugins |
@@ -227,3 +227,52 @@ Stream 页面:
 3. **插件接入**：Feature Plugin 通过 CoreClient.call() 使用规范命名，Core 根据 `pluginId + method` 做权限校验
 4. **向后兼容**：如果旧 relay server 仍在使用，UI 层可以做一层 thin wrapper 做命名映射
 5. **文档对齐**：所有 wireframe、COMPONENT_CATALOG.md、PLUGIN_UI_CONTRACT.md、SYSTEM_UI_FEATURES.md 中的 API 引用应逐步迁移到此映射表
+
+---
+
+## 6. Known Gaps & Caveats
+
+### 6.1 Entry Points
+
+- **`/plugins` is the only plugin management entry point.** There is no "AI page" or alternative plugin management surface. All plugin listing, enable/disable, permission grant/revoke, install, and config operations happen through the Plugin Management and Plugin Detail pages.
+
+### 6.2 Launchability
+
+- **Plugins must be launchable/direct to open from "New Tab".** If a plugin's views are not registered as `launchable: true` or `direct: true` in the view registry, they cannot be opened as a new tab. The Plugin Manager and Plugin Detail pages display the launchability status. See `isViewLaunchable()` in `app/console/plugin-host/launchability.ts`.
+
+### 6.3 Runs Tab "Attach" Not Wired
+
+- **The "Attach" button in the Runs tab is currently disabled** (`title="Attach not wired yet"`). There is no Core handler or UI path to attach to an existing run's terminal session. Stopping runs (`run.stop`) works.
+
+### 6.4 Install Execute — Dry Run Stub
+
+- **`plugin.install.execute` is a dry-run stub.** The Core handler validates the plan is approved, iterates through steps marking them completed, but does NOT execute real system commands. The UI's Install tab in Plugin Detail shows a warning: "Install execution is not implemented by Core yet." The execution result includes `dryRun: true`.
+
+### 6.5 `plugin.cache.clear` — Bulk Clear Stub
+
+- **`plugin.cache.clear` (bulk clear without plan) returns `not_implemented`.** Use `plugin.cache.clear.plan` + `plugin.cache.clear.execute` instead for targeted cache clearing.
+
+### 6.6 API Mismatches Between Docs and Core
+
+| Doc Reference | Issue | Actual |
+|---|---|---|
+| `plugin.permissions.revoke` params | Doc said `{ pluginId, permissionId }` (wrong field name) | Core expects `{ pluginId, capability }` |
+| `plugin.config.set` params | Doc described it as taking full config object | Core expects `{ pluginId, key, value }` (single key-value pair) |
+| `logs.*` / `audit.*` status | CAPABILITY_STATUS.md said "not implemented" | `logs.tail`, `logs.query`, `audit.list` are implemented |
+
+### 6.7 API Names Without Core Handlers
+
+The following API names appear in documentation or type definitions but have **no registered Core handler**:
+
+- `notify.list`, `notify.markRead`, `notify.markAllRead` — no handlers; use `approval.list` + WS events
+- `logs.export` — not registered
+- `audit.get`, `audit.export` — not registered
+- `session.events`, `session.stop` — not registered; use `session.destroy` for stop
+- `node.get`, `node.update` — not registered; use `node.info` for get
+- `config.get` (global non-plugin) — not registered; use `config.list`
+- `approval.approve`, `approval.deny` — intentionally not implemented; use `notify.respond`
+- `run.attach` — not registered
+
+### 6.8 `plugin.config.set` — Single Key-Value Contract
+
+Core's `plugin.config.set` operates on individual key-value pairs (`{ pluginId, key, value }`), not on entire config objects. The UI's ConfigTab in Plugin Detail iterates over all config entries and saves them individually. Any batch save is best-effort (individual errors are collected).
