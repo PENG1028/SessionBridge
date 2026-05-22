@@ -291,3 +291,56 @@ export interface CoreClient {
 
 // ─── CoreClient status ──────────────────────────────────────────
 export type CoreConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
+
+// ─── update ──────────────────────────────────────────────────────
+export interface UpdateSource {
+  type: string;
+  remote: string;
+  branch: string;
+  repoUrl: string;
+  mode: string;
+}
+
+export interface UpdatePolicy {
+  autoCheck: boolean;
+  autoApply: boolean;
+  checkIntervalSeconds: number;
+  allowDirtyWorktree: boolean;
+  allowWhenRunsActive: boolean;
+  ignoredVersions: string[];
+}
+
+export interface UpdateStatus {
+  status: UpdateStatusValue;
+  currentCommit: string;
+  remoteCommit: string;
+  behindBy: number;
+  dirty: boolean;
+  source: UpdateSource;
+  lastCheckedAt: number;
+  lastCheckError?: string;
+  requiresRestart: boolean;
+}
+
+export type UpdateStatusValue = 'unknown' | 'checking' | 'up-to-date' | 'update-available' | 'error';
+
+export interface UpdatePlanBlocker {
+  type: string;
+  message: string;
+  detail?: string;
+}
+
+export interface UpdatePlan {
+  canUpdate: boolean;
+  status: string;
+  currentCommit: string;
+  remoteCommit: string;
+  behindBy: number;
+  dirty: boolean;
+  blockers: UpdatePlanBlocker[];
+  steps: Array<{ order: number; action: string; description: string }>;
+}
+
+export type UpdateSourceSetParams = Partial<UpdateSource>;
+export type UpdatePolicySetParams = Partial<UpdatePolicy>;
+export type UpdateIgnoreParams = { version: string };

@@ -68,11 +68,26 @@ The core plugin (`sessionnode-core`) declares 40 capabilities in `AllPluginsCaps
 | Capability | Status | Handler | Notes |
 |---|---|---|---|
 | `run.create` | ✅ implemented | `runCreate` | Spawns process + creates run record with policy & metadata; reuses spawnManagedProcess helper |
-| `run.list` | ✅ implemented | `runList` | Lists runs with kind/pluginId/state filters; auto-syncs run state from ProcessManager |
-| `run.info` | ✅ implemented | `runInfo` | Returns run detail + process snapshot (pid/state/exitCode/command) |
-| `run.stop` | ✅ implemented | `runStop` | Stops run by sending signal to process; updates run state to stopped |
-| `run.updatePolicy` | ✅ implemented | `runUpdatePolicy` | Updates run policy (onDisconnect/onCoreShutdown/persistHistory); rejects restartRestore |
-| `run.attach` | ✅ implemented | `runAttach` | Re-binds UI/client to existing run; returns metadata + replay + stream subscription info; does NOT create process, change policy, or stop/restart |
+| `run.list` | ✅ implemented | `runList` | Lists runs with kind/pluginId/state filters; auto-syncs run state from ProcessManager; classifies orphaned/restorable |
+| `run.info` | ✅ implemented | `runInfo` | Returns run detail + process snapshot (pid/state/exitCode/command); classifies orphaned/restorable |
+| `run.stop` | ✅ implemented | `runStop` | Stops run by sending signal to process; orphaned/restorable runs transition directly to stopped |
+| `run.updatePolicy` | ✅ implemented | `runUpdatePolicy` | Updates run policy; accepts restartRestore (declaration only, no auto-respawn) and onCoreShutdown: keep_running |
+| `run.attach` | ✅ implemented | `runAttach` | Re-binds UI/client to existing run; returns metadata + replay + stream subscription info; does NOT create process, change policy, or stop/restart; handles orphaned/restorable states |
+
+### Self-Update (8 capabilities) — R22
+
+| Capability | Status | Handler | Notes |
+|---|---|---|---|
+| `update.status` | ✅ implemented | `updateStatus` | Returns current UpdateStatus snapshot (commit, behindBy, dirty, etc.) |
+| `update.source.get` | ✅ implemented | `updateSourceGet` | Returns current UpdateSource (type, remote, branch, mode) |
+| `update.source.set` | ✅ implemented | `updateSourceSet` | Validates and persists new source; git-only, manual/auto-check modes |
+| `update.policy.get` | ✅ implemented | `updatePolicyGet` | Returns current UpdatePolicy |
+| `update.policy.set` | ✅ implemented | `updatePolicySet` | Merges and persists new policy; rejects autoApply |
+| `update.check` | ✅ implemented | `updateCheck` | Git ls-remote + rev-parse HEAD + commit comparison + dirty check; side-effect-free (no fetch, no .git writes); updates status |
+| `update.plan` | ✅ implemented | `updatePlan` | Enumerates blockers (dirty_worktree, active_runs); returns canUpdate + steps; side-effect-free |
+| `update.ignore` | ✅ implemented | `updateIgnore` | Adds commit hash to policy.ignoredVersions |
+
+> **update.apply is intentionally never registered.** Core only provides check/plan/ignore — actual git merge and restart are manual operations performed by the administrator.
 
 ### Other (1 capability)
 

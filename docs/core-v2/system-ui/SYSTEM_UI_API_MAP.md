@@ -18,6 +18,7 @@ plugin.*      插件管理（安装、状态、权限、文件、缓存）
 config.*      配置（读写、schema）
 task.*        异步任务进度
 node.*        节点管理（发现、健康、identity、invite 配对、peer 信任网格）
+update.*      自更新状态与计划（source/policy/status/check/plan/ignore）
 action.*      操作审计
 ```
 
@@ -171,6 +172,21 @@ action.*      操作审计
 | `node.peer.revoke` | `{ nodeId }` | 撤销信任并断开连接 |
 | `node.reachability.check` | — | 可公网访问性检查 |
 
+### 2.x update — 自更新状态与计划
+
+| 规范命名 | 参数 | 用途 |
+|---|---|---|
+| `update.status` | — | 返回当前 UpdateStatus（commit、behindBy、dirty 等） |
+| `update.source.get` | — | 返回当前 UpdateSource（type、remote、branch、mode） |
+| `update.source.set` | `{ type?, remote?, branch?, repoUrl?, mode? }` | 验证并持久化新 source |
+| `update.policy.get` | — | 返回当前 UpdatePolicy |
+| `update.policy.set` | `{ autoCheck?, autoApply?, checkIntervalSeconds?, allowDirtyWorktree?, allowWhenRunsActive?, ignoredVersions? }` | 合并并持久化新 policy |
+| `update.check` | — | Git ls-remote + rev-parse HEAD + commit 比较；更新 status。无副作用：不写入 .git/refs/ 或 FETCH_HEAD |
+| `update.plan` | — | 返回 canUpdate + blockers + steps（仅计划，不执行；无副作用，不调用 fetch/pull） |
+| `update.ignore` | `{ version }` | 将 commit hash 加入 ignoredVersions |
+
+> **update.apply 不存在。** Core 只提供检查/计划/忽略，实际的 git merge 和重启由管理员手动执行。
+
 ---
 
 ## 3. 日志三分法
@@ -243,6 +259,9 @@ Stream 页面:
 ### 6.3 Runs Tab Attach
 
 - **`run.attach` is implemented.** The Attach button in the Runs tab calls `run.attach({ runId, replay: false })` to verify the run exists and retrieve its sessionId. After a successful attach, the button displays "Attach verified" with the session ID. The `run.attach` capability does NOT create a process, change policy, or stop/restart — it only returns metadata, process snapshot, and optional replay data.
+- **Orphaned / restorable states (Round 21).** `run.list`, `run.info`, and `run.attach` now classify runs as `orphaned` (registry has record but no live process) or `restorable` (process exited, policy.restartRestore=true). Orphaned/restorable runs show with distinct badges in UI (yellow/blue). `run.stop` on orphaned/restorable transitions directly to `stopped`. `run.attach` on non-running runs returns metadata with a descriptive reason string.
+- **Run registry persistence (Round 21).** Run records are persisted to `~/.sessionnode/runs.json` via atomic writes. All mutations auto-persist. Counter is recovered from existing run IDs on startup.
+- **Policy update (Round 21).** `restartRestore: true` is now accepted by `ValidatePolicy` (declaration only — Core does not auto-respawn). `onCoreShutdown: keep_running` is accepted alongside `terminate`.
 - **Cross-page tab creation is NOT wired.** From Plugin Detail's Runs tab, attaching does not open a workbench terminal tab. To actually resume input/output on an existing run, use the TerminalView's "Runs" dropdown which calls `run.attach` and then `stream.subscribe` to restore interactive control.
 
 ### 6.4 Install Execute — Dry Run Stub
@@ -272,7 +291,6 @@ The following API names appear in documentation or type definitions but have **n
 - `node.get`, `node.update` — not registered; use `node.info` for get
 - `config.get` (global non-plugin) — not registered; use `config.list`
 - `approval.approve`, `approval.deny` — intentionally not implemented; use `notify.respond`
-- `run.attach` — not registered
 
 ### 6.8 `plugin.config.set` — Single Key-Value Contract
 

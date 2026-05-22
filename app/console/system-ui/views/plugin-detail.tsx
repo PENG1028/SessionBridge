@@ -1432,8 +1432,11 @@ function RunsTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
             <span className="text-xs text-gray-600">{str(run.kind)}</span>
             <span className={`text-xs px-1.5 py-0.5 rounded ${
               str(run.state) === 'running' ? 'bg-green-900/50 text-green-400' :
+              str(run.state) === 'orphaned' ? 'bg-yellow-900/50 text-yellow-400' :
+              str(run.state) === 'restorable' ? 'bg-blue-900/50 text-blue-400' :
               str(run.state) === 'stopped' ? 'bg-gray-800 text-gray-500' :
-              'bg-yellow-900/50 text-yellow-400'
+              str(run.state) === 'exited' ? 'bg-gray-800 text-gray-500' :
+              'bg-red-900/50 text-red-400'
             }`}>
               {str(run.state)}
             </span>

@@ -334,6 +334,16 @@ class MockCoreClient implements CoreClient {
     if (method === 'run.updatePolicy') return { runId: 'run_mock_001', policy: { onDisconnect: 'keep_running', onCoreShutdown: 'terminate', persistHistory: true } } as T;
     if (method === 'run.attach') return { runId: 'run_mock_001', sessionId: 'sess_mock_001', kind: 'terminal', pluginId: 'terminal', state: 'running', processId: 'sess_mock_001', streamSubscriptions: [{ streamType: 'stdout', subscribed: false, reason: 'call stream.subscribe after attach' }, { streamType: 'stderr', subscribed: false, reason: 'call stream.subscribe after attach' }], process: { sessionId: 'sess_mock_001', pid: 12345, state: 'running', exitCode: 0, command: 'bash' } } as T;
 
+    // ─── update mock defaults ─────────────────────────────────
+    if (method === 'update.status') return { status: 'unknown', currentCommit: '', remoteCommit: '', behindBy: 0, dirty: false, source: { type: 'git', remote: 'origin', branch: 'main', repoUrl: '', mode: 'manual' }, lastCheckedAt: 0, lastCheckError: '', requiresRestart: false } as T;
+    if (method === 'update.source.get') return { type: 'git', remote: 'origin', branch: 'main', repoUrl: '', mode: 'manual' } as T;
+    if (method === 'update.source.set') return { type: 'git', remote: 'origin', branch: 'main', repoUrl: '', mode: 'manual' } as T;
+    if (method === 'update.policy.get') return { autoCheck: false, autoApply: false, checkIntervalSeconds: 86400, allowDirtyWorktree: false, allowWhenRunsActive: false, ignoredVersions: [] } as T;
+    if (method === 'update.policy.set') return { autoCheck: false, autoApply: false, checkIntervalSeconds: 86400, allowDirtyWorktree: false, allowWhenRunsActive: false, ignoredVersions: [] } as T;
+    if (method === 'update.check') return { status: 'up-to-date', currentCommit: 'abc123', remoteCommit: 'abc123', behindBy: 0, dirty: false, source: { type: 'git', remote: 'origin', branch: 'main', repoUrl: '', mode: 'manual' }, lastCheckedAt: Date.now(), lastCheckError: '', requiresRestart: false } as T;
+    if (method === 'update.plan') return { canUpdate: false, status: 'up-to-date', currentCommit: 'abc123', remoteCommit: 'abc123', behindBy: 0, dirty: false, blockers: [], steps: [] } as T;
+    if (method === 'update.ignore') return { ignoredVersions: ['abc123'], ignoredVersion: 'abc123' } as T;
+
     return undefined as T;
   }
 

@@ -195,6 +195,80 @@ metadata 是不透明透传  — Core 存储但从不解释
 policy 控制生命周期    — onDisconnect: keep_running 确保 tab 关闭后 run 继续
 ```
 
+### Run 状态模型 (Round 21+)
+
+```
+                    ┌──────────┐
+                    │ running  │ ← 进程活跃
+                    └────┬─────┘
+                         │
+          ┌──────────────┼──────────────┐
+          │              │              │
+    进程退出          run.stop()    进程异常消失
+          │              │              │
+          ▼              ▼              ▼
+    ┌──────────┐   ┌──────────┐   ┌──────────────┐
+    │ exited   │   │ stopped  │   │  orphaned    │← 进程已消失,
+    └────┬─────┘   └──────────┘   │  registry 有  │   registry 中
+         │                        │  记录但无进程  │   保留
+         │ policy.restartRestore  └──────┬───────┘
+         │ = true                        │ policy.restartRestore
+         ▼                               │ = true
+    ┌──────────────┐                     ▼
+    │ restorable   │               ┌──────────────┐
+    │ (可重建)     │               │ restorable   │
+    └──────────────┘               │ (可重建)     │
+                                   └──────────────┘
+    ┌──────────┐
+    │ archived │ ← 手动归档（长期保留）
+    └──────────┘
+```
+
+| 状态 | 含义 | 进程是否存在 | 可 attach | 可 stop |
+|------|------|-------------|-----------|---------|
+| `running` | 进程活跃 | 是 | 是（完整交互） | 是 |
+| `exited` | 进程正常退出 | 否 | 仅查看 metadata | 否 |
+| `stopped` | 主动停止 | 否 | 仅查看 metadata | 否 |
+| `failed` | 启动/运行失败 | 否 | 仅查看 metadata | 否 |
+| `orphaned` | 进程意外消失，registry 仍有记录 | 否 | 仅查看 metadata + replay | 是（转 stopped） |
+| `restorable` | 进程已退出，policy 允许重建 | 否 | 仅查看 metadata + replay | 是（转 stopped） |
+| `archived` | 已归档 | 否 | 仅查看 metadata | 否 |
+
+### Run 恢复矩阵
+
+| 当前状态 | 操作 | 结果 | 说明 |
+|---------|------|------|------|
+| `running` | `run.attach` | 返回 metadata + 进程快照 | UI 可通过 stream.subscribe 恢复交互 |
+| `orphaned` | `run.attach` | 返回 metadata + replay | 进程已消失，不可恢复交互 |
+| `orphaned` | `run.stop` | → `stopped` | 清理 orphaned 记录 |
+| `restorable` | `run.attach` | 返回 metadata + replay | 需 run.create 重建进程 |
+| `restorable` | `run.stop` | → `stopped` | 放弃重建，清理记录 |
+| `exited` / `stopped` | `run.attach` | 返回 metadata | 查看历史，不可交互 |
+
+### 持久化 Run Registry (Round 21+)
+
+Run registry 从 memory-only 升级为可持久化：
+
+```
+Core 启动时从 ~/.sessionnode/runs.json 读取 run records
+所有 mutation (Create / UpdateState / UpdatePolicy / SaveProcessRef / Delete) 自动原子写入磁盘
+写入方式: JSON → 临时文件 → os.Rename (原子操作)
+Counter 恢复: 从已有 run ID 中扫描最大序列号
+```
+
+### Policy 更新 (Round 21+)
+
+| 字段 | 可选值 | 默认值 | 说明 |
+|------|--------|--------|------|
+| `onDisconnect` | `keep_running` | `keep_running` | UI 断开后保持进程运行 |
+| `onCoreShutdown` | `terminate`, `keep_running` | `terminate` | Core 关闭时行为；`keep_running` 仅适用于外部进程 |
+| `persistHistory` | `true`, `false` | `true` | 是否持久化 stream 历史 |
+| `restartRestore` | `true`, `false` | `false` | 声明 run 可重建；Core 接受声明但**不自动重建进程**（partial） |
+
+**restartRestore 语义：**
+- `restartRestore: true` — run 声明自己可被重建。Core 接受此声明并：1) 进程退出后标记为 `restorable` 而非 `exited`/`orphaned`，2) 持久化 run record 到磁盘，3) **不自动重建** — 需 UI/调度器调用 `run.create` 手动重建
+- `restartRestore: false`（默认）— 进程退出后标记为 `exited` 或 `orphaned`，不做重建声明
+
 ---
 
 ## 二、Session 生命周期

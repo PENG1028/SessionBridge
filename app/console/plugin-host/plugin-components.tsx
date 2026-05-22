@@ -331,15 +331,29 @@ export function TerminalView({ core, config }: HostComponentProps) {
     try {
       const result = await core.call<{ sessionId: string; state: string; kind?: string; pluginId?: string; process?: { command?: string } }>('run.attach', { runId: rid, replay: false, ...(targetNodeId ? { targetNodeId } : {}) });
       const sid = result.sessionId;
-	      if (!sid) throw new Error('run.attach returned no sessionId');
+      if (!sid) throw new Error('run.attach returned no sessionId');
       setRunId(rid);
+      if (result.state === 'orphaned') {
+        termRef.current?.writeln('\r\n\x1b[33m[Run ' + rid.slice(0, 12) + ' is orphaned — process no longer exists. Viewing historical data only.]\x1b[0m');
+        setStatus('idle');
+        setSessionId(null);
+        setRunId(null);
+        return;
+      }
+      if (result.state === 'restorable') {
+        termRef.current?.writeln('\r\n\x1b[34m[Run ' + rid.slice(0, 12) + ' is restorable — process not running. Re-create run to resume.]\x1b[0m');
+        setStatus('idle');
+        setSessionId(null);
+        setRunId(null);
+        return;
+      }
       setSessionId(sid);
-      termRef.current?.writeln(`\r\n\x1b[32mAttached to ${result.process?.command || result.kind || 'run'} ${rid.slice(0, 12)} (session: ${sid.slice(0, 12)})\x1b[0m`);
+      termRef.current?.writeln('\r\n\x1b[32mAttached to ' + (result.process?.command || result.kind || 'run') + ' ' + rid.slice(0, 12) + ' (session: ' + sid.slice(0, 12) + ')\x1b[0m');
       subscribeSession(sid);
     } catch (err) {
       setStatus('error');
       setError(String(err));
-      termRef.current?.writeln(`\r\n\x1b[91m[Attach error: ${err}]\x1b[0m`);
+      termRef.current?.writeln('\r\n\x1b[91m[Attach error: ' + err + ']\x1b[0m');
       setSessionId(null);
       setRunId(null);
     }
@@ -436,24 +450,33 @@ export function TerminalView({ core, config }: HostComponentProps) {
           </div>
           {existingRuns.length > 0 && (
             <div className="space-y-1">
-              {existingRuns.map(r => (
+              {existingRuns.map(r => {
+                const stateColor =
+                  r.state === 'running' ? 'text-green-500' :
+                  r.state === 'orphaned' ? 'text-yellow-500' :
+                  r.state === 'restorable' ? 'text-blue-400' :
+                  r.state === 'stopped' || r.state === 'exited' ? 'text-gray-500' :
+                  'text-red-400';
+                const canAttach = r.state === 'running' || r.state === 'orphaned' || r.state === 'restorable';
+                return (
                 <div key={r.runId} className="flex items-center justify-between text-[11px] px-2 py-1 bg-gray-900 rounded">
                   <span className="text-gray-400 truncate flex-1">
                     {r.label || r.process?.command || r.runId?.slice(0, 8) || 'untitled'}
-                    <span className={`ml-2 ${r.state === 'running' ? 'text-green-500' : 'text-gray-500'}`}>
+                    <span className={`ml-2 ${stateColor}`}>
                       [{r.state}]
                     </span>
                   </span>
-                  {r.state === 'running' && (
+                  {canAttach && (
                     <button
                       onClick={() => handleAttach(r.runId)}
                       className="px-2 py-0.5 rounded bg-gray-700 text-gray-200 hover:bg-gray-600 ml-2"
                     >
-                      Attach
+                      {r.state === 'running' ? 'Attach' : 'View'}
                     </button>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
