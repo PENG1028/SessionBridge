@@ -240,9 +240,10 @@ Stream 页面:
 
 - **Plugins must be launchable/direct to open from "New Tab".** If a plugin's views are not registered as `launchable: true` or `direct: true` in the view registry, they cannot be opened as a new tab. The Plugin Manager and Plugin Detail pages display the launchability status. See `isViewLaunchable()` in `app/console/plugin-host/launchability.ts`.
 
-### 6.3 Runs Tab "Attach" Not Wired
+### 6.3 Runs Tab Attach
 
-- **The "Attach" button in the Runs tab is currently disabled** (`title="Attach not wired yet"`). There is no Core handler or UI path to attach to an existing run's terminal session. Stopping runs (`run.stop`) works.
+- **`run.attach` is implemented.** The Attach button in the Runs tab calls `run.attach({ runId, replay: false })` to verify the run exists and retrieve its sessionId. After a successful attach, the button displays "Attach verified" with the session ID. The `run.attach` capability does NOT create a process, change policy, or stop/restart — it only returns metadata, process snapshot, and optional replay data.
+- **Cross-page tab creation is NOT wired.** From Plugin Detail's Runs tab, attaching does not open a workbench terminal tab. To actually resume input/output on an existing run, use the TerminalView's "Runs" dropdown which calls `run.attach` and then `stream.subscribe` to restore interactive control.
 
 ### 6.4 Install Execute — Dry Run Stub
 

@@ -145,8 +145,9 @@ Session = 进程实例
 | 信息 | `run.info` | 查询单个 run 的完整信息（含 sessionId、process 状态） |
 | 停止 | `run.stop` | 停止 run（发送信号给进程，更新 run 状态） |
 | 策略更新 | `run.updatePolicy` | 运行时更新 run 的持久化/重连策略 |
+| 附加 | `run.attach` | 重新绑定 UI/client 到已有 run；返回 metadata + replay + stream 订阅信息；不创建进程、不改变 policy、不 stop/restart |
 
-**Terminal 启动路径（Round 9+）：**
+**Terminal 启动路径（Round 20+）：**
 
 ```
 用户点击 Start
@@ -165,8 +166,21 @@ Session = 进程实例
   → run.list({ kind:'terminal' })
   → 用户看到现有 run 列表
   → 用户点击 Attach
-  → run.info(runId) → 获得 sessionId
-  → stream.subscribe + stream.replay
+  → run.attach({ runId, replay: false }) → 获得 sessionId + metadata
+  → stream.subscribe(sessionId, 'stdout') + stream.replay(sessionId)
+  → 终端恢复交互（输入/输出/停止）
+```
+
+**run.attach 语义：**
+
+```
+run.attach 不创建新进程        — 仅返回已有 run 的 metadata 和 replay 数据
+run.attach 不改变 run policy   — policy 保持原样
+run.attach 不 stop / restart   — 如果 run 已 exited/stopped，仍返回 metadata（subscribed: false）
+streamTypes 默认 stdout/stderr — 可指定自定义流类型
+replay: true 可获取历史输出    — replay: false 跳过历史数据（UI 自行调用 stream.replay）
+UI 收到 sessionId 后自行订阅  — run.attach 采用 Option A：不自动注册 WS stream subscription
+跨页面 tab 创建不在本轮       — run.attach 不负责从 Plugin Detail 打开 workbench tab
 ```
 
 **关键原则：**
@@ -174,6 +188,7 @@ Session = 进程实例
 ```
 runId 是长期资源 ID    — 比 UI tab 生命周期更长
 UI tab 是投影          — tab 关闭不停止 run
+Core run 是长期资源    — 手机断开后 PC Core 继续跑
 sessionId 是进程引用    — 通过 runId 间接访问
 stream.write 是唯一 stdin 入口 — 所有输入经过 stream 通道
 metadata 是不透明透传  — Core 存储但从不解释

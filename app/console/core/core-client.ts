@@ -332,6 +332,7 @@ class MockCoreClient implements CoreClient {
     if (method === 'run.info') return { runId: 'run_mock_001', kind: 'terminal', label: 'mock-run', pluginId: 'terminal', state: 'running', sessionId: 'sess_mock_001', processId: 'sess_mock_001', process: { sessionId: 'sess_mock_001', pid: 12345, state: 'running', exitCode: 0, command: 'bash' } } as T;
     if (method === 'run.stop') return { runId: 'run_mock_001', state: 'stopped' } as T;
     if (method === 'run.updatePolicy') return { runId: 'run_mock_001', policy: { onDisconnect: 'keep_running', onCoreShutdown: 'terminate', persistHistory: true } } as T;
+    if (method === 'run.attach') return { runId: 'run_mock_001', sessionId: 'sess_mock_001', kind: 'terminal', pluginId: 'terminal', state: 'running', processId: 'sess_mock_001', streamSubscriptions: [{ streamType: 'stdout', subscribed: false, reason: 'call stream.subscribe after attach' }, { streamType: 'stderr', subscribed: false, reason: 'call stream.subscribe after attach' }], process: { sessionId: 'sess_mock_001', pid: 12345, state: 'running', exitCode: 0, command: 'bash' } } as T;
 
     return undefined as T;
   }

@@ -489,3 +489,95 @@ describe('Regression smoke', () => {
     expect(body.pluginId).not.toBe('malicious');
   });
 });
+
+// ─── Test 10: run.attach protocol ────────────────────────────────────
+
+describe('CoreClient run.attach protocol', () => {
+  let client: CoreClientImpl;
+
+  beforeEach(() => {
+    client = createCoreClient({ pluginId: 'terminal' }) as CoreClientImpl;
+  });
+
+  afterEach(() => {
+    client.disconnect();
+  });
+
+  it('sends run.attach with runId and default replay:true', async () => {
+    const { sentBodies } = injectMockWs(client);
+
+    const promise = client.call('run.attach', { runId: 'run_001' });
+    resolveAllPending(client, { runId: 'run_001', sessionId: 'sess_001', state: 'running' });
+    await promise;
+
+    expect(sentBodies.length).toBe(1);
+    const body = JSON.parse(sentBodies[0]);
+    expect(body.capability).toBe('run.attach');
+    expect(body.payload.runId).toBe('run_001');
+  });
+
+  it('sends run.attach with replay:false', async () => {
+    const { sentBodies } = injectMockWs(client);
+
+    const promise = client.call('run.attach', { runId: 'run_001', replay: false });
+    resolveAllPending(client, { runId: 'run_001', sessionId: 'sess_001', state: 'running' });
+    await promise;
+
+    const body = JSON.parse(sentBodies[0]);
+    expect(body.capability).toBe('run.attach');
+    expect(body.payload.replay).toBe(false);
+  });
+
+  it('sends run.attach with custom streamTypes', async () => {
+    const { sentBodies } = injectMockWs(client);
+
+    const promise = client.call('run.attach', { runId: 'run_001', streamTypes: ['stdout'], replay: false });
+    resolveAllPending(client, { runId: 'run_001', sessionId: 'sess_001' });
+    await promise;
+
+    const body = JSON.parse(sentBodies[0]);
+    expect(body.payload.streamTypes).toEqual(['stdout']);
+  });
+
+  it('extracts targetNodeId from params to routing level for run.attach', async () => {
+    const { sentBodies } = injectMockWs(client);
+
+    const promise = client.call('run.attach', { runId: 'run_001', targetNodeId: 'remote-node-4' });
+    resolveAllPending(client, { runId: 'run_001', sessionId: 'sess_001' });
+    await promise;
+
+    const body = JSON.parse(sentBodies[0]);
+    expect(body.capability).toBe('run.attach');
+    expect(body.targetNodeId).toBe('remote-node-4');
+    expect(body.payload.targetNodeId).toBeUndefined();
+  });
+});
+
+// ─── Test 11: MockCoreClient run.attach defaults ──────────────────
+
+describe('MockCoreClient run.attach defaults', () => {
+  it('run.attach returns sessionId, state, streamSubscriptions, process', async () => {
+    const mock = createMockCoreClient();
+    const result = await mock.call('run.attach', { runId: 'run_mock_001' });
+    expect(result.runId).toBe('run_mock_001');
+    expect(result.sessionId).toBe('sess_mock_001');
+    expect(result.state).toBe('running');
+    expect(result.kind).toBe('terminal');
+    expect(result.process?.pid).toBe(12345);
+    expect(result.streamSubscriptions).toHaveLength(2);
+    expect(result.streamSubscriptions[0].streamType).toBe('stdout');
+    expect(result.streamSubscriptions[0].subscribed).toBe(false);
+  });
+
+  it('run.attach is distinct from run.info in MockCoreClient', async () => {
+    const mock = createMockCoreClient();
+    const attachResult = await mock.call('run.attach', { runId: 'run_mock_001' });
+    const infoResult = await mock.call('run.info', { runId: 'run_mock_001' });
+
+    // run.attach has streamSubscriptions, run.info does not
+    expect(attachResult.streamSubscriptions).toBeDefined();
+    expect(infoResult).not.toHaveProperty('streamSubscriptions');
+    // Both share core metadata
+    expect(attachResult.sessionId).toBe(infoResult.sessionId);
+  });
+});

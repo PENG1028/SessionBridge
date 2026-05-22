@@ -16,7 +16,8 @@ import { hostComponentRegistry } from './host-component-registry';
  * Protocol:
  *  - run.create     { kind, command, pty: true, cols, rows, policy, metadata, targetNodeId? }
  *  - run.list       { kind: 'terminal' }                                → existing runs for restore
- *  - run.info       { runId }                                           → sessionId for attach
+ *  - run.attach     { runId, replay: false }                            → sessionId for attach
+ *  - run.info       { runId }                                           → run details
  *  - run.stop       { runId, signal: 'SIGTERM' }                        → terminate
  *  - stream.subscribe / stream.replay / stream.write / process.resize   → unchanged
  *
@@ -288,7 +289,7 @@ export function TerminalView({ core, config }: HostComponentProps) {
   async function handleStop() {
     const sid = sessionIdRef.current;
     const rid = runIdRef.current;
-    if (!sid) return;
+	      if (!sid) return;
 
     // Prefer run.stop when runId is available; fallback to process.signal for legacy sessions
     if (rid) {
@@ -328,11 +329,12 @@ export function TerminalView({ core, config }: HostComponentProps) {
     setError(null);
     setStatus('running');
     try {
-      const info = await core.call<RunInfo>('run.info', { runId: rid, ...(targetNodeId ? { targetNodeId } : {}) });
-      const sid = info.sessionId;
+      const result = await core.call<{ sessionId: string; state: string; kind?: string; pluginId?: string; process?: { command?: string } }>('run.attach', { runId: rid, replay: false, ...(targetNodeId ? { targetNodeId } : {}) });
+      const sid = result.sessionId;
+	      if (!sid) throw new Error('run.attach returned no sessionId');
       setRunId(rid);
       setSessionId(sid);
-      termRef.current?.writeln(`\r\n\x1b[32mAttached to run ${rid.slice(0, 12)} (session: ${sid.slice(0, 12)})\x1b[0m`);
+      termRef.current?.writeln(`\r\n\x1b[32mAttached to ${result.process?.command || result.kind || 'run'} ${rid.slice(0, 12)} (session: ${sid.slice(0, 12)})\x1b[0m`);
       subscribeSession(sid);
     } catch (err) {
       setStatus('error');

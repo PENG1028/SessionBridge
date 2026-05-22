@@ -1699,13 +1699,17 @@ describe('PluginDetail: Contract Hardening', () => {
     });
   });
 
-  it('Runs tab shows disabled Attach button', async () => {
+  it('Runs tab shows enabled Attach button and calls run.attach on click', async () => {
     const mockRuns = {
       runs: [
         { runId: 'run-001', kind: 'terminal', state: 'running', sessionId: 'sess-001', createdAt: 1000 },
       ],
     };
-    const core = createCore({ 'plugin.get': mockPluginGet, 'run.list': mockRuns });
+    const core = createCore({
+      'plugin.get': mockPluginGet,
+      'run.list': mockRuns,
+      'run.attach': { runId: 'run-001', sessionId: 'sess-001', state: 'running' },
+    });
     render(<PluginDetail core={core} pluginId="terminal" />);
 
     await waitForDetail();
@@ -1714,9 +1718,17 @@ describe('PluginDetail: Contract Hardening', () => {
     await waitFor(() => {
       const attachBtn = screen.getByText('Attach');
       expect(attachBtn).toBeDefined();
-      expect((attachBtn as HTMLButtonElement).disabled).toBe(true);
-      expect((attachBtn as HTMLButtonElement).title).toBe('Attach not wired yet');
+      expect((attachBtn as HTMLButtonElement).disabled).toBe(false);
     });
+
+    // Click Attach — verify UI updates to "Attach verified"
+    const callSpy = vi.spyOn(core, 'call');
+    fireEvent.click(screen.getByText('Attach'));
+    await waitFor(() => {
+      expect(callSpy).toHaveBeenCalledWith('run.attach', { runId: 'run-001', replay: false });
+      expect(screen.getByText('Attach verified')).toBeDefined();
+    });
+    callSpy.mockRestore();
   });
 
   it('History tab handles empty history', async () => {
@@ -1918,11 +1930,15 @@ describe('PluginDetail: Runs Tab', () => {
     expect(errorElements.length).toBe(1);
   });
 
-  it('Attach button disabled with correct title', async () => {
+  it('Attach button enabled and shows verified after successful attach', async () => {
     const mockRuns = {
       runs: [{ runId: 'run-attach', kind: 'terminal', state: 'running', sessionId: 'sess-a1' }],
     };
-    const core = createCore({ 'plugin.get': mockPluginGet, 'run.list': mockRuns });
+    const core = createCore({
+      'plugin.get': mockPluginGet,
+      'run.list': mockRuns,
+      'run.attach': { runId: 'run-attach', sessionId: 'sess-a1', state: 'running' },
+    });
     render(<PluginDetail core={core} pluginId="terminal" />);
 
     await waitForDetail();
@@ -1930,8 +1946,13 @@ describe('PluginDetail: Runs Tab', () => {
     await waitFor(() => expect(screen.getByText('run-attach')).toBeDefined());
 
     const attachBtn = screen.getByText('Attach');
-    expect((attachBtn as HTMLButtonElement).disabled).toBe(true);
-    expect((attachBtn as HTMLButtonElement).title).toBe('Attach not wired yet');
+    expect((attachBtn as HTMLButtonElement).disabled).toBe(false);
+
+    // Click Attach
+    fireEvent.click(attachBtn);
+    await waitFor(() => {
+      expect(screen.getByText('Attach verified')).toBeDefined();
+    });
   });
 
   it('run.list returns null — does not crash', async () => {

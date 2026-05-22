@@ -1357,6 +1357,8 @@ function RunsTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
   const [fetchError, setFetchError] = useState<string | null>(null);
   // Per-run stop state: keyed by runId
   const [stopState, setStopState] = useState<Record<string, { loading: boolean; error: string | null }>>({});
+  // Per-run attach state: keyed by runId
+  const [attachState, setAttachState] = useState<Record<string, { loading: boolean; error: string | null; sessionId?: string }>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -1401,6 +1403,17 @@ function RunsTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
     }
   }
 
+  async function handleAttach(runId: string) {
+    setAttachState(prev => ({ ...prev, [runId]: { loading: true, error: null } }));
+    try {
+      const result = await core.call<{ sessionId: string; state: string; kind?: string; pluginId?: string }>('run.attach', { runId, replay: false });
+      setAttachState(prev => ({ ...prev, [runId]: { loading: false, error: null, sessionId: result.sessionId } }));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Attach failed';
+      setAttachState(prev => ({ ...prev, [runId]: { loading: false, error: msg } }));
+    }
+  }
+
   if (loading) return <div className="text-gray-500 text-sm">Loading runs...</div>;
   if (fetchError) return <p className="text-red-400 text-sm">{fetchError}</p>;
   if (runs.length === 0) return <div className="text-gray-500 text-sm">No active runs for this plugin.</div>;
@@ -1410,6 +1423,7 @@ function RunsTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
       {runs.map((run, i) => {
         const runId = str(run.runId);
         const rowStop = stopState[runId] || { loading: false, error: null };
+        const rowAttach = attachState[runId] || { loading: false, error: null, sessionId: undefined };
         const isRunning = str(run.state) === 'running';
         return (
         <div key={i} className="px-4 py-3 bg-gray-900 rounded-lg border border-gray-800">
@@ -1425,11 +1439,16 @@ function RunsTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
             </span>
             <div className="flex-1" />
             <button
-              disabled
-              title="Attach not wired yet"
-              className="text-xs px-2 py-1 rounded bg-gray-800 text-gray-600 cursor-not-allowed transition-colors"
+              onClick={() => handleAttach(runId)}
+              disabled={rowAttach.loading}
+              title={rowAttach.sessionId ? `Attached session ${rowAttach.sessionId}` : 'Attach to run'}
+              className={`text-xs px-2 py-1 rounded transition-colors disabled:opacity-50 ${
+                rowAttach.sessionId
+                  ? 'bg-green-900/50 text-green-400'
+                  : 'bg-gray-800 hover:bg-gray-700 text-gray-400'
+              }`}
             >
-              Attach
+              {rowAttach.loading ? 'Attaching...' : rowAttach.sessionId ? 'Attach verified' : 'Attach'}
             </button>
             {isRunning && (
               <button
@@ -1448,6 +1467,12 @@ function RunsTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
           </div>
           {rowStop.error && (
             <div className="text-xs text-red-400 mt-1">{rowStop.error}</div>
+          )}
+          {rowAttach.sessionId && (
+            <div className="text-xs text-green-400 mt-1">Attached session: {rowAttach.sessionId}</div>
+          )}
+          {rowAttach.error && (
+            <div className="text-xs text-red-400 mt-1">{rowAttach.error}</div>
           )}
           {!!run.process && (
             <div className="text-xs text-gray-600 mt-1">

@@ -72,6 +72,7 @@ The core plugin (`sessionnode-core`) declares 40 capabilities in `AllPluginsCaps
 | `run.info` | ✅ implemented | `runInfo` | Returns run detail + process snapshot (pid/state/exitCode/command) |
 | `run.stop` | ✅ implemented | `runStop` | Stops run by sending signal to process; updates run state to stopped |
 | `run.updatePolicy` | ✅ implemented | `runUpdatePolicy` | Updates run policy (onDisconnect/onCoreShutdown/persistHistory); rejects restartRestore |
+| `run.attach` | ✅ implemented | `runAttach` | Re-binds UI/client to existing run; returns metadata + replay + stream subscription info; does NOT create process, change policy, or stop/restart |
 
 ### Other (1 capability)
 
@@ -270,8 +271,9 @@ Each capability status maps to a specific UI presentation in the Plugin Manager 
 | `run.info` | `TestRunInfo`, `TestRunInfo_NotFound` | Detail + process snapshot; not found |
 | `run.stop` | `TestRunStop`, `TestRunStop_NotFound` | Stop + state verification; not found |
 | `run.updatePolicy` | `TestRunUpdatePolicy`, `TestRunUpdatePolicy_RejectsRestartRestore` | Policy update + validation |
+| `run.attach` | `TestRunAttach_ExistingRunningRun`, `TestRunAttach_UnknownRunId`, `TestRunAttach_StoppedRun`, `TestRunAttach_ReplayTrue`, `TestRunAttach_ReplayFalse`, `TestRunAttach_DefaultStreamTypes`, `TestRunAttach_DoesNotCreateProcess`, `TestRunAttach_DoesNotChangePolicy`, `TestRunAttach_MissingRunId` | Attach to running/stopped runs, replay, error paths, no side-effects |
 | `run integration` | `TestRunIntegration_ProcessSpawnStillWorks`, `TestRunIntegration_StreamWriteToRunProcess`, `TestRunIntegration_DisconnectDoesNotKillRunProcess` | process.spawn preserved, stream write works, disconnect protection |
-| `run registry` | `TestRegisteredRunCapabilitiesInHandlers` | All 5 run caps registered |
+| `run registry` | `TestRegisteredRunCapabilitiesInHandlers` | All 6 run caps registered |
 | `notify.respond` (approval) | `TestNotifyRespond_Approve_UpdatesRequest`, `TestNotifyRespond_Approve_UpdatesLinkedPlan`, `TestNotifyRespond_Deny_UpdatesLinkedPlan` | Approval/deny updates linked plans and requests |
 | `high-risk grant approval` | `TestHighRiskGrant_WithoutPlan_RequiresApproval`, `TestHighRiskGrant_WithApprovedPlan_Succeeds`, `TestHighRiskGrant_WithDeniedPlan_Fails` | High-risk grant plan/approval/deny lifecycle |
 | `session.history.*` | `TestWSHistoryE2E` | Full history lifecycle E2E |
@@ -366,6 +368,7 @@ run.list                 → runList
 run.info                 → runInfo
 run.stop                 → runStop
 run.updatePolicy         → runUpdatePolicy
+run.attach               → runAttach
 system.info              → systemInfo
 node.list                → nodeList
 node.info                → nodeInfo

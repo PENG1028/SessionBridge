@@ -155,6 +155,28 @@ export type RunUpdatePolicyParams = {
   };
 };
 
+// ─── run.attach ──────────────────────────────────────────────────────
+export interface RunAttachParams {
+  runId: string;
+  streamTypes?: StreamType[];
+  replay?: boolean;
+  fromSeq?: number;
+}
+
+export interface RunAttachResult {
+  runId: string;
+  sessionId: string;
+  kind?: string;
+  pluginId?: string;
+  state: string;
+  processId?: string;
+  streamSubscriptions?: Array<{ streamType: string; subscribed: boolean; reason?: string }>;
+  replay?: Record<string, Array<{ seq?: number; data: string; streamType?: string; timestamp?: number }>>;
+  process?: RunInfo['process'];
+  policy?: RunInfo['policy'];
+  label?: string;
+}
+
 // ─── config ─────────────────────────────────────────────────────
 export interface ConfigEntry {
   key: string;
