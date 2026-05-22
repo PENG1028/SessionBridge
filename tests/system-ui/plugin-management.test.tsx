@@ -384,6 +384,27 @@ describe('PluginDetail', () => {
     });
   });
 
+  it('shows Logs tab with entries from logs.query', async () => {
+    const core = createCore({
+      'plugin.get': mockPluginGet,
+      'logs.query': {
+        entries: [
+          { timestamp: 1000, level: 'info', source: 'plugin', pluginId: 'terminal', message: 'plugin loaded' },
+          { timestamp: 2000, level: 'error', source: 'plugin', pluginId: 'terminal', message: 'capability failed' },
+        ],
+      },
+    });
+    render(<PluginDetail core={core} pluginId="terminal" />);
+
+    await waitForDetail();
+    await clickTab('Logs');
+
+    await waitFor(() => {
+      expect(screen.getByText('plugin loaded')).toBeDefined();
+      expect(screen.getByText('capability failed')).toBeDefined();
+    });
+  });
+
   it('shows grant state in Permissions tab', async () => {
     const mockPermissions = {
       pluginId: 'terminal',
