@@ -2,6 +2,7 @@
 
 import { type ViewType } from './workbench-state';
 import { getAllViewEntries, getViewEntry } from '../main/view-registry';
+import { isViewLaunchable } from '../plugin-host/launchability';
 
 interface ViewSelectorProps {
   onSelect: (viewType: ViewType) => void;
@@ -16,15 +17,10 @@ function viewIcon(id: string): string {
 
 export function ViewSelector({ onSelect }: ViewSelectorProps) {
   const allViews = getAllViewEntries();
-  // Each view declares showInSelector itself. Adapter views additionally
-  // appear when they have an adapter mapping (registered by the adapter).
+  // Only show directly launchable editor views.
+  // Adapter-only mappings (no launchable/direct) do NOT appear.
   const options = allViews
-    .filter(([id, entry]) => {
-      if (id === 'empty') return false;
-      if (!entry.meta.showInSelector) return false;
-      if (entry.meta.launchMode === 'hidden' || entry.meta.launchMode === 'runtime') return false;
-      return true;
-    })
+    .filter(([id, entry]) => isViewLaunchable(entry.meta))
     .map(([id, entry]) => ({
       type: id as ViewType,
       label: entry.meta.title,

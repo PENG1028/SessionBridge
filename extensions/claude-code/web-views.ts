@@ -6,7 +6,14 @@ import { ClaudeChatView } from '../../app/console/main/claude-chat-view';
 
 registerView('claude-chat', {
   component: ClaudeChatView,
-  meta: { title: 'Claude Chat', icon: Sparkles, sidebarRequirements: { left: 'auto', right: 'shown' }, openMode: 'instance-bound' },
+  meta: {
+    title: 'Claude Chat',
+    icon: Sparkles,
+    viewType: 'main.editor',
+    pluginId: 'claude-code',
+    sidebarRequirements: { left: 'auto', right: 'shown' },
+    openMode: 'instance-bound',
+  },
 });
 
 registerAdapterMapping('claude-code', 'claude-chat');

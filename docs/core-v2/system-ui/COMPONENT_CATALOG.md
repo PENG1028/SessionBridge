@@ -870,7 +870,7 @@
 | **Purpose** | 通知列表（审批请求 + 系统通知） |
 | **Surface** | notification.center |
 | **Props** | `{ notifications: Notification[], onMarkRead: (id: string) => void, onMarkAllRead: () => void, onAction: (notification: Notification) => void }` |
-| **Core API** | notification.list |
+| **Core API** | notify.list |
 | **State ownership** | 无 |
 | **Failure states** | 加载失败 → ErrorState |
 | **Notes** | 未读标记 ● |
@@ -898,7 +898,7 @@
 | **Purpose** | 审批请求详情弹窗 |
 | **Surface** | notification.center |
 | **Props** | `{ request: ApprovalRequest, onApprove: (note?: string) => void, onDeny: (reason?: string) => void, onClose: () => void }` |
-| **Core API** | approval.get |
+| **Core API** | approval.list |
 | **State ownership** | 无 |
 | **Failure states** | 详情加载失败 → 弹窗内 [ERROR] |
 | **Notes** | 含倒计时、风险评估、上下文 |
@@ -912,7 +912,7 @@
 | **Purpose** | 审批操作栏 |
 | **Surface** | notification.center |
 | **Props** | `{ requestId: string, onApprove: () => void, onDeny: () => void, disabled?: boolean }` |
-| **Core API** | approval.approve, approval.deny |
+| **Core API** | notify.respond |
 | **State ownership** | 无 |
 | **Failure states** | 操作失败 → 按钮变红 + 错误消息 |
 | **Notes** | 审批后按钮禁用 |
@@ -939,7 +939,7 @@
 | **Purpose** | 多设备同步状态指示 |
 | **Surface** | notification.center |
 | **Props** | `{ status: 'synced' | 'viewing' | 'alone', viewerCount?: number }` |
-| **Core API** | WebSocket: approval.viewing |
+| **Core API** | WebSocket: notify.approval.result |
 | **State ownership** | 无 |
 | **Notes** | 显示 "已在其他设备处理" 或 "其他设备正在查看" |
 

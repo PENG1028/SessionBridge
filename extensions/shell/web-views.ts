@@ -9,6 +9,11 @@ registerView('terminal', {
   meta: {
     title: 'Terminal',
     icon: TerminalIcon,
+    viewType: 'main.editor',
+    pluginId: 'terminal',
+    showInSelector: true,
+    launchable: true,
+    launchMode: 'direct',
     sidebarRequirements: { left: 'auto', right: 'auto' },
     chrome: {
       header: 'full',

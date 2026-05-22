@@ -100,7 +100,8 @@ export function ConsoleHeader({
   const focus = useFocus();
   const { activePolicy } = useRuntimePolicy();
 
-  // Runtime badge — only for adapters with modes capability
+  // Built-in runtime status badge — driven by adapter capability "modes".
+  // This is a host-level built-in element, not a plugin-contributed slot.
   let runtimeBadge: string | null = null;
   try {
     const { paneViewType, adapterId } = focus;
@@ -304,19 +305,43 @@ export function ConsoleHeader({
 
           {!isMinimal && headerContextControls.map(cc => {
             const IconComp = cc.icon ? ICON_MAP[cc.icon] : null;
+            const hasCommand = !!cc.command;
+
+            // kind === 'button' renders as a standard button.
+            // All other non-hint kinds (toggle, menu, progress, approval, jump) render as compact pills.
+            if (cc.kind === 'button') {
+              return (
+                <button key={cc.id}
+                  onClick={() => {
+                    if (hasCommand && actionCtx) {
+                      runWorkbenchCommand({ command: cc.command! }, actionCtx);
+                    }
+                  }}
+                  disabled={!hasCommand}
+                  className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#1a1a1a] border border-gray-700 hover:border-purple-500 text-gray-400 hover:text-gray-200 text-[10px] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  title={cc.label}
+                >
+                  {IconComp && <IconComp className="w-3 h-3" />}
+                  {cc.label}
+                </button>
+              );
+            }
+
+            // Non-button kinds: render as compact pill
             return (
-              <button key={cc.id}
-                onClick={() => {
-                  if (cc.command && actionCtx) {
-                    runWorkbenchCommand({ command: cc.command }, actionCtx);
+              <span key={cc.id}
+                onClick={hasCommand ? () => {
+                  if (actionCtx) {
+                    runWorkbenchCommand({ command: cc.command! }, actionCtx);
                   }
-                }}
-                className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#1a1a1a] border border-gray-700 hover:border-purple-500 text-gray-400 hover:text-gray-200 text-[10px] transition-colors"
+                } : undefined}
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-900 border border-gray-800 text-gray-500 text-[10px] ${hasCommand ? 'cursor-pointer hover:border-purple-500 hover:text-gray-300 transition-colors' : 'opacity-50'}`}
                 title={cc.label}
+                role={hasCommand ? 'button' : undefined}
               >
                 {IconComp && <IconComp className="w-3 h-3" />}
                 {cc.label}
-              </button>
+              </span>
             );
           })}
         </div>

@@ -365,7 +365,7 @@ State Ownership:
   - UI 只展示进度，不维护状态
 
 Permission:
-  - plugin.install (高危操作，需 audit)
+  - plugin.install.plan + plugin.install.execute (高危操作组，走 plan→approval→execute 流程，需 audit)
 
 Logs/Audit:
   - plugin.install.plan → audit
@@ -661,8 +661,8 @@ Permission:
   - notify.respond (批准/拒绝，需 audit)
 
 Logs/Audit:
-  - approval.allow → audit
-  - approval.deny → audit
+  - notify.respond { action: "allow" } → audit
+  - notify.respond { action: "deny" } → audit
   - 通知发送 → audit（可选）
 
 Failure States:
@@ -882,7 +882,7 @@ Migration From Existing Code:
 | Plugin Manager | P1 | 中 | plugin.list（待实现） | 0% |
 | Plugin Detail | P2 | 高 | 多项 plugin.* 待实现 | 0% |
 | Environment Check | P2 | 低 | plugin.check（待实现） | 0% |
-| Install Plan/Execute | P2 | 高 | plugin.install.*（待实现） | 0% |
+| Install Plan/Execute | P2 | 高 | plugin.install.plan / plugin.install.execute（dry-run 已实现） | 0% |
 | Files/Cache/Artifacts | P2 | 中 | plugin.files.*（待实现） | 0% |
 | Permission Grant | P1 | 中 | plugin.permissions.*（待实现） | 0% |
 | Config/Settings | P1 | 中 | config.get/set + schema（已有） | 80%（settings-panel.tsx） |

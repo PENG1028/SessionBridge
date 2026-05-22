@@ -22,7 +22,7 @@
   audit.*           审计日志（list/get/export/event）
   plugin.*          插件管理（list/check/install/files/cache/permissions/config/history）
   notify.*          通知（list/markRead/respond/event）
-  approval.*        审批（list/approve/deny/request）
+  approval.*        审批（list thin facade over notify manager；approve/deny 统一走 notify.respond）
   node.*            节点管理（list/get/health/update/connect/disconnect）
   task.*            异步任务（event）
   action.*          操作执行（request）
@@ -242,10 +242,9 @@ core:
 
 | Capability | 参数 | 说明 |
 |-----------|------|------|
-| `approval.list` | `{ status?, type? }` | 审批请求列表 |
-| `approval.get` | `{ requestId }` | 请求详情 |
-| `approval.approve` | `{ requestId, note? }` | 批准 |
-| `approval.deny` | `{ requestId, reason? }` | 拒绝 |
+| `approval.list` | `{ status?, type? }` | 审批请求列表（R13 thin facade，底层委托 notify manager，仅返回 pending） |
+
+> **注意**: `approval.approve`、`approval.deny`、`approval.get` **故意不实现**。审批/拒绝操作统一走 `notify.request` + `notify.respond` 流程（action 字段为 `"allow"` | `"deny"`）。请求详情通过 `approval.list` 返回的列表项获取。
 
 ### node.* — 节点
 

@@ -253,19 +253,17 @@ Detail (mobile):
 
 | API | 用途 |
 |-----|------|
-| approval.list { status } | 审批请求列表 |
-| approval.get { requestId } | 请求详情 |
-| approval.approve { requestId, note? } | 批准请求 |
-| approval.deny { requestId, reason? } | 拒绝请求 |
-| approval.takeOver { requestId } | 接管请求（其他设备在看） |
-| approval.timeout { requestId } | 触发超时 |
-| notification.list | 通知列表 |
-| notification.markRead { notificationId } | 标记已读 |
-| notification.markAllRead | 全部已读 |
-| WebSocket: approval.request | 新审批请求推送 |
-| WebSocket: approval.response | 审批结果推送（多设备同步） |
-| WebSocket: approval.viewing | 其他设备正在查看 |
-| WebSocket: notification.event | 新通知推送 |
+| `approval.list` `{ status? }` | 审批请求列表（R13 thin facade over notify manager，仅返回 pending） |
+| `notify.request` `{ capability, action, detail? }` | 发起审批请求（primary approval flow） |
+| `notify.respond` `{ requestId, action: "allow"\|"deny" }` | 批准/拒绝审批请求 |
+| `notify.list` `{ filter?, since? }` | 通知列表 |
+| `notify.markRead` `{ notificationId }` | 标记已读 |
+| `notify.markAllRead` | 全部已读 |
+| WebSocket: `notify.approval.request` | 新审批请求推送 |
+| WebSocket: `notify.approval.result` | 审批结果推送（多设备同步） |
+| WebSocket: `notify.event` | 新通知推送 |
+
+> **已废弃**: `approval.get`、`approval.approve`、`approval.deny`、`approval.takeOver`、`approval.viewing`、`approval.timeout` 均未实现。审批/拒绝统一走 `notify.respond`，详情统一走 `approval.list`。
 
 ---
 

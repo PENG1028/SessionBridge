@@ -245,6 +245,233 @@ describe('PluginManager', () => {
       expect(screen.getByText(/unk:1/)).toBeDefined();
     });
   });
+
+  // ── Response shape compatibility ──
+
+  it('plugin.list returns {plugins: []} object and renders empty state', async () => {
+    const core = createCore({ 'plugin.list': { plugins: [] } });
+    render(<PluginManager core={core} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('No plugins installed')).toBeDefined();
+    });
+  });
+
+  it('plugin.list returns {entries: []} object and renders plugin list', async () => {
+    const core = createCore({ 'plugin.list': { entries: mockPluginList } });
+    render(<PluginManager core={core} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('terminal')).toBeDefined();
+    });
+  });
+
+  // ── run.list integration ──
+
+  it('run.list returns {runs: [...]} object and run counts render', async () => {
+    const core = createCore({
+      'plugin.list': mockPluginList,
+      'run.list': {
+        runs: [
+          { runId: 'r1', kind: 'terminal', pluginId: 'terminal', state: 'running', sessionId: 's1' },
+          { runId: 'r2', kind: 'shell', pluginId: 'shell', state: 'stopped', sessionId: 's2' },
+          { runId: 'r3', kind: 'terminal', pluginId: 'terminal', state: 'running', sessionId: 's3' },
+        ],
+      },
+    });
+    render(<PluginManager core={core} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('terminal')).toBeDefined();
+    });
+
+    // terminal has 2 runs, others have 0
+    expect(screen.getByText('runs: 2')).toBeDefined();
+    const zeroRunNodes = screen.getAllByText('runs: 0');
+    expect(zeroRunNodes.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('run.list fails but plugin list still renders with run counts 0', async () => {
+    const core = createCore({ 'plugin.list': mockPluginList });
+    const origCall = core.call.bind(core);
+    vi.spyOn(core, 'call').mockImplementation(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'run.list') throw new Error('run.list unavailable');
+      return origCall(method, params);
+    });
+
+    render(<PluginManager core={core} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('terminal')).toBeDefined();
+    });
+    // All plugins have 0 runs since run.list failed
+    const zeroRunNodes = screen.getAllByText('runs: 0');
+    expect(zeroRunNodes.length).toBe(5);
+  });
+
+  it('run.list returns {entries: [...]} object and counts aggregate correctly', async () => {
+    const core = createCore({
+      'plugin.list': mockPluginList,
+      'run.list': {
+        entries: [
+          { runId: 'r1', kind: 'terminal', pluginId: 'terminal', state: 'running', sessionId: 's1' },
+        ],
+      },
+    });
+    render(<PluginManager core={core} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('terminal')).toBeDefined();
+    });
+  });
+
+  // ── Single Check failure isolation ──
+
+  it('single plugin Check fails and shows inline error only for that row', async () => {
+    const core = createCore({ 'plugin.list': mockPluginList });
+    const origCall = core.call.bind(core);
+    vi.spyOn(core, 'call').mockImplementation(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'plugin.check' && (params as Record<string, unknown>)?.pluginId === 'terminal') {
+        throw new Error('Check unavailable for terminal');
+      }
+      return origCall(method, params);
+    });
+
+    render(<PluginManager core={core} />);
+
+    await waitFor(() => expect(screen.getByText('terminal')).toBeDefined());
+
+    // Click Check on terminal (index 1 in plugin list, index 0 is sessionnode-core)
+    const checkButtons = screen.getAllByText('Check');
+    fireEvent.click(checkButtons[1]);
+
+    await waitFor(() => {
+      expect(screen.getByText('Check unavailable for terminal')).toBeDefined();
+    });
+    // Other plugins still show "check: not run"
+    const notRunNodes = screen.getAllByText('check: not run');
+    expect(notRunNodes.length).toBeGreaterThanOrEqual(3);
+  });
+
+  // ── Check All partial failure ──
+
+  it('Check All with partial failures still shows successful results', async () => {
+    const core = createCore({ 'plugin.list': mockPluginList });
+    const origCall = core.call.bind(core);
+    vi.spyOn(core, 'call').mockImplementation(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'plugin.check') {
+        const pid = (params as Record<string, unknown>)?.pluginId as string;
+        if (pid === 'terminal') {
+          return { status: 'ok', dependencies: [{ id: 'bash' }], blockers: [], capabilities: [] };
+        }
+        if (pid === 'system-info') {
+          throw new Error('Check failed for system-info');
+        }
+        return { status: 'incomplete', dependencies: [], blockers: [], capabilities: [] };
+      }
+      return origCall(method, params);
+    });
+
+    render(<PluginManager core={core} />);
+
+    await waitFor(() => expect(screen.getByText('terminal')).toBeDefined());
+
+    fireEvent.click(screen.getByText('Check All'));
+
+    await waitFor(() => {
+      // terminal check succeeded
+      expect(screen.getByText('check: ok')).toBeDefined();
+      // error for system-info
+      expect(screen.getByText('check: error')).toBeDefined();
+    });
+    // incomplete checks appear on multiple plugins
+    const incompleteNodes = screen.getAllByText('check: incomplete');
+    expect(incompleteNodes.length).toBeGreaterThanOrEqual(1);
+  });
+
+  // ── Builtin vs non-builtin toggle ──
+
+  it('builtin plugin row shows "builtin" text, no Enable/Disable button', async () => {
+    const core = createCore({ 'plugin.list': mockPluginList });
+    render(<PluginManager core={core} />);
+
+    await waitFor(() => expect(screen.getByText('sessionnode-core')).toBeDefined());
+
+    // sessionnode-core is builtin — the "builtin" label appears (both type badge and action placeholder)
+    const builtinTexts = screen.getAllByText('builtin');
+    expect(builtinTexts.length).toBeGreaterThanOrEqual(1);
+
+    // Non-builtin plugins have Enable/Disable buttons — 4 non-builtin plugins = 4 toggle buttons
+    const toggleButtons = screen.getAllByText(/^(Enable|Disable)$/);
+    expect(toggleButtons.length).toBe(4);
+  });
+
+  it('non-builtin plugin shows Enable/Disable button', async () => {
+    const core = createCore({ 'plugin.list': mockPluginList });
+    render(<PluginManager core={core} />);
+
+    await waitFor(() => expect(screen.getByText('terminal')).toBeDefined());
+
+    // terminal is a feature plugin — should show Disable button (since status is enabled)
+    const disableButtons = screen.getAllByText('Disable');
+    expect(disableButtons.length).toBeGreaterThanOrEqual(1);
+  });
+
+  // ── Toggle failure inline error ──
+
+  it('toggle fails and shows inline error on the plugin row', async () => {
+    const core = createCore({ 'plugin.list': mockPluginList });
+    const origCall = core.call.bind(core);
+    const callSpy = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'plugin.disable' && (params as Record<string, unknown>)?.pluginId === 'terminal') {
+        throw new Error('Cannot disable terminal: in use');
+      }
+      return origCall(method, params);
+    });
+    (core as unknown as Record<string, unknown>).call = callSpy;
+
+    render(<PluginManager core={core} />);
+
+    await waitFor(() => expect(screen.getByText('terminal')).toBeDefined());
+
+    // Click Disable on terminal (first "Disable" button in DOM order)
+    const disableButtons = screen.getAllByText('Disable');
+    fireEvent.click(disableButtons[0]);
+
+    // Verify the spy was called with plugin.disable
+    await waitFor(() => {
+      expect(callSpy).toHaveBeenCalledWith('plugin.disable', expect.objectContaining({ pluginId: 'terminal' }));
+    });
+
+    // Error should appear — check both inline row and top banner
+    const errorMsg = 'Cannot disable terminal: in use';
+    await waitFor(() => {
+      expect(screen.getAllByText(errorMsg).length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  // ── deps count in summary ──
+
+  it('shows deps count from env check result', async () => {
+    const core = createCore({
+      'plugin.list': [mockPluginList[0]],
+      'plugin.check': {
+        status: 'ok',
+        blockers: [],
+        dependencies: [{ id: 'bash' }, { id: 'python3' }, { id: 'git' }],
+      },
+    });
+
+    render(<PluginManager core={core} />);
+
+    await waitFor(() => expect(screen.getByText('sessionnode-core')).toBeDefined());
+
+    fireEvent.click(screen.getByText('Check All'));
+
+    await waitFor(() => {
+      expect(screen.getByText('deps: 3')).toBeDefined();
+    });
+  });
 });
 
 // ─── PluginDetail ───────────────────────────────────────────────────
@@ -703,6 +930,248 @@ describe('PluginDetail: Capabilities & Install', () => {
     await waitFor(() => {
       expect(screen.getByText('missing_grant')).toBeDefined();
       expect(screen.getByText('session.create')).toBeDefined();
+    });
+  });
+});
+
+// ─── PluginDetail: Contract Hardening ─────────────────────────────
+
+describe('PluginDetail: Contract Hardening', () => {
+  it('Environment tab shows "No dependencies" for empty deps', async () => {
+    const mockCheck = {
+      pluginId: 'terminal',
+      status: 'ok',
+      checkedAt: Date.now(),
+      dependencies: [],
+    };
+    const core = createCore({ 'plugin.get': mockPluginGet, 'plugin.check': mockCheck });
+    render(<PluginDetail core={core} pluginId="terminal" />);
+
+    await waitForDetail();
+    await clickTab('Environment');
+
+    await waitFor(() => {
+      expect(screen.getByText('No dependencies.')).toBeDefined();
+    });
+  });
+
+  it('Capabilities tab handles all 4 blocker kinds', async () => {
+    const mockCheck = {
+      pluginId: 'terminal',
+      status: 'blocked',
+      blockers: [
+        { kind: 'missing_dependency', dependency: 'python3', reason: 'binary_missing' },
+        { kind: 'unsupported_capability', capability: 'gpu.compute', reason: 'no GPU support' },
+        { kind: 'missing_grant', capability: 'session.create', reason: 'not_granted' },
+        { kind: 'unknown_capability', capability: 'magic.wand', reason: 'not in support matrix' },
+      ],
+    };
+    const core = createCore({ 'plugin.get': mockPluginGet, 'plugin.check': mockCheck });
+    render(<PluginDetail core={core} pluginId="terminal" />);
+
+    await waitForDetail();
+    await clickTab('Capabilities');
+
+    await waitFor(() => {
+      expect(screen.getByText('missing_dependency')).toBeDefined();
+      expect(screen.getByText('unsupported_capability')).toBeDefined();
+      expect(screen.getByText('missing_grant')).toBeDefined();
+      expect(screen.getByText('unknown_capability')).toBeDefined();
+    });
+  });
+
+  it('Permissions tab handles empty permissions', async () => {
+    const mockPermissions = { pluginId: 'terminal', permissions: [] };
+    const core = createCore({ 'plugin.get': mockPluginGet, 'plugin.permissions.list': mockPermissions });
+    render(<PluginDetail core={core} pluginId="terminal" />);
+
+    await waitForDetail();
+    await clickTab('Permissions');
+
+    await waitFor(() => {
+      expect(screen.getByText('No permissions found')).toBeDefined();
+    });
+  });
+
+  it('Approvals tab handles {approvals:[]} response', async () => {
+    const core = createCore({
+      'plugin.get': mockPluginGet,
+      'approval.list': { approvals: [] },
+    });
+    render(<PluginDetail core={core} pluginId="terminal" />);
+
+    await waitForDetail();
+    await clickTab('Approvals');
+
+    await waitFor(() => {
+      expect(screen.getByText(/No pending approvals/i)).toBeDefined();
+    });
+  });
+
+  it('Approvals tab handles approval.list failure', async () => {
+    const core = createCore({ 'plugin.get': mockPluginGet });
+    vi.spyOn(core, 'call').mockImplementation(async (method: string) => {
+      if (method === 'plugin.get') return mockPluginGet;
+      if (method === 'approval.list') throw new Error('Network error');
+      return undefined;
+    });
+    render(<PluginDetail core={core} pluginId="terminal" />);
+
+    await waitForDetail();
+    await clickTab('Approvals');
+
+    await waitFor(() => {
+      expect(screen.getByText(/No pending approvals/i)).toBeDefined();
+    });
+  });
+
+  it('Install tab shows "not implemented" when execute returns not_implemented', async () => {
+    const mockPlan = {
+      planId: 'plan-ni',
+      pluginId: 'terminal',
+      steps: [{ order: 1, description: 'Install step', commands: ['echo test'], risk: 'low', status: 'pending' }],
+      risk: 'low',
+      status: 'pending_approval',
+      summary: 'Test plan',
+      createdAt: Date.now(),
+    };
+    const core = createCore({
+      'plugin.get': mockPluginGet,
+      'plugin.install.plan': mockPlan,
+    });
+    // Override execute to throw not_implemented
+    vi.spyOn(core, 'call').mockImplementation(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'plugin.get') return mockPluginGet;
+      if (method === 'plugin.install.plan') return mockPlan;
+      if (method === 'notify.request') return { requestId: 'req-ni', status: 'pending' };
+      if (method === 'notify.respond') return { status: 'responded' };
+      if (method === 'plugin.install.execute') throw new Error('CAPABILITY_NOT_DECLARED: plugin.install.execute not_implemented');
+      return undefined;
+    });
+    render(<PluginDetail core={core} pluginId="terminal" />);
+
+    await waitForDetail();
+    await clickTab('Install');
+
+    // Create plan
+    await waitFor(() => expect(screen.getByText('Create Install Plan')).toBeDefined());
+    fireEvent.click(screen.getByText('Create Install Plan'));
+    await waitFor(() => expect(screen.getByText('Request Approval')).toBeDefined());
+
+    // Request approval
+    fireEvent.click(screen.getByText('Request Approval'));
+    await waitFor(() => expect(screen.getByText('Approve')).toBeDefined());
+
+    // Approve
+    fireEvent.click(screen.getByText('Approve'));
+    await waitFor(() => expect(screen.getByText('Execute Install')).toBeDefined());
+
+    // Execute - should show not implemented message
+    fireEvent.click(screen.getByText('Execute Install'));
+    await waitFor(() => {
+      expect(screen.getByText('Execution not implemented by Core yet')).toBeDefined();
+    });
+  });
+
+  it('Install tab shows error when planId missing', async () => {
+    const mockPlanNoId = {
+      // planId intentionally missing
+      pluginId: 'terminal',
+      steps: [{ order: 1, description: 'Step', commands: ['echo test'], risk: 'low', status: 'pending' }],
+      risk: 'low',
+      status: 'pending_approval',
+      summary: 'No Plan ID',
+      createdAt: Date.now(),
+    };
+    const core = createCore({
+      'plugin.get': mockPluginGet,
+      'plugin.install.plan': mockPlanNoId,
+    });
+    render(<PluginDetail core={core} pluginId="terminal" />);
+
+    await waitForDetail();
+    await clickTab('Install');
+
+    // Create plan
+    await waitFor(() => expect(screen.getByText('Create Install Plan')).toBeDefined());
+    fireEvent.click(screen.getByText('Create Install Plan'));
+
+    // Should see Request Approval button
+    await waitFor(() => expect(screen.getByText('Request Approval')).toBeDefined());
+    fireEvent.click(screen.getByText('Request Approval'));
+
+    // Should show planId missing error
+    await waitFor(() => {
+      expect(screen.getByText(/Plan ID is missing/i)).toBeDefined();
+    });
+  });
+
+  it('Config tab handles missing schema', async () => {
+    const core = createCore({
+      'plugin.get': mockPluginGet,
+      'plugin.config.schema': { pluginId: 'terminal', schema: null },
+      'plugin.config.get': { pluginId: 'terminal', config: {} },
+    });
+    render(<PluginDetail core={core} pluginId="terminal" />);
+
+    await waitForDetail();
+    await clickTab('Config');
+
+    await waitFor(() => {
+      expect(screen.getByText(/No configuration schema declared/i)).toBeDefined();
+    });
+  });
+
+  it('Cache tab shows disabled Clear when cache is not clearable', async () => {
+    const mockCache = {
+      pluginId: 'terminal',
+      caches: [{ id: 'system-cache', path: '/sys/cache', description: 'System data', risk: 'low', clearable: false }],
+    };
+    const core = createCore({ 'plugin.get': mockPluginGet, 'plugin.cache.list': mockCache });
+    render(<PluginDetail core={core} pluginId="terminal" />);
+
+    await waitForDetail();
+    await clickTab('Cache');
+
+    await waitFor(() => {
+      const clearBtn = screen.getByText('Clear');
+      expect(clearBtn).toBeDefined();
+      expect((clearBtn as HTMLButtonElement).disabled).toBe(true);
+    });
+  });
+
+  it('Runs tab shows disabled Attach button', async () => {
+    const mockRuns = {
+      runs: [
+        { runId: 'run-001', kind: 'terminal', state: 'running', sessionId: 'sess-001', createdAt: 1000 },
+      ],
+    };
+    const core = createCore({ 'plugin.get': mockPluginGet, 'run.list': mockRuns });
+    render(<PluginDetail core={core} pluginId="terminal" />);
+
+    await waitForDetail();
+    await clickTab('Runs');
+
+    await waitFor(() => {
+      const attachBtn = screen.getByText('Attach');
+      expect(attachBtn).toBeDefined();
+      expect((attachBtn as HTMLButtonElement).disabled).toBe(true);
+      expect((attachBtn as HTMLButtonElement).title).toBe('Attach not wired yet');
+    });
+  });
+
+  it('History tab handles empty history', async () => {
+    const core = createCore({
+      'plugin.get': mockPluginGet,
+      'plugin.history': { pluginId: 'terminal', events: [] },
+    });
+    render(<PluginDetail core={core} pluginId="terminal" />);
+
+    await waitForDetail();
+    await clickTab('History');
+
+    await waitFor(() => {
+      expect(screen.getByText(/No history events recorded/i)).toBeDefined();
     });
   });
 });

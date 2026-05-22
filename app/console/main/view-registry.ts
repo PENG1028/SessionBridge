@@ -46,6 +46,18 @@ export interface ViewMeta {
    * - 'hidden': never shown in selector, only opened programmatically
    */
   launchMode?: 'direct' | 'runtime' | 'session' | 'hidden';
+  /**
+   * The surface type this view occupies.
+   * - 'main.editor': shown as a tab in the main work area
+   * - 'panel.bottom', 'sidebar.left', etc.: auxiliary slots
+   * Only 'main.editor' views can be launchable. Panels never are.
+   */
+  viewType?: string;
+  /**
+   * The plugin that owns this view. Used by plugin-manager and plugin-detail
+   * to filter launchable views per plugin.
+   */
+  pluginId?: string;
 }
 
 export interface ViewRegistryEntry {

@@ -113,7 +113,8 @@ permissions:
     - config.write
     - plugin.enable
     - plugin.disable
-    - plugin.install
+    - plugin.install.plan
+    - plugin.install.execute
     - plugin.repair
     - plugin.permissions.grant
     - plugin.permissions.revoke
@@ -550,7 +551,7 @@ Surface: main.editor（子页面）
 ```
 目标: 管理插件全生命周期
 数据源: Core API (plugin.*)
-权限: plugin.read + plugin.install + plugin.permissions.*
+权限: plugin.read + plugin.install.plan + plugin.install.execute + plugin.permissions.*
 Surface: main.editor
 功能:
   - 插件列表（id, title, status, enabled, version）
@@ -610,7 +611,8 @@ permissions:
     - session.read       # 自动允许
     - config.read        # 自动允许
   privileged:
-    - plugin.install     # 自动允许，但 audit
+    - plugin.install.plan     # 自动允许，但 audit
+    - plugin.install.execute  # 自动允许，但 audit
     - config.write       # 自动允许，但 audit
 
 # feature plugin — 必须用户授权，可撤销

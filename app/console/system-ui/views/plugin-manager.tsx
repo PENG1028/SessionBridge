@@ -5,7 +5,7 @@ import { RefreshCw, Search, Play, Power, PowerOff } from 'lucide-react';
 import type { CoreClient, PluginInfo, BlockerEntry, RunInfo } from '../../core/core-types';
 import { PageHeader, PageLoading, PageError, PageEmpty, PageOffline, type PageState } from './page-utils';
 import { listFromResponse } from './core-response-utils';
-import { getAllViewEntries } from '../../main/view-registry';
+import { getAllViewEntries, getAdapterIdForView } from '../../main/view-registry';
 
 interface PluginManagerProps {
   core: CoreClient;
@@ -23,7 +23,13 @@ interface EnvCheckResult {
 
 /** Check if a plugin has any launchable/direct view registered. */
 function hasLaunchableView(pluginId: string): boolean {
-  for (const [, entry] of getAllViewEntries()) {
+  for (const [viewId, entry] of getAllViewEntries()) {
+    // Determine the plugin that owns this view:
+    // - Adapter views have an adapter mapping (e.g. 'claude-chat' -> 'claude-code')
+    // - Core views (dashboard, logs, agent-monitor) have no mapping; they belong to sessionnode-core
+    const adapterId = getAdapterIdForView(viewId);
+    const ownerId = adapterId ?? 'sessionnode-core';
+    if (ownerId !== pluginId) continue;
     if (entry.meta.launchable && entry.meta.launchMode !== 'hidden' && entry.meta.launchMode !== 'runtime') {
       return true;
     }
@@ -49,6 +55,8 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
   const [error, setError] = useState<string | null>(null);
   const [togglingIds, setTogglingIds] = useState<Set<string>>(new Set());
   const [toggleError, setToggleError] = useState<string | null>(null);
+  const [toggleErrors, setToggleErrors] = useState<Record<string, string>>({});
+  const [checkErrors, setCheckErrors] = useState<Record<string, string>>({});
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
@@ -73,21 +81,25 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
     try {
       const [pluginResult, runResult] = await Promise.all([
         core.call<unknown>('plugin.list'),
-        core.call<unknown>('run.list'),
+        core.call<unknown>('run.list').catch(() => null),
       ]);
 
-      const normalized = listFromResponse<PluginInfo>(pluginResult, 'plugins');
+      const normalized = listFromResponse<PluginInfo>(pluginResult, 'plugins', 'entries', 'list');
       setPlugins(normalized);
 
-      // Count runs by pluginId
-      const runs = listFromResponse<RunInfo>(runResult, 'runs');
-      const counts: Record<string, number> = {};
-      for (const r of runs) {
-        if (r.pluginId) {
-          counts[r.pluginId] = (counts[r.pluginId] || 0) + 1;
+      // Count runs by pluginId (best-effort; run.list failure does not block plugin display)
+      if (runResult !== null) {
+        const runs = listFromResponse<RunInfo>(runResult, 'runs', 'entries', 'list');
+        const counts: Record<string, number> = {};
+        for (const r of runs) {
+          if (r.pluginId) {
+            counts[r.pluginId] = (counts[r.pluginId] || 0) + 1;
+          }
         }
+        setRunCounts(counts);
+      } else {
+        setRunCounts({});
       }
-      setRunCounts(counts);
 
       setPageState(normalized.length > 0 ? 'ready' : 'empty');
     } catch (err) {
@@ -99,6 +111,11 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
   async function handleToggle(pluginId: string, currentStatus: string) {
     setTogglingIds(prev => new Set(prev).add(pluginId));
     setToggleError(null);
+    setToggleErrors(prev => {
+      const next = { ...prev };
+      delete next[pluginId];
+      return next;
+    });
     try {
       if (currentStatus === 'enabled') {
         await core.call('plugin.disable', { pluginId });
@@ -109,11 +126,11 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to toggle plugin';
-      if (msg.includes('not_implemented')) {
-        setToggleError(`Toggle not supported by Go Core for "${pluginId}"`);
-      } else {
-        setToggleError(msg);
-      }
+      const displayMsg = msg.includes('not_implemented')
+        ? `Toggle not supported by Go Core for "${pluginId}"`
+        : msg;
+      setToggleError(displayMsg);
+      setToggleErrors(prev => ({ ...prev, [pluginId]: displayMsg }));
     } finally {
       setTogglingIds(prev => {
         const next = new Set(prev);
@@ -142,6 +159,11 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
 
   async function runSingleCheck(pluginId: string) {
     setCheckingIds(prev => new Set(prev).add(pluginId));
+    setCheckErrors(prev => {
+      const next = { ...prev };
+      delete next[pluginId];
+      return next;
+    });
     try {
       const res = await core.call<{ status: string; dependencies?: unknown[]; blockers?: BlockerEntry[] }>('plugin.check', { pluginId });
       const blockers = Array.isArray(res?.blockers) ? res.blockers as BlockerEntry[] : [];
@@ -149,11 +171,13 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
         ...prev,
         [pluginId]: { status: res?.status || 'ok', deps: res?.dependencies?.length || 0, blockers },
       }));
-    } catch {
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Check failed';
       setEnvCheckResults(prev => ({
         ...prev,
         [pluginId]: { status: 'error', deps: 0, blockers: [] },
       }));
+      setCheckErrors(prev => ({ ...prev, [pluginId]: msg }));
     } finally {
       setCheckingIds(prev => {
         const next = new Set(prev);
@@ -278,9 +302,12 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
             const launchable = hasLaunchableView(plugin.pluginId);
             const capCount = plugin.capabilities?.length ?? 0;
             const runCount = runCounts[plugin.pluginId] ?? 0;
+            const depsCount = envCheck?.deps ?? 0;
             const isChecking = checkingIds.has(plugin.pluginId);
             const isToggling = togglingIds.has(plugin.pluginId);
             const isBuiltin = plugin.type === 'builtin';
+            const inlineToggleError = toggleErrors[plugin.pluginId];
+            const inlineCheckError = checkErrors[plugin.pluginId];
 
             return (
               <div
@@ -346,12 +373,18 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
                   </div>
                 </div>
 
-                {/* Row 2: summary line — launchable / caps / deps / perms / runs */}
+                {/* Inline toggle error for this plugin row */}
+                {inlineToggleError && (
+                  <div className="mt-1 text-[10px] text-red-400">{inlineToggleError}</div>
+                )}
+
+                {/* Row 2: summary line — launchable / caps / deps / check / runs */}
                 <div className="flex items-center gap-3 mt-1.5 text-[10px] text-gray-500">
                   <span className={launchable ? 'text-green-400' : 'text-gray-600'}>
                     launchable: {launchable ? 'yes' : 'no'}
                   </span>
                   <span>caps: {capCount}</span>
+                  <span>deps: {depsCount}</span>
 
                   {envCheck ? (
                     <>
@@ -376,6 +409,11 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
                     <span className="text-gray-600 truncate hidden md:inline">— {plugin.description}</span>
                   )}
                 </div>
+
+                {/* Inline check error for this plugin row */}
+                {inlineCheckError && (
+                  <div className="mt-1 text-[10px] text-red-400">{inlineCheckError}</div>
+                )}
 
                 {/* Row 3: capability tags (collapsed when many) */}
                 {capCount > 0 && (

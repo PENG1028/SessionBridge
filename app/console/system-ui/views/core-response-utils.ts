@@ -2,11 +2,14 @@
 
 import type { NodeInfo, NodeStatus, SessionInfo } from '../../core/core-types';
 
-export function listFromResponse<T>(result: unknown, key: string): T[] {
+export function listFromResponse<T>(result: unknown, ...keys: string[]): T[] {
   if (Array.isArray(result)) return result as T[];
   if (result && typeof result === 'object') {
-    const value = (result as Record<string, unknown>)[key];
-    if (Array.isArray(value)) return value as T[];
+    const obj = result as Record<string, unknown>;
+    for (const key of keys) {
+      const value = obj[key];
+      if (Array.isArray(value)) return value as T[];
+    }
   }
   return [];
 }

@@ -204,11 +204,20 @@ function TabContent({
 function OverviewTab({ pluginId, manifest }: { pluginId: string; manifest: Record<string, unknown> | null }) {
   if (!manifest) return <div className="text-gray-500 text-sm">No manifest data available.</div>;
 
-  // Check if any view for this plugin is launchable/direct
+  const contributes = (manifest.contributes || {}) as Record<string, unknown>;
+  const manifestViews = safeArray(contributes.views);
+  const manifestPanels = safeArray(contributes.panels);
+
+  // Build a set of view IDs declared by this plugin's manifest
+  const pluginViewIds = new Set(manifestViews.map((v: Record<string, unknown>) => str(v.id)));
+
+  // Check launchable from manifest contributes, cross-referenced with view registry
   let launchable = false;
   let launchableViews: string[] = [];
   const otherViews: string[] = [];
   for (const [vid, entry] of getAllViewEntries()) {
+    // Only consider views declared by THIS plugin's manifest
+    if (!pluginViewIds.has(vid)) continue;
     if (entry.meta.launchable && entry.meta.launchMode !== 'hidden' && entry.meta.launchMode !== 'runtime') {
       launchable = true;
       launchableViews.push(vid);
@@ -218,9 +227,6 @@ function OverviewTab({ pluginId, manifest }: { pluginId: string; manifest: Recor
   }
 
   const caps = safeArray(manifest.capabilities);
-  const contributes = (manifest.contributes || {}) as Record<string, unknown>;
-  const views = safeArray(contributes.views);
-  const panels = safeArray(contributes.panels);
 
   return (
     <div className="max-w-2xl space-y-5">
@@ -254,18 +260,18 @@ function OverviewTab({ pluginId, manifest }: { pluginId: string; manifest: Recor
       </Section>
 
       {/* Contributes summary */}
-      {(views.length > 0 || panels.length > 0) && (
+      {(manifestViews.length > 0 || manifestPanels.length > 0) && (
         <Section title="Contributions">
-          {views.length > 0 && (
+          {manifestViews.length > 0 && (
             <div className="text-xs text-gray-400">
               <span className="text-gray-500">Views:</span>{' '}
-              {views.map((v: Record<string, unknown>) => str(v.id)).join(', ')}
+              {manifestViews.map((v: Record<string, unknown>) => str(v.id)).join(', ')}
             </div>
           )}
-          {panels.length > 0 && (
+          {manifestPanels.length > 0 && (
             <div className="text-xs text-gray-400">
               <span className="text-gray-500">Panels:</span>{' '}
-              {panels.map((p: Record<string, unknown>) => str(p.id)).join(', ')}
+              {manifestPanels.map((p: Record<string, unknown>) => str(p.id)).join(', ')}
             </div>
           )}
         </Section>
@@ -344,12 +350,18 @@ function EnvironmentTab({ core, pluginId }: { core: CoreClient; pluginId: string
 
       {!data ? (
         <div className="text-gray-500 text-sm">Running check...</div>
-      ) : data.dependencies.length === 0 ? (
-        <div className="text-gray-500 text-sm">No environment checks defined.</div>
+      ) : !data.dependencies || data.dependencies.length === 0 ? (
+        <div className="text-gray-500 text-sm">No dependencies.</div>
       ) : (
         <div className="space-y-2">
-          {data.dependencies.map((dep, i) => (
-            <div key={i} className="flex items-center gap-3 px-3 py-2 bg-gray-900 rounded-lg border border-gray-800 text-sm">
+          {data.dependencies.map((dep, i) => {
+            const isMissingRequired = !!dep.required && dep.status !== 'ok';
+            return (
+            <div key={i} className={`flex items-center gap-3 px-3 py-2 rounded-lg border text-sm ${
+              isMissingRequired
+                ? 'bg-red-950/30 border-red-900/50'
+                : 'bg-gray-900 border-gray-800'
+            }`}>
               <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
                 dep.status === 'ok' ? 'bg-green-500' :
                 dep.status === 'skipped' ? 'bg-gray-600' :
@@ -358,7 +370,11 @@ function EnvironmentTab({ core, pluginId }: { core: CoreClient; pluginId: string
               <span className="text-gray-200 font-medium">{dep.id}</span>
               <span className="text-xs text-gray-500">({dep.type})</span>
               {dep.command && <span className="text-xs text-gray-600">cmd: {dep.command}</span>}
-              {dep.required && <span className="text-xs text-red-400/70">required</span>}
+              {dep.required && (
+                <span className={`text-xs ${isMissingRequired ? 'text-red-400 font-semibold' : 'text-red-400/70'}`}>
+                  required{isMissingRequired ? ' (missing)' : ''}
+                </span>
+              )}
               {dep.versionCommand && <span className="text-xs text-gray-600">ver: {dep.versionCommand}</span>}
               {dep.requiredVersion && <span className="text-xs text-gray-600">≥ {dep.requiredVersion}</span>}
               {dep.installHint && (
@@ -367,7 +383,8 @@ function EnvironmentTab({ core, pluginId }: { core: CoreClient; pluginId: string
                 </span>
               )}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -454,7 +471,8 @@ function CapabilitiesTab({ core, pluginId }: { core: CoreClient; pluginId: strin
                   b.kind === 'missing_dependency' ? 'bg-red-900/50 text-red-400' :
                   b.kind === 'missing_grant' ? 'bg-yellow-900/50 text-yellow-400' :
                   b.kind === 'unsupported_capability' ? 'bg-red-900/50 text-red-400' :
-                  'bg-orange-900/50 text-orange-400'
+                  b.kind === 'unknown_capability' ? 'bg-orange-900/50 text-orange-400' :
+                  'bg-gray-800 text-gray-500'
                 }`}>
                   {b.kind}
                 </span>
@@ -513,29 +531,135 @@ function CapabilitiesTab({ core, pluginId }: { core: CoreClient; pluginId: strin
 
 // ─── Permissions ──────────────────────────────────────────────────
 
+/** Normalize plugin.permissions.list response: [], { permissions: [] }, { grants: [] } */
+function listFromResponse(result: Record<string, unknown> | unknown, primaryKey: string, fallbackKey?: string): Record<string, unknown>[] {
+  if (Array.isArray(result)) return result as Record<string, unknown>[];
+  const obj = result as Record<string, unknown> | null | undefined;
+  if (!obj) return [];
+  const primary = obj[primaryKey];
+  if (Array.isArray(primary)) return primary as Record<string, unknown>[];
+  if (fallbackKey) {
+    const fb = obj[fallbackKey];
+    if (Array.isArray(fb)) return fb as Record<string, unknown>[];
+  }
+  return [];
+}
+
 function PermissionsTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
-  return <TabApiFetcher
-    core={core} pluginId={pluginId}
-    apiMethod="plugin.permissions.list"
-    dataKey="permissions"
-    renderTitle="Permissions"
-    render={(items) => (
-      <div className="space-y-3">
-        {items.map((p, i) => (
+  const [permissions, setPermissions] = useState<Record<string, unknown>[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [permDenied, setPermDenied] = useState(false);
+  const [notImpl, setNotImpl] = useState(false);
+  // Per-row grant/revoke state: keyed by permission id
+  const [grantState, setGrantState] = useState<Record<string, { loading: boolean; error: string | null }>>({});
+
+  async function fetchPermissions() {
+    setLoading(true);
+    setFetchError(null);
+    setPermDenied(false);
+    setNotImpl(false);
+    try {
+      const result = await core.call<Record<string, unknown>>('plugin.permissions.list', { pluginId });
+      if (result?.status === 'not_implemented') {
+        setNotImpl(true);
+        setPermissions([]);
+        return;
+      }
+      const items = listFromResponse(result, 'permissions', 'grants');
+      setPermissions(items);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed';
+      if (msg.includes('CAPABILITY_NOT_DECLARED') || msg.includes('permission_denied') || msg.includes('not permitted')) {
+        setPermDenied(true);
+      } else {
+        setFetchError(msg);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleGrant(permId: string, perm: Record<string, unknown>) {
+    setGrantState(prev => ({ ...prev, [permId]: { loading: true, error: null } }));
+    try {
+      const caps = Array.isArray(perm.capabilities) ? (perm.capabilities as string[]) : [];
+      const capability = caps[0] || str(perm.id);
+      await core.call('plugin.permissions.grant', { pluginId, capability, mode: 'allow' });
+      await fetchPermissions();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Grant failed';
+      setGrantState(prev => ({ ...prev, [permId]: { loading: false, error: msg } }));
+    }
+  }
+
+  async function handleRevoke(permId: string, perm: Record<string, unknown>) {
+    setGrantState(prev => ({ ...prev, [permId]: { loading: true, error: null } }));
+    try {
+      const caps = Array.isArray(perm.capabilities) ? (perm.capabilities as string[]) : [];
+      const capability = caps[0] || str(perm.id);
+      await core.call('plugin.permissions.revoke', { pluginId, capability });
+      await fetchPermissions();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Revoke failed';
+      setGrantState(prev => ({ ...prev, [permId]: { loading: false, error: msg } }));
+    }
+  }
+
+  useEffect(() => { fetchPermissions(); }, [core, pluginId]);
+
+  if (loading) return <div className="text-gray-500 text-sm">Loading permissions...</div>;
+  if (permDenied) return <PagePermissionDenied />;
+  if (notImpl) return <div className="text-gray-500 text-sm">Permission management is not available in Phase 1.</div>;
+  if (fetchError) return <p className="text-red-400 text-sm">{fetchError}</p>;
+  if (permissions.length === 0) return <PageEmpty title="No permissions found" />;
+
+  return (
+    <div className="space-y-3">
+      {permissions.map((p, i) => {
+        const pid = str(p.id);
+        const rowState = grantState[pid] || { loading: false, error: null };
+        const grantMode = (p.grant as Record<string, unknown> | undefined)?.mode;
+        const canGrant = grantMode !== 'allow';
+        const canRevoke = grantMode === 'allow';
+        return (
           <div key={i} className="px-4 py-3 bg-gray-900 rounded-lg border border-gray-800">
             <div className="flex items-center gap-2 mb-1">
-              <code className="text-sm text-gray-200 font-mono">{str(p.id)}</code>
+              <code className="text-sm text-gray-200 font-mono">{pid}</code>
               <DefaultBadge value={str(p.default)} />
               <GrantBadge grant={p.grant as Record<string, unknown> | undefined | null} />
             </div>
             <p className="text-xs text-gray-500 mb-2">{str(p.description)}</p>
             {Array.isArray(p.capabilities) && (
-              <div className="flex flex-wrap gap-1">
+              <div className="flex flex-wrap gap-1 mb-2">
                 {(p.capabilities as string[]).map(cap => (
                   <span key={cap} className="text-xs px-1.5 py-0.5 bg-gray-800 text-gray-400 rounded">{cap}</span>
                 ))}
               </div>
             )}
+            <div className="flex items-center gap-2">
+              {canGrant && (
+                <button
+                  onClick={() => handleGrant(pid, p)}
+                  disabled={rowState.loading}
+                  className="text-xs px-2 py-1 rounded bg-green-900/50 hover:bg-green-800/50 text-green-400 transition-colors disabled:opacity-50"
+                >
+                  {rowState.loading ? '...' : 'Grant Allow'}
+                </button>
+              )}
+              {canRevoke && (
+                <button
+                  onClick={() => handleRevoke(pid, p)}
+                  disabled={rowState.loading}
+                  className="text-xs px-2 py-1 rounded bg-red-900/50 hover:bg-red-800/50 text-red-400 transition-colors disabled:opacity-50"
+                >
+                  {rowState.loading ? '...' : 'Revoke'}
+                </button>
+              )}
+              {rowState.error && (
+                <span className="text-xs text-red-400">{rowState.error}</span>
+              )}
+            </div>
             {!!p.constraints && (
               <details className="mt-2">
                 <summary className="text-xs text-gray-600 cursor-pointer hover:text-gray-400">Constraints</summary>
@@ -543,10 +667,10 @@ function PermissionsTab({ core, pluginId }: { core: CoreClient; pluginId: string
               </details>
             )}
           </div>
-        ))}
-      </div>
-    )}
-  />;
+        );
+      })}
+    </div>
+  );
 }
 
 function GrantBadge({ grant }: { grant: Record<string, unknown> | undefined | null }) {
@@ -578,7 +702,7 @@ function DefaultBadge({ value }: { value: string }) {
 // ─── Approvals ────────────────────────────────────────────────────
 
 function ApprovalsTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
-  const [requests, setRequests] = useState<Array<{ requestId: string; title: string; status: string }>>([]);
+  const [requests, setRequests] = useState<Array<{ requestId: string; title: string; status: string; pluginId?: string }>>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -586,10 +710,16 @@ function ApprovalsTab({ core, pluginId }: { core: CoreClient; pluginId: string }
     async function load() {
       setLoading(true);
       try {
-        const result = await core.call<{ requests?: Array<{ requestId: string; title: string; status: string }> }>('approval.list');
+        const result = await core.call<Record<string, unknown>>('approval.list');
         if (cancelled) return;
-        const all = result?.requests || [];
-        setRequests(all.filter(r => r.title?.includes(pluginId)));
+        // Normalize: primary contract is { approvals: [...] }, fallback { requests: [...] } or []
+        const all = listFromResponse(result, 'approvals', 'requests');
+        // Filter to current pluginId: use pluginId field first, title includes as fallback
+        const filtered = all.filter((r: Record<string, unknown>) => {
+          if (r.pluginId && str(r.pluginId) === pluginId) return true;
+          return str(r.title).includes(pluginId);
+        });
+        setRequests(filtered as Array<{ requestId: string; title: string; status: string; pluginId?: string }>);
       } catch {
         if (!cancelled) setRequests([]);
       } finally {
@@ -658,12 +788,17 @@ function InstallTab({ core, pluginId }: { core: CoreClient; pluginId: string }) 
 
   async function requestApproval() {
     if (!install.plan) return;
+    const planId = str((install.plan as Record<string, unknown>).planId);
+    if (!planId) {
+      setInstall(prev => ({ ...prev, planError: 'Plan ID is missing — cannot request approval.' }));
+      return;
+    }
     setApprovalStatus('requesting');
     try {
       const res = await core.call<Record<string, unknown>>('notify.request', {
         title: `Install ${pluginId}`,
         body: str((install.plan as Record<string, unknown>).summary) || `Install plan for ${pluginId}`,
-        planId: str((install.plan as Record<string, unknown>).planId),
+        planId,
         actions: [{ id: 'allow', label: 'Approve' }, { id: 'deny', label: 'Deny' }],
         timeout: 300,
       });
@@ -697,16 +832,20 @@ function InstallTab({ core, pluginId }: { core: CoreClient; pluginId: string }) 
 
   async function executePlan() {
     if (!install.plan) return;
+    const planId = str((install.plan as Record<string, unknown>).planId);
+    if (!planId) {
+      setInstall(prev => ({ ...prev, planError: 'Plan ID is missing — cannot execute.' }));
+      return;
+    }
     setInstall(prev => ({ ...prev, executing: true, executionResult: null, planError: null }));
     try {
-      const result = await core.call<Record<string, unknown>>('plugin.install.execute', {
-        planId: str((install.plan as Record<string, unknown>).planId),
-      });
+      const result = await core.call<Record<string, unknown>>('plugin.install.execute', { planId });
       setInstall(prev => ({ ...prev, executing: false, executionResult: result ?? null }));
     } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Execution failed';
       setInstall(prev => ({
         ...prev, executing: false,
-        planError: err instanceof Error ? err.message : 'Execution failed',
+        planError: msg.includes('not_implemented') ? 'Execution not implemented by Core yet' : msg,
       }));
     }
   }
@@ -1033,7 +1172,9 @@ function CacheTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
 
   return (
     <div className="space-y-2">
-      {cacheEntries.map((c, i) => (
+      {cacheEntries.map((c, i) => {
+        const isClearable = c.clearable !== false; // undefined/null/true → clearable
+        return (
         <div key={i} className="flex items-center gap-3 px-4 py-3 bg-gray-900 rounded-lg border border-gray-800">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
@@ -1045,13 +1186,15 @@ function CacheTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
           </div>
           <button
             onClick={() => handleClear(str(c.id))}
-            disabled={clearingId === str(c.id)}
+            disabled={!isClearable || clearingId === str(c.id)}
+            title={!isClearable ? 'This cache is not clearable' : undefined}
             className="text-xs px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 disabled:opacity-50 transition-colors"
           >
             {clearingId === str(c.id) ? '...' : 'Clear'}
           </button>
         </div>
-      ))}
+        );
+      })}
       {clearMsg && (
         <p className={`text-xs mt-2 ${clearMsg === 'Cleared' ? 'text-green-400' : 'text-gray-500'}`}>{clearMsg}</p>
       )}
@@ -1064,6 +1207,8 @@ function CacheTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
 function RunsTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
   const [runs, setRuns] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState(true);
+  // Per-run stop state: keyed by runId
+  const [stopState, setStopState] = useState<Record<string, { loading: boolean; error: string | null }>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -1084,15 +1229,33 @@ function RunsTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
     return () => { cancelled = true; };
   }, [core, pluginId]);
 
+  async function handleStop(runId: string) {
+    setStopState(prev => ({ ...prev, [runId]: { loading: true, error: null } }));
+    try {
+      await core.call('run.stop', { runId });
+      // Refresh runs after stop
+      const result = await core.call<Record<string, unknown>>('run.list', { pluginId });
+      const allRuns = Array.isArray(result?.runs) ? result!.runs as Record<string, unknown>[] : [];
+      setRuns(allRuns);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Stop failed';
+      setStopState(prev => ({ ...prev, [runId]: { loading: false, error: msg } }));
+    }
+  }
+
   if (loading) return <div className="text-gray-500 text-sm">Loading runs...</div>;
   if (runs.length === 0) return <div className="text-gray-500 text-sm">No active runs for this plugin.</div>;
 
   return (
     <div className="space-y-2">
-      {runs.map((run, i) => (
+      {runs.map((run, i) => {
+        const runId = str(run.runId);
+        const rowStop = stopState[runId] || { loading: false, error: null };
+        const isRunning = str(run.state) === 'running';
+        return (
         <div key={i} className="px-4 py-3 bg-gray-900 rounded-lg border border-gray-800">
           <div className="flex items-center gap-2">
-            <code className="text-xs text-gray-400 font-mono">{str(run.runId)}</code>
+            <code className="text-xs text-gray-400 font-mono">{runId}</code>
             <span className="text-xs text-gray-600">{str(run.kind)}</span>
             <span className={`text-xs px-1.5 py-0.5 rounded ${
               str(run.state) === 'running' ? 'bg-green-900/50 text-green-400' :
@@ -1101,19 +1264,40 @@ function RunsTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
             }`}>
               {str(run.state)}
             </span>
+            <div className="flex-1" />
+            <button
+              disabled
+              title="Attach not wired yet"
+              className="text-xs px-2 py-1 rounded bg-gray-800 text-gray-600 cursor-not-allowed transition-colors"
+            >
+              Attach
+            </button>
+            {isRunning && (
+              <button
+                onClick={() => handleStop(runId)}
+                disabled={rowStop.loading}
+                className="text-xs px-2 py-1 rounded bg-red-900/50 hover:bg-red-800/50 text-red-400 transition-colors disabled:opacity-50"
+              >
+                {rowStop.loading ? 'Stopping...' : 'Stop'}
+              </button>
+            )}
           </div>
           <div className="text-xs text-gray-500 mt-1 space-x-3">
             {!!run.sessionId && <span>session: {str(run.sessionId)}</span>}
             {!!run.nodeId && <span>node: {str(run.nodeId)}</span>}
             {!!run.createdAt && <span>created: {str(run.createdAt)}</span>}
           </div>
+          {rowStop.error && (
+            <div className="text-xs text-red-400 mt-1">{rowStop.error}</div>
+          )}
           {!!run.process && (
             <div className="text-xs text-gray-600 mt-1">
               PID {str((run.process as Record<string, unknown>).pid)} | {str((run.process as Record<string, unknown>).state)}
             </div>
           )}
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -1193,12 +1377,14 @@ function HistoryTab({ core, pluginId }: { core: CoreClient; pluginId: string }) 
     setFetchError(null);
     setNotImpl(false);
     try {
-      const result = await core.call<{ events?: Record<string, unknown>[]; status?: string }>('plugin.history', { pluginId });
+      const result = await core.call<Record<string, unknown>>('plugin.history', { pluginId });
       if (result?.status === 'not_implemented') {
         setNotImpl(true);
         setEvents([]);
       } else {
-        setEvents(result?.events || []);
+        // Normalize: { events: [...] }, { history: [...] }, or [...] directly
+        const items = listFromResponse(result, 'events', 'history');
+        setEvents(items);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to load history';

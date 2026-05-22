@@ -50,6 +50,7 @@ export interface WorkbenchState {
 }
 
 import { getAllViewEntries } from '../main/view-registry';
+import { isViewLaunchable } from '../plugin-host/launchability';
 
 /** Collect all non-empty tabs from a workbench state (flat list). */
 export function collectAllTabs(state: WorkbenchState): PaneTab[] {
@@ -94,15 +95,11 @@ export function genTabId(): string {
 }
 
 /** Pick the best default view type from registered views that are launchable.
- *  Skips adapter-only mappings — only views with showInSelector: true qualify. */
+ *  Returns the first direct-launchable view, NOT an adapter-only mapping.
+ *  If no direct launchable view exists, returns 'empty'. */
 export function getDefaultViewType(): string {
   const entries = getAllViewEntries();
-  const first = entries.find(([id, entry]) => {
-    if (id === 'empty') return false;
-    if (!entry.meta.showInSelector) return false;
-    if (entry.meta.launchMode === 'hidden' || entry.meta.launchMode === 'runtime') return false;
-    return true;
-  });
+  const first = entries.find(([, entry]) => isViewLaunchable(entry.meta));
   return first?.[0] || 'empty';
 }
 
