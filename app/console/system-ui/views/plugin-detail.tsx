@@ -29,6 +29,8 @@ export function PluginDetail({ core, pluginId, onBack = () => {} }: PluginDetail
   const [activeTab, setActiveTab] = useState<DetailTab>('overview');
   const [manifest, setManifest] = useState<Record<string, unknown> | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [toggling, setToggling] = useState(false);
+  const [toggleError, setToggleError] = useState<string | null>(null);
 
   async function fetchPlugin() {
     if (!core.isConnected) {
@@ -54,6 +56,25 @@ export function PluginDetail({ core, pluginId, onBack = () => {} }: PluginDetail
     }
   }
 
+  async function handleToggle() {
+    const currentStatus = str(manifest?.status);
+    setToggling(true);
+    setToggleError(null);
+    try {
+      if (currentStatus === 'enabled') {
+        await core.call('plugin.disable', { pluginId });
+      } else {
+        await core.call('plugin.enable', { pluginId });
+      }
+      await fetchPlugin();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Toggle failed';
+      setToggleError(msg.includes('not_implemented') ? 'Toggle not supported by Go Core' : msg);
+    } finally {
+      setToggling(false);
+    }
+  }
+
   useEffect(() => {
     fetchPlugin();
   }, [core, pluginId]);
@@ -62,6 +83,8 @@ export function PluginDetail({ core, pluginId, onBack = () => {} }: PluginDetail
   if (pageState === 'offline') return <div className="flex-1"><PageOffline /></div>;
   if (pageState === 'permission_denied') return <div className="flex-1"><PagePermissionDenied /></div>;
   if (pageState === 'error') return <div className="flex-1"><PageError message={error || 'Unknown error'} onRetry={fetchPlugin} /></div>;
+
+  const isBuiltin = str(manifest?.type) === 'builtin';
 
   return (
     <div className="flex-1 flex flex-col overflow-y-auto">
@@ -84,6 +107,42 @@ export function PluginDetail({ core, pluginId, onBack = () => {} }: PluginDetail
             </span>
           </>
         )}
+        <div className="flex-1" />
+        <div className="flex items-center gap-2">
+          {toggleError && (
+            <span className="text-xs text-red-400">{toggleError}</span>
+          )}
+          <button
+            onClick={fetchPlugin}
+            className="text-xs px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 transition-colors"
+            title="Refresh plugin data"
+          >
+            Refresh
+          </button>
+          <button
+            onClick={() => setActiveTab('environment')}
+            className="text-xs px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 transition-colors"
+            title="Run environment check"
+          >
+            Run Check
+          </button>
+          {!isBuiltin && (
+            <button
+              onClick={handleToggle}
+              disabled={toggling}
+              className={`text-xs px-3 py-1.5 rounded transition-colors disabled:opacity-50 ${
+                str(manifest?.status) === 'enabled'
+                  ? 'bg-red-900/50 hover:bg-red-800/50 text-red-400'
+                  : 'bg-green-900/50 hover:bg-green-800/50 text-green-400'
+              }`}
+            >
+              {toggling ? '...' : (str(manifest?.status) === 'enabled' ? 'Disable' : 'Enable')}
+            </button>
+          )}
+          {isBuiltin && (
+            <span className="text-xs text-gray-600">builtin — always on</span>
+          )}
+        </div>
       </div>
 
       <div className="flex border-b border-gray-800 px-6 overflow-x-auto">

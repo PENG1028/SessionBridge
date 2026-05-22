@@ -24,7 +24,7 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
   const [pageState, setPageState] = useState<PageState>('loading');
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [togglingIds, setTogglingIds] = useState<Set<string>>(new Set());
   const [toggleError, setToggleError] = useState<string | null>(null);
 
   // Search & filters
@@ -57,15 +57,16 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
   }
 
   async function handleToggle(pluginId: string, currentStatus: string) {
-    setTogglingId(pluginId);
+    setTogglingIds(prev => new Set(prev).add(pluginId));
     setToggleError(null);
     try {
       if (currentStatus === 'enabled') {
         await core.call('plugin.disable', { pluginId });
+        setPlugins(prev => prev.map(p => p.pluginId === pluginId ? { ...p, status: 'disabled' as const } : p));
       } else {
         await core.call('plugin.enable', { pluginId });
+        setPlugins(prev => prev.map(p => p.pluginId === pluginId ? { ...p, status: 'enabled' as const } : p));
       }
-      fetchPlugins();
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to toggle plugin';
       if (msg.includes('not_implemented')) {
@@ -74,14 +75,18 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
         setToggleError(msg);
       }
     } finally {
-      setTogglingId(null);
+      setTogglingIds(prev => {
+        const next = new Set(prev);
+        next.delete(pluginId);
+        return next;
+      });
     }
   }
 
   async function runAllEnvChecks() {
     setEnvCheckRunning(true);
     const results: Record<string, EnvCheckResult> = {};
-    for (const p of plugins) {
+    const tasks = plugins.map(async (p) => {
       try {
         const res = await core.call<{ status: string; dependencies?: unknown[]; blockers?: BlockerEntry[] }>('plugin.check', { pluginId: p.pluginId });
         const blockers = Array.isArray(res?.blockers) ? res.blockers as BlockerEntry[] : [];
@@ -89,7 +94,8 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
       } catch {
         results[p.pluginId] = { status: 'error', deps: 0, blockers: [] };
       }
-    }
+    });
+    await Promise.allSettled(tasks);
     setEnvCheckResults(results);
     setEnvCheckRunning(false);
   }
@@ -134,7 +140,7 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
   return (
     <div className="flex-1 flex flex-col overflow-y-auto">
       <PageHeader
-        title="Plugins"
+        title="Plugin Management"
         actions={
           <div className="flex items-center gap-2">
             <button
@@ -294,7 +300,7 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
                 {plugin.type !== 'builtin' && (
                   <button
                     onClick={() => handleToggle(plugin.pluginId, plugin.status)}
-                    disabled={togglingId === plugin.pluginId}
+                    disabled={togglingIds.has(plugin.pluginId)}
                     className={`text-xs px-3 py-1.5 rounded transition-colors ${
                       plugin.status === 'enabled'
                         ? 'bg-red-900/50 hover:bg-red-800/50 text-red-400'
@@ -302,7 +308,7 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
                     } disabled:opacity-50`}
                     title={toggleError ? 'Not supported by Core' : ''}
                   >
-                    {togglingId === plugin.pluginId ? '...' : (plugin.status === 'enabled' ? 'Disable' : 'Enable')}
+                    {togglingIds.has(plugin.pluginId) ? '...' : (plugin.status === 'enabled' ? 'Disable' : 'Enable')}
                   </button>
                 )}
                 {plugin.type === 'builtin' && (

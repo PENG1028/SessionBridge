@@ -49,7 +49,7 @@ export interface WorkbenchState {
   bottom: PaneState | null;
 }
 
-import { getAllViewEntries, getAdapterViewId, getAllAdapterTypes } from '../main/view-registry';
+import { getAllViewEntries } from '../main/view-registry';
 
 /** Collect all non-empty tabs from a workbench state (flat list). */
 export function collectAllTabs(state: WorkbenchState): PaneTab[] {
@@ -93,17 +93,16 @@ export function genTabId(): string {
   return `tab_${++_counter}_${Date.now().toString(36)}`;
 }
 
-/** Pick the best default view type from what's registered. */
+/** Pick the best default view type from registered views that are launchable.
+ *  Skips adapter-only mappings — only views with showInSelector: true qualify. */
 export function getDefaultViewType(): string {
-  // Prefer the first adapter's mapped view
-  const adapters = getAllAdapterTypes();
-  if (adapters.length > 0) {
-    const vid = getAdapterViewId(adapters[0].id);
-    if (vid) return vid;
-  }
-  // Fall back to the first non-empty registered view
   const entries = getAllViewEntries();
-  const first = entries.find(([id]) => id !== 'empty');
+  const first = entries.find(([id, entry]) => {
+    if (id === 'empty') return false;
+    if (!entry.meta.showInSelector) return false;
+    if (entry.meta.launchMode === 'hidden' || entry.meta.launchMode === 'runtime') return false;
+    return true;
+  });
   return first?.[0] || 'empty';
 }
 

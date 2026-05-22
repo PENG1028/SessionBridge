@@ -9,8 +9,6 @@ export type NotifyMarkReadParams = { notificationId: string };
 
 // ─── approval ───────────────────────────────────────────────────
 export type ApprovalListParams = { status?: string; type?: string };
-export type ApprovalGetParams = { requestId: string };
-export type ApprovalTakeOverParams = { requestId: string };
 
 // ─── logs ───────────────────────────────────────────────────────
 export type LogSource = 'core' | 'plugin' | 'system' | 'session';
@@ -73,8 +71,8 @@ export type PluginInstallExecuteParams = { planId: string };
 export type PluginUninstallParams = { nodeId?: string; pluginId: string };
 export type PluginFilesListParams = { nodeId?: string; pluginId: string };
 export type PluginCacheListParams = { nodeId?: string; pluginId: string };
-export type PluginCacheClearPlanParams = { nodeId?: string; pluginId: string };
-export type PluginCacheClearExecuteParams = { planId: string };
+export type PluginCacheClearPlanParams = { nodeId?: string; pluginId: string; cacheId: string };
+export type PluginCacheClearExecuteParams = { pluginId: string; cacheId: string };
 export type PluginPermissionsListParams = { pluginId: string };
 export type PluginPermissionsGrantParams = { pluginId: string; capability: string; mode: "allow" | "deny" | "ask"; constraints?: Record<string, unknown>; planId?: string };
 export type PluginPermissionsRevokeParams = { pluginId: string; capability: string };
@@ -252,7 +250,6 @@ export type CoreEvent =
   | { type: 'audit.event'; eventType: string; actor: string; target: string; metadata?: Record<string, unknown> }
   | { type: 'approval.request'; pluginId: string; action: string; detail: Record<string, unknown> }
   | { type: 'approval.response'; requestId: string; result: string }
-  | { type: 'approval.viewing'; requestId: string; deviceId: string }
   | { type: 'notify.approval.request'; requestId: string; pluginId: string; payload?: Record<string, unknown> }
   | { type: 'notify.approval.result'; requestId: string; action: string; respondedBy: string }
   | { type: 'notify.event'; notificationType: string; title: string; body: string }

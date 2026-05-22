@@ -8,7 +8,7 @@ import { getActions } from '../actions/action-registry';
 import { runWorkbenchCommand } from '../actions/workbench-command-dispatch';
 import type { ActionRunContext, WorkbenchAction } from '../actions/action-types';
 import type { LucideIcon } from 'lucide-react';
-import { getHeaderChromeItems } from '../chrome/chrome-registry';
+import { getHeaderChromeItems, getContextControls } from '../chrome/chrome-registry';
 
 // ── Icon name → Lucide component map ──────────────────────────
 const ICON_MAP: Record<string, LucideIcon> = {
@@ -120,6 +120,7 @@ export function ConsoleHeader({
   // Chrome items + action context — always resolved (never inside try-catch)
   const headerRightActions: WorkbenchAction[] = getActions('header.right', focus.whenContext as Record<string, unknown>);
   const headerChromeItems: any[] = getHeaderChromeItems(focus.whenContext);
+  const headerContextControls = getContextControls(focus.whenContext).filter(c => c.placement === 'header-right');
   const actionCtx: ActionRunContext = {
     view: focus.viewId,
     activeAdapterId: focus.adapterId || '',
@@ -298,6 +299,24 @@ export function ConsoleHeader({
               {IconComp && <IconComp className="w-3 h-3" />}
               {item.text || item.title}
             </button>
+            );
+          })}
+
+          {!isMinimal && headerContextControls.map(cc => {
+            const IconComp = cc.icon ? ICON_MAP[cc.icon] : null;
+            return (
+              <button key={cc.id}
+                onClick={() => {
+                  if (cc.command && actionCtx) {
+                    runWorkbenchCommand({ command: cc.command }, actionCtx);
+                  }
+                }}
+                className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#1a1a1a] border border-gray-700 hover:border-purple-500 text-gray-400 hover:text-gray-200 text-[10px] transition-colors"
+                title={cc.label}
+              >
+                {IconComp && <IconComp className="w-3 h-3" />}
+                {cc.label}
+              </button>
             );
           })}
         </div>

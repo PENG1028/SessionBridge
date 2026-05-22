@@ -32,6 +32,20 @@ export interface ViewMeta {
   showInSelector?: boolean;
   /** Category label in the view selector (e.g. "workspace", "adapter"). */
   category?: string;
+  /**
+   * Whether this view can be launched as a standalone tab/window.
+   * Views without this flag only appear when bound to a runtime instance
+   * (via adapter mapping) — they are NOT selectable in the ViewSelector.
+   */
+  launchable?: boolean;
+  /**
+   * How this view is launched:
+   * - 'direct': user can open it directly from the ViewSelector (default)
+   * - 'runtime': requires a running instance (terminal, claude-chat)
+   * - 'session': binds to an active session
+   * - 'hidden': never shown in selector, only opened programmatically
+   */
+  launchMode?: 'direct' | 'runtime' | 'session' | 'hidden';
 }
 
 export interface ViewRegistryEntry {

@@ -10,10 +10,10 @@ interface StatusBarProps {
 }
 
 /**
- * StatusBar — bottom status bar.
- * Shows connection status, node counts, time, and plugin status items.
- * Height is fixed at 24px.
- * Plugin status items added via manifest `contributes.status`.
+ * StatusBar — bottom status bar (height: 24px).
+ * Shows connection status and optional left/right string items.
+ * For plugin-contributed status items, use the chrome registry
+ * (getStatusBarChromeItems / getContextControls with placement: 'status-left' | 'status-right').
  */
 export function StatusBar({ connectionStatus, leftItems, rightItems }: StatusBarProps) {
   const statusLabel = {

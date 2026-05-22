@@ -1,7 +1,7 @@
 'use client';
 
 import { type ViewType } from './workbench-state';
-import { getAllViewEntries, getAdapterIdForView, getViewEntry } from '../main/view-registry';
+import { getAllViewEntries, getViewEntry } from '../main/view-registry';
 
 interface ViewSelectorProps {
   onSelect: (viewType: ViewType) => void;
@@ -19,7 +19,12 @@ export function ViewSelector({ onSelect }: ViewSelectorProps) {
   // Each view declares showInSelector itself. Adapter views additionally
   // appear when they have an adapter mapping (registered by the adapter).
   const options = allViews
-    .filter(([id, entry]) => id !== 'empty' && (entry.meta.showInSelector || getAdapterIdForView(id)))
+    .filter(([id, entry]) => {
+      if (id === 'empty') return false;
+      if (!entry.meta.showInSelector) return false;
+      if (entry.meta.launchMode === 'hidden' || entry.meta.launchMode === 'runtime') return false;
+      return true;
+    })
     .map(([id, entry]) => ({
       type: id as ViewType,
       label: entry.meta.title,

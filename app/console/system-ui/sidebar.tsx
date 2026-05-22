@@ -24,6 +24,7 @@ function NavIcon({ icon }: { icon: string }) {
     'check-circle': '○',
     settings: '⚙',
     shield: '◈',
+    bot: '⬡',
   };
 
   return (
@@ -58,6 +59,7 @@ export function Sidebar({ activeRoute, onNavigate, children }: SidebarProps) {
     { id: 'approvals', label: 'Approvals', icon: 'check-circle', route: '/approvals' },
     { id: 'settings', label: 'Settings', icon: 'settings', route: '/settings' },
     { id: 'access-control', label: 'Access Control', icon: 'shield', route: '/access-control' },
+    { id: 'ai', label: 'AI / Agents', icon: 'bot', route: '/ai' },
   ];
 
   const width = collapsed ? 'w-12' : 'w-56';
