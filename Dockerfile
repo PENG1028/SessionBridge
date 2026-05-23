@@ -2,7 +2,7 @@
 # Multi-stage build: deps → build-web → build-go → runtime
 # Go Core is the sole runtime. Node relay has been retired.
 #
-# Frontend (out/) is served by a reverse proxy (nginx, etc.) in front of Go Core.
+# .next/ is the Next.js production build (served via `next start` or reverse proxy).
 # Go Core listens on :8080 (API + WebSocket).
 
 # ─── Stage 1: Production dependencies ────────────
@@ -40,8 +40,8 @@ RUN if [ "$INSTALL_CLAUDE" = "true" ]; then \
 # Production node_modules (for bin/bridge.js and scripts)
 COPY --from=deps /app/node_modules ./node_modules
 
-# Frontend static export
-COPY --from=build-web /app/out ./out
+# Next.js production build
+COPY --from=build-web /app/.next ./.next
 
 # Go Core binary
 COPY --from=build-go /src/sessionnode ./dist/go-core/sessionnode

@@ -6,10 +6,12 @@
 #   git push origin v0.7.0
 #
 # Artifacts:
-#   - sessionbridge-vX.Y.Z.zip  (linux-x64 portable, Node.js + Go required)
+#   - sessionbridge-vX.Y.Z.zip  (linux-x64 portable, includes Go Core binary
+#                                and Next.js production build (.next/))
 #   - Source code (GitHub auto-attaches)
 #
 # Go Core is the sole runtime. Legacy Node relay has been retired.
+# Web UI served via `next start` from .next/, not static out/.
 
 name: Release
 
@@ -52,7 +54,7 @@ jobs:
           VERSION=${GITHUB_REF_NAME#v}
           PKG_DIR="dist/sessionbridge-${VERSION}"
 
-          mkdir -p "$PKG_DIR"/{bin,scripts,dist/go-core,out,public,plugins}
+          mkdir -p "$PKG_DIR"/{bin,scripts,dist/go-core,.next,public,plugins}
 
           # Launcher
           cp bin/bridge.js "$PKG_DIR/bin/"
@@ -65,14 +67,17 @@ jobs:
           # Go Core binary (linux-x64)
           cp dist/go-core/sessionnode "$PKG_DIR/dist/go-core/"
 
-          # Frontend static export
-          cp -r out/* "$PKG_DIR/out/"
+          # Next.js production build (.next/) — required for `next start`
+          cp -r .next "$PKG_DIR/"
 
           # Public assets
           cp -r public/* "$PKG_DIR/public/"
 
           # Plugin manifests
           cp -r plugins/* "$PKG_DIR/plugins/"
+
+          # Lockfile for reproducible npm ci
+          cp package-lock.json "$PKG_DIR/"
 
           # Portable package.json
           node -e "
@@ -85,6 +90,7 @@ jobs:
               scripts: {
                 start: 'node bin/bridge.js',
                 'start:core': 'node scripts/start-core.js',
+                'start:web': 'next start',
               },
               dependencies: p.dependencies,
             }, null, 2));

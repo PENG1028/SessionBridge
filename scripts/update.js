@@ -154,10 +154,10 @@ async function main() {
   }
   console.log('  ✓ Dependencies installed.');
 
-  // 7. Build (with BRIDGE_EXPORT=1 so Next.js generates static out/)
+  // 7. Build (build:web generates .next/, build:core generates Go binary)
   console.log('  Building...');
   try {
-    run('npm run build', { env: { ...process.env, BRIDGE_EXPORT: '1' } });
+    run('npm run build');
   } catch (err) {
     console.error(`  ✗ Build failed: ${err.message}`);
     process.exit(1);

@@ -66,7 +66,7 @@ UI/部署/打包链变更不得修改 `go-core/` 下的 Go 代码，除非是启
 | Next.js Dev | 3000 | `npm run dev:web` | 前端 UI 开发服务器，仅开发时使用 |
 
 **开发时**：浏览器访问 `http://localhost:3000`，API 请求通过 rewrites 代理到 Go Core。
-**生产构建**：`npm run build` 生成 `dist/go-core/sessionnode` + `out/`（Next.js 静态导出）。
+**生产构建**：`npm run build` 生成 `dist/go-core/sessionnode` + `.next/`（Next.js 生产构建，通过 `next start` 启动）。
 
 ### `next.config.ts` 的 `output: 'export'` 规则
 
@@ -92,7 +92,7 @@ npm run dev:web   # 终端 2 — 仅前端
 **症状**：改了 `app/` 下的 `.tsx`，源码确认已修改，换浏览器/清缓存/强制刷新都看到旧内容。
 
 **根因**：
-1. `out/` 目录残留（上次 `npm run build` 产物）→ dev server 直接 serve 旧静态文件
+1. `out/` 或 `.next` 目录残留（上次 `npm run build` 产物）→ dev server 可能 serve 旧静态文件
 2. 或者 `.next` 缓存损坏
 
 **修复**：

@@ -245,5 +245,5 @@ sessionBridge/
 │   ├── system-info/          ← System info adapter
 │   └── host/                 ← Host core views
 ├── dist/                     ← 构建产物 (go-core/)
-└── out/                      ← Compiled UI static output
+└── .next/                    ← Next.js production build
 ```

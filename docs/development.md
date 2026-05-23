@@ -30,7 +30,7 @@ npm run dev:web
 ```bash
 # 构建全部
 npm run build
-# → build:web (Next.js static export) + build:core (Go binary)
+# → build:web (Next.js production build → .next/) + build:core (Go binary)
 
 # 启动 Go Core（默认）
 npm start

@@ -30,7 +30,7 @@
     "start:core": "node scripts/start-core.js",
     "start:web": "next start",
     "build": "npm run build:web && npm run build:core",
-    "build:web": "BRIDGE_EXPORT=1 next build --webpack",
+    "build:web": "next build --webpack",
     "build:core": "node scripts/build-core.js",
     "update": "node scripts/update.js",
     "update:check": "node scripts/check-update.js --notify",

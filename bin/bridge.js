@@ -5,7 +5,7 @@
 // Usage:
 //   node bin/bridge.js      — default: start Go Core
 //   node bin/bridge.js core — start Go Core
-//   node bin/bridge.js web  — start Next.js (prod, needs build:web first)
+//   node bin/bridge.js web  — start Next.js production from .next/ (needs build:web first)
 //   node bin/bridge.js dev  — start Go Core + Next.js dev
 
 const { spawn, spawnSync } = require('child_process');
@@ -58,11 +58,10 @@ switch (subcommand) {
     break;
 
   case 'web': {
-    // Check for Next.js build
-    const outDir = path.join(projectRoot, 'out');
+    // Check for Next.js production build (.next/)
     const nextDir = path.join(projectRoot, '.next');
-    if (!existsSync(outDir) && !existsSync(nextDir)) {
-      console.error('No Next.js build found. Run: npm run build:web');
+    if (!existsSync(nextDir)) {
+      console.error('No Next.js production build found. Run: npm run build:web');
       process.exit(1);
     }
     const nextBin = path.join(projectRoot, 'node_modules', '.bin', 'next');

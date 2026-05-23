@@ -2,7 +2,7 @@
 
 | 平台 | 文件 | 说明 |
 |------|------|------|
-| Linux x64 | `sessionbridge-*.zip` | 便携包，需要 Node.js >= 18, Go >= 1.21 |
+| Linux x64 | `sessionbridge-*.zip` | 便携包，内含 Go Core 二进制 + Next.js 构建 (.next/)，需要 Node.js >= 18 |
 
 ## 更新
 
@@ -18,7 +18,10 @@ npm run update
 
 ```bash
 # 解压后
-node bin/bridge.js
+node bin/bridge.js          # 启动 Go Core
+
+# 启动 Web UI（Next.js production）
+node bin/bridge.js web      # → http://localhost:3000
 
 # 环境变量
 # LISTEN_ADDR=0.0.0.0:8080  (默认 127.0.0.1:8080)
