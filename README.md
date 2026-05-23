@@ -27,17 +27,32 @@ SessionBridge 是一个**节点式远程控制网络**。每台设备（PC、手
 # 1. 安装依赖
 npm install
 
-# 2. 构建前端 + 启动服务
-npm start
-# → 浏览器打开 http://127.0.0.1:8080
-# → Relay 默认监听 ws://127.0.0.1:8080
+# 2. 构建前端 + Go Core
+npm run build
+
+# 3. 启动 Go Core（默认运行时）
+npm run start:core
+# → HTTP + WebSocket 监听 ws://127.0.0.1:8080
 ```
 
-就这么简单。不需要数据库，不需要 Docker，不需要配置文件。
+开发模式（热重载）：
+```bash
+npm run dev          # Go Core + Next.js 同时启动
+npm run dev:core     # 仅 Go Core
+npm run dev:web      # 仅 Next.js 前端（:3000）
+```
+
+| 命令 | 说明 |
+|------|------|
+| `npm run dev` | Go Core + Next.js 开发模式 |
+| `npm run start:core` | 生产启动 Go Core |
+| `npm run build` | 构建前端 + Go Core 二进制 |
+| `npm run legacy:relay` | 启动旧版 Node relay（已废弃，仅用于兼容） |
 
 ### 前置条件
 
 - **Node.js** ≥ 18
+- **Go** ≥ 1.21（用于构建 Go Core 二进制）
 - **Claude Code**（可选）— 需要 AI 对话能力时安装：`npm install -g @anthropic-ai/claude-code`
 
 ---
@@ -101,21 +116,25 @@ Node A (PC)                          Node B (VPS/Relay)                Node C (�
 
 端口和 token 当前主要通过 CLI 参数或配置文件控制：`--relay-port`、`--relay-token`、`--dashboard-port`、`--upstream`。
 
-### CLI 参数
+### 环境变量（Go Core）
 
-```bash
-npx tsx src/index.ts --relay-port 8080 --relay-token mytoken --dashboard-port 9843
-```
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `LISTEN_ADDR` | `127.0.0.1:8080` | HTTP + WebSocket 监听地址 |
+| `SESSIONNODE_DATA_DIR` | `~/.sessionnode` | 数据目录 |
+| `SESSIONNODE_TOKEN` | 空（dev mode） | 认证令牌 |
+| `SESSIONNODE_PLUGIN_DIRS` | `./plugins/` | 插件目录 |
 
-> 完整参数列表见 [docs/development.md](docs/development.md) 或运行 `npx tsx src/index.ts --help`。
+Legacy Node relay 参数见 `node bin/bridge.js legacy-relay --help`。
 
 ---
 
 ## 开发
 
 ```bash
-npm run dev          # 后端热重载开发
+npm run dev          # Go Core + Next.js 开发模式
 npm run dev:web      # 前端热重载（Next.js :3000）
+npm run dev:core     # Go Core 开发模式（go run）
 npx vitest run       # 跑全部测试
 npx tsc --noEmit     # 类型检查
 ```
@@ -123,10 +142,17 @@ npx tsc --noEmit     # 类型检查
 目录结构：
 
 ```
-src/                 # 后端（relay 服务器、实例管理、审计日志）
-extensions/            # 插件体系（类型定义、Shell、Claude Code、System Info）
-app/                 # 前端（Next.js App Router）
+go-core/             # Go Core 运行时（主 Core）
+  cmd/node/          # 入口点
+  internal/          # 内部实现
+plugins/             # 插件声明（plugin.yaml）
+app/                 # 前端 UI（Next.js App Router）
 lib/                 # 客户端工具库（WebSocket、IndexedDB）
+src/                 # Legacy Node relay（已废弃，保留用于兼容）
+  relay-server.ts    # 旧 relay 服务器
+  instance-manager.ts
+agent-core/          # Legacy 扩展运行时（已废弃）
+extensions/          # Legacy 扩展目录（已废弃）
 docs/                # 详细文档
 ```
 

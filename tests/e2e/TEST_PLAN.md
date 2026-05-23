@@ -178,11 +178,11 @@ ls tests/e2e/screenshots/
 ## Update Workflow (修改代码后快速同步)
 
 ```
-┌─ 1. 修改代码 (src/ 或 app/)
-├─ 2. npx tsc -p tsconfig.server.json --noEmit --skipLibCheck   ← 编译检查
-├─ 3. npm run build                                              ← 构建 dist/ + out/
+┌─ 1. 修改代码 (go-core/ 或 app/)
+├─ 2. npx tsc --noEmit                                           ← 前端类型检查
+├─ 3. npm run build                                              ← 构建前端 + Go Core
 ├─ 4. git add -A && git commit && git push github main          ← 推送
-├─ 5. 本地: 重启 relay (Ctrl+C 重跑 npm run dev)                 ← 本地生效
+├─ 5. 本地: 重启 (Ctrl+C 重跑 npm run dev)                       ← 本地生效
 ├─ 6. VPS:  type ! ssh ubuntu@43.160.241.180 ...                 ← 手动拉取+重启
 ├─ 7. npx playwright test --config=tests/e2e/playwright.config.mjs --headed  ← E2E
 └─ 8. 检查 tests/e2e/screenshots/ 截图确认                        ← 视觉验证
@@ -190,13 +190,13 @@ ls tests/e2e/screenshots/
 
 ### 本地一键构建+重启
 ```bash
-npm run build && pkill -f 'node.*dist/src/index' ; sleep 1 && \
-  nohup node dist/src/index.js --relay-port 14400 --upstream ws://localhost:18080 --data-dir .data-local > /tmp/bridge.log 2>&1 &
+npm run build && pkill -f 'sessionnode' ; sleep 1 && \
+  nohup npm run start:core > /tmp/bridge.log 2>&1 &
 ```
 
 ### VPS 一键更新 (需要你手动执行)
 ```bash
-ssh ubuntu@43.160.241.180 "cd sessionbridge && git fetch github main && git reset --hard github/main && npm run build && pkill -f 'node.*bridge' ; sleep 1 && nohup node dist/src/index.js --relay-port 8080 --dir /home/ubuntu/sessionbridge --label VM-0-15-ubuntu > /tmp/bridge.log 2>&1 &"
+ssh ubuntu@43.160.241.180 "cd sessionbridge && git fetch github main && git reset --hard github/main && npm run build && pkill -f 'sessionnode' ; sleep 1 && nohup npm run start:core > /tmp/bridge.log 2>&1 &"
 ```
 
 ### 仅检查版本是否一致
@@ -224,6 +224,9 @@ sessionBridge/
 │   │   ├── TEST_PLAN.md      ← THIS FILE
 │   │   └── screenshots/
 │   └── stress/               ← (future: stress/load tests)
+├── go-core/                  ← Go Core 运行时（主 Core）
+│   ├── cmd/node/main.go      ← 入口点
+│   └── internal/             ← server, session, process, fs, config, ...
 ├── app/                      ← Next.js UI source
 │   ├── page.tsx              ← Main app shell
 │   ├── shell-terminal.tsx    ← Xterm.js terminal component
@@ -231,16 +234,20 @@ sessionBridge/
 │       ├── shell/settings-panel.tsx   ← Settings + Check for Updates
 │       ├── stage/workbench-state.ts   ← Tab/workbench state
 │       └── actions/register-core-actions.tsx  ← Core actions (settings, terminal)
-├── src/                      ← Server (relay, API, state bridge)
-│   ├── index.ts              ← CLI entry
+├── src/                      ← Legacy Node relay（已废弃）
+│   ├── index.ts              ← Legacy CLI entry
 │   ├── relay-server.ts       ← WebSocket + HTTP relay
 │   ├── api-routes.ts         ← REST API endpoints
 │   └── state-bridge/         ← StateBus key-value store
+├── scripts/                  ← 构建/启动脚本
+│   ├── start-core.js         ← 启动 Go Core
+│   ├── build-core.js         ← 构建 Go Core 二进制
+│   └── dev-all.js            ← 开发模式 (Core + Next.js)
 ├── extensions/               ← Plugin extensions
 │   ├── shell/                ← Terminal adapter (core)
 │   ├── claude-code/          ← Claude Code adapter
 │   ├── system-info/          ← System info adapter
 │   └── host/                 ← Host core views
-├── dist/                     ← Compiled server output
+├── dist/                     ← 构建产物 (go-core/ + legacy server)
 └── out/                      ← Compiled UI static output
 ```
