@@ -1,6 +1,6 @@
 // ─── Start Go Core ──────────────────────────────────────
 // Launches the Go Core binary (built) or falls back to `go run`.
-// Usage: node scripts/start-core.js [--dev]
+// Usage: node scripts/start-core.js [--dev] [--help|-h]
 //   --dev    Use `go run` instead of the pre-built binary.
 
 const { spawn } = require('child_process');
@@ -8,9 +8,38 @@ const { existsSync } = require('fs');
 const path = require('path');
 
 const projectRoot = path.resolve(__dirname, '..');
+const goCoreDir = path.join(projectRoot, 'go-core');
 const binaryName = process.platform === 'win32' ? 'sessionnode.exe' : 'sessionnode';
 const binPath = path.join(projectRoot, 'dist', 'go-core', binaryName);
-const goCmdDir = path.join(projectRoot, 'go-core', 'cmd', 'node');
+
+// ── Help ─────────────────────────────────────────────────
+if (process.argv.includes('--help') || process.argv.includes('-h')) {
+  console.log(`
+start-core — Start the Go Core runtime.
+
+Usage:
+  node scripts/start-core.js [--dev]
+  npm run start:core
+  npm run dev:core               (same as --dev)
+
+Options:
+  --dev    Use "go run ./go-core/cmd/node" instead of the pre-built binary.
+           Pre-built binary path: dist/go-core/sessionnode(.exe)
+
+Environment variables:
+  LISTEN_ADDR              HTTP + WebSocket listen address (default: 127.0.0.1:8080)
+  SESSIONNODE_CONFIG       Path to config file (default: ~/.sessionnode/config.json)
+  SESSIONNODE_DATA_DIR     Data directory for logs/sessions (default: ~/.sessionnode)
+  SESSIONNODE_TOKEN        Auth token — empty = dev mode, no auth required
+  SESSIONNODE_PLUGIN_DIRS  Plugin directories (default: ./plugins/)
+
+Examples:
+  npm run start:core
+  npm run dev:core
+  LISTEN_ADDR=127.0.0.1:9090 npm run start:core
+`);
+  process.exit(0);
+}
 
 const useDev = process.argv.includes('--dev');
 
@@ -32,11 +61,13 @@ if (useDev || !existsSync(binPath)) {
     process.exit(1);
   }
   cmd = 'go';
-  args = ['run', './go-core/cmd/node'];
+  args = ['run', './cmd/node'];
 } else {
   cmd = binPath;
   args = [];
 }
+
+const cwd = (cmd === 'go') ? goCoreDir : projectRoot;
 
 // ── Environment ─────────────────────────────────────────
 const env = { ...process.env };
@@ -83,7 +114,7 @@ console.log('');
 
 // ── Spawn ───────────────────────────────────────────────
 const child = spawn(cmd, args, {
-  cwd: projectRoot,
+  cwd,
   env,
   stdio: 'inherit',
   windowsHide: true,

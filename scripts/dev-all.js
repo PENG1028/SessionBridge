@@ -3,25 +3,62 @@
 // Usage: node scripts/dev-all.js
 
 const { spawn } = require('child_process');
+const { existsSync } = require('fs');
 const path = require('path');
 
 const projectRoot = path.resolve(__dirname, '..');
 
+// ── Help ─────────────────────────────────────────────────
+if (process.argv.includes('--help') || process.argv.includes('-h')) {
+  console.log(`
+dev-all — Start Go Core + Next.js dev server in parallel.
+
+Usage:
+  node scripts/dev-all.js
+  npm run dev
+  npm run dev:all
+
+What it does:
+  Go Core    → ws://127.0.0.1:8080
+  Next.js    → http://localhost:3000
+
+Requirements:
+  Go ≥ 1.21  (for Go Core — built binary or go run fallback)
+  Node.js    (Next.js dev server, from node_modules/.bin/next)
+
+Environment variables (Go Core):
+  LISTEN_ADDR              default: 127.0.0.1:8080
+  SESSIONNODE_DATA_DIR     default: ~/.sessionnode
+  SESSIONNODE_PLUGIN_DIRS  default: ./plugins/
+`);
+  process.exit(0);
+}
+
 // ── Go Core ─────────────────────────────────────────────
+const goCoreDir = path.join(projectRoot, 'go-core');
 const binaryName = process.platform === 'win32' ? 'sessionnode.exe' : 'sessionnode';
 const binPath = path.join(projectRoot, 'dist', 'go-core', binaryName);
-const { existsSync } = require('fs');
 
-let coreCmd, coreArgs;
+let coreCmd, coreArgs, coreCwd;
 if (existsSync(binPath)) {
   coreCmd = binPath;
   coreArgs = [];
+  coreCwd = projectRoot;
 } else {
+  // Fallback to go run — check Go availability first
+  try {
+    const { execSync } = require('child_process');
+    execSync('go version', { stdio: 'pipe' });
+  } catch {
+    console.error('Go is required to run Go Core in dev mode.');
+    console.error('Install Go (https://go.dev/dl/) or run: npm run build:core');
+    process.exit(1);
+  }
   coreCmd = 'go';
-  coreArgs = ['run', './go-core/cmd/node'];
+  coreArgs = ['run', './cmd/node'];
+  coreCwd = goCoreDir;
 }
 
-const configPath = path.join(projectRoot, 'go-core', 'config', 'dev.json');
 const pluginDirs = path.join(projectRoot, 'plugins');
 
 const coreEnv = {
@@ -33,7 +70,7 @@ const coreEnv = {
 
 console.log('[dev-all] Starting Go Core on 127.0.0.1:8080...');
 const core = spawn(coreCmd, coreArgs, {
-  cwd: projectRoot,
+  cwd: coreCwd,
   env: coreEnv,
   stdio: 'inherit',
   windowsHide: true,
@@ -42,6 +79,12 @@ const core = spawn(coreCmd, coreArgs, {
 // ── Next.js Dev ─────────────────────────────────────────
 const nextBin = path.join(projectRoot, 'node_modules', '.bin', 'next');
 const nextBinPlatform = process.platform === 'win32' ? nextBin + '.cmd' : nextBin;
+
+if (!existsSync(nextBinPlatform)) {
+  console.error('[dev-all] Next.js binary not found. Run: npm install');
+  core.kill();
+  process.exit(1);
+}
 
 console.log('[dev-all] Starting Next.js dev on 3000...');
 const next = spawn(nextBinPlatform, ['dev'], {

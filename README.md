@@ -31,7 +31,7 @@ npm install
 npm run build
 
 # 3. 启动 Go Core（默认运行时）
-npm run start:core
+npm start
 # → HTTP + WebSocket 监听 ws://127.0.0.1:8080
 ```
 
@@ -44,8 +44,8 @@ npm run dev:web      # 仅 Next.js 前端（:3000）
 
 | 命令 | 说明 |
 |------|------|
+| `npm start` | 启动 Go Core（默认） |
 | `npm run dev` | Go Core + Next.js 开发模式 |
-| `npm run start:core` | 生产启动 Go Core |
 | `npm run build` | 构建前端 + Go Core 二进制 |
 | `npm run legacy:relay` | 启动旧版 Node relay（已废弃，仅用于兼容） |
 

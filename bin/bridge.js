@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 // ─── SessionBridge Launcher ──────────────────────────────
-// Default entry point. Go Core is the primary runtime.
-// Legacy Node relay is preserved under the "legacy-relay" subcommand.
+// Go Core is the primary runtime. Legacy Node relay preserved
+// under the "legacy-relay" subcommand.
 //
 // Usage:
-//   node bin/bridge.js              — print available commands
+//   node bin/bridge.js              — default: start Go Core
 //   node bin/bridge.js core         — start Go Core
 //   node bin/bridge.js web          — start Next.js (prod, needs build:web first)
 //   node bin/bridge.js dev          — start Go Core + Next.js dev
-//   node bin/bridge.js legacy-relay — start legacy Node relay
+//   node bin/bridge.js legacy-relay — start legacy Node relay (deprecated)
 
 const { spawn, spawnSync } = require('child_process');
 const { existsSync } = require('fs');
@@ -21,19 +21,20 @@ function usage() {
   console.log(`
 SessionBridge — Go Core is the primary runtime.
 
+Default:   node bin/bridge.js  →  start Go Core (same as "core")
 Commands:
   core          Start Go Core (default runtime)
   web           Start Next.js production server (build first: npm run build:web)
   dev           Start Go Core + Next.js dev server
-  legacy-relay  Start legacy Node relay (deprecated, for backward compatibility)
+  legacy-relay  Start legacy Node relay (deprecated)
 
 npm scripts:
-  npm start             → node bin/bridge.js (shows this help)
-  npm run dev           → dev:all (Go Core + Next.js dev)
+  npm start             → start Go Core (default)
+  npm run dev           → Go Core + Next.js dev
   npm run dev:core      → Go Core dev mode
   npm run dev:web       → Next.js dev only
   npm run build         → build:web + build:core
-  npm run legacy:relay  → legacy Node relay
+  npm run legacy:relay  → legacy Node relay (deprecated)
 
 Docs: docs/development.md
 `);
@@ -50,6 +51,12 @@ function runScript(scriptPath, args = []) {
 }
 
 switch (subcommand) {
+  case '--help':
+  case '-h':
+    usage();
+    break;
+
+  case '':
   case 'core':
     runScript(path.join(projectRoot, 'scripts', 'start-core.js'), process.argv.slice(3));
     break;
@@ -104,12 +111,8 @@ switch (subcommand) {
   }
 
   default:
-    if (subcommand && subcommand !== '--help' && subcommand !== '-h') {
-      console.error(`Unknown command: ${subcommand}`);
-      console.error('');
-    }
+    console.error(`Unknown command: ${subcommand}`);
+    console.error('');
     usage();
-    if (subcommand && subcommand !== '--help' && subcommand !== '-h') {
-      process.exit(1);
-    }
+    process.exit(1);
 }

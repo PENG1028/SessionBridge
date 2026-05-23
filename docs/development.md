@@ -32,8 +32,8 @@ npm run dev:web
 npm run build
 # → build:web (Next.js static export) + build:core (Go binary)
 
-# 启动 Go Core
-npm run start:core
+# 启动 Go Core（默认）
+npm start
 # → ws://127.0.0.1:8080
 ```
 
@@ -79,7 +79,8 @@ npm run legacy:relay
 | `npm run dev:core` | Go Core 开发（`go run`） |
 | `npm run dev:web` | Next.js 前端开发 |
 | `npm run dev:all` | 同 `dev` |
-| `npm start` | 打印可用命令（`node bin/bridge.js`） |
+| `npm start` | 启动 Go Core（默认运行时） |
+| `npm run start:core` | 同 `npm start`，显式启动 Go Core |
 | `npm run start:core` | 生产启动 Go Core |
 | `npm run start:web` | 生产启动 Next.js |
 | `npm run build` | 构建前端 + Go Core |
