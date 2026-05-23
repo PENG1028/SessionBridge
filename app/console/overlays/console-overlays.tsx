@@ -7,7 +7,7 @@ import { ForkDialog } from '../shell/fork-dialog';
 import { SearchResultsPanel } from '../shell/search-results-panel';
 import { SettingsPanel } from '../shell/settings-panel';
 import { useCore } from '../core/core-client-provider';
-import { ApprovalCenter } from '../system-ui/approval-center';
+import { ApprovalCenter } from './approval-center';
 
 interface ConsoleOverlaysProps {
   // Search

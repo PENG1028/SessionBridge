@@ -313,7 +313,7 @@ describe('Launchability cross-consistency (ViewSelector / PluginManager / Plugin
 // These tests mirror the exact Meta shapes from the real registrations:
 //   shell/web-views.ts        → terminal
 //   claude-code/web-views.ts  → claude-chat
-//   plugin-manifest-bridge.ts → system-info panel
+//   Core plugin manifest → system-info panel
 //   register-core-views.ts    → dashboard / logs / agent-monitor
 
 describe('ViewSelector tab filtering (real-world meta shapes)', () => {

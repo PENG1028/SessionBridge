@@ -1,8 +1,8 @@
 'use client';
 
-// ─── Extension Panel Component Registrations ──────────────────
+// ─── Plugin Panel Component Registrations ──────────────────
 // Registers known React components for panel IDs declared in
-// adapter manifests (sb-extension.json contributes.views).
+// plugin manifests (plugin.yaml contributes.panels).
 //
 // These are "host-provided fallback" components — the manifest
 // declares the panel structure (id, title, side, when), and core
@@ -30,7 +30,7 @@ registerPanelComponent('system', SystemPanel);
 registerPanelComponent('processes', ProcessesPanel);
 registerPanelComponent('tasks', TaskPanel);
 
-// Core panels — components provided by the platform, registration via extension manifests
+// Core panels — components provided by the platform, registration via plugin manifests
 registerPanelComponent('quick-actions', QuickActionsPanel);
 registerPanelComponent('session-actions', SessionActionsPanel);
 registerPanelComponent('snapshots', SnapshotsPanel);

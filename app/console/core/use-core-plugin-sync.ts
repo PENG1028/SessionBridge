@@ -36,7 +36,7 @@ function extractPluginList(raw: unknown): Array<{ pluginId: string }> {
  * Plugin views are registered with PluginManifestViewRenderer, which
  * resolves host-rendered → componentId → hostComponentRegistry at render time.
  *
- * Does NOT return extensionPointsData. No merge with relay needed.
+ * Reads plugin manifests directly from Core. Does not use relay extension points.
  */
 export function useCorePluginRegistrySync(
   core: CoreClient,

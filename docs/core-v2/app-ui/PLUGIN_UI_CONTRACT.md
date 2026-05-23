@@ -1,6 +1,6 @@
 # SessionNode v2 — Plugin UI Contract
 
-> 定义插件如何与 System UI 集成。所有插件通过 `sb-extension.json` manifest 声明 UI 贡献，System UI 根据 manifest 渲染。
+> 定义插件如何与 App UI (Workbench) 集成。所有插件通过 `plugin.yaml` manifest 声明 UI 贡献，App UI 根据 manifest 渲染。
 
 ---
 
@@ -10,13 +10,13 @@
 |------|---------|---------|------|
 | `custom-react` view | 插件声明的 view surface | iframe / 同域 React | 插件自渲染完整 view |
 | `custom-react` panel | 插件声明的 panel surface | iframe / 同域 React | 插件自渲染面板 |
-| `host-rendered` component | 插件声明的 surface | System UI 渲染 | 插件只提供数据，UI 由 host 渲染 |
+| `host-rendered` component | 插件声明的 surface | App UI 渲染 | 插件只提供数据，UI 由 host 渲染 |
 | settings section | settings.page | ConfigSchemaForm | 插件声明配置 schema |
 | command | 全局 | CommandPalette / 快捷键 | 注册命令 |
 | menu | 全局 | 菜单栏 / 右键菜单 | 注册菜单项 |
-| status item | StatusBar | system-ui.StatusBar | 状态栏图标/文本 |
-| approval request | notification.center | system-ui.ApprovalRequestModal | 审核请求 UI |
-| notification | notification.center | system-ui.NotificationCenter | 系统通知 |
+| status item | StatusBar | app-ui.StatusBar | 状态栏图标/文本 |
+| approval request | notification.center | app-ui.ApprovalRequestModal | 审核请求 UI |
+| notification | notification.center | app-ui.NotificationCenter | 系统通知 |
 
 ---
 
@@ -24,11 +24,11 @@
 
 ### 2.1 Host-Rendered View 声明
 
-插件声明一个由 System UI 渲染的 host-rendered view，只需要提供 componentId 和绑定数据：
+插件声明一个由 App UI 渲染的 host-rendered view，只需要提供 componentId 和绑定数据：
 
 ```jsonc
-// sb-extension.json — host-rendered 示例
-// 适合管理类 UI：System UI 内置组件渲染，插件只声明 componentId
+// plugin.yaml — host-rendered 示例
+// 适合管理类 UI：App UI 内置组件渲染，插件只声明 componentId
 {
   "id": "node-monitor",
   "version": "1.0.0",
@@ -38,7 +38,7 @@
         {
           "id": "node-monitor.health",
           "type": "host-rendered",
-          "componentId": "NodeHealthPanel",   // System UI 内置组件
+          "componentId": "NodeHealthPanel",   // App UI 内置组件
           "title": "Node Health",
           "icon": "activity"
         }
@@ -74,7 +74,7 @@
 插件提供自己的 React 组件（同域或 iframe）：
 
 ```jsonc
-// sb-extension.json — custom-react 示例
+// plugin.yaml — custom-react 示例
 // 适合复杂业务 UI：插件提供自己的 React 组件
 {
   "id": "claude-code",
@@ -290,7 +290,7 @@ interface CoreClient {
   ❌ 创建新的 WebSocket/HTTP 连接到 Core（必须走 CoreClient）
   ❌ 通过 fetch/XMLHttpRequest 直接调用 Core REST API
   ❌ 修改 CoreClient.pluginId
-  ❌ 修改 PluginHost 分配容器之外的 DOM（含 System UI shell、其他插件容器）
+  ❌ 修改 PluginHost 分配容器之外的 DOM（含 App UI shell、其他插件容器）
   ❌ 修改全局 registry（command、menu、panel 注册表）
 ```
 
@@ -298,12 +298,12 @@ interface CoreClient {
 
 ## 5. Host-Rendered 组件数据绑定
 
-Host-rendered 意味着插件只声明 componentId，不提供实现。System UI 内置了对应的 React 组件：
+Host-rendered 意味着插件只声明 componentId，不提供实现。App UI 内置了对应的 React 组件：
 
 ```typescript
-// System UI 内置的 host-rendered 组件注册表
+// App UI 内置的 host-rendered 组件注册表
 const HOST_COMPONENTS: Record<string, React.ComponentType<HostComponentProps>> = {
-  // 在 system-ui 中注册，适用于管理类 UI
+  // 在 App UI (system-pages) 中注册，适用于管理类 UI
   // 注意：复杂业务 UI（如 ClaudeChatView）应使用 custom-react
   "PluginCacheTable": PluginCacheTable,
   "PluginPermissionPanel": PluginPermissionPanel,
@@ -355,32 +355,32 @@ Plugin Manifest (componentId: "PluginPermissionPanel")
 
 ---
 
-## 6. 插件复用 System UI 组件
+## 6. 插件复用 App UI 组件
 
-插件可以复用以下 System UI 组件：
+插件可以复用以下 App UI 组件：
 
 | 组件 | 使用场景 |
 |------|---------|
-| system-ui.SearchBox | 插件内部搜索 |
-| system-ui.FilterBar | 插件内部过滤 |
-| system-ui.EmptyState | 插件空状态 |
-| system-ui.ErrorState | 插件错误状态 |
-| system-ui.LoadingState | 插件加载态 |
-| system-ui.PermissionDenied | 插件权限提示 |
-| system-ui.Badge | 插件标签 |
-| system-ui.PageHeader | 插件页面标题 |
-| system-ui.ConfirmDialog | 插件确认弹窗 |
-| system-ui.DataTable | 插件数据表格 |
-| system-ui.HealthCard | 插件统计卡片 |
-| system-ui.TabBar | 插件 tab 导航 |
-| system-ui.PanelContainer | 插件侧边面板 |
-| system-ui.SessionStatusBadge | 插件内 session 状态 |
-| system-ui.RiskBadge | 插件风险标记 |
-| system-ui.SettingsSection | 插件设置分组 |
-| system-ui.ConfigField | 插件配置项 |
-| system-ui.SecretField | 插件密钥字段 |
-| system-ui.EventTimeline | 插件事件时间线 |
-| system-ui.LogSearchBox | 插件日志搜索 |
+| app-ui.SearchBox | 插件内部搜索 |
+| app-ui.FilterBar | 插件内部过滤 |
+| app-ui.EmptyState | 插件空状态 |
+| app-ui.ErrorState | 插件错误状态 |
+| app-ui.LoadingState | 插件加载态 |
+| app-ui.PermissionDenied | 插件权限提示 |
+| app-ui.Badge | 插件标签 |
+| app-ui.PageHeader | 插件页面标题 |
+| app-ui.ConfirmDialog | 插件确认弹窗 |
+| app-ui.DataTable | 插件数据表格 |
+| app-ui.HealthCard | 插件统计卡片 |
+| app-ui.TabBar | 插件 tab 导航 |
+| app-ui.PanelContainer | 插件侧边面板 |
+| app-ui.SessionStatusBadge | 插件内 session 状态 |
+| app-ui.RiskBadge | 插件风险标记 |
+| app-ui.SettingsSection | 插件设置分组 |
+| app-ui.ConfigField | 插件配置项 |
+| app-ui.SecretField | 插件密钥字段 |
+| app-ui.EventTimeline | 插件事件时间线 |
+| app-ui.LogSearchBox | 插件日志搜索 |
 
 ---
 
@@ -431,13 +431,13 @@ Manifest 声明:
 
   配置:
     - Settings → Plugins → claude-code
-    - 自动渲染 ConfigSchemaForm（host-rendered，System UI 提供）
+    - 自动渲染 ConfigSchemaForm（host-rendered，App UI 提供）
     - Key 全部 namespace 化: claude-code.*
 
   权限/缓存/文件:
     - Plugin Detail → Permissions / Cache / Files tab
-    - 使用 system-ui.PluginPermissionPanel / PluginCacheTable / PluginFilesTable（host-rendered）
-    - 插件通过 manifest 声明配置 schema，UI 由 System UI 渲染
+    - 使用 app-ui.PluginPermissionPanel / PluginCacheTable / PluginFilesTable（host-rendered）
+    - 插件通过 manifest 声明配置 schema，UI 由 App UI 渲染
 
   审批:
     - 当 claude-code 执行 process.spawn(rm -rf /data)
@@ -465,7 +465,7 @@ Manifest 声明:
    - 信任等级：低
 
 3. host-rendered 组件
-   - 由 System UI 实现，插件只声明 componentId
+   - 由 App UI 实现，插件只声明 componentId
    - 插件无自定义 UI 代码
    - 信任等级：最高
 
@@ -475,7 +475,7 @@ Manifest 声明:
    - 不可修改 manifest 声明的权限
    - 不可注册同 ID 的命令/菜单/快捷键
    - 不可操作 PluginHost 分配容器之外的 DOM
-     （包括 System UI shell、其他插件容器、全局 registry）
+     （包括 App UI shell、其他插件容器、全局 registry）
 ```
 
 ---
@@ -539,7 +539,7 @@ View/Panel 生命周期:
 
   4. 权限错误 (PERMISSION_DENIED)
      → CoreClient 返回 PERMISSION_DENIED 错误码
-     → 组件显示 system-ui.PermissionDenied
+     → 组件显示 app-ui.PermissionDenied
      → 不可重试（除非权限被重新授予）
 
   5. 无效的 manifest

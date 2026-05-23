@@ -170,7 +170,7 @@ Feature Plugin ↔ System UI：不直接通信，都通过 Core
 
 ## 与现有顶层文档的冲突和建议
 
-当前 `docs/core-v2/system-ui/UX_SURFACES.md` 和 `docs/core-v2/system-ui/SYSTEM_UI_PLUGIN.md` 是现有顶层文档。以下子文档可能与之产生重叠或冲突，在此列出建议：
+当前 `docs/core-v2/app-ui/UX_SURFACES.md` 和 `docs/core-v2/app-ui/SYSTEM_UI_PLUGIN.md` 是现有顶层文档。以下子文档可能与之产生重叠或冲突，在此列出建议：
 
 | 子文档 | 冲突点 | 建议 |
 |--------|--------|------|

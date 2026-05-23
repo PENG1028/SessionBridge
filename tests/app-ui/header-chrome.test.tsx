@@ -51,7 +51,7 @@ vi.mock('../../app/console/core/core-client-provider', () => ({
 // ─── Now import after mocks are set up ──────────────────────────
 import { ConsoleHeader } from '../../app/console/shell/console-header';
 import type { ConsoleHeaderProps } from '../../app/console/shell/console-header';
-import { StatusBar } from '../../app/console/system-ui/status-bar';
+import { StatusBar } from '../../app/console/shell/core-status-bar';
 import { runWorkbenchCommand } from '../../app/console/actions/workbench-command-dispatch';
 import {
   syncChromeContributions,

@@ -7,7 +7,7 @@ import {
 import { evaluateWhen, type WhenContext } from '../../../lib/evaluate-when';
 
 // ── Icon Name Resolution ──────────────────────────────────────────
-// Maps string icon names from extension manifests to lucide components.
+// Maps string icon names from plugin manifests to lucide components.
 
 const iconMap: Record<string, ComponentType<{ className?: string }>> = {
   activity: Activity,

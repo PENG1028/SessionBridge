@@ -13,7 +13,7 @@ import { NodeManager } from '../../app/console/system-pages/node-manager';
 import { Settings } from '../../app/console/system-pages/settings';
 import { LogsViewer } from '../../app/console/system-pages/logs-viewer';
 import { Approvals } from '../../app/console/system-pages/approvals';
-import { ApprovalCenter } from '../../app/console/system-ui/approval-center';
+import { ApprovalCenter } from '../../app/console/overlays/approval-center';
 import type { CoreEvent } from '../../app/console/core/core-types';
 
 // Helper to create a mock CoreClient with canned responses

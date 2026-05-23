@@ -1,6 +1,6 @@
 'use client';
 
-// ─── Plugin Manifest types — matches sb-extension.json schema ──
+// ─── Plugin Manifest types — matches plugin.yaml schema ──
 
 export interface PluginManifest {
   id: string;
