@@ -1,4 +1,4 @@
-# SessionNode v2 — System UI 现状盘点
+# SessionNode v2 — App UI 现状盘点
 
 > 基于 `app/` 目录的模块盘点
 > 格式：模块路径 → 当前职责 → 旧概念依赖 → 未来归属 → 迁移风险 → 迁移建议
@@ -53,8 +53,8 @@
 
 | 模块 | 当前职责 | 旧概念依赖 | 未来归属 | 迁移风险 | 迁移建议 |
 |------|---------|-----------|---------|---------|---------|
-| `app/console/panels/panel-registry.ts` | Panel 注册表：register/unregister/getPanels/syncExtensionPanels、component overrides、extension panel 同步 | **extension manifest 概念**、`syncExtensionPanels()` 负责同步扩展面板 | **system-ui** → **surface-registry** 的子集 | 高。Panel 和 View 当前是两套注册表，未来应统一为 surface 贡献 | 合并 panel-registry 和 view-registry 为 **surface-registry.ts**。panels 只是 `surface-type = "sidebar.left"` 或 `"panel.bottom"` 的特殊 surface |
-| `app/console/panels/register-panel-components.ts` | 注册已知 panel 的 React 组件（LogsPanel/TerminalPanel/SystemPanel 等） | 通过 `registerPanelComponent()` 回调注册 | **system-ui** → **plugin-host** 的内置组件注册 | 中。需区分"系统内置"和"插件贡献" | 迁移到 `plugin-host/component-registry.ts`，system-ui 组件标记为 `type: "builtin"`，插件组件标记为 `type: "custom"` |
+| `app/console/panels/panel-registry.ts` | Panel 注册表：register/unregister/getPanels/syncPluginPanels、component overrides、plugin panel 同步 | **plugin manifest 概念**、旧称 `syncExtensionPanels`，已由 `syncPluginPanels()` 取代 | **app-ui** → **surface-registry** 的子集 | 高。Panel 和 View 当前是两套注册表，未来应统一为 surface 贡献 | 合并 panel-registry 和 view-registry 为 **surface-registry.ts**。panels 只是 `surface-type = "sidebar.left"` 或 `"panel.bottom"` 的特殊 surface |
+| `app/console/panels/register-panel-components.ts` | 注册已知 panel 的 React 组件（LogsPanel/TerminalPanel/SystemPanel 等） | 通过 `registerPanelComponent()` 回调注册 | **app-ui** → **plugin-host** 的内置组件注册 | 中。需区分"系统内置"和"插件贡献" | 迁移到 `plugin-host/component-registry.ts`，app-ui 组件标记为 `type: "builtin"`，插件组件标记为 `type: "custom"` |
 | `app/console/panels/extension-panels.tsx` | 内置 panel 组件实现（LogsPanel/TerminalPanel/SystemPanel/ProcessesPanel） | 部分组件依赖 adapterId 概念 | **system-ui**（作为内置组件保留） | 低。组件本身可复用 | 保留，移动到 `system-ui/panels/` 目录。后续扩展 panel 移到 feature plugin |
 | `app/console/panels/files-panel.tsx` | 文件浏览器 panel | 无 | **feature plugin** → file-explorer | 中。文件浏览是产品功能，不属于系统管理 | 移到 `plugins/file-explorer/web/` |
 | `app/console/panels/files-context-panel.tsx` | 文件上下文 panel | 无 | **feature plugin** | 中 | 同上 |
@@ -109,7 +109,7 @@
 | `workbench-context 巨型上下文` | workbench-context.tsx, claude-chat-view.tsx, terminal-view.tsx, extension-panels.tsx | **极高**。紧耦合，拆分风险大 |
 | `adapter 驱动的 view 选择` | view-registry.ts (getAdapterViewId, getDefaultViewType), view-selector.tsx | **中**。视图选择应基于 surface + plugin |
 | `ChromePolicy` | view-registry.ts | **低**。chrome 策略可以由 surface 声明替代 |
-| `syncExtensionPanels` | panel-registry.ts | **中**。extension 概念升级为 plugin |
+| `syncPluginPanels`（旧称 `syncExtensionPanels`） | panel-registry.ts | **中**。extension 概念升级为 plugin，已重命名 |
 
 ---
 

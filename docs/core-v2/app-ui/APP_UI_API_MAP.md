@@ -1,4 +1,4 @@
-# SessionNode v2 — System UI API Map
+# SessionNode v2 — App UI API Map
 
 > 统一所有 UI 页面、组件、插件合同中的 Core API 命名。
 > 所有 UI 文档必须使用此映射表中的命名，不得混用。
@@ -49,7 +49,7 @@ action.*      操作审计
 
 > **注意**: `approval.approve`、`approval.deny`、`approval.get`、`approval.takeOver`、`approval.viewing` **没有实现**。审批/拒绝操作统一走 `notify.respond`（见 2.1 节），action 字段为 `"allow"` | `"deny"`。`approval.list` 是 R13 实现的 thin facade，仅返回 pending 状态的请求。
 
-> **ApprovalCenter 全局面板**: `app/console/system-ui/approval-center.tsx` 是一个固定在右下角（`z-[200]`）的可折叠全局审批面板，无需导航到 Approvals 页面即可查看和处理审批。挂载时通过 `approval.list` 拉取已有 pending approvals（hydration），WS 重连后自动重新 hydration。同时监听 `notify.approval.request` 接收新推送，监听 `notify.approval.result` 自动移除已处理的请求。通过 `AppShell` 的 `core` prop 挂载。
+> **ApprovalCenter 全局面板**: `app/console/overlays/approval-center.tsx` 是一个固定在右下角（`z-[200]`）的可折叠全局审批面板，无需导航到 Approvals 页面即可查看和处理审批。挂载时通过 `approval.list` 拉取已有 pending approvals（hydration），WS 重连后自动重新 hydration。同时监听 `notify.approval.request` 接收新推送，监听 `notify.approval.result` 自动移除已处理的请求。通过 `ConsoleOverlays` 组件渲染为全局浮层。
 
 ### 2.3 logs — 运行时日志
 

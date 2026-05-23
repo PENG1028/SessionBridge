@@ -31,7 +31,7 @@ page.tsx
   ├── 注册命令（command-registry）
   ├── 注册操作（action-registry）
   ├── 同步上下文菜单（context-menu-registry）
-  └── 扩展面板同步（panel-registry syncExtensionPanels）
+  └── plugin panel 同步（panel-registry syncPluginPanels，旧称 syncExtensionPanels）
 ```
 
 ### 当前模型的问题

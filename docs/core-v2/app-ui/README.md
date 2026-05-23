@@ -1,17 +1,17 @@
-# SessionNode v2 — System UI 文档体系
+# SessionNode v2 — App UI 文档体系
 
-> 当前 app 目录模块地图、System UI 定位、与 Go Core / Feature Plugin / External Client 的边界
+> 当前 app 目录模块地图、App UI 定位、与 Go Core / Feature Plugin / External Client 的边界
 > 配套文档：SYSTEM_UI_PLUGIN.md、UX_SURFACES.md、INVENTORY.md
 
 ---
 
-## System UI 的定位
+## App UI 的定位
 
-System UI 是 SessionNode Go Core 的**内置控制面**。它不是"普通前端"，而是一个**拥有最高 UI 权限但仍然走 Core Protocol 的 system plugin**。
+App UI 是 SessionNode Go Core 的**内置控制面**。它不是"普通前端"，而是一个**拥有最高 UI 权限但仍然走 Core Protocol 的 system plugin**。
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    System UI Plugin                           │
+│                    App UI Plugin                               │
 │  React SPA                                                    │
 │  Dashboard · Nodes · Sessions · Plugin Manager · Settings    │
 │  Log Viewer · Permission Grant · Notification Center         │
@@ -22,18 +22,18 @@ System UI 是 SessionNode Go Core 的**内置控制面**。它不是"普通前�
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### System UI 的核心原则
+### App UI 的核心原则
 
 1. **不拥有 Core 状态** — session 列表、节点拓扑、插件安装状态全部由 Core 维护
 2. **不绕过 Core 权限** — 即使权限高，也必须走 `action.request`，受 audit 记录
 3. **不实现插件业务逻辑** — 不解析 claude-code stream-json，不实现终端模拟器
-4. **不依赖 Feature Plugin** — Core + System UI 独立可用
+4. **不依赖 Feature Plugin** — Core + App UI 独立可用
 
 ---
 
 ## 当前 app 目录模块地图
 
-当前 `app/` 目录（旧 sessionBridge 演进产物）包含了后续 System UI 的绝大部分代码：
+当前 `app/` 目录（旧 sessionBridge 演进产物）包含了后续 App UI 的绝大部分代码：
 
 ```
 app/
@@ -135,13 +135,13 @@ app/
 
 ┌──────────────────────────────────────────────────────────────────┐
 │                     Feature Plugin                                 │
-│  通过 PluginHost 在 System UI 中获得渲染位置                        │
+│  通过 PluginHost 在 App UI 中获得渲染位置                            │
 │  调用 Core Capability API（带 pluginId，受权限校验）                │
-│  不直接修改 System UI 的布局/注册表                                 │
+│  不直接修改 App UI 的布局/注册表                                     │
 └──────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────┐
-│                     System UI                                      │
+│                     App UI                                          │
 │  通过 Core Client 调用 Core API（pluginId: "system-ui"）           │
 │  拥有 PluginHost 加载 Feature Plugin 的 Web 贡献                   │
 │  拥有 Layout Engine 管理 Surface 的布局和投影                      │
@@ -159,11 +159,11 @@ app/
 ### 通信路径
 
 ```
-System UI ─── Core Client ─── HTTP/WS ───▶ Go Core
+App UI ─── Core Client ─── HTTP/WS ───▶ Go Core
 Feature Plugin ─── Core Client ─── HTTP/WS ───▶ Go Core
 External Client ─── HTTP ───▶ Go Core
 
-Feature Plugin ↔ System UI：不直接通信，都通过 Core
+Feature Plugin ↔ App UI：不直接通信，都通过 Core
 ```
 
 ---
@@ -179,7 +179,7 @@ Feature Plugin ↔ System UI：不直接通信，都通过 Core
 | SYSTEM_UI_FEATURES.md | SYSTEM_UI_PLUGIN.md 已有 Dashboard/Nodes/Sessions/Logs/Settings/Plugin Manager/Permission Grant 的概述 | SYSTEM_UI_FEATURES.md 使用统一模板补全所有功能的失败状态和 Core API 映射 |
 | SETTINGS_AND_PLUGIN_MANAGER.md | SYSTEM_UI_PLUGIN.md 的 Settings 和 Plugin Manager 描述较简略 | SETTINGS_AND_PLUGIN_MANAGER.md 作为子文档提供完整 IA 和所有 Core API 调用 |
 | MIGRATION_PLAN.md | 全新内容，不与现有文档冲突 | — |
-| SYSTEM_UI_API_MAP.md | 现有 wireframe 和 feature 文档中使用了不同的 API 别名 | SYSTEM_UI_API_MAP.md 作为规范参考，其他文档逐步对齐 |
+| APP_UI_API_MAP.md | 现有 wireframe 和 feature 文档中使用了不同的 API 别名 | APP_UI_API_MAP.md 作为规范参考，其他文档逐步对齐 |
 | ACCESS_CONTROL_WIREFRAMES.md | SETTINGS.md 原有 Access Control 子段过于简略 | 独立成完整页面，Settings 中的 Access Control 改为指向此文档 |
 | PLUGIN_UI_BOUNDARIES.md | PLUGIN_UI_CONTRACT.md 中的 ClaudeCode 示例前后不一致 | PLUGIN_UI_BOUNDARIES.md 作为边界参考，PLUGIN_UI_CONTRACT.md 以文档为准 |
 
@@ -189,7 +189,7 @@ Feature Plugin ↔ System UI：不直接通信，都通过 Core
 
 ## Wireframes 线框图
 
-`wireframes/` 目录包含 System UI 所有页面的 ASCII 线框图，描述布局、组件、交互、状态。
+`wireframes/` 目录包含 App UI 所有页面的 ASCII 线框图，描述布局、组件、交互、状态。
 
 | 文档 | 描述 |
 |------|------|
@@ -215,9 +215,9 @@ Feature Plugin ↔ System UI：不直接通信，都通过 Core
 - Plugin Grants（按插件聚合的权限概览）
 - Permission Audit Log（不可篡改的权限变更记录）
 
-## System UI API Map
+## App UI API Map
 
-[SYSTEM_UI_API_MAP.md](SYSTEM_UI_API_MAP.md) 统一所有 UI 文档中的 Core API 命名（11 个命名空间）：
+[APP_UI_API_MAP.md](APP_UI_API_MAP.md) 统一所有 UI 文档中的 Core API 命名（11 个命名空间）：
 
 | 命名空间 | 覆盖 |
 |---------|------|
@@ -241,7 +241,7 @@ Feature Plugin ↔ System UI：不直接通信，都通过 Core
 
 - 决策树：custom-react / host-rendered / iframe / system component reuse
 - 核心业务 UI → custom-react（复杂交互、特有数据格式、用户 facing）
-- 管理/配置 UI → host-rendered（System UI 提供组件）
+- 管理/配置 UI → host-rendered（App UI 提供组件）
 - 禁止模式清单（6 项）
 - 边界校验清单（7 项，实现前逐项检查）
 - 以 ClaudeCode 为例展示分层：聊天 UI = custom-react、配置/权限/缓存 = host-rendered、内部 SearchBox/EmptyState = system-ui 复用
@@ -249,7 +249,7 @@ Feature Plugin ↔ System UI：不直接通信，都通过 Core
 
 ## Plugin UI Contract
 
-[PLUGIN_UI_CONTRACT.md](PLUGIN_UI_CONTRACT.md) 定义插件如何与 System UI 集成：
+[PLUGIN_UI_CONTRACT.md](PLUGIN_UI_CONTRACT.md) 定义插件如何与 App UI 集成：
 
 - 5 种贡献类型（custom-react view/panel、host-rendered component、settings section、command、menu、status item、approval request、notification）
 - Manifest 声明示例（host-rendered、custom-react、settings）
@@ -266,14 +266,14 @@ Feature Plugin ↔ System UI：不直接通信，都通过 Core
 ## 文档阅读顺序
 
 ```
-1. SYSTEM_UI_PLUGIN.md           — 先读：System UI 是什么、职责边界
+1. SYSTEM_UI_PLUGIN.md           — 先读：App UI 是什么、职责边界
 2. UX_SURFACES.md                — 再读：Surface 模型、SurfaceType
 3. INVENTORY.md                  — 再读：当前 app 现状盘点
 4. SURFACE_MODEL.md              — 再读：从旧模型到新 Surface 的迁移
 5. SYSTEM_UI_FEATURES.md         — 再读：16 个系统功能的详细设计
 6. PLUGIN_HOST.md                — 再读：Plugin Host 设计
 7. SETTINGS_AND_PLUGIN_MANAGER.md — 再读：设置和插件管理
-8. SYSTEM_UI_API_MAP.md          — 再读：API 命名映射（所有文档的 API 参考）
+8. APP_UI_API_MAP.md              — 再读：API 命名映射（所有文档的 API 参考）
 9. PLUGIN_UI_BOUNDARIES.md       — 再读：插件渲染方式边界和决策树
 10. PLUGIN_UI_CONTRACT.md        — 再读：插件 UI 集成契约
 11. COMPONENT_CATALOG.md         — 再读：组件规格手册（实现参考）

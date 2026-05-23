@@ -3,7 +3,7 @@
 > Core self-update awareness and safety base. This implements the update checking
 > and planning layer WITHOUT actual auto-update execution.
 > **update.apply is intentionally never registered.**
-> Related: CAPABILITY_STATUS.md, SYSTEM_UI_API_MAP.md
+> Related: CAPABILITY_STATUS.md, APP_UI_API_MAP.md
 
 ---
 

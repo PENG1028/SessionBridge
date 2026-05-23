@@ -265,7 +265,7 @@ web:
   surfaceRegistry.getContributions("sidebar.left") → SurfaceContribution[]
 
 删除：
-  - syncExtensionPanels() → move to PluginHost contribution-loader
+  - syncPluginPanels()（旧称 syncExtensionPanels）→ move to PluginHost contribution-loader
   - extensionPanelIds → move to PluginHost
   - componentOverrides → move to contribution-loader
   - getPanelComponentOverride

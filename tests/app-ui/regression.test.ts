@@ -1,8 +1,8 @@
-// ─── Regression tests for System UI migration ──────────────────
+// ─── Regression tests for App UI migration ──────────────────
 // Verifies that:
-// 1. No `process.stdin` usage in new System UI path
+// 1. No `process.stdin` usage in App UI pages
 // 2. No localStorage session list restore in new code
-// 3. No ClaudeChatView imported by system-ui host-rendered registry
+// 3. No ClaudeChatView imported by host-rendered registry
 
 import { describe, it, expect } from 'vitest';
 import fs from 'fs';
@@ -40,15 +40,17 @@ function scanDirectory(dir: string, pattern: RegExp): string[] {
   return results;
 }
 
-describe('Regression: no process.stdin in System UI path', () => {
-  const systemUiDir = path.resolve(__dirname, '../../app/console/system-ui');
+describe('Regression: no process.stdin in App UI pages', () => {
+  const systemPagesDir = path.resolve(__dirname, '../../app/console/system-pages');
+  const overlaysDir = path.resolve(__dirname, '../../app/console/overlays');
+  const shellDir = path.resolve(__dirname, '../../app/console/shell');
   const coreDir = path.resolve(__dirname, '../../app/console/core');
   const surfaceDir = path.resolve(__dirname, '../../app/console/surface');
   const pluginHostDir = path.resolve(__dirname, '../../app/console/plugin-host');
 
-  const dirs = [systemUiDir, coreDir, surfaceDir, pluginHostDir];
+  const dirs = [systemPagesDir, overlaysDir, shellDir, coreDir, surfaceDir, pluginHostDir];
 
-  it('system-ui files do not contain process.stdin', () => {
+  it('App UI pages do not contain process.stdin', () => {
     for (const dir of dirs) {
       if (!fs.existsSync(dir)) continue;
       const matches = scanDirectory(dir, /process\.stdin/);
@@ -56,7 +58,7 @@ describe('Regression: no process.stdin in System UI path', () => {
     }
   });
 
-  it('system-ui files do not contain stream.stdin', () => {
+  it('App UI pages do not contain stream.stdin', () => {
     for (const dir of dirs) {
       if (!fs.existsSync(dir)) continue;
       const matches = scanDirectory(dir, /stream\.stdin/);
@@ -66,12 +68,14 @@ describe('Regression: no process.stdin in System UI path', () => {
 });
 
 describe('Regression: no localStorage session list restore', () => {
-  const systemUiDir = path.resolve(__dirname, '../../app/console/system-ui');
+  const systemPagesDir = path.resolve(__dirname, '../../app/console/system-pages');
+  const overlaysDir = path.resolve(__dirname, '../../app/console/overlays');
+  const shellDir = path.resolve(__dirname, '../../app/console/shell');
   const coreDir = path.resolve(__dirname, '../../app/console/core');
   const surfaceDir = path.resolve(__dirname, '../../app/console/surface');
   const pluginHostDir = path.resolve(__dirname, '../../app/console/plugin-host');
 
-  const dirs = [systemUiDir, coreDir, surfaceDir, pluginHostDir];
+  const dirs = [systemPagesDir, overlaysDir, shellDir, coreDir, surfaceDir, pluginHostDir];
 
   it('new files do not restore session list from localStorage', () => {
     for (const dir of dirs) {
@@ -132,11 +136,11 @@ describe('Regression: no ClaudeChatView import in host-rendered registry', () =>
 });
 
 describe('Regression: stream.write is the only stdin method', () => {
-  const systemUiDir = path.resolve(__dirname, '../../app/console/system-ui');
+  const systemPagesDir = path.resolve(__dirname, '../../app/console/system-pages');
   const coreDir = path.resolve(__dirname, '../../app/console/core');
 
-  it('system-ui pages use stream.write for input', () => {
-    const dirs = [systemUiDir, coreDir].filter(d => fs.existsSync(d));
+  it('App UI pages use stream.write for input', () => {
+    const dirs = [systemPagesDir, coreDir].filter(d => fs.existsSync(d));
     let foundStreamWrite = false;
 
     for (const dir of dirs) {

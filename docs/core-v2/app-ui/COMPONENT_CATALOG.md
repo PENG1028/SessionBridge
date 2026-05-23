@@ -1,7 +1,7 @@
-# SessionNode v2 — System UI Component Catalog
+# SessionNode v2 — App UI Component Catalog
 
-> 所有 system-ui 内置组件的规格说明。
-> 命名约定: `system-ui.*` 为内置组件，`pluginId.*` 为插件贡献组件。
+> 所有 app-ui 内置组件的规格说明。
+> 命名约定: `app-ui.*` 为内置组件，`pluginId.*` 为插件贡献组件。
 
 ---
 

@@ -1,6 +1,6 @@
-# SessionNode v2 — System UI 迁移计划
+# SessionNode v2 — App UI 迁移计划
 
-> 从当前 app/（旧 sessionBridge 模型）到 System UI Plugin 的分阶段迁移方案
+> 从当前 app/（旧 sessionBridge 模型）到 App UI Plugin 的分阶段迁移方案
 > 共 6 个 Phase（Phase 0–5），可并行执行
 
 ---
@@ -180,7 +180,7 @@ function SurfaceRenderer({ context }: { context: SurfaceRenderContext }) {
 | 当前方式 | 改造后 |
 |---------|--------|
 | `register-panel-components.ts` 模块加载时注册 | `PluginHost.init()` 时注册 system-ui 内置组件 |
-| `syncExtensionPanels()` 手动同步 | PluginHost 自动从 Core `plugin.registered` 事件同步 |
+| `syncPluginPanels()`（旧称 `syncExtensionPanels`）手动同步 | PluginHost 自动从 Core `plugin.registered` 事件同步 |
 | view/panel/command/menu 各自独立同步 | PluginHost 统一处理 contributes |
 | 插件组件直接 import | PluginHost 通过 contribution-loader 动态加载 |
 
@@ -300,7 +300,7 @@ function SurfaceRenderer({ context }: { context: SurfaceRenderContext }) {
 | `workbench-state.ts` 中的 `instanceId`, `_surfaceId`, `_stale`, `_orphaned` | 旧概念 | sessionId |
 | `workbench-state.ts` 中的 `saveLayoutsToStorage`/`loadLayoutsFromStorage` | 违反了"localStorage 不存 session 真相" | 删除 |
 | `workbench-state.ts` 中的 `AppWorkbenchState.instanceStates` | instanceId 绑定 | AppWorkbenchState surfaceStates |
-| `syncExtensionPanels` | 被 PluginHost contribution-loader 替代 | PluginHost |
+| `syncPluginPanels`（旧称 `syncExtensionPanels`） | 被 PluginHost contribution-loader 替代 | PluginHost |
 | `syncLegacyRegistry` | 不再需要 | 删除 |
 | `getAdapterViewId` / `setAdapterViewMap` | adapter 概念被 plugin 替代 | 删除 |
 | `registerAdapterMeta` / `getAdapterMeta` | adapter 概念被 plugin 替代 | 由 manifest 提供 |
