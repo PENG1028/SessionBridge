@@ -1,0 +1,74 @@
+manifestVersion: "1"
+id: kitchen-sink
+name: Kitchen Sink
+version: 0.1.0
+type: plugin
+trusted: false
+description: Example plugin demonstrating all contribution types — views, commands, panels, chrome items, permissions, and configuration.
+author: SessionBridge Examples
+
+core:
+  permissions:
+    - id: ks.read
+      description: Read Kitchen Sink state and logs
+      capabilities:
+        - node.list
+      default: ask
+
+  environment:
+    checks:
+      - id: ks-shell
+        type: binary
+        required: false
+        command: echo
+        installHint: "No external runtime required"
+
+  history:
+    defaultPolicy: memory
+
+adapters:
+  system-ui:
+    views:
+      - id: ks.explorer
+        surface: panel.left
+        type: host-rendered
+        componentId: KsExplorer
+        title: KS Explorer
+        icon: compass
+      - id: ks.info
+        surface: panel.right
+        type: host-rendered
+        componentId: KsInfo
+        title: KS Info
+        icon: info
+    panels:
+      - id: ks.stats
+        surface: panel.right
+        type: host-rendered
+        componentId: KsStats
+        title: KS Stats
+        icon: bar-chart
+    commands:
+      - id: ks.hello
+        title: Say Hello
+        icon: wave
+      - id: ks.greet
+        title: Greet World
+        icon: globe
+      - id: ks.reset
+        title: Reset State
+        icon: rotate-ccw
+    status:
+      - id: ks.hint.greet
+        kind: hint
+        label: Greet
+        keys: Ctrl+G
+        placement: bottom-right
+      - id: ks.button.reset
+        kind: button
+        label: Reset
+        placement: bottom-right
+
+# Planned: configuration, notifications, menus, languages
+# These contribution types are not yet supported in plugin.yaml v1.
+# See docs/core-v2/app-ui/PLUGIN_HOST.md for the roadmap.

@@ -101,11 +101,8 @@ app/
 │   └── dialogs/
 │       └── directory-picker.tsx
 │
-├── extensions/                   # 扩展/适配器层
-│   ├── registry.ts
-│   ├── types.ts
+├── plugins/                       # 插件声明（plugin.yaml）
 │   ├── agent-core/              # agent 运行时
-│   └── ...
 │
 └── lib/                          # 客户端共享工具
 ```
@@ -117,7 +114,7 @@ app/
 | 归类 | 范围 | 理由 |
 |------|------|------|
 | **保留为 system-ui 内置** | stage/, workbench/slots/, sidebar/, panels/panel-registry, commands/command-registry, actions/action-registry, menus/context-menu-registry, shell/settings-panel | 这些构成 UI 基础设施和管理页面，属于控制面 |
-| **迁移为 feature plugin** | claude-chat-view.tsx, terminal-view.tsx, extensions/agent-core/* | Claude Chat 和 Terminal 是产品功能，不属于系统管理 |
+| **迁移为 feature plugin** | claude-chat-view.tsx, terminal-view.tsx, agent-core/* | Claude Chat 和 Terminal 是产品功能，不属于系统管理 |
 | **迁移为 plugin-host** | panels/register-panel-components.ts（内置组件注册逻辑）, panels/extension-panels.tsx（内置 panel 组件） | 组件注册机制应归 PluginHost 管理 |
 | **废弃/删除** | view-registry.ts 中的 adapterId/surface 映射、adapterMeta 缓存、localStorage session 持久化 | 旧概念，在新模型中不存在 |
 | **需要重写** | page.tsx（职责过重）, workbench-state.ts（instanceId 绑定）, workbench-context.tsx（过大） | 逐步拆分为 surface 模型 |

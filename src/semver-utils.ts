@@ -1,5 +1,5 @@
 // ─── Lightweight semver helpers ────────────────────────────────
-// Local copy — formerly in extensions/semver.ts.
+// Local copy (formerly in the old extensions/ directory).
 
 export interface SemVer { major: number; minor: number; patch: number }
 

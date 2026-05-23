@@ -8,7 +8,7 @@
 // Plugin authors interact with StateBus through two paths:
 //   1.  Direct API for imperative read/write/subscribe
 //   2.  Plugin hooks for lifecycle interception (declared in
-//       sb-extension.json, activated at plugin load time)
+//       plugin.yaml, activated at plugin load time)
 
 import type {
   StateEntry,
@@ -281,7 +281,7 @@ export class StateBus {
    * Register a plugin's state namespace.
    * Called by the extension host when activating a plugin.
    *
-   * Plugin authors declare `contributes.state` in sb-extension.json;
+   * Plugin authors declare state contributions in plugin.yaml;
    * the extension host calls this method at activation time.
    */
   registerPlugin(plugin: StatePluginRegistrar): void {

@@ -57,7 +57,7 @@ npm run legacy:relay
 | **App UI** | `app/` | **官方 UI** | Next.js React SPA，通过 WebSocket/HTTP 连接 Go Core |
 | **Plugins** | `plugins/` | **插件声明源** | `plugin.yaml` 声明能力、权限、UI/CLI 贡献 |
 | **Legacy Node relay** | `src/` | **已废弃** | 旧 Node.js relay server |
-| **Legacy extensions** | `extensions/` | **已废弃** | 旧的扩展/适配器系统 |
+| **Legacy extensions** | (已删除) | **已删除** | 旧的扩展/适配器系统，已被 plugins/ 替代 |
 | **Legacy agent-core** | `agent-core/` | **已废弃** | 旧的 agent 核心运行时 |
 
 ### Go Core 环境变量

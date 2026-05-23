@@ -2,7 +2,7 @@
 
 import { evaluateWhen, type WhenContext } from '../../../lib/evaluate-when';
 
-// ─── Local chrome types (no cross-layer import from extensions/) ──
+// ─── Local chrome types ──
 
 export type ContextControlPlacement =
   | 'bottom-left'

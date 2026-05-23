@@ -1,5 +1,5 @@
 // ─── Relay Protocol v1 ──────────────────────────────────
-// Message envelope helpers — local copy, formerly in extensions/protocol.ts.
+// Message envelope helpers — local copy (formerly in the old extensions/ directory).
 
 export interface Envelope {
   v: 1;

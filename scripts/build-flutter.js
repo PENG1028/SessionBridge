@@ -46,7 +46,7 @@ function buildFlutter(platform) {
   const binarySrc = join(RELAY_BINARY_DIR, binaryName);
   if (!existsSync(binarySrc)) {
     console.log(`    → Relay binary not found at ${binarySrc}`);
-    console.log(`    → Run "node scripts/build-relay.js" first`);
+    console.log(`    → Run "node scripts/build-legacy-relay.js" first`);
     return false;
   }
 

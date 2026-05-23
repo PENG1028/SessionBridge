@@ -4,7 +4,7 @@
 
 import { registerCommand, getCommand } from '../commands/command-registry';
 
-// ─── Local chrome types (mirrors extensions/types without the cross-layer import) ──
+// ─── Local chrome types ──
 export interface StatusBarChromeContribution {
   id: string;
   text: string;

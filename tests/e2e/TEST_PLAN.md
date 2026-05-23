@@ -166,12 +166,12 @@ ls tests/e2e/screenshots/
 
 ## Plugin Inventory
 
-| Extension | Path | Manifest | Status |
-|-----------|------|----------|--------|
-| Shell | `extensions/shell/sb-extension.json` | adapter: shell | Core |
-| Claude Code | `extensions/claude-code/sb-extension.json` | adapter: claude-code | Plugin |
-| System Info | `extensions/system-info/sb-extension.json` | adapter: system-info | Plugin |
-| Host | `extensions/host/sb-extension.json` | contributes core views | Core |
+| Plugin | Path | Manifest | Status |
+|--------|------|----------|--------|
+| Terminal | `plugins/terminal/plugin.yaml` | adapter: shell | Core |
+| System Info | `plugins/system-info/plugin.yaml` | adapter: system-info | Plugin |
+| Claude Code | (planned) | adapter: claude-code | Plugin |
+| Core (Host) | sessionnode-core built-in | contributes core views | Core |
 
 ---
 
@@ -243,7 +243,7 @@ sessionBridge/
 │   ├── start-core.js         ← 启动 Go Core
 │   ├── build-core.js         ← 构建 Go Core 二进制
 │   └── dev-all.js            ← 开发模式 (Core + Next.js)
-├── extensions/               ← Plugin extensions
+├── plugins/                  ← Plugin declarations (plugin.yaml)
 │   ├── shell/                ← Terminal adapter (core)
 │   ├── claude-code/          ← Claude Code adapter
 │   ├── system-info/          ← System info adapter

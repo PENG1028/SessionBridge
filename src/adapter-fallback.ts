@@ -1,7 +1,7 @@
 // ─── Adapter Fallback Utilities ──────────────────────────
-// Minimal replacements for extensions/registry functions.
-// The relay no longer loads extension adapters from sb-extension.json
-// manifests. A minimal shell adapter is provided so that shell.spawn
+// Minimal in-process adapter registry.
+// The relay no longer loads extension adapters from external manifests.
+// A minimal shell adapter is provided so that shell.spawn
 // and terminal sessions continue to work without the old extension runtime.
 
 import { spawn as ptySpawn } from 'node-pty';

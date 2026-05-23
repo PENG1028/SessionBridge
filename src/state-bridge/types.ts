@@ -7,7 +7,7 @@
 // through the sync engine, not through ad-hoc message passing.
 //
 // Plugin authors extend StateBridge by declaring state namespaces
-// in their sb-extension.json manifest.
+// in their plugin.yaml manifest.
 
 // ─── Key ─────────────────────────────────────────────────
 // state://<namespace>/<path>
@@ -174,8 +174,7 @@ export interface Subscription {
 
 /**
  * A state namespace that a plugin provides — declared in
- * sb-extension.json `contributes.state` and passed to
- * StateBridge at plugin activation time.
+ * plugin.yaml and passed to StateBridge at plugin activation time.
  */
 export interface StateDeclaration {
   /** Namespace prefix, e.g. "plugin:editor" → state://plugin:editor/* */

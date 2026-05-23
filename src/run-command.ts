@@ -78,7 +78,7 @@ async function waitForAgent(port: number, timeoutMs = 10000): Promise<boolean> {
 /** Start agent in the background. */
 function startAgentBg(opts: { relayUrl?: string; dir?: string; label?: string; dashPort: number }): void {
   const args = [
-    process.argv[1] || 'dist/src/index.js',
+    process.argv[1] || 'dist/src/index.js',  // legacy relay entry point
     'agent',
     `--dashboard-port=${opts.dashPort}`,
   ];

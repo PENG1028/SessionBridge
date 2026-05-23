@@ -1,5 +1,5 @@
 // ─── Relay Types — local type definitions ──────────────────
-// Previously imported from extensions/types.ts.
+// Local adapter type definitions.
 // Only the subset used by src/ is kept.
 
 // ═══════════════════════════════════════════════════════════════════
@@ -14,7 +14,7 @@ export type PermissionCategory =
   | 'configurationWrite';
 
 // ═══════════════════════════════════════════════════════════════════
-// Adapter types — local subset, formerly in extensions/types.ts
+// Adapter types — local subset (formerly in the old extensions/ directory)
 // ═══════════════════════════════════════════════════════════════════
 
 export interface AdapterCapabilities {

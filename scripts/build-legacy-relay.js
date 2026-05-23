@@ -1,11 +1,12 @@
-// ─── Relay Server pkg Build Script ──────────────────────────────
-// Compiles the Node.js relay server into a standalone binary.
+// ─── Legacy Relay Server pkg Build Script ──────────────────
+// Legacy Node relay packaging. Deprecated. Go Core is default.
+// Compiles the old Node.js relay server into a standalone binary.
 // Output: dist/relay-server/  (one binary per platform)
 //
 // Usage:
-//   node scripts/build-relay.js               # Build for current platform
-//   node scripts/build-relay.js --all          # Build for all platforms
-//   node scripts/build-relay.js --platform win # Build for Windows only
+//   node scripts/build-legacy-relay.js               # Build for current platform
+//   node scripts/build-legacy-relay.js --all          # Build for all platforms
+//   node scripts/build-legacy-relay.js --platform win # Build for Windows only
 //
 // Prerequisites:
 //   npm install -g @yao-pkg/pkg
@@ -78,7 +79,7 @@ async function main() {
 
   console.log('');
   console.log('  ╔═══════════════════════════════════════╗');
-  console.log('  ║  SessionBridge Relay Binary Build     ║');
+  console.log('  ║  SessionBridge Legacy Relay Build     ║');
   console.log(`  ║  v${version.padEnd(35)}║`);
   console.log('  ╚═══════════════════════════════════════╝');
   console.log('');
