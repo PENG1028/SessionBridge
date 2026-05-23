@@ -68,8 +68,6 @@ export type WSCallback = {
   onSystemNotify?: (notification: { id?: string; type: string; title: string; message?: string; scenarioId?: string; duration?: number; action?: { label: string; onClick: () => void } }) => void;
   /** Dismiss a previously shown notification by server-assigned ID */
   onSystemNotifyDismiss?: (id: string) => void;
-  /** Extension points data from server (views, commands, menus, configs) */
-  onExtensionPoints?: (eps: Record<string, unknown>) => void;
 };
 
 import { VERSION } from '../version';
@@ -183,9 +181,6 @@ export class WSClient {
           });
           if (msg.instances) {
             this.cb.onInstanceList?.(msg.instances, msg.sessionId || null);
-          }
-          if (msg.extensionPoints) {
-            this.cb.onExtensionPoints?.(msg.extensionPoints);
           }
           break;
 

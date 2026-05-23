@@ -13,10 +13,9 @@ import { join, extname, dirname } from "path";
 import type { PermissionModel } from "../agent-core/permissions";
 import type { NotificationModel } from "../agent-core/notifications";
 import type { RelayConnection } from "../agent-core/relay-connection";
-import { VERSION } from "../extensions/version";
+import { VERSION } from "./version";
 import { getSystemState, listProcesses, listProcessesSorted } from "../agent-core/introspection";
 import { detectNetwork } from "./network-detect";
-import { extensionPoints } from "../agent-core/extension-points";
 import { persistUpstreamRelay } from "../agent-core/config";
 
 import {
@@ -751,7 +750,7 @@ export async function registerAdminRoutes(
           }
         } else {
           const info = extHost.getInfo() as Record<string, unknown>;
-          info.configurations = extensionPoints.getConfigSchemas();
+          info.configurations = [];
           json(res, 200, info);
         }
         return true;

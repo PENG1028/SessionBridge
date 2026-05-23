@@ -11,10 +11,10 @@ import os from "os";
 import { checkRateLimit } from "./rate-limiter";
 import { CheckpointManager } from "./checkpoint-manager";
 import { InstanceManager } from "./instance-manager";
-import { envelope, parseMsg } from "../extensions/protocol";
-import { adapterRegistry, getDefaultAdapterId, getTerminalAdapterId, resolveAdapter, resolveAdapterByCapability } from "../extensions/registry";
-import { extensionPoints, evaluateWhen } from "../agent-core/extension-points";
-import type { WhenContext, StreamParserDeps } from "../extensions/types";
+import { envelope, parseMsg } from "./relay-protocol";
+import { getDefaultAdapterId, getTerminalAdapterId, resolveAdapter, resolveAdapterByCapability } from "./adapter-fallback";
+import { evaluateWhen, type WhenContext } from "./when-evaluator";
+import type { StreamParserDeps } from "./relay-types";
 import { RelayEventBus } from "../agent-core/event-bus";
 import { AuditLogger } from "./audit-log";
 import { appConfig } from "./config";
@@ -60,12 +60,18 @@ const BROWSER_ALLOWED_CAPABILITIES = new Set([
   'notify.respond',
 ]);
 
-// ─── Session provider helper — first adapter that provides SessionProvider ──
-function sessionProvider() {
-  for (const adapter of adapterRegistry.list()) {
-    const provider = adapter.getSessionProvider?.();
-    if (provider) return provider;
-  }
+// ─── Adapter / extension stubs — relay no longer loads extensions ──
+const adapterRegistry = {
+  get: (_id?: string) => undefined as any,
+  list: () => [] as any[],
+};
+const extensionPoints = {
+  toJSON: () => ({ views: [], commands: [], menus: [], chrome: {}, panels: [] }),
+  findCommand: (_name: string): any => undefined,
+};
+
+// ─── Session provider helper — relay no longer loads adapters ──
+function sessionProvider(): any {
   return undefined;
 }
 
@@ -73,7 +79,7 @@ function sessionProvider() {
 const START_TIME = Date.now();
 
 import { VERSION as SERVER_VERSION } from "../version";
-import { mismatchSeverity } from "../extensions/semver";
+import { mismatchSeverity } from "./semver-utils";
 
 // ─── Config ──────────────────────────────────────────────────────
 const PORT = appConfig.get("port");
@@ -1117,7 +1123,12 @@ async function spawnInstance(instanceId?: string) {
   // Clear stale blocks (but preserve outputBuffer — it's needed for shell replay on reconnect)
   i.blockBuffer.length = 0;
 
-  const adapter = resolveAdapter(i.adapterId) || adapterRegistry.get(getDefaultAdapterId())!;
+  const adapter = resolveAdapter(i.adapterId);
+  if (!adapter) {
+    i.status = 'error';
+    broadcastToBrowsers(envelope("instance.block", { blockType: "error", text: "No adapter available for this instance" }));
+    return;
+  }
   const adapterName = adapter.displayName;
 
   broadcastToBrowsers(envelope("instance.block", { blockType: "status", text: `Spawning ${adapterName} instance...` }));
@@ -2599,7 +2610,7 @@ function setupWssHandlers(): void {
       // Start Claude on first browser connection (skip in test mode)
       if (role === "browser" && !process.env.BRIDGE_TEST_MODE) {
         const activeInst = inst();
-        if (!activeInst.process && activeInst.adapterId && adapterRegistry.get(activeInst.adapterId)?.getCapabilities().structuredEvents) spawnInstance();
+        if (!activeInst.process && activeInst.adapterId && adapterRegistry.get(activeInst.adapterId)?.getCapabilities()?.structuredEvents) spawnInstance();
       }
 
       // Track agent version for update notification
@@ -2664,7 +2675,7 @@ function setupWssHandlers(): void {
 
       if (!process.env.BRIDGE_TEST_MODE) {
         const activeInst = inst();
-        if (!activeInst.process && activeInst.adapterId && adapterRegistry.get(activeInst.adapterId)?.getCapabilities().structuredEvents) spawnInstance();
+        if (!activeInst.process && activeInst.adapterId && adapterRegistry.get(activeInst.adapterId)?.getCapabilities()?.structuredEvents) spawnInstance();
       }
       flushBuffer(ws);
       send(ws, { type: "auth_result", success: true, sessionId: inst().id, instances: instanceManager.toJSON() });
@@ -4411,19 +4422,7 @@ export async function startRelayServer(port?: number): Promise<{ close: () => vo
   secretStore.load();
   configStore.setWorkspaceDir(process.cwd());
 
-  // ── Register adapters via extension loader ──────────────
-  // Must complete before server starts so the adapter registry is populated.
-  try {
-    const { scanAndActivate } = await import("../agent-core/extension-loader");
-    const result = await scanAndActivate({ log: (msg: string) => console.log(`[ext] ${msg}`) });
-    console.log(`  ✓ Extensions activated: ${result.activated.map(a => a.manifest.id).join(', ')}`);
-    if (result.diagnostics.some(d => d.status === 'failed' || d.status === 'invalid')) {
-      const bad = result.diagnostics.filter(d => d.status === 'failed' || d.status === 'invalid');
-      for (const d of bad) console.warn(`  ⚠ Extension "${d.id}": ${d.message}`);
-    }
-  } catch (err) {
-    console.warn(`  ⚠ Adapter loading failed: ${(err as Error).message}`);
-  }
+  // ── Extension loading removed — relay no longer loads adapters ──
 
   // ── Background update check (non-blocking) ────────────
   setTimeout(() => {
@@ -4505,25 +4504,7 @@ export class NodeRelayServer {
     if (this._port !== 0 && (this._port < 1 || this._port > 65535)) {
       this._port = 8080;
     }
-    // Register adapters via extension loader — await so the adapter registry
-    // is populated before the server accepts connections. Without this,
-    // shell.spawn (and other adapter-dependent operations) can race and fail.
-    const extResult = await (async () => {
-      try {
-        const { scanAndActivate } = await import("../agent-core/extension-loader");
-        return await scanAndActivate({ log: (msg: string) => console.log(`[ext] ${msg}`) });
-      } catch (err) {
-        console.warn(`  ⚠ Extension loading failed: ${(err as Error).message}`);
-        return null;
-      }
-    })();
-    if (extResult) {
-      console.log(`  ✓ Extensions activated: ${extResult.activated.map(a => a.manifest.id).join(', ')}`);
-      if (extResult.diagnostics.some(d => d.status === 'failed' || d.status === 'invalid')) {
-        const bad = extResult.diagnostics.filter(d => d.status === 'failed' || d.status === 'invalid');
-        for (const d of bad) console.warn(`  ⚠ Extension "${d.id}": ${d.message}`);
-      }
-    }
+    // Extension loading removed — relay no longer loads adapters
     // Restore sessions from previous run
     const snapshot = sessionPersistence.restore();
     if (snapshot) {

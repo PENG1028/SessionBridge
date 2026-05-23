@@ -6,7 +6,6 @@
   "files": [
     "dist/",
     ".next/",
-    "extensions/",
     "lib/",
     "src/",
     "app/",
@@ -34,7 +33,7 @@
     "dev": "tsx watch src/index.ts",
     "dev:web": "next dev",
     "build": "npm run build:server && BRIDGE_EXPORT=1 next build --webpack",
-    "build:server": "tsc -p tsconfig.server.json && node scripts/copy-manifests.js",
+    "build:server": "tsc -p tsconfig.server.json",
     "postinstall": "npm run build:server",
     "quick": "node bin/bridge.js",
     "typecheck": "tsc --noEmit"

@@ -9,8 +9,8 @@
 import { writeFileSync, readFileSync, existsSync, unlinkSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import type { InstanceManager } from './instance-manager';
-import type { RelayEventBus } from '../extensions/types';
-import { getDefaultAdapterId } from '../extensions/registry';
+import type { RelayEventBus } from './relay-types';
+import { getDefaultAdapterId } from './adapter-fallback';
 
 // ─── Types ─────────────────────────────────────────────────
 

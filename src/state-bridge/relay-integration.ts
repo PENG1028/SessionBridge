@@ -13,7 +13,7 @@
 //   subscribeShellOutput(id, cb)       → stateBus.subscribe(node:*/shells/<id>/output, cb)
 
 import { WebSocket } from 'ws';
-import type { SharedSurface, ReplayPolicy, RuntimeOutputChunk, RuntimeState } from '../../extensions/types';
+import type { SharedSurface, ReplayPolicy, RuntimeOutputChunk, RuntimeState } from '../relay-types';
 import { StateBus } from './index';
 import { stateKey, parseStateKey } from './types';
 import type { StateKey, StateChange } from './types';

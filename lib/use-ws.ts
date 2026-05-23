@@ -48,9 +48,6 @@ export function useSession(
   const [activeInstanceId, setActiveInstanceId] = useState<string | null>(null);
   const activeInstanceIdRef = useRef<string | null>(null);
 
-  // Extension points state (from server welcome message)
-  const [extensionPointsData, setExtensionPointsData] = useState<Record<string, unknown> | null>(null);
-
   const appendOutput = useCallback((data: string) => {
     outputRef.current += data;
     // Keep only last 500KB to avoid memory issues
@@ -214,9 +211,6 @@ export function useSession(
         addMsgLog('system', `${msg.title || msg.type || 'message'}: ${msg.detail || msg.message || ''}`);
         onSystemMessage?.(msg);
       },
-      onExtensionPoints: (eps) => {
-        setExtensionPointsData(eps);
-      },
     });
 
     ws.connect(initialCols, initialRows, isWorkspace);
@@ -336,8 +330,6 @@ export function useSession(
     activateInstance,
     createInstance,
     killInstance,
-    // Extension points
-    extensionPointsData,
     // Generic message send
     sendMessage,
   };

@@ -8,8 +8,8 @@
 import { CheckpointManager } from "./checkpoint-manager";
 import type { ChildProcess } from "child_process";
 import type { WebSocket } from "ws";
-import type { RelayEventBus } from '../extensions/types';
-import { adapterRegistry, getDefaultAdapterId } from "../extensions/registry";
+import type { RelayEventBus, InstanceHandle } from './relay-types';
+import { getDefaultAdapterId } from './adapter-fallback';
 
 // ─── Types ─────────────────────────────────────────────────
 
@@ -74,7 +74,7 @@ export interface InstanceData {
   adapterState: Record<string, unknown>;
 
   // Adapter start handle (set by spawnInstance via adapter.start())
-  handle?: import('../extensions/types').InstanceHandle;
+  handle?: InstanceHandle;
 
   // Metadata
   createdAt: number;

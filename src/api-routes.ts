@@ -13,9 +13,9 @@ import os from "os";
 import type { InstanceManager, InstanceData } from "./instance-manager";
 import type { ConfigManager } from "./config";
 import type { RelayConfigManager } from "../agent-core/config-sync";
-import { envelope } from "../extensions/protocol";
-import { adapterRegistry, getDefaultAdapterId } from "../extensions/registry";
-import type { PermissionCategory } from "../extensions/types";
+import { envelope } from "./relay-protocol";
+import { getDefaultAdapterId } from "./adapter-fallback";
+import type { PermissionCategory } from "./relay-types";
 import { getStateBus } from "./state-bridge";
 
 // ─── Types ─────────────────────────────────────────────────────
@@ -683,13 +683,13 @@ export function registerApiRoutes(
   // List recent sessions via the first available SessionProvider.
   if (method === "GET" && pathname === "/api/sessions") {
     try {
-      const provider = adapterRegistry.list().map(a => a.getSessionProvider?.()).find(Boolean);
+      const provider = ([] as any[]).map(a => a.getSessionProvider?.()).find(Boolean);
       if (!provider) {
         json(res, 200, { sessions: [] });
         return true;
       }
       const results = provider.searchSessions();
-      const sessions = results.slice(0, 100).map(r => ({
+      const sessions = results.slice(0, 100).map((r: any) => ({
         sessionId: r.sessionId,
         display: (r.display || '').slice(0, 200),
         project: r.project || '',
