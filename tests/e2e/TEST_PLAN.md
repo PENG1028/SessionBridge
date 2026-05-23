@@ -234,11 +234,7 @@ sessionBridge/
 │       ├── shell/settings-panel.tsx   ← Settings + Check for Updates
 │       ├── stage/workbench-state.ts   ← Tab/workbench state
 │       └── actions/register-core-actions.tsx  ← Core actions (settings, terminal)
-├── src/                      ← Legacy Node relay（已废弃）
-│   ├── index.ts              ← Legacy CLI entry
-│   ├── relay-server.ts       ← WebSocket + HTTP relay
-│   ├── api-routes.ts         ← REST API endpoints
-│   └── state-bridge/         ← StateBus key-value store
+├── src/                      ← (已删除 — Go Core 是唯一运行时)
 ├── scripts/                  ← 构建/启动脚本
 │   ├── start-core.js         ← 启动 Go Core
 │   ├── build-core.js         ← 构建 Go Core 二进制
@@ -248,6 +244,6 @@ sessionBridge/
 │   ├── claude-code/          ← Claude Code adapter
 │   ├── system-info/          ← System info adapter
 │   └── host/                 ← Host core views
-├── dist/                     ← 构建产物 (go-core/ + legacy server)
+├── dist/                     ← 构建产物 (go-core/)
 └── out/                      ← Compiled UI static output
 ```

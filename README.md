@@ -47,7 +47,6 @@ npm run dev:web      # 仅 Next.js 前端（:3000）
 | `npm start` | 启动 Go Core（默认） |
 | `npm run dev` | Go Core + Next.js 开发模式 |
 | `npm run build` | 构建前端 + Go Core 二进制 |
-| `npm run legacy:relay` | 启动旧版 Node relay（已废弃，仅用于兼容） |
 
 ### 前置条件
 
@@ -125,7 +124,6 @@ Node A (PC)                          Node B (VPS/Relay)                Node C (�
 | `SESSIONNODE_TOKEN` | 空（dev mode） | 认证令牌 |
 | `SESSIONNODE_PLUGIN_DIRS` | `./plugins/` | 插件目录 |
 
-Legacy Node relay 参数见 `node bin/bridge.js legacy-relay --help`。
 
 ---
 
@@ -148,11 +146,9 @@ go-core/             # Go Core 运行时（主 Core）
 plugins/             # 插件声明（plugin.yaml）
 app/                 # 前端 UI（Next.js App Router）
 lib/                 # 客户端工具库（WebSocket、IndexedDB）
-src/                 # Legacy Node relay（已废弃，保留用于兼容）
-  relay-server.ts    # 旧 relay 服务器
-  instance-manager.ts
-agent-core/          # Legacy 扩展运行时（已废弃）
-extensions/          # Legacy 扩展目录（已废弃）
+src/                 # (已删除 — Go Core 是唯一运行时)
+agent-core/          # (已删除)
+extensions/          # (已删除)
 docs/                # 详细文档
 ```
 
@@ -167,7 +163,6 @@ docs/                # 详细文档
 | [docs/protocol.md](docs/protocol.md) | WebSocket 通信协议参考 |
 | [docs/development.md](docs/development.md) | 开发指南、部署、环境变量 |
 | [docs/plugin-system-design.md](docs/plugin-system-design.md) | 插件系统专项设计 |
-| [extensions/ARCHITECTURE.md](extensions/ARCHITECTURE.md) | Adapter 插件体系设计蓝图 |
 
 ---
 

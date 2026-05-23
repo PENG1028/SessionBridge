@@ -10,7 +10,7 @@
 // Steps:
 //   1. git pull from the tracked GitHub remote
 //   2. npm install
-//   3. npm run build (or just build:server for faster updates)
+//   3. npm run build
 //   4. Signal success (caller handles restart)
 
 const { execSync, spawn } = require('child_process');

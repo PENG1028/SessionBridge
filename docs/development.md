@@ -37,14 +37,6 @@ npm start
 # → ws://127.0.0.1:8080
 ```
 
-### Legacy Node relay（已废弃）
-
-```bash
-# 旧 relay 入口 — 仅用于兼容，不再作为默认运行时
-npm run legacy:relay
-# 或: node bin/bridge.js legacy-relay
-```
-
 ---
 
 ## 架构分层
@@ -86,8 +78,6 @@ npm run legacy:relay
 | `npm run build` | 构建前端 + Go Core |
 | `npm run build:web` | 构建前端静态文件 |
 | `npm run build:core` | 构建 Go Core 二进制 |
-| `npm run build:server` | 构建 legacy Node relay（已废弃） |
-| `npm run legacy:relay` | 启动 legacy Node relay |
 | `npm run typecheck` | TypeScript 类型检查 |
 
 ---
@@ -129,13 +119,10 @@ app/                        # Next.js Web UI
 
 lib/                        # 客户端库
 ├── ws-client.ts            # WebSocket 客户端封装
-├── use-ws.ts               # React hook（legacy relay WebSocket）
+├── use-ws.ts               # React hook（WebSocket）
 └── ...
 
-src/                        # Legacy Node relay（已废弃）
-├── index.ts                # 旧 CLI 入口
-├── relay-server.ts         # 旧 relay 服务器
-└── ...
+src/                        # (已删除 — Go Core 是唯一运行时)
 
 scripts/                    # 构建/启动脚本
 ├── start-core.js           # 启动 Go Core
@@ -174,11 +161,4 @@ npm run start:core
 # → ws://127.0.0.1:8080
 
 # 4. 配合 nginx 反向代理（TLS + WebSocket）
-```
-
-### Legacy relay 部署（已废弃）
-
-```bash
-npm run build:server        # 构建旧 relay
-npm run legacy:relay        # 启动
 ```

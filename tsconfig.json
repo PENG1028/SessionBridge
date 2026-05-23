@@ -33,8 +33,6 @@
   "exclude": [
     "node_modules",
     "tests",
-    "docs/archive/",
-    "agent-core",
-    "agent-core/**"
+    "docs/archive/"
   ]
 }

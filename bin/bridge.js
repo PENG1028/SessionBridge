@@ -1,14 +1,12 @@
 #!/usr/bin/env node
 // ─── SessionBridge Launcher ──────────────────────────────
-// Go Core is the primary runtime. Legacy Node relay preserved
-// under the "legacy-relay" subcommand.
+// Go Core is the only runtime. Legacy Node relay has been retired.
 //
 // Usage:
-//   node bin/bridge.js              — default: start Go Core
-//   node bin/bridge.js core         — start Go Core
-//   node bin/bridge.js web          — start Next.js (prod, needs build:web first)
-//   node bin/bridge.js dev          — start Go Core + Next.js dev
-//   node bin/bridge.js legacy-relay — start legacy Node relay (deprecated)
+//   node bin/bridge.js      — default: start Go Core
+//   node bin/bridge.js core — start Go Core
+//   node bin/bridge.js web  — start Next.js (prod, needs build:web first)
+//   node bin/bridge.js dev  — start Go Core + Next.js dev
 
 const { spawn, spawnSync } = require('child_process');
 const { existsSync } = require('fs');
@@ -19,22 +17,20 @@ const subcommand = process.argv[2] || '';
 
 function usage() {
   console.log(`
-SessionBridge — Go Core is the primary runtime.
+SessionBridge — Go Core is the primary runtime. Legacy Node relay has been retired.
 
 Default:   node bin/bridge.js  →  start Go Core (same as "core")
 Commands:
   core          Start Go Core (default runtime)
   web           Start Next.js production server (build first: npm run build:web)
   dev           Start Go Core + Next.js dev server
-  legacy-relay  Start legacy Node relay (deprecated)
 
 npm scripts:
-  npm start             → start Go Core (default)
-  npm run dev           → Go Core + Next.js dev
-  npm run dev:core      → Go Core dev mode
-  npm run dev:web       → Next.js dev only
-  npm run build         → build:web + build:core
-  npm run legacy:relay  → legacy Node relay (deprecated)
+  npm start         → start Go Core (default)
+  npm run dev       → Go Core + Next.js dev
+  npm run dev:core  → Go Core dev mode
+  npm run dev:web   → Next.js dev only
+  npm run build     → build:web + build:core
 
 Docs: docs/development.md
 `);
@@ -85,30 +81,10 @@ switch (subcommand) {
     runScript(path.join(projectRoot, 'scripts', 'dev-all.js'), process.argv.slice(3));
     break;
 
-  case 'legacy-relay': {
-    // Legacy Node relay — load dist/src/index.js or fall back to tsx
-    const distEntry = path.join(projectRoot, 'dist', 'src', 'index.js');
-    if (existsSync(distEntry)) {
-      console.log('[legacy-relay] Starting legacy Node relay (compiled)...');
-      require(distEntry);
-    } else {
-      console.log('[legacy-relay] Starting legacy Node relay (tsx dev)...');
-      const tsxBin = path.join(projectRoot, 'node_modules', '.bin', 'tsx');
-      const tsxPlatform = process.platform === 'win32' ? tsxBin + '.cmd' : tsxBin;
-      if (!existsSync(tsxBin) && !existsSync(tsxPlatform)) {
-        console.error('tsx not found. Run "npm install" first.');
-        process.exit(1);
-      }
-      const child = spawn(process.execPath, [tsxPlatform, path.join(projectRoot, 'src', 'index.ts'), ...process.argv.slice(3)], {
-        cwd: projectRoot,
-        stdio: 'inherit',
-        env: process.env,
-        windowsHide: true,
-      });
-      child.on('exit', (code) => process.exit(code ?? 1));
-    }
-    break;
-  }
+  case 'legacy-relay':
+  case 'legacy:relay':
+    console.error('Legacy Node relay has been retired. Use Go Core: npm start / npm run dev.');
+    process.exit(1);
 
   default:
     console.error(`Unknown command: ${subcommand}`);

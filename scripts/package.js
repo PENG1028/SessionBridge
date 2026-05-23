@@ -24,12 +24,8 @@ console.log('');
 console.log('  [1/4] Building frontend (next build)...');
 execSync('npx next build', { cwd: ROOT, stdio: 'pipe' });
 
-// ─── 2. Build server ───────────────────────────
-console.log('  [2/4] Building server (tsc)...');
-execSync('npx tsc -p tsconfig.server.json', { cwd: ROOT, stdio: 'pipe' });
-
-// ─── 3. Create portable folder ─────────────────
-console.log('  [3/4] Assembling portable package...');
+// ─── 2. Create portable folder ─────────────────
+console.log('  [2/3] Assembling portable package...');
 
 // Clean previous output
 if (existsSync(OUT)) rmSync(OUT, { recursive: true });
@@ -95,7 +91,7 @@ const portablePkg = {
   name: 'sessionbridge',
   version: pkg.version,
   private: true,
-  scripts: { start: 'node dist/index.js' },
+  scripts: { start: 'node bin/bridge.js' },
 };
 writeFileSync(join(OUT, 'package.json'), JSON.stringify(portablePkg, null, 2));
 
@@ -112,12 +108,12 @@ writeFileSync(join(OUT, '.bridge-info'), JSON.stringify({
   nodeRequired: '>=18',
 }, null, 2));
 
-console.log('  [4/4] Done!');
+console.log('  [3/3] Done!');
 console.log('');
 console.log(`  📦  ${OUT}`);
 console.log('');
 console.log('  To run:');
 console.log('    cd dist/sessionbridge');
-console.log('    node dist/index.js');
+console.log('    node bin/bridge.js');
 console.log('  Or just double-click SessionBridge.bat');
 console.log('');

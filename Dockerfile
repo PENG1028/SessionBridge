@@ -15,15 +15,12 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
-COPY tsconfig.json tsconfig.server.json next.config.ts tailwind.config.ts postcss.config.mjs ./
+COPY tsconfig.json next.config.ts tailwind.config.ts postcss.config.mjs ./
 COPY app/ app/
-COPY src/ src/
-COPY adapters/ adapters/
 COPY lib/ lib/
 COPY public/ public/
 
 RUN npx next build
-RUN npm run build:server
 
 # ─── Stage 3: Runtime ──────────────────────────────
 FROM node:20-slim AS runtime
@@ -41,7 +38,6 @@ COPY --from=build /app/.next ./.next
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/public ./public
 COPY --from=build /app/package.json ./package.json
-COPY --from=build /app/adapters ./adapters
 COPY --from=build /app/lib ./lib
 
 EXPOSE 8080

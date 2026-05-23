@@ -37,9 +37,6 @@ jobs:
       - name: Build frontend
         run: npx next build
 
-      - name: Build server
-        run: npm run build:server
-
       - name: Package portable
         run: |
           VERSION=${GITHUB_REF_NAME#v}
