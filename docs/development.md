@@ -50,7 +50,7 @@ npm start
 | **Plugins** | `plugins/` | **插件声明源** | `plugin.yaml` 声明能力、权限、UI/CLI 贡献 |
 | **Legacy Node relay** | `src/` | **已废弃** | 旧 Node.js relay server |
 | **Legacy extensions** | (已删除) | **已删除** | 旧的扩展/适配器系统，已被 plugins/ 替代 |
-| **Legacy agent-core** | `agent-core/` | **已废弃** | 旧的 agent 核心运行时 |
+| **Legacy agent-core** | (已删除) | Go Core 是唯一运行时 |
 
 ### Go Core 环境变量
 

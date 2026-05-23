@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 // ─── SessionBridge Git-based Updater ─────────────────────────────────
-// Pulls the latest code from GitHub, installs dependencies, and rebuilds.
+// External CLI helper. Pulls the latest code from GitHub, installs
+// dependencies, and rebuilds. This is NOT the Core update.* system.
+//
+// Core update.check / update.plan are read-only diagnostics surfaced
+// through the Go Core API. This script is a manual CLI tool for
+// developers who want to git-pull + rebuild from the command line.
 //
 // Usage:
 //   node scripts/update.js                  # check + prompt + update
@@ -10,7 +15,7 @@
 // Steps:
 //   1. git pull from the tracked GitHub remote
 //   2. npm install
-//   3. npm run build
+//   3. npm run build (build:web + build:core)
 //   4. Signal success (caller handles restart)
 
 const { execSync, spawn } = require('child_process');

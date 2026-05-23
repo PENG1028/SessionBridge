@@ -1,51 +1,65 @@
 # SessionBridge — Production Docker Image
-# Multi-stage build: install → build → minimal runtime
+# Multi-stage build: deps → build-web → build-go → runtime
+# Go Core is the sole runtime. Node relay has been retired.
+#
+# Frontend (out/) is served by a reverse proxy (nginx, etc.) in front of Go Core.
+# Go Core listens on :8080 (API + WebSocket).
 
-# ─── Stage 1: Install dependencies ─────────────────
+# ─── Stage 1: Production dependencies ────────────
 FROM node:20-slim AS deps
 WORKDIR /app
-
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
-# ─── Stage 2: Build ────────────────────────────────
-FROM node:20-slim AS build
+# ─── Stage 2: Build Next.js frontend ─────────────
+FROM node:20-slim AS build-web
 WORKDIR /app
-
 COPY package.json package-lock.json ./
 RUN npm ci
-
 COPY tsconfig.json next.config.ts tailwind.config.ts postcss.config.mjs ./
 COPY app/ app/
 COPY lib/ lib/
 COPY public/ public/
+RUN npm run build:web
 
-RUN npx next build
+# ─── Stage 3: Build Go Core ──────────────────────
+FROM golang:1.23-alpine AS build-go
+WORKDIR /src
+COPY go-core/ ./
+RUN CGO_ENABLED=0 go build -o sessionnode ./cmd/node
 
-# ─── Stage 3: Runtime ──────────────────────────────
+# ─── Stage 4: Runtime ────────────────────────────
 FROM node:20-slim AS runtime
 WORKDIR /app
 
-# Install Claude Code (optional, for AI agent features)
 ARG INSTALL_CLAUDE=false
 RUN if [ "$INSTALL_CLAUDE" = "true" ]; then \
       npm install -g @anthropic-ai/claude-code; \
     fi
 
-# Copy built artifacts from previous stages
+# Production node_modules (for bin/bridge.js and scripts)
 COPY --from=deps /app/node_modules ./node_modules
-COPY --from=build /app/.next ./.next
-COPY --from=build /app/dist ./dist
-COPY --from=build /app/public ./public
-COPY --from=build /app/package.json ./package.json
-COPY --from=build /app/lib ./lib
+
+# Frontend static export
+COPY --from=build-web /app/out ./out
+
+# Go Core binary
+COPY --from=build-go /src/sessionnode ./dist/go-core/sessionnode
+
+# Runtime files
+COPY package.json ./
+COPY bin/ bin/
+COPY scripts/start-core.js ./scripts/start-core.js
+COPY plugins/ plugins/
+COPY public/ public/
 
 EXPOSE 8080
 
 ENV NODE_ENV=production
+ENV LISTEN_ADDR=0.0.0.0:8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
-  CMD node -e "require('http').get('http://localhost:8080/api/health', r => {process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))"
+  CMD node -e "require('http').get('http://localhost:8080/health', r => {process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))"
 
-ENTRYPOINT ["node", "dist/index.js"]
+ENTRYPOINT ["node", "bin/bridge.js", "core"]
 CMD []

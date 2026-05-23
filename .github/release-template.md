@@ -2,7 +2,7 @@
 
 | 平台 | 文件 | 说明 |
 |------|------|------|
-| Windows / Linux / macOS | `sessionbridge-*.zip` | 便携包，需要 Node.js >= 18 |
+| Linux x64 | `sessionbridge-*.zip` | 便携包，需要 Node.js >= 18, Go >= 1.21 |
 
 ## 更新
 
@@ -18,12 +18,14 @@ npm run update
 
 ```bash
 # 解压后
-node dist/index.js
+node bin/bridge.js
 
-# Windows 双击
-SessionBridge.bat
+# 环境变量
+# LISTEN_ADDR=0.0.0.0:8080  (默认 127.0.0.1:8080)
+# SESSIONNODE_TOKEN=         (空 = dev mode, 无认证)
 ```
 
 ---
 
+> Go Core 是唯一运行时。旧 Node relay 已退役。
 > 详细更新日志见下方自动生成的 Release Notes。

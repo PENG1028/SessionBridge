@@ -6,8 +6,10 @@
 #   git push origin v0.7.0
 #
 # Artifacts:
-#   - sessionbridge-vX.Y.Z.zip  (portable, Node.js required)
+#   - sessionbridge-vX.Y.Z.zip  (linux-x64 portable, Node.js + Go required)
 #   - Source code (GitHub auto-attaches)
+#
+# Go Core is the sole runtime. Legacy Node relay has been retired.
 
 name: Release
 
@@ -18,7 +20,7 @@ on:
 
 jobs:
   build:
-    name: Build and Package
+    name: Build and Package (linux-x64)
     runs-on: ubuntu-latest
 
     steps:
@@ -31,49 +33,75 @@ jobs:
           node-version: 20
           cache: 'npm'
 
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
       - name: Install dependencies
         run: npm ci
 
       - name: Build frontend
-        run: npx next build
+        run: npm run build:web
+
+      - name: Build Go Core
+        run: npm run build:core
 
       - name: Package portable
         run: |
           VERSION=${GITHUB_REF_NAME#v}
           PKG_DIR="dist/sessionbridge-${VERSION}"
 
-          mkdir -p "$PKG_DIR"/{dist,out,adapters,lib,public,scripts}
+          mkdir -p "$PKG_DIR"/{bin,scripts,dist/go-core,out,public,plugins}
 
-          # Built artifacts
-          cp -r dist/*.js "$PKG_DIR/dist/" 2>/dev/null || true
-          cp -r dist/adapters "$PKG_DIR/dist/" 2>/dev/null || true
+          # Launcher
+          cp bin/bridge.js "$PKG_DIR/bin/"
+
+          # Scripts
+          cp scripts/start-core.js "$PKG_DIR/scripts/"
+          cp scripts/check-update.js "$PKG_DIR/scripts/"
+          cp scripts/update.js "$PKG_DIR/scripts/"
+
+          # Go Core binary (linux-x64)
+          cp dist/go-core/sessionnode "$PKG_DIR/dist/go-core/"
+
+          # Frontend static export
           cp -r out/* "$PKG_DIR/out/"
-          cp -r adapters "$PKG_DIR/"
-          cp -r lib "$PKG_DIR/"
-          cp -r public "$PKG_DIR/"
-          cp -r scripts "$PKG_DIR/"
 
-          # Production modules only
-          npm ci --omit=dev --prefix "$PKG_DIR" 2>/dev/null || true
-          cp node_modules/.package-lock.json "$PKG_DIR/" 2>/dev/null || true
+          # Public assets
+          cp -r public/* "$PKG_DIR/public/"
 
-          # Minimal package.json for portable app
+          # Plugin manifests
+          cp -r plugins/* "$PKG_DIR/plugins/"
+
+          # Portable package.json
           node -e "
             const p = require('./package.json');
             require('fs').writeFileSync('$PKG_DIR/package.json', JSON.stringify({
-              name: 'sessionbridge', version: '$VERSION', private: true,
-              scripts: { start: 'node dist/index.js' },
+              name: 'sessionbridge',
+              version: '$VERSION',
+              private: true,
+              description: p.description,
+              scripts: {
+                start: 'node bin/bridge.js',
+                'start:core': 'node scripts/start-core.js',
+              },
+              dependencies: p.dependencies,
             }, null, 2));
           "
 
-          # Launcher scripts
-          cp SessionBridge.bat "$PKG_DIR/" 2>/dev/null || true
-          cp SessionBridge.sh "$PKG_DIR/" 2>/dev/null || true
+          # Production modules
+          npm ci --omit=dev --prefix "$PKG_DIR" 2>/dev/null || true
 
           # Version info
           node -e "
             require('fs').writeFileSync('$PKG_DIR/.bridge-info',
-              JSON.stringify({ version: '$VERSION', builtAt: new Date().toISOString() }, null, 2));
+              JSON.stringify({
+                version: '$VERSION',
+                builtAt: new Date().toISOString(),
+                runtime: 'Go Core (linux-x64)',
+                nodeRequired: '>=18',
+              }, null, 2));
           "
 
           # Zip it

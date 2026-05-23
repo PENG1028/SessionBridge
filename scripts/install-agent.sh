@@ -1,36 +1,40 @@
 #!/usr/bin/env bash
-# SessionBridge Node (leaf) — cross-platform user-level installer
-# Installs a bridge node in leaf mode, connecting to an upstream relay.
+# SessionBridge Node — cross-platform user-level installer
+# Installs the Go Core runtime as a background service.
 # Linux: systemd user unit   macOS: launchd agent
-# Usage: ./install-agent.sh --relay ws://YOUR_HOST:8080 [--dir /path] [--label my-name]
+#
+# Go Core is the sole runtime. Legacy Node relay has been retired.
+# Configuration is via environment variables, not CLI flags.
+#
+# Usage: ./install-agent.sh [--install-dir /path] [--node /path/to/node]
 set -euo pipefail
 
-RELAY=""
-DIR="${HOME}"
 LABEL=""
-DASHBOARD_PORT="9843"
 INSTALL_DIR="${HOME}/.sessionbridge"
+LISTEN_ADDR="127.0.0.1:8080"
 
 usage() {
   cat <<'EOF'
-bridge node installer (leaf mode)
+SessionBridge Node installer (Go Core)
 
 Usage:
-  ./install-agent.sh --relay <url> [options]
-
-Required:
-  --relay <url>       Upstream relay WebSocket URL (e.g. ws://10.0.0.1:8080)
+  ./install-agent.sh [options]
 
 Options:
-  --dir <path>        Working directory (default: $HOME)
-  --label <name>      Node label (default: hostname)
-  --dashboard-port N  Dashboard HTTP port (default: 9843)
-  --install-dir <dir> Install directory (default: ~/.sessionbridge)
-  --node <path>       Path to node binary (default: auto-detect)
+  --install-dir <dir>  Install directory (default: ~/.sessionbridge)
+  --listen <addr>      Listen address (default: 127.0.0.1:8080)
+  --label <name>       Node label (default: hostname)
+  --node <path>        Path to node binary (default: auto-detect)
+
+Go Core env vars (set after install in the service file):
+  LISTEN_ADDR               HTTP + WebSocket listen address
+  SESSIONNODE_TOKEN         Auth token (empty = dev mode)
+  SESSIONNODE_PLUGIN_DIRS   Plugin directories
+  SESSIONNODE_DATA_DIR      Data directory
 
 Install examples:
-  ./install-agent.sh --relay ws://my-server:8080 --dir ~/projects
-  ./install-agent.sh --relay ws://my-server:8080 --label office-pc
+  ./install-agent.sh
+  ./install-agent.sh --install-dir /opt/sessionbridge --listen 0.0.0.0:8080
 EOF
   exit 0
 }
@@ -38,27 +42,18 @@ EOF
 # ── Parse args ──────────────────────────────────────
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --relay) RELAY="$2"; shift 2 ;;
-    --relay=*) RELAY="${1#*=}"; shift ;;
-    --dir) DIR="$2"; shift 2 ;;
-    --dir=*) DIR="${1#*=}"; shift ;;
-    --label) LABEL="$2"; shift 2 ;;
-    --label=*) LABEL="${1#*=}"; shift ;;
-    --dashboard-port) DASHBOARD_PORT="$2"; shift 2 ;;
-    --dashboard-port=*) DASHBOARD_PORT="${1#*=}"; shift ;;
     --install-dir) INSTALL_DIR="$2"; shift 2 ;;
     --install-dir=*) INSTALL_DIR="${1#*=}"; shift ;;
+    --listen) LISTEN_ADDR="$2"; shift 2 ;;
+    --listen=*) LISTEN_ADDR="${1#*=}"; shift ;;
+    --label) LABEL="$2"; shift 2 ;;
+    --label=*) LABEL="${1#*=}"; shift ;;
     --node) NODE_BIN="$2"; shift 2 ;;
     --node=*) NODE_BIN="${1#*=}"; shift ;;
     -h|--help) usage ;;
     *) echo "Unknown option: $1"; usage ;;
   esac
 done
-
-if [[ -z "${RELAY}" ]]; then
-  echo "Error: --relay is required"
-  usage
-fi
 
 # ── Detect node ─────────────────────────────────────
 NODE_BIN="${NODE_BIN:-}"
@@ -88,22 +83,28 @@ fi
 
 # ── Install agent code ──────────────────────────────
 echo ""
-echo "==> Installing node (leaf) to ${INSTALL_DIR}"
+echo "==> Installing Go Core to ${INSTALL_DIR}"
 mkdir -p "${INSTALL_DIR}"
 # Copy source files (not node_modules or .next)
 rsync -a --exclude='node_modules' --exclude='.next' --exclude='.git' "${PROJECT_DIR}/" "${INSTALL_DIR}/"
 cd "${INSTALL_DIR}"
 npm install --production --no-audit --no-fund 2>&1 | tail -1
 
-# ── Node run command ───────────────────────────────
-NODE_CMD="${NODE_BIN} ${INSTALL_DIR}/dist/index.js \
---role leaf \
---upstream ${RELAY} \
---dir ${DIR} \
---label ${LABEL} \
---dashboard-port ${DASHBOARD_PORT} \
---log-file ${INSTALL_DIR}/node.log \
---pid-file ${INSTALL_DIR}/node.pid"
+# Build if Go binary not present
+if [[ ! -f "${INSTALL_DIR}/dist/go-core/sessionnode" ]]; then
+  echo "==> Building Go Core..."
+  if command -v go >/dev/null 2>&1; then
+    npm run build:core 2>&1 || echo "Warning: build:core failed, will use go run fallback"
+  else
+    echo "Warning: Go not found. Go Core will use 'go run' fallback at startup."
+    echo "Install Go >= 1.21 for faster startup."
+  fi
+fi
+
+# ── Go Core run command ────────────────────────────
+# Legacy CLI flags (--role, --upstream, --dir, --dashboard-port, etc.)
+# have been retired. Go Core uses environment variables.
+NODE_CMD="${NODE_BIN} ${INSTALL_DIR}/bin/bridge.js core"
 
 # ── Platform-specific registration ──────────────────
 OS="$(uname -s)"
@@ -127,37 +128,32 @@ if [[ "${OS}" == "Darwin" ]]; then
   <key>ProgramArguments</key>
   <array>
     <string>${NODE_BIN}</string>
-    <string>${INSTALL_DIR}/dist/index.js</string>
-    <string>--role</string>
-    <string>leaf</string>
-    <string>--upstream</string>
-    <string>${RELAY}</string>
-    <string>--dir</string>
-    <string>${DIR}</string>
-    <string>--label</string>
-    <string>${LABEL}</string>
-    <string>--dashboard-port</string>
-    <string>${DASHBOARD_PORT}</string>
-    <string>--log-file</string>
-    <string>${INSTALL_DIR}/node.log</string>
-    <string>--pid-file</string>
-    <string>${INSTALL_DIR}/node.pid</string>
+    <string>${INSTALL_DIR}/bin/bridge.js</string>
+    <string>core</string>
   </array>
   <key>WorkingDirectory</key>
   <string>${INSTALL_DIR}</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>LISTEN_ADDR</key>
+    <string>${LISTEN_ADDR}</string>
+    <key>SESSIONNODE_DATA_DIR</key>
+    <string>${INSTALL_DIR}/data</string>
+    <key>SESSIONNODE_PLUGIN_DIRS</key>
+    <string>${INSTALL_DIR}/plugins</string>
+  </dict>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>${INSTALL_DIR}/node.log</string>
+  <string>${INSTALL_DIR}/core.log</string>
   <key>StandardErrorPath</key>
-  <string>${INSTALL_DIR}/node.log</string>
+  <string>${INSTALL_DIR}/core.log</string>
 </dict>
 </plist>
 PLISTEOF
 
-  # Unload if already loaded, then load
   launchctl bootout gui/$(id -u)/com.sessionbridge.node 2>/dev/null || true
   launchctl bootstrap gui/$(id -u) "${PLIST}"
   echo "  ✓ LaunchAgent installed and started"
@@ -171,29 +167,31 @@ elif [[ "${OS}" == "Linux" ]]; then
 
   cat > "${SERVICE}" <<SVCEOF
 [Unit]
-Description=SessionBridge Node (Leaf)
+Description=SessionBridge Go Core
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=${NODE_CMD}
+ExecStart=${NODE_BIN} ${INSTALL_DIR}/bin/bridge.js core
 WorkingDirectory=${INSTALL_DIR}
+Environment=LISTEN_ADDR=${LISTEN_ADDR}
+Environment=SESSIONNODE_DATA_DIR=${INSTALL_DIR}/data
+Environment=SESSIONNODE_PLUGIN_DIRS=${INSTALL_DIR}/plugins
 Restart=always
 RestartSec=5
-StandardOutput=append:${INSTALL_DIR}/node.log
-StandardError=append:${INSTALL_DIR}/node.log
+StandardOutput=append:${INSTALL_DIR}/core.log
+StandardError=append:${INSTALL_DIR}/core.log
 
 [Install]
 WantedBy=default.target
 SVCEOF
 
   systemctl --user daemon-reload
-  systemctl --user enable sessionbridge-node
-  systemctl --user restart sessionbridge-node
+  systemctl --user enable sessionbridge-agent
+  systemctl --user restart sessionbridge-agent
   echo "  ✓ systemd user unit installed and started"
 
-  # Enable lingering so the user service starts at boot
   if command -v loginctl >/dev/null 2>&1; then
     loginctl enable-linger "${USER}" 2>/dev/null || true
   fi
@@ -206,8 +204,8 @@ fi
 
 echo ""
 echo "──────────────────────────────────────────"
-echo "  Node (leaf) installed successfully"
-echo "  Dashboard: http://localhost:${DASHBOARD_PORT}"
-echo "  Logs:      ${INSTALL_DIR}/node.log"
-echo "  Config:    ${INSTALL_DIR}/agent.json"
+echo "  Go Core installed successfully"
+echo "  Listen:    http://${LISTEN_ADDR}"
+echo "  Health:    http://${LISTEN_ADDR}/health"
+echo "  Logs:      ${INSTALL_DIR}/core.log"
 echo "──────────────────────────────────────────"

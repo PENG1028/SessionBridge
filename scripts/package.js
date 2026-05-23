@@ -1,82 +1,113 @@
 // ─── SessionBridge Portable Package Script ───────────────────────
-// Builds everything and creates a portable `dist/sessionbridge/` folder.
-// Contents can be zipped and run on any machine with Node.js >= 18.
+// Builds Go Core + Next.js frontend and creates a portable dist/sessionbridge/ folder.
+// Contents can be zipped and run on any machine with Node.js >= 18 and Go.
 //
 // Usage:  node scripts/package.js
 // Output: dist/sessionbridge/  (portable app)
-//         dist/sessionbridge-v0.6.0.zip  (optional, if zip tool available)
+//         dist/sessionbridge-vX.Y.Z.zip  (optional, if zip tool available)
+//
+// Go Core is the sole runtime. Legacy Node relay has been retired.
 
 const { execSync } = require('child_process');
 const { existsSync, readFileSync, writeFileSync, cpSync, rmSync, mkdirSync } = require('fs');
-const { join, relative } = require('path');
+const { join } = require('path');
 
 const ROOT = join(__dirname, '..');
 const OUT = join(ROOT, 'dist', 'sessionbridge');
 const PACKAGE_JSON = join(ROOT, 'package.json');
 
 console.log('');
-console.log('  ╔═══════════════════════════════════════╗');
-console.log('  ║  SessionBridge Portable Package       ║');
-console.log('  ╚═══════════════════════════════════════╝');
+console.log('  SessionBridge Portable Package');
+console.log('  Go Core + App UI');
 console.log('');
 
-// ─── 1. Build frontend ─────────────────────────
-console.log('  [1/4] Building frontend (next build)...');
-execSync('npx next build', { cwd: ROOT, stdio: 'pipe' });
+const pkg = JSON.parse(readFileSync(PACKAGE_JSON, 'utf-8'));
 
-// ─── 2. Create portable folder ─────────────────
+// ─── 1. Build ───────────────────────────────────
+console.log('  [1/3] Building...');
+
+// Build frontend
+try {
+  execSync('npm run build:web', { cwd: ROOT, stdio: 'inherit' });
+} catch (err) {
+  console.error('  Build:web failed. Run npm run build:web manually to diagnose.');
+  process.exit(1);
+}
+
+// Build Go Core
+try {
+  execSync('npm run build:core', { cwd: ROOT, stdio: 'inherit' });
+} catch (err) {
+  console.error('  Build:core failed. Ensure Go >= 1.21 is installed.');
+  process.exit(1);
+}
+
+// ─── 2. Assemble portable folder ────────────────
 console.log('  [2/3] Assembling portable package...');
 
 // Clean previous output
 if (existsSync(OUT)) rmSync(OUT, { recursive: true });
 
-const pkg = JSON.parse(readFileSync(PACKAGE_JSON, 'utf-8'));
-
-// Collect runtime dependencies (production only)
-const runtimeDeps = new Set([
-  ...Object.keys(pkg.dependencies || {}),
-  // Core runtime modules that need to be explicitly included
-  'next', 'react', 'react-dom',
-]);
-
 // Copy files needed at runtime
-mkdirSync(join(OUT, 'dist'));
-cpSync(join(ROOT, 'dist'), join(OUT, 'dist'), { recursive: true });       // Server build
-cpSync(join(ROOT, 'out'), join(OUT, 'out'), { recursive: true });         // Frontend (static export)
-cpSync(join(ROOT, 'adapters'), join(OUT, 'adapters'), { recursive: true }); // Adapter source (loaded at runtime)
-cpSync(join(ROOT, 'lib'), join(OUT, 'lib'), { recursive: true });         // Client libs
-cpSync(join(ROOT, 'public'), join(OUT, 'public'), { recursive: true });   // Static assets
+const goBinaryName = process.platform === 'win32' ? 'sessionnode.exe' : 'sessionnode';
+const goBinarySrc = join(ROOT, 'dist', 'go-core', goBinaryName);
 
-// Copy node_modules (production only)
-// This uses npm ls to find all production deps, or just copies node_modules minus devDeps
-const nmSrc = join(ROOT, 'node_modules');
-const nmDst = join(OUT, 'node_modules');
-if (!existsSync(nmDst)) mkdirSync(nmDst, { recursive: true });
+if (!existsSync(goBinarySrc)) {
+  console.error(`  Go Core binary not found: ${goBinarySrc}`);
+  process.exit(1);
+}
 
-// Copy only what's needed — the server runtime + next
-const neededModules = new Set([
-  // Server runtime
-  'ws', 'react', 'react-dom', 'next', 'styled-jsx', 'zod', 'caniuse-lite',
-  // Next.js peer deps
-  'postcss', 'autoprefixer', 'tailwindcss', 'lucide-react',
-  'react-markdown', 'remark-gfm', '@xterm/xterm', '@xterm/addon-fit',
-  // Framework deps
-  'next/dist', 'next/link', 'next/router', 'next/navigation',
-]);
+mkdirSync(join(OUT, 'bin'), { recursive: true });
+cpSync(join(ROOT, 'bin', 'bridge.js'), join(OUT, 'bin', 'bridge.js'));
 
-// Simpler approach: copy the full node_modules and prune dev deps
-// Using npm's --omit=dev approach
+mkdirSync(join(OUT, 'scripts'), { recursive: true });
+cpSync(join(ROOT, 'scripts', 'start-core.js'), join(OUT, 'scripts', 'start-core.js'));
+cpSync(join(ROOT, 'scripts', 'check-update.js'), join(OUT, 'scripts', 'check-update.js'));
+cpSync(join(ROOT, 'scripts', 'update.js'), join(OUT, 'scripts', 'update.js'));
 
-// Actually the most reliable approach is to let npm handle it
-console.log('  ... installing production dependencies');
-execSync(`npm ci --omit=dev --prefix "${OUT}" 2> nul || true`, { cwd: ROOT, stdio: 'pipe' });
+mkdirSync(join(OUT, 'dist', 'go-core'), { recursive: true });
+cpSync(goBinarySrc, join(OUT, 'dist', 'go-core', goBinaryName));
 
-// If npm --prefix fails, manually copy node_modules (Windows compatibility)
-if (!existsSync(join(OUT, 'node_modules', 'ws'))) {
-  console.log('  ... copying node_modules (fallback)');
-  // Copy key runtime deps
-  const keep = ['ws', 'next', 'react', 'react-dom', 'styled-jsz', 'lucide-react',
-    'react-markdown', 'remark-gfm', 'zod', 'caniuse-lite',
+if (existsSync(join(ROOT, 'out'))) {
+  cpSync(join(ROOT, 'out'), join(OUT, 'out'), { recursive: true });
+}
+
+if (existsSync(join(ROOT, 'public'))) {
+  cpSync(join(ROOT, 'public'), join(OUT, 'public'), { recursive: true });
+}
+
+if (existsSync(join(ROOT, 'plugins'))) {
+  cpSync(join(ROOT, 'plugins'), join(OUT, 'plugins'), { recursive: true });
+}
+
+// ─── 3. Install production dependencies ─────────
+console.log('  [3/3] Installing production dependencies...');
+
+// Write portable package.json first so npm ci --prefix works
+const portablePkg = {
+  name: 'sessionbridge',
+  version: pkg.version,
+  private: true,
+  description: pkg.description,
+  scripts: {
+    start: 'node bin/bridge.js',
+    'start:core': 'node scripts/start-core.js',
+  },
+  dependencies: pkg.dependencies,
+};
+writeFileSync(join(OUT, 'package.json'), JSON.stringify(portablePkg, null, 2));
+
+// Install production deps into portable directory
+try {
+  execSync(`npm ci --omit=dev --prefix "${OUT}"`, { cwd: ROOT, stdio: 'pipe' });
+} catch {
+  // Fallback: copy key runtime modules from local node_modules
+  console.log('  ... npm ci failed, copying node_modules (fallback)');
+  const nmSrc = join(ROOT, 'node_modules');
+  const nmDst = join(OUT, 'node_modules');
+  if (!existsSync(nmDst)) mkdirSync(nmDst, { recursive: true });
+  const keep = ['ws', 'next', 'react', 'react-dom', 'lucide-react',
+    'react-markdown', 'remark-gfm',
     '@xterm/xterm', '@xterm/addon-fit'];
   for (const mod of keep) {
     const src = join(nmSrc, mod);
@@ -86,34 +117,19 @@ if (!existsSync(join(OUT, 'node_modules', 'ws'))) {
   }
 }
 
-// Copy package.json (for version info)
-const portablePkg = {
-  name: 'sessionbridge',
-  version: pkg.version,
-  private: true,
-  scripts: { start: 'node bin/bridge.js' },
-};
-writeFileSync(join(OUT, 'package.json'), JSON.stringify(portablePkg, null, 2));
-
-// Copy launcher scripts
-const batSrc = join(__dirname, '..', 'SessionBridge.bat');
-if (existsSync(batSrc)) cpSync(batSrc, join(OUT, 'SessionBridge.bat'));
-const shSrc = join(__dirname, '..', 'SessionBridge.sh');
-if (existsSync(shSrc)) cpSync(shSrc, join(OUT, 'SessionBridge.sh'));
-
-// ─── 4. Write a start.json with metadata ────────
+// Write version metadata
 writeFileSync(join(OUT, '.bridge-info'), JSON.stringify({
   version: pkg.version,
   builtAt: new Date().toISOString(),
+  runtime: 'Go Core',
   nodeRequired: '>=18',
 }, null, 2));
 
-console.log('  [3/3] Done!');
+// ─── Done ───────────────────────────────────────
 console.log('');
-console.log(`  📦  ${OUT}`);
+console.log(`  Package: ${OUT}`);
 console.log('');
 console.log('  To run:');
 console.log('    cd dist/sessionbridge');
 console.log('    node bin/bridge.js');
-console.log('  Or just double-click SessionBridge.bat');
 console.log('');
