@@ -14,6 +14,35 @@ export type PermissionCategory =
   | 'configurationWrite';
 
 // ═══════════════════════════════════════════════════════════════════
+// Adapter types — local subset, formerly in extensions/types.ts
+// ═══════════════════════════════════════════════════════════════════
+
+export interface AdapterCapabilities {
+  terminal?: boolean;
+  fileContext?: boolean;
+  structuredEvents?: boolean;
+  approvals?: boolean;
+  modes?: boolean;
+  timeline?: boolean;
+  compact?: boolean;
+  tasks?: boolean;
+  [key: string]: unknown;
+}
+
+export interface AgentAdapter {
+  id: string;
+  name?: string;
+  displayName: string;
+  icon?: string;
+  viewId?: string;
+  getCapabilities(): AdapterCapabilities;
+  start(input: { workspaceId: string; directory: string; label: string; adapterId: string; config?: Record<string, unknown>; onOutput?: (data: string) => void; onExit?: (code: number | null) => void; onBlock?: (block: Record<string, unknown>) => void }): Promise<InstanceHandle>;
+  getSessionProvider?(): unknown;
+  detect?(runtime: Record<string, unknown>): Promise<boolean>;
+  parseLine?(line: string, instance: any, deps: any): void;
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // When Context
 // ═══════════════════════════════════════════════════════════════════
 

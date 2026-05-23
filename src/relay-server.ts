@@ -12,9 +12,8 @@ import { checkRateLimit } from "./rate-limiter";
 import { CheckpointManager } from "./checkpoint-manager";
 import { InstanceManager } from "./instance-manager";
 import { envelope, parseMsg } from "./relay-protocol";
-import { getDefaultAdapterId, getTerminalAdapterId, resolveAdapter, resolveAdapterByCapability } from "./adapter-fallback";
-import { evaluateWhen, type WhenContext } from "./when-evaluator";
-import type { StreamParserDeps } from "./relay-types";
+import { getDefaultAdapterId, getTerminalAdapterId, resolveAdapter, resolveAdapterByCapability, getAdapter, listAdapters } from "./adapter-fallback";
+import type { StreamParserDeps, PermissionCategory, AgentAdapter } from "./relay-types";
 import { RelayEventBus } from "../agent-core/event-bus";
 import { AuditLogger } from "./audit-log";
 import { appConfig } from "./config";
@@ -60,14 +59,10 @@ const BROWSER_ALLOWED_CAPABILITIES = new Set([
   'notify.respond',
 ]);
 
-// ─── Adapter / extension stubs — relay no longer loads extensions ──
+// ─── Adapter registry stub — backed by minimal shell adapter ──
 const adapterRegistry = {
-  get: (_id?: string) => undefined as any,
-  list: () => [] as any[],
-};
-const extensionPoints = {
-  toJSON: () => ({ views: [], commands: [], menus: [], chrome: {}, panels: [] }),
-  findCommand: (_name: string): any => undefined,
+  get: getAdapter,
+  list: listAdapters,
 };
 
 // ─── Session provider helper — relay no longer loads adapters ──
@@ -771,7 +766,7 @@ function inst(): import("./instance-manager").InstanceData {
 /** Check an HTTP request against the permission model. Returns true if allowed. */
 function checkHttpPermission(
   res: import("http").ServerResponse,
-  category: import("../extensions/types").PermissionCategory,
+  category: PermissionCategory,
   context?: Record<string, unknown>,
 ): boolean {
   const result = permissions.check(category, context);
@@ -1195,7 +1190,7 @@ async function spawnShellForWs(ws: WebSocket, instanceId?: string): Promise<impo
   }
 
   let i: import("./instance-manager").InstanceData;
-  let terminalAdapter: import("../extensions/types").AgentAdapter | undefined;
+  let terminalAdapter: AgentAdapter | undefined;
 
   if (instanceId) {
     const existing = instanceManager.get(instanceId);
@@ -2635,7 +2630,6 @@ function setupWssHandlers(): void {
         sessionId: inst().id,
         serverTime: Date.now(),
         instances: instanceManager.toJSON(),
-        extensionPoints: extensionPoints.toJSON(),
         ...(restoredInstances.length > 0 ? { restoredInstances } : {}),
       };
       if (cryptoSession) {
@@ -4264,27 +4258,8 @@ function setupWssHandlers(): void {
               }));
             }
           });
-        } else {
-          // Extension-contributed commands
-          const cmd = extensionPoints.findCommand(name);
-          if (cmd) {
-            const ctx: WhenContext = {
-              view: targetInst?.adapterId || getDefaultAdapterId(),
-              instanceStatus: targetInst?.status || 'stopped',
-              activeAdapterId: targetInst?.adapterId || getDefaultAdapterId(),
-              isRunning: targetInst?.status === 'running',
-            };
-            if (!cmd.when || evaluateWhen(cmd.when, ctx)) {
-              if (targetInst?.handle?.sendCommand) {
-                targetInst.handle.sendCommand(cmd.id, msg.args || {}).then(() => {
-                  send(ws, envelope("instance.command_result", { name: cmd.id, ok: true }));
-                }).catch((err: Error) => {
-                  send(ws, envelope("instance.command_result", { name: cmd.id, ok: false, error: err.message }));
-                });
-              }
-            }
-          }
         }
+        // Extension-contributed commands removed — Node relay no longer hosts a plugin command registry
         break;
       }
 
