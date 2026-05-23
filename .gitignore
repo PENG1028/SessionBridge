@@ -9,7 +9,6 @@ out_server/
 relay.log
 *.log
 memory/
-content/
 components/
 /core/
 .env
