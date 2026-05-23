@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { RefreshCw } from 'lucide-react';
-import type { CoreClient } from '../../core/core-types';
+import type { CoreClient } from '../core/core-types';
 import { PageHeader, PageLoading, PageError, PageOffline, PageEmpty, type PageState } from './page-utils';
 
 interface ApprovalRequest {
@@ -106,13 +106,13 @@ export function Approvals({ core }: ApprovalsProps) {
             <select
               value={filter}
               onChange={e => setFilter(e.target.value as typeof filter)}
-              className="px-2 py-1 bg-gray-800 border border-gray-700 rounded text-xs text-gray-300 focus:outline-none"
+              className="px-2 py-1 bg-[#1a1a1a] border border-gray-700 rounded text-[9px] text-gray-300 focus:outline-none"
             >
               <option value="pending">Pending</option>
             </select>
             <button
               onClick={fetchRequests}
-              className="p-2 rounded hover:bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
+              className="p-1.5 rounded hover:bg-[#1a1a1a] text-gray-400 hover:text-gray-200 transition-colors"
               title="Refresh"
             >
               <RefreshCw size={16} />
@@ -121,36 +121,36 @@ export function Approvals({ core }: ApprovalsProps) {
         }
       />
 
-      <div className="p-6 space-y-3">
+      <div className="p-4 space-y-2">
         {requests.map(req => (
           <div
             key={req.requestId}
-            className={`p-4 rounded-lg border ${
+            className={`p-3 rounded border ${
               req.status === 'pending'
-                ? 'border-yellow-800 bg-yellow-900/10'
+                ? 'border-yellow-700/50 bg-yellow-900/10'
                 : req.status === 'approved'
-                ? 'border-green-800 bg-green-900/10'
+                ? 'border-emerald-700/30 bg-emerald-900/10'
                 : req.status === 'denied'
-                ? 'border-red-800 bg-red-900/10'
-                : 'border-gray-800 bg-gray-900'
+                ? 'border-red-700/30 bg-red-900/10'
+                : 'border-gray-800 bg-[#111]'
             }`}
           >
             <div className="flex items-start justify-between">
               <div className="flex-1">
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-gray-200">{req.pluginId}</span>
-                  <span className={`text-xs px-1.5 py-0.5 rounded ${
-                    req.status === 'pending' ? 'bg-yellow-900/50 text-yellow-400' :
-                    req.status === 'approved' ? 'bg-green-900/50 text-green-400' :
-                    req.status === 'denied' ? 'bg-red-900/50 text-red-400' :
-                    'bg-gray-800 text-gray-500'
+                  <span className="text-[10px] font-mono text-gray-200">{req.pluginId}</span>
+                  <span className={`text-[9px] px-1.5 py-0.5 rounded ${
+                    req.status === 'pending' ? 'bg-yellow-900/30 text-yellow-400' :
+                    req.status === 'approved' ? 'bg-emerald-900/30 text-emerald-400' :
+                    req.status === 'denied' ? 'bg-red-900/30 text-red-400' :
+                    'bg-[#1a1a1a] text-gray-500'
                   }`}>
                     {req.status}
                   </span>
                 </div>
-                <p className="text-sm text-gray-300 mt-1">{req.action}</p>
-                <p className="text-xs text-gray-500 mt-0.5">{req.detail}</p>
-                <div className="text-xs text-gray-600 mt-1">
+                <p className="text-[10px] text-gray-300 mt-1">{req.action}</p>
+                <p className="text-[9px] text-gray-500 mt-0.5">{req.detail}</p>
+                <div className="text-[9px] text-gray-600 mt-1">
                   {req.createdAt}
                   {req.expiresAt ? ` · expires ${req.expiresAt}` : ''}
                   {req.approvedBy ? ` · by ${req.approvedBy}` : ''}
@@ -159,22 +159,22 @@ export function Approvals({ core }: ApprovalsProps) {
 
               {req.status === 'pending' && (
                 <div className="flex flex-col items-end gap-1 ml-4 flex-shrink-0">
-                  <div className="flex gap-2">
+                  <div className="flex gap-1.5">
                     <button
                       onClick={() => handleApprove(req.requestId)}
-                      className="px-4 py-2 bg-green-700 hover:bg-green-600 text-white text-sm rounded transition-colors"
+                      className="px-3 py-1 bg-emerald-900/20 text-emerald-400 border border-emerald-700/30 text-[10px] rounded transition-colors hover:bg-emerald-900/40"
                     >
                       Approve
                     </button>
                     <button
                       onClick={() => handleDeny(req.requestId)}
-                      className="px-4 py-2 bg-red-700 hover:bg-red-600 text-white text-sm rounded transition-colors"
+                      className="px-3 py-1 bg-red-900/20 text-red-400 border border-red-700/30 text-[10px] rounded transition-colors hover:bg-red-900/40"
                     >
                       Deny
                     </button>
                   </div>
                   {actionError && (
-                    <p className="text-xs text-red-400">{actionError}</p>
+                    <p className="text-[9px] text-red-400">{actionError}</p>
                   )}
                 </div>
               )}

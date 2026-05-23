@@ -1,20 +1,35 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useWorkbench } from '../workbench/workbench-context';
+import { useCore } from '../core/core-client-provider';
 
 // ── Logs Panel ──────────────────────────────────────────────
 
 export function LogsPanel(props: { logs?: string[]; msgLog?: any[] }) {
+  const core = useCore();
+  const [coreLogs, setCoreLogs] = useState<string[] | null>(null);
   const { logs } = props;
-  if (!logs || logs.length === 0) {
+
+  useEffect(() => {
+    if (!core?.isConnected) return;
+    core.call<{ entries?: Array<{ message: string }> }>('logs.tail', { source: 'core', lines: 50 })
+      .then(data => {
+        const entries = data?.entries ?? [];
+        setCoreLogs(entries.map((e: { message: string }) => e.message));
+      })
+      .catch(() => {});
+  }, [core]);
+
+  const displayLogs = coreLogs ?? logs;
+  if (!displayLogs || displayLogs.length === 0) {
     return <div className="text-gray-700 text-[10px] italic p-3">No logs available</div>;
   }
   return (
     <div className="border-t border-gray-800 bg-[#111]">
       <div className="p-2 text-[10px] font-bold text-gray-500 tracking-wider">LOGS</div>
       <div className="max-h-36 overflow-y-auto px-2 pb-2 space-y-0.5">
-        {logs.slice(-50).map((log, i) => (
+        {displayLogs.slice(-50).map((log, i) => (
           <div key={i} className={`text-[9px] font-mono whitespace-pre-wrap ${
             log.includes('Error') || log.includes('[Error]') ? 'text-red-400'
             : log.includes('✓') || log.includes('✅') ? 'text-green-400'
@@ -29,7 +44,44 @@ export function LogsPanel(props: { logs?: string[]; msgLog?: any[] }) {
 // ── Terminal Panel ──────────────────────────────────────────
 
 export function TerminalPanel(props: { msgLog?: any[] }) {
+  const core = useCore();
   const { msgLog } = props;
+  const [streamEntries, setStreamEntries] = useState<Array<{ id: number; sessionId: string; time: string; data: string }>>([]);
+  const nextIdRef = useRef(0);
+
+  useEffect(() => {
+    if (!core?.isConnected) return;
+    const handler = (event: any) => {
+      if (event.type !== 'stream.chunk') return;
+      const now = new Date();
+      const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+      setStreamEntries(prev => {
+        const next = [...prev, { id: nextIdRef.current++, sessionId: event.sessionId, time, data: event.data }];
+        return next.slice(-100);
+      });
+    };
+    core.on('stream.chunk', handler);
+    return () => { core.off('stream.chunk', handler); };
+  }, [core]);
+
+  // Prefer CoreClient stream data, fallback to msgLog prop
+  if (streamEntries.length > 0) {
+    return (
+      <div className="border-t border-gray-800 bg-black">
+        <div className="p-2 text-[10px] font-bold text-gray-500 tracking-wider">RAW</div>
+        <div className="max-h-36 overflow-y-auto px-2 pb-2 space-y-0.5">
+          {streamEntries.map((entry) => (
+            <div key={entry.id} className="text-[9px] font-mono">
+              <span className="text-gray-700">{entry.time}</span>{' '}
+              <span className="text-gray-600">{entry.sessionId.slice(0, 8)}</span>{' '}
+              <span className="text-gray-400">{entry.data}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   if (!msgLog || msgLog.length === 0) {
     return <div className="text-gray-700 text-[10px] italic p-3">No terminal output</div>;
   }
@@ -59,9 +111,25 @@ function wsToHttpUrl(url: string): string {
 
 export function SystemPanel(props: { projectCwd?: string }) {
   const { wsUrl } = useWorkbench();
+  const core = useCore();
   const [info, setInfo] = useState<{ cwd?: string; platform?: string; hostname?: string; uptime?: number } | null>(null);
 
   useEffect(() => {
+    // Prefer CoreClient node.info when core is connected
+    if (core?.isConnected) {
+      core.call<{ cwd?: string; platform?: string; hostname?: string; uptime?: number }>('node.info', {})
+        .then(data => {
+          setInfo({
+            cwd: data.cwd,
+            platform: data.platform || (typeof navigator !== 'undefined' ? navigator.platform : ''),
+            hostname: data.hostname || '',
+            uptime: data.uptime,
+          });
+        })
+        .catch(() => {});
+      return;
+    }
+    // Fallback: relay HTTP API
     fetch(`${wsToHttpUrl(wsUrl).replace(/\/$/, '')}/api/info`).then(r => r.json()).then(data => {
       setInfo({
         cwd: data.cwd,
@@ -70,7 +138,7 @@ export function SystemPanel(props: { projectCwd?: string }) {
         uptime: data.uptime,
       });
     }).catch(() => {});
-  }, [wsUrl]);
+  }, [wsUrl, core]);
 
   return (
     <div className="border-t border-gray-800 bg-[#111]">

@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { RefreshCw } from 'lucide-react';
-import type { CoreClient, NodeInfo } from '../../core/core-types';
+import type { CoreClient, NodeInfo } from '../core/core-types';
 import { PageHeader, PageLoading, PageError, PageEmpty, PageOffline, type PageState } from './page-utils';
 import { listFromResponse, normalizeNodeInfo } from './core-response-utils';
 
@@ -66,7 +66,7 @@ export function NodeManager({ core }: NodeManagerProps) {
         actions={
           <button
             onClick={fetchNodes}
-            className="p-2 rounded hover:bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
+            className="p-1.5 rounded hover:bg-[#1a1a1a] text-gray-400 hover:text-gray-200 transition-colors"
             title="Refresh"
           >
             <RefreshCw size={16} />
@@ -74,8 +74,8 @@ export function NodeManager({ core }: NodeManagerProps) {
         }
       />
 
-      <div className="flex-1 p-6">
-        <div className="space-y-2">
+      <div className="flex-1 p-4">
+        <div className="space-y-1.5">
           {nodes.map(node => (
             <button
               key={node.nodeId}
@@ -83,30 +83,30 @@ export function NodeManager({ core }: NodeManagerProps) {
                 setSelectedNode(node);
                 fetchNodeDetail(node.nodeId);
               }}
-              className={`w-full flex items-center gap-4 px-4 py-3 rounded-lg border text-sm text-left transition-colors ${
+              className={`w-full flex items-center gap-3 px-3 py-2 rounded border text-[10px] text-left transition-colors ${
                 selectedNode?.nodeId === node.nodeId
-                  ? 'border-blue-700 bg-blue-900/20'
-                  : 'border-gray-800 bg-gray-900 hover:border-gray-700'
+                  ? 'border-purple-500/50 bg-purple-900/10'
+                  : 'border-gray-800 bg-[#111] hover:bg-[#1a1a1a]'
               }`}
             >
-              <span className={`w-3 h-3 rounded-full flex-shrink-0 ${
-                node.status === 'online' ? 'bg-green-500' :
+              <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
+                node.status === 'online' ? 'bg-emerald-500' :
                 node.status === 'connecting' ? 'bg-yellow-500' :
                 node.status === 'error' ? 'bg-red-500' :
                 'bg-gray-600'
               }`} />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="font-medium text-gray-200">{node.name}</span>
-                  <span className="text-xs text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded">{node.role || '-'}</span>
-                  <span className="text-xs text-gray-600">{node.version || ''}</span>
+                  <span className="font-mono text-gray-200">{node.name}</span>
+                  <span className="text-[9px] text-gray-500 bg-[#1a1a1a] px-1.5 py-0.5 rounded">{node.role || '-'}</span>
+                  <span className="text-[9px] text-gray-600">{node.version || ''}</span>
                 </div>
-                <div className="text-xs text-gray-500 mt-0.5">
+                <div className="text-[9px] text-gray-500 mt-0.5">
                   {node.address || ''}
                   {node.uptime ? ` - up ${node.uptime}` : ''}
                 </div>
               </div>
-              <span className="text-xs text-gray-500 flex-shrink-0">
+              <span className="text-[9px] text-gray-500 flex-shrink-0">
                 CPU {node.cpu || '-'}
               </span>
             </button>
@@ -114,9 +114,9 @@ export function NodeManager({ core }: NodeManagerProps) {
         </div>
 
         {selectedNode && (
-          <div className="mt-6 p-4 bg-gray-900 rounded-lg border border-gray-800">
-            <h3 className="text-sm font-medium text-gray-200 mb-3">Node Detail: {selectedNode.name}</h3>
-            <div className="grid grid-cols-2 gap-3 text-sm">
+          <div className="mt-4 p-3 bg-[#111] rounded border border-gray-800">
+            <h3 className="text-[11px] font-mono text-gray-200 mb-2">Node Detail: {selectedNode.name}</h3>
+            <div className="grid grid-cols-2 gap-2 text-[10px]">
               <DetailRow label="ID" value={selectedNode.nodeId} />
               <DetailRow label="Role" value={selectedNode.role || '-'} />
               <DetailRow label="Status" value={selectedNode.status} />
@@ -137,8 +137,8 @@ export function NodeManager({ core }: NodeManagerProps) {
 function DetailRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex gap-2">
-      <span className="text-gray-500 w-20 flex-shrink-0">{label}:</span>
-      <span className="text-gray-300">{value}</span>
+      <span className="text-gray-500 w-20 flex-shrink-0 text-[10px]">{label}:</span>
+      <span className="text-gray-300 text-[10px]">{value}</span>
     </div>
   );
 }

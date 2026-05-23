@@ -125,14 +125,6 @@ export function getAdapterIdForView(viewId: string): string | undefined {
   return undefined;
 }
 
-export function syncAdapterViewsFromExtensionData(eps: Record<string, unknown> | null): void {
-  if (!eps) return;
-  const adapterViews = eps.adapterViews as Record<string, string> | undefined;
-  if (adapterViews) {
-    setAdapterViewMap(adapterViews);
-  }
-}
-
 // ── Adapter display metadata ──────────────────────────────────
 
 export interface AdapterMeta {
@@ -154,37 +146,13 @@ export function getAdapterMeta(adapterId?: string): AdapterMeta {
   return _adapterMeta.get(adapterId || '') || fallbackMeta;
 }
 
-export function syncAdapterMetaFromExtensionData(eps: Record<string, unknown> | null): void {
-  if (!eps) return;
-  const extMeta = eps.adapterMeta as Record<string, { label?: string; emoji?: string }> | undefined;
-  if (extMeta) {
-    for (const [id, meta] of Object.entries(extMeta)) {
-      if (!_adapterMeta.has(id)) {
-        _adapterMeta.set(id, {
-          icon: Cpu,
-          label: meta.label || id,
-          emoji: meta.emoji || '▶',
-        });
-      }
-    }
-  }
-}
-
 export function getAllAdapterTypes(): Array<{ id: string; meta: AdapterMeta }> {
   return [..._adapterMeta.entries()].map(([id, meta]) => ({ id, meta }));
 }
 
-// ─── Adapter Capabilities (from extension manifests) ────────────
+// ─── Adapter Capabilities ───────────────────────────────────
 
 const dynamicAdapterCapabilities = new Map<string, Record<string, boolean>>();
-
-export function syncAdapterCapabilitiesFromExtensionData(eps: Record<string, unknown> | null): void {
-  if (!eps?.adapterCapabilities) return;
-  const caps = eps.adapterCapabilities as Record<string, Record<string, boolean>>;
-  for (const [id, cap] of Object.entries(caps)) {
-    dynamicAdapterCapabilities.set(id, cap);
-  }
-}
 
 export function getAdapterCapabilities(adapterId: string): Record<string, boolean> | undefined {
   return dynamicAdapterCapabilities.get(adapterId);

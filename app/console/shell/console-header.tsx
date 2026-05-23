@@ -9,6 +9,7 @@ import { runWorkbenchCommand } from '../actions/workbench-command-dispatch';
 import type { ActionRunContext, WorkbenchAction } from '../actions/action-types';
 import type { LucideIcon } from 'lucide-react';
 import { getHeaderChromeItems, getContextControls } from '../chrome/chrome-registry';
+import { useCoreStatus } from '../core/core-client-provider';
 
 // ── Icon name → Lucide component map ──────────────────────────
 const ICON_MAP: Record<string, LucideIcon> = {
@@ -99,6 +100,7 @@ export function ConsoleHeader({
   // Hooks must be called unconditionally
   const focus = useFocus();
   const { activePolicy } = useRuntimePolicy();
+  const coreStatus = useCoreStatus();
 
   // Built-in runtime status badge — driven by adapter capability "modes".
   // This is a host-level built-in element, not a plugin-contributed slot.
@@ -209,6 +211,11 @@ export function ConsoleHeader({
         <span className="text-xs text-gray-400 flex items-center gap-2">
           <span className={`w-2 h-2 rounded-full ${statusColor} ${connStatus.status === 'connected' ? 'animate-pulse' : ''}`} />
           {statusText}{connectionUnstable ? <span className="text-yellow-500 animate-pulse">...</span> : null}
+          {coreStatus !== 'connected' && coreStatus !== 'connecting' && (
+            <span className="text-[9px] text-yellow-500/70 ml-1" title={`Core: ${coreStatus}`}>
+              core:{coreStatus === 'error' ? 'err' : 'off'}
+            </span>
+          )}
         </span>
 
         {/* ── Minimal header: show only brand + connection, no chat-specific items ── */}

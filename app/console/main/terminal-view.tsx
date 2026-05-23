@@ -3,6 +3,7 @@
 import { Terminal, Folder } from 'lucide-react';
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useWorkbench } from '../workbench/workbench-context';
+import { useCore } from '../core/core-client-provider';
 import ShellTerminal from '../../shell-terminal';
 import { DirectoryPicker } from '../dialogs/directory-picker';
 import { TitleBar } from '../shared/title-bar';
@@ -23,10 +24,12 @@ function env(type: string, body: Record<string, unknown> = {}) {
 
 export function TerminalView({ instanceId, _surfaceId }: TerminalViewProps) {
   const { wsUrl, token, createInstance, bindCurrentTabInstance, ensureSurfacePublished, projectCwd, homeDir, activeNodeWsUrl } = useWorkbench();
+  const core = useCore();
   // Compute API base URL: remote node gets proxied, local uses empty (same-origin)
   const apiBaseUrl = activeNodeWsUrl !== wsUrl ? activeNodeWsUrl.replace(/^ws/, 'http') : '';
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [coreSessionId, setCoreSessionId] = useState<string | null>(null);
   const autoCreated = useRef(false);
   const surfacePublished = useRef(false);
   const [cwd, setCwd] = useState(() => {
@@ -48,11 +51,30 @@ export function TerminalView({ instanceId, _surfaceId }: TerminalViewProps) {
   useEffect(() => {
     if (instanceId || autoCreated.current) return;
     autoCreated.current = true;
-    debugLog('TerminalView auto-creating instance', { cwd: cwdRef.current });
+    debugLog('TerminalView auto-creating instance', { cwd: cwdRef.current, coreConnected: core?.isConnected });
     setCreating(true);
     setError(null);
     (async () => {
       try {
+        // Prefer CoreClient run.create when core is connected
+        if (core?.isConnected) {
+          const run = await core.call<{ runId: string; sessionId: string }>('run.create', {
+            command: 'bash',
+            pty: true,
+            cols: 80,
+            rows: 24,
+            cwd: cwdRef.current,
+            label: 'Terminal',
+            pluginId: 'shell',
+          });
+          if (run?.runId && run?.sessionId) {
+            debugLog('TerminalView core.run.create SUCCESS', { runId: run.runId, sessionId: run.sessionId });
+            setCoreSessionId(run.sessionId);
+            bindCurrentTabInstance(run.runId, undefined);
+            return;
+          }
+        }
+        // Fallback: relay createInstance
         const result = await createInstance(cwdRef.current, 'Terminal', 'shell');
         if (result?.instance?.id) {
           debugLog('TerminalView auto-create SUCCESS', { instanceId: result.instance.id, surfaceId: result.surface?.surfaceId });
@@ -68,7 +90,7 @@ export function TerminalView({ instanceId, _surfaceId }: TerminalViewProps) {
         setCreating(false);
       }
     })();
-  }, [instanceId, createInstance, bindCurrentTabInstance, projectCwd]);
+  }, [instanceId, core, createInstance, bindCurrentTabInstance, projectCwd]);
 
   // Publish surface for tabs that already have an instanceId (e.g. restored
   // from localStorage or synced via workbench.tabs). Without this, other
@@ -106,15 +128,22 @@ export function TerminalView({ instanceId, _surfaceId }: TerminalViewProps) {
     return r ? base + '/' + r : base;
   }, [projectCwd]);
 
-  // Send cd command to the terminal shell via a transient WS connection
+  // Send cd command to the terminal shell
   const sendCd = useCallback((path: string) => {
     const absPath = resolveRel(path);
     setCwd(absPath);
     setLastActiveDir(absPath);
-    if (!instanceId) return;
+    if (!instanceId && !coreSessionId) return;
     const qPath = absPath.replace(/\\/g, '/');
     const cdCmd = `cd "${qPath}"\r`;
 
+    // CoreClient mode: use stream.write
+    if (core?.isConnected && coreSessionId) {
+      core.call('stream.write', { sessionId: coreSessionId, data: cdCmd }).catch(() => {});
+      return;
+    }
+
+    // Fallback: transient WebSocket for relay
     const ws = new WebSocket(wsUrl);
     ws.onopen = () => {
       const helloBody: Record<string, unknown> = { role: 'browser', features: ['cd-helper'] };
@@ -124,7 +153,7 @@ export function TerminalView({ instanceId, _surfaceId }: TerminalViewProps) {
       setTimeout(() => ws.close(), 500);
     };
     ws.onerror = () => {};
-  }, [instanceId, wsUrl, token, resolveRel]);
+  }, [instanceId, coreSessionId, core, wsUrl, token, resolveRel]);
 
   const handleSelectDir = useCallback((path: string) => {
     sendCd(path);
@@ -183,7 +212,7 @@ export function TerminalView({ instanceId, _surfaceId }: TerminalViewProps) {
       </TitleBar>
 
       <div className="flex-1 flex flex-col min-h-0">
-        <ShellTerminal wsUrl={wsUrl} instanceId={instanceId} token={token} _surfaceId={_surfaceId} onOpenDirectoryPicker={handleOpenDirectoryPicker} />
+        <ShellTerminal wsUrl={wsUrl} instanceId={instanceId} token={token} _surfaceId={_surfaceId} onOpenDirectoryPicker={handleOpenDirectoryPicker} core={core} coreSessionId={coreSessionId ?? undefined} />
       </div>
 
       <DirectoryPicker

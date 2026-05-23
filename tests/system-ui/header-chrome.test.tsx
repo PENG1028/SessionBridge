@@ -43,6 +43,11 @@ vi.mock('../../app/console/actions/action-registry', () => ({
   getActions: vi.fn(() => []),
 }));
 
+// CoreClient status — ConsoleHeader uses useCoreStatus
+vi.mock('../../app/console/core/core-client-provider', () => ({
+  useCoreStatus: vi.fn(() => 'connected'),
+}));
+
 // ─── Now import after mocks are set up ──────────────────────────
 import { ConsoleHeader } from '../../app/console/shell/console-header';
 import type { ConsoleHeaderProps } from '../../app/console/shell/console-header';

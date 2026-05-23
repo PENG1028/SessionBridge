@@ -2,11 +2,11 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { RefreshCw, Search, Play, Power, PowerOff } from 'lucide-react';
-import type { CoreClient, PluginInfo, BlockerEntry, RunInfo } from '../../core/core-types';
+import type { CoreClient, PluginInfo, BlockerEntry, RunInfo } from '../core/core-types';
 import { PageHeader, PageLoading, PageError, PageEmpty, PageOffline, type PageState } from './page-utils';
 import { listFromResponse } from './core-response-utils';
-import { getAllViewEntries, getAdapterIdForView } from '../../main/view-registry';
-import { isViewLaunchable } from '../../plugin-host/launchability';
+import { getAllViewEntries, getAdapterIdForView } from '../main/view-registry';
+import { isViewLaunchable } from '../plugin-host/launchability';
 
 interface PluginManagerProps {
   core: CoreClient;
@@ -244,14 +244,14 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
             <button
               onClick={runAllEnvChecks}
               disabled={envCheckRunning}
-              className="text-xs px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 transition-colors disabled:opacity-50"
+              className="text-[9px] px-3 py-1.5 rounded bg-[#1a1a1a] hover:bg-[#222] text-gray-400 transition-colors disabled:opacity-50"
               title="Run environment checks for all plugins"
             >
               {envCheckRunning ? 'Checking...' : 'Check All'}
             </button>
             <button
               onClick={fetchPlugins}
-              className="p-2 rounded hover:bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
+              className="p-2 rounded hover:bg-[#1a1a1a] text-gray-400 hover:text-gray-200 transition-colors"
               title="Refresh"
             >
               <RefreshCw size={16} />
@@ -261,14 +261,14 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
       />
 
       {toggleError && (
-        <div className="mx-6 mt-3 px-3 py-2 bg-red-900/30 border border-red-800 rounded text-sm text-red-400">
+        <div className="mx-6 mt-3 px-3 py-2 bg-red-900/30 border border-red-800 rounded text-[10px] text-red-400">
           {toggleError}
           <button onClick={() => setToggleError(null)} className="ml-2 text-red-300 hover:text-red-200">&times;</button>
         </div>
       )}
 
       {/* Search & Filters */}
-      <div className="px-6 py-3 border-b border-gray-800 flex items-center gap-3">
+      <div className="px-4 py-2 border-b border-gray-800 flex items-center gap-2">
         <div className="relative flex-1 max-w-xs">
           <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-600" />
           <input
@@ -276,14 +276,14 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
             placeholder="Search plugins..."
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
-            className="w-full pl-8 pr-3 py-1.5 text-sm bg-gray-900 border border-gray-800 rounded text-gray-300 placeholder-gray-600 focus:outline-none focus:border-gray-600"
+            className="w-full pl-8 pr-3 py-1.5 text-[10px] bg-[#1a1a1a] border border-gray-700 rounded text-gray-300 placeholder-gray-600 focus:outline-none focus:border-purple-500"
           />
         </div>
 
         <select
           value={statusFilter}
           onChange={e => setStatusFilter(e.target.value as StatusFilter)}
-          className="text-xs px-2 py-1.5 bg-gray-900 border border-gray-800 rounded text-gray-400 focus:outline-none focus:border-gray-600"
+          className="text-[9px] px-2 py-1.5 bg-[#111] border border-gray-800 rounded text-gray-400 focus:outline-none focus:border-gray-600"
         >
           <option value="all">All Status</option>
           <option value="enabled">Enabled</option>
@@ -294,7 +294,7 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
         <select
           value={typeFilter}
           onChange={e => setTypeFilter(e.target.value as TypeFilter)}
-          className="text-xs px-2 py-1.5 bg-gray-900 border border-gray-800 rounded text-gray-400 focus:outline-none focus:border-gray-600"
+          className="text-[9px] px-2 py-1.5 bg-[#111] border border-gray-800 rounded text-gray-400 focus:outline-none focus:border-gray-600"
         >
           <option value="all">All Types</option>
           <option value="builtin">Builtin</option>
@@ -302,14 +302,14 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
         </select>
 
         {searchQuery && (
-          <span className="text-xs text-gray-600">
+          <span className="text-[9px] text-gray-600">
             {filteredPlugins.length} / {plugins.length}
           </span>
         )}
       </div>
 
       {/* Plugin list */}
-      <div className="p-6">
+      <div className="p-4">
         <div className="space-y-2">
           {filteredPlugins.map(plugin => {
             const envCheck = envCheckResults[plugin.pluginId];
@@ -326,20 +326,20 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
             return (
               <div
                 key={plugin.pluginId}
-                className="px-4 py-3 rounded-lg border border-gray-800 bg-gray-900"
+                className="px-4 py-2 rounded border border-gray-800 bg-[#111]"
               >
                 {/* Row 1: identity + status + actions */}
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
                   <div className="flex-1 min-w-0 flex items-center gap-2">
                     <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                      plugin.status === 'enabled' ? 'bg-green-500' :
+                      plugin.status === 'enabled' ? 'bg-emerald-500' :
                       plugin.status === 'error' ? 'bg-red-500' :
                       'bg-gray-600'
                     }`} />
-                    <span className="font-medium text-gray-200">{plugin.pluginId}</span>
+                    <span className="font-mono text-gray-200">{plugin.pluginId}</span>
                     {plugin.type && (
                       <span className={`text-[10px] px-1.5 py-0.5 rounded ${
-                        isBuiltin ? 'bg-gray-800 text-gray-400' : 'bg-blue-900/50 text-blue-400'
+                        isBuiltin ? 'bg-[#1a1a1a] text-gray-500' : 'bg-purple-900/20 text-purple-400'
                       }`}>
                         {plugin.type}
                       </span>
@@ -356,14 +356,14 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
                     <button
                       onClick={() => runSingleCheck(plugin.pluginId)}
                       disabled={isChecking}
-                      className="text-[10px] px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 transition-colors disabled:opacity-50"
+                      className="text-[10px] px-2 py-1 rounded bg-[#1a1a1a] hover:bg-[#222] text-gray-400 transition-colors disabled:opacity-50"
                       title={`Check ${plugin.pluginId}`}
                     >
                       {isChecking ? '...' : 'Check'}
                     </button>
                     <button
                       onClick={() => onPluginSelect?.(plugin.pluginId)}
-                      className="text-[10px] px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 transition-colors"
+                      className="text-[10px] px-2 py-1 rounded bg-[#1a1a1a] hover:bg-[#222] text-gray-400 transition-colors"
                     >
                       Detail
                     </button>
@@ -373,8 +373,8 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
                         disabled={isToggling}
                         className={`text-[10px] px-2 py-1 rounded transition-colors disabled:opacity-50 ${
                           plugin.status === 'enabled'
-                            ? 'bg-red-900/50 hover:bg-red-800/50 text-red-400'
-                            : 'bg-green-900/50 hover:bg-green-800/50 text-green-400'
+                            ? 'bg-red-900/20 hover:bg-red-900/40 text-red-400'
+                            : 'bg-emerald-900/20 hover:bg-emerald-900/40 text-emerald-400'
                         }`}
                         title={isToggling ? 'Toggling...' : (plugin.status === 'enabled' ? 'Disable' : 'Enable')}
                       >
@@ -393,8 +393,8 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
                 )}
 
                 {/* Row 2: summary line — launchable / caps / deps / check / runs */}
-                <div className="flex items-center gap-3 mt-1.5 text-[10px] text-gray-500">
-                  <span className={launchable ? 'text-green-400' : 'text-gray-600'}>
+                <div className="flex items-center gap-2 mt-1.5 text-[10px] text-gray-500">
+                  <span className={launchable ? 'text-emerald-400' : 'text-gray-600'}>
                     launchable: {launchable ? 'yes' : 'no'}
                   </span>
                   <span>caps: {capCount}</span>
@@ -403,7 +403,7 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
                   {envCheck ? (
                     <>
                       <span className={
-                        envCheck.status === 'ok' ? 'text-green-400' :
+                        envCheck.status === 'ok' ? 'text-emerald-400' :
                         envCheck.status === 'blocked' ? 'text-red-400' :
                         'text-yellow-400'
                       }>
@@ -439,7 +439,7 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
                 {capCount > 0 && (
                   <div className="flex flex-wrap gap-1 mt-1">
                     {(plugin.capabilities || []).slice(0, 8).map((cap: string) => (
-                      <span key={cap} className="text-[9px] px-1.5 py-0.5 bg-gray-800/50 text-gray-500 rounded">
+                      <span key={cap} className="text-[9px] px-1.5 py-0.5 bg-[#1a1a1a] text-gray-500 rounded">
                         {cap}
                       </span>
                     ))}
@@ -454,7 +454,7 @@ export function PluginManager({ core, onPluginSelect }: PluginManagerProps) {
         </div>
 
         {filteredPlugins.length === 0 && (
-          <div className="text-center py-12 text-gray-500 text-sm">
+          <div className="text-center py-12 text-gray-500 text-[10px]">
             No plugins match your filters.
           </div>
         )}

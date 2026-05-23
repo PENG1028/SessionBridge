@@ -1,10 +1,10 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import type { CoreClient, BlockerEntry } from '../../core/core-types';
+import type { CoreClient, BlockerEntry } from '../core/core-types';
 import { PageLoading, PageError, PageEmpty, PageOffline, PagePermissionDenied, type PageState } from './page-utils';
-import { getAllViewEntries } from '../../main/view-registry';
-import { isViewLaunchable } from '../../plugin-host/launchability';
+import { getAllViewEntries } from '../main/view-registry';
+import { isViewLaunchable } from '../plugin-host/launchability';
 
 interface PluginDetailProps {
   core: CoreClient;
@@ -108,20 +108,20 @@ export function PluginDetail({ core, pluginId, onBack = () => {} }: PluginDetail
   return (
     <div className="flex-1 flex flex-col overflow-y-auto">
       {/* Header */}
-      <div className="flex items-center gap-3 px-6 py-3 border-b border-gray-800">
-        <button onClick={onBack} className="text-sm text-blue-400 hover:text-blue-300 transition-colors">
+      <div className="flex items-center gap-3 px-4 py-1.5 border-b border-gray-800">
+        <button onClick={onBack} className="text-[10px] text-purple-400 hover:text-purple-300 transition-colors">
           &lt; Plugin Manager
         </button>
-        <h1 className="text-lg font-semibold text-gray-100">{pluginId}</h1>
+        <h1 className="text-[11px] font-mono text-gray-100">{pluginId}</h1>
         {manifest && (
           <>
-            <span className="text-xs text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded">
+            <span className="text-[9px] text-gray-500 bg-[#1a1a1a] px-1.5 py-0.5 rounded">
               {str(manifest.version)}
             </span>
-            <span className={`text-xs px-1.5 py-0.5 rounded ${
+            <span className={`text-[9px] px-1.5 py-0.5 rounded ${
               str(manifest.status) === 'enabled'
-                ? 'bg-green-900/50 text-green-400'
-                : 'bg-gray-800 text-gray-500'
+                ? 'bg-emerald-900/20 text-emerald-400'
+                : 'bg-[#1a1a1a] text-gray-500'
             }`}>
               {str(manifest.status) || 'unknown'}
             </span>
@@ -129,10 +129,10 @@ export function PluginDetail({ core, pluginId, onBack = () => {} }: PluginDetail
         )}
         <div className="flex-1" />
         <div className="flex items-center gap-2">
-          {toggleError && <span className="text-xs text-red-400">{toggleError}</span>}
+          {toggleError && <span className="text-[9px] text-red-400">{toggleError}</span>}
           <button
             onClick={fetchPlugin}
-            className="text-xs px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 transition-colors"
+            className="text-[9px] px-3 py-1.5 rounded bg-[#1a1a1a] hover:bg-[#222] text-gray-400 transition-colors"
             title="Refresh plugin data"
           >
             Refresh
@@ -141,28 +141,28 @@ export function PluginDetail({ core, pluginId, onBack = () => {} }: PluginDetail
             <button
               onClick={handleToggle}
               disabled={toggling}
-              className={`text-xs px-3 py-1.5 rounded transition-colors disabled:opacity-50 ${
+              className={`text-[9px] px-3 py-1.5 rounded transition-colors disabled:opacity-50 ${
                 str(manifest?.status) === 'enabled'
-                  ? 'bg-red-900/50 hover:bg-red-800/50 text-red-400'
-                  : 'bg-green-900/50 hover:bg-green-800/50 text-green-400'
+                  ? 'bg-red-900/20 hover:bg-red-900/40 text-red-400'
+                  : 'bg-emerald-900/20 hover:bg-emerald-900/40 text-emerald-400'
               }`}
             >
               {toggling ? '...' : (str(manifest?.status) === 'enabled' ? 'Disable' : 'Enable')}
             </button>
           )}
-          {isBuiltin && <span className="text-xs text-gray-600">builtin — always on</span>}
+          {isBuiltin && <span className="text-[9px] text-gray-600">builtin — always on</span>}
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-gray-800 px-6 overflow-x-auto">
+      <div className="flex border-b border-gray-800 px-4 overflow-x-auto">
         {TABS.map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`px-3 py-2.5 text-xs whitespace-nowrap border-b-2 transition-colors ${
+            className={`px-3 py-1.5 text-[10px] font-mono whitespace-nowrap border-b-2 transition-colors ${
               activeTab === tab.id
-                ? 'border-blue-500 text-blue-400'
+                ? 'border-purple-500 text-purple-400'
                 : 'border-transparent text-gray-500 hover:text-gray-300'
             }`}
           >
@@ -171,7 +171,7 @@ export function PluginDetail({ core, pluginId, onBack = () => {} }: PluginDetail
         ))}
       </div>
 
-      <div className="flex-1 p-6">
+      <div className="flex-1 p-4">
         <TabContent core={core} pluginId={pluginId} tab={activeTab} manifest={manifest} />
       </div>
     </div>
@@ -203,7 +203,7 @@ function TabContent({
 // ─── Overview ─────────────────────────────────────────────────────
 
 function OverviewTab({ pluginId, manifest }: { pluginId: string; manifest: Record<string, unknown> | null }) {
-  if (!manifest) return <div className="text-gray-500 text-sm">No manifest data available.</div>;
+  if (!manifest) return <div className="text-gray-500 text-[10px]">No manifest data available.</div>;
 
   const contributes = (manifest.contributes || {}) as Record<string, unknown>;
   const manifestViews = safeArray(contributes.views);
@@ -245,17 +245,17 @@ function OverviewTab({ pluginId, manifest }: { pluginId: string; manifest: Recor
 
       {/* Launchable status */}
       <Section title="Tab / Window">
-        <div className="flex items-center gap-2 text-sm">
-          <span className={launchable ? 'text-green-400' : 'text-gray-500'}>
+        <div className="flex items-center gap-2 text-[10px]">
+          <span className={launchable ? 'text-emerald-400' : 'text-gray-500'}>
             Can open as tab: {launchable ? 'Yes' : 'No'}
           </span>
         </div>
         {launchable ? (
-          <p className="text-xs text-green-400/70 mt-1">
+          <p className="text-[9px] text-emerald-400/70 mt-1">
             Has {launchableViews.length} launchable view{launchableViews.length > 1 ? 's' : ''}: {launchableViews.join(', ')}
           </p>
         ) : (
-          <p className="text-xs text-gray-500 mt-1">
+          <p className="text-[9px] text-gray-500 mt-1">
             No direct-launchable view declared. Plugin {otherViews.length > 0 ? `contributes ${otherViews.join(', ')} (non-direct)` : 'has no registered views'}.
           </p>
         )}
@@ -265,13 +265,13 @@ function OverviewTab({ pluginId, manifest }: { pluginId: string; manifest: Recor
       {(manifestViews.length > 0 || manifestPanels.length > 0) && (
         <Section title="Contributions">
           {manifestViews.length > 0 && (
-            <div className="text-xs text-gray-400">
+            <div className="text-[9px] text-gray-400">
               <span className="text-gray-500">Views:</span>{' '}
               {manifestViews.map((v: Record<string, unknown>) => str(v.id)).join(', ')}
             </div>
           )}
           {manifestPanels.length > 0 && (
-            <div className="text-xs text-gray-400">
+            <div className="text-[9px] text-gray-400">
               <span className="text-gray-500">Panels:</span>{' '}
               {manifestPanels.map((p: Record<string, unknown>) => str(p.id)).join(', ')}
             </div>
@@ -284,7 +284,7 @@ function OverviewTab({ pluginId, manifest }: { pluginId: string; manifest: Recor
         <Section title={`Declared Capabilities (${caps.length})`}>
           <div className="flex flex-wrap gap-1">
             {caps.map((cap: Record<string, unknown>, idx: number) => (
-              <span key={idx} className="text-[10px] px-2 py-0.5 bg-gray-800 text-gray-400 rounded">
+              <span key={idx} className="text-[10px] px-2 py-0.5 bg-[#1a1a1a] text-gray-400 rounded">
                 {str(cap.id) || str(cap)}
               </span>
             ))}
@@ -295,7 +295,7 @@ function OverviewTab({ pluginId, manifest }: { pluginId: string; manifest: Recor
       {/* Last error */}
       {!!manifest.error && (
         <Section title="Last Error">
-          <p className="text-xs text-red-400">{str(manifest.error)}</p>
+          <p className="text-[9px] text-red-400">{str(manifest.error)}</p>
         </Section>
       )}
     </div>
@@ -333,54 +333,54 @@ function EnvironmentTab({ core, pluginId }: { core: CoreClient; pluginId: string
   return (
     <div>
       <div className="flex items-center gap-2 mb-4">
-        <h3 className="text-sm font-medium text-gray-300">Environment Check</h3>
+        <h3 className="text-[10px] font-mono text-gray-300">Environment Check</h3>
         <button onClick={runCheck} disabled={loading}
-          className="text-xs px-3 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 transition-colors disabled:opacity-50"
+          className="text-[9px] px-3 py-1 rounded bg-[#1a1a1a] hover:bg-[#222] text-gray-400 transition-colors disabled:opacity-50"
         >
           {loading ? 'Running...' : 'Run Check Again'}
         </button>
         {data && (
-          <span className={`text-xs px-2 py-0.5 rounded ${
-            data.status === 'ok' ? 'bg-green-900/50 text-green-400' : 'bg-yellow-900/50 text-yellow-400'
+          <span className={`text-[9px] px-2 py-0.5 rounded ${
+            data.status === 'ok' ? 'bg-emerald-900/20 text-emerald-400' : 'bg-yellow-900/50 text-yellow-400'
           }`}>
             {data.status}
           </span>
         )}
       </div>
 
-      {fetchError && <p className="text-red-400 text-sm mb-3">{fetchError}</p>}
+      {fetchError && <p className="text-red-400 text-[10px] mb-3">{fetchError}</p>}
 
       {!data ? (
-        <div className="text-gray-500 text-sm">Running check...</div>
+        <div className="text-gray-500 text-[10px]">Running check...</div>
       ) : !data.dependencies || data.dependencies.length === 0 ? (
-        <div className="text-gray-500 text-sm">No dependencies.</div>
+        <div className="text-gray-500 text-[10px]">No dependencies.</div>
       ) : (
         <div className="space-y-2">
           {data.dependencies.map((dep, i) => {
             const isMissingRequired = !!dep.required && dep.status !== 'ok';
             return (
-            <div key={i} className={`flex items-center gap-3 px-3 py-2 rounded-lg border text-sm ${
+            <div key={i} className={`flex items-center gap-3 px-3 py-2 rounded border text-[10px] ${
               isMissingRequired
                 ? 'bg-red-950/30 border-red-900/50'
-                : 'bg-gray-900 border-gray-800'
+                : 'bg-[#111] border-gray-800'
             }`}>
               <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                dep.status === 'ok' ? 'bg-green-500' :
+                dep.status === 'ok' ? 'bg-emerald-500' :
                 dep.status === 'skipped' ? 'bg-gray-600' :
                 dep.status === 'pending' ? 'bg-yellow-500' : 'bg-red-500'
               }`} />
-              <span className="text-gray-200 font-medium">{dep.id}</span>
-              <span className="text-xs text-gray-500">({dep.type})</span>
-              {dep.command && <span className="text-xs text-gray-600">cmd: {dep.command}</span>}
+              <span className="text-gray-200 font-mono">{dep.id}</span>
+              <span className="text-[9px] text-gray-500">({dep.type})</span>
+              {dep.command && <span className="text-[9px] text-gray-600">cmd: {dep.command}</span>}
               {dep.required && (
-                <span className={`text-xs ${isMissingRequired ? 'text-red-400 font-semibold' : 'text-red-400/70'}`}>
+                <span className={`text-[9px] ${isMissingRequired ? 'text-red-400 font-mono' : 'text-red-400/70'}`}>
                   required{isMissingRequired ? ' (missing)' : ''}
                 </span>
               )}
-              {dep.versionCommand && <span className="text-xs text-gray-600">ver: {dep.versionCommand}</span>}
-              {dep.requiredVersion && <span className="text-xs text-gray-600">≥ {dep.requiredVersion}</span>}
+              {dep.versionCommand && <span className="text-[9px] text-gray-600">ver: {dep.versionCommand}</span>}
+              {dep.requiredVersion && <span className="text-[9px] text-gray-600">≥ {dep.requiredVersion}</span>}
               {dep.installHint && (
-                <span className="text-xs text-blue-400/70 ml-auto" title={dep.installHint}>
+                <span className="text-[9px] text-purple-400/70 ml-auto" title={dep.installHint}>
                   install hint
                 </span>
               )}
@@ -436,11 +436,11 @@ function CapabilitiesTab({ core, pluginId }: { core: CoreClient; pluginId: strin
 
   useEffect(() => { runCheck(); }, [core, pluginId]);
 
-  if (loading) return <div className="text-gray-500 text-sm">Checking capabilities...</div>;
+  if (loading) return <div className="text-gray-500 text-[10px]">Checking capabilities...</div>;
   if (fetchError) return (
     <div>
-      <p className="text-red-400 text-sm mb-2">{fetchError}</p>
-      <button onClick={runCheck} className="text-xs px-3 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-400">Retry</button>
+      <p className="text-red-400 text-[10px] mb-2">{fetchError}</p>
+      <button onClick={runCheck} className="text-[9px] px-3 py-1 rounded bg-[#1a1a1a] hover:bg-[#222] text-gray-400">Retry</button>
     </div>
   );
   if (!checkResult) return null;
@@ -448,15 +448,15 @@ function CapabilitiesTab({ core, pluginId }: { core: CoreClient; pluginId: strin
   return (
     <div className="max-w-2xl space-y-4">
       <div className="flex items-center gap-2">
-        <h3 className="text-sm font-medium text-gray-300">Capability Status</h3>
+        <h3 className="text-[10px] font-mono text-gray-300">Capability Status</h3>
         <button onClick={runCheck} disabled={loading}
-          className="text-xs px-3 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 transition-colors disabled:opacity-50"
+          className="text-[9px] px-3 py-1 rounded bg-[#1a1a1a] hover:bg-[#222] text-gray-400 transition-colors disabled:opacity-50"
         >
           {loading ? 'Running...' : 'Re-check'}
         </button>
-        <span className={`text-xs px-2 py-0.5 rounded ${
-          checkResult.status === 'ok' ? 'bg-green-900/50 text-green-400' :
-          checkResult.status === 'blocked' ? 'bg-red-900/50 text-red-400' :
+        <span className={`text-[9px] px-2 py-0.5 rounded ${
+          checkResult.status === 'ok' ? 'bg-emerald-900/20 text-emerald-400' :
+          checkResult.status === 'blocked' ? 'bg-red-900/20 text-red-400' :
           'bg-yellow-900/50 text-yellow-400'
         }`}>
           {checkResult.status}
@@ -465,16 +465,16 @@ function CapabilitiesTab({ core, pluginId }: { core: CoreClient; pluginId: strin
 
       {checkResult.blockers.length > 0 && (
         <div className="space-y-2">
-          <h4 className="text-xs font-medium text-red-400">Blockers ({checkResult.blockers.length})</h4>
+          <h4 className="text-[9px] font-mono text-red-400">Blockers ({checkResult.blockers.length})</h4>
           {checkResult.blockers.map((b, i) => (
-            <div key={i} className="px-3 py-2 bg-gray-900 rounded-lg border border-gray-800 text-xs space-y-1">
+            <div key={i} className="px-3 py-2 bg-[#111] rounded border border-gray-800 text-[9px] space-y-1">
               <div className="flex items-center gap-2">
                 <span className={`px-1.5 py-0.5 rounded ${
-                  b.kind === 'missing_dependency' ? 'bg-red-900/50 text-red-400' :
+                  b.kind === 'missing_dependency' ? 'bg-red-900/20 text-red-400' :
                   b.kind === 'missing_grant' ? 'bg-yellow-900/50 text-yellow-400' :
-                  b.kind === 'unsupported_capability' ? 'bg-red-900/50 text-red-400' :
+                  b.kind === 'unsupported_capability' ? 'bg-red-900/20 text-red-400' :
                   b.kind === 'unknown_capability' ? 'bg-orange-900/50 text-orange-400' :
-                  'bg-gray-800 text-gray-500'
+                  'bg-[#1a1a1a] text-gray-500'
                 }`}>
                   {b.kind}
                 </span>
@@ -488,7 +488,7 @@ function CapabilitiesTab({ core, pluginId }: { core: CoreClient; pluginId: strin
 
       {checkResult.capabilities.length > 0 && (
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full text-[10px]">
             <thead>
               <tr className="text-left text-gray-500 border-b border-gray-800">
                 <th className="pb-2 pr-4">Capability</th>
@@ -500,21 +500,21 @@ function CapabilitiesTab({ core, pluginId }: { core: CoreClient; pluginId: strin
             <tbody>
               {checkResult.capabilities.map((cap, idx) => (
                 <tr key={idx} className="border-b border-gray-800/50 text-gray-300">
-                  <td className="py-2 pr-4 font-mono text-xs text-gray-200">{cap.capability}</td>
+                  <td className="py-2 pr-4 font-mono text-[9px] text-gray-200">{cap.capability}</td>
                   <td className="py-2 pr-4">
-                    <span className={`text-xs ${cap.supported ? 'text-green-400' : 'text-red-400'}`}>
+                    <span className={`text-[9px] ${cap.supported ? 'text-emerald-400' : 'text-red-400'}`}>
                       {cap.supported ? 'supported' : 'unsupported'}
                     </span>
                   </td>
                   <td className="py-2 pr-4">
-                    <span className={`text-xs px-1.5 py-0.5 rounded ${
-                      cap.level === 'full' ? 'bg-green-900/50 text-green-400' :
+                    <span className={`text-[9px] px-1.5 py-0.5 rounded ${
+                      cap.level === 'full' ? 'bg-emerald-900/20 text-emerald-400' :
                       cap.level === 'partial' ? 'bg-yellow-900/50 text-yellow-400' :
-                      cap.level === 'none' ? 'bg-red-900/50 text-red-400' :
-                      'bg-gray-800 text-gray-500'
+                      cap.level === 'none' ? 'bg-red-900/20 text-red-400' :
+                      'bg-[#1a1a1a] text-gray-500'
                     }`}>{cap.level}</span>
                   </td>
-                  <td className="py-2 text-xs text-gray-500 max-w-xs truncate">
+                  <td className="py-2 text-[9px] text-gray-500 max-w-xs truncate">
                     {cap.reason || cap.detail || '—'}
                   </td>
                 </tr>
@@ -525,7 +525,7 @@ function CapabilitiesTab({ core, pluginId }: { core: CoreClient; pluginId: strin
       )}
 
       {checkResult.blockers.length === 0 && checkResult.capabilities.length === 0 && (
-        <div className="text-gray-500 text-sm">No blockers. All declared capabilities are supported.</div>
+        <div className="text-gray-500 text-[10px]">No blockers. All declared capabilities are supported.</div>
       )}
     </div>
   );
@@ -692,14 +692,14 @@ function PermissionsTab({ core, pluginId }: { core: CoreClient; pluginId: string
 
   useEffect(() => { fetchPermissions(); }, [core, pluginId]);
 
-  if (loading) return <div className="text-gray-500 text-sm">Loading permissions...</div>;
+  if (loading) return <div className="text-gray-500 text-[10px]">Loading permissions...</div>;
   if (permDenied) return <PagePermissionDenied />;
-  if (notImpl) return <div className="text-gray-500 text-sm">Permission management is not available in Phase 1.</div>;
-  if (fetchError) return <p className="text-red-400 text-sm">{fetchError}</p>;
+  if (notImpl) return <div className="text-gray-500 text-[10px]">Permission management is not available in Phase 1.</div>;
+  if (fetchError) return <p className="text-red-400 text-[10px]">{fetchError}</p>;
   if (permissions.length === 0) return <PageEmpty title="No permissions found" />;
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-1.5">
       {permissions.map((p, i) => {
         const pid = str(p.id);
         const rowState = grantState[pid] || { loading: false, error: null };
@@ -707,17 +707,17 @@ function PermissionsTab({ core, pluginId }: { core: CoreClient; pluginId: string
         const canGrant = grantMode !== 'allow';
         const canRevoke = grantMode === 'allow';
         return (
-          <div key={i} className="px-4 py-3 bg-gray-900 rounded-lg border border-gray-800">
+          <div key={i} className="px-4 py-1.5 bg-[#111] rounded border border-gray-800">
             <div className="flex items-center gap-2 mb-1">
-              <code className="text-sm text-gray-200 font-mono">{pid}</code>
+              <code className="text-[10px] text-gray-200 font-mono">{pid}</code>
               <DefaultBadge value={str(p.default)} />
               <GrantBadge grant={p.grant as Record<string, unknown> | undefined | null} />
             </div>
-            <p className="text-xs text-gray-500 mb-2">{str(p.description)}</p>
+            <p className="text-[9px] text-gray-500 mb-2">{str(p.description)}</p>
             {Array.isArray(p.capabilities) && (
               <div className="flex flex-wrap gap-1 mb-2">
                 {(p.capabilities as string[]).map(cap => (
-                  <span key={cap} className="text-xs px-1.5 py-0.5 bg-gray-800 text-gray-400 rounded">{cap}</span>
+                  <span key={cap} className="text-[9px] px-1.5 py-0.5 bg-[#1a1a1a] text-gray-400 rounded">{cap}</span>
                 ))}
               </div>
             )}
@@ -725,52 +725,52 @@ function PermissionsTab({ core, pluginId }: { core: CoreClient; pluginId: string
               {/* Approval flow UI */}
               {rowState.approvalStatus === 'requires_approval' && (
                 <>
-                  <span className="text-xs text-yellow-400">Requires approval</span>
-                  {rowState.planId && <span className="text-xs text-gray-500">{rowState.planId}</span>}
+                  <span className="text-[9px] text-yellow-400">Requires approval</span>
+                  {rowState.planId && <span className="text-[9px] text-gray-500">{rowState.planId}</span>}
                   <button
                     onClick={() => handleRequestApproval(pid)}
                     disabled={rowState.loading}
-                    className="text-xs px-2 py-1 rounded bg-yellow-900/50 hover:bg-yellow-800/50 text-yellow-400 transition-colors disabled:opacity-50"
+                    className="text-[9px] px-2 py-1 rounded bg-yellow-900/50 hover:bg-yellow-800/50 text-yellow-400 transition-colors disabled:opacity-50"
                   >
                     {rowState.loading ? '...' : 'Request Approval'}
                   </button>
                 </>
               )}
               {rowState.approvalStatus === 'requesting' && (
-                <span className="text-xs text-gray-400">Requesting approval...</span>
+                <span className="text-[9px] text-gray-400">Requesting approval...</span>
               )}
               {rowState.approvalStatus === 'pending' && (
                 <>
-                  <span className="text-xs text-yellow-400">Awaiting approval</span>
-                  {rowState.requestId && <span className="text-xs text-gray-600">({rowState.requestId})</span>}
+                  <span className="text-[9px] text-yellow-400">Awaiting approval</span>
+                  {rowState.requestId && <span className="text-[9px] text-gray-600">({rowState.requestId})</span>}
                   <button
                     onClick={() => handleApproveGrant(pid, p)}
                     disabled={rowState.loading}
-                    className="text-xs px-2 py-1 rounded bg-green-700 hover:bg-green-600 text-white transition-colors disabled:opacity-50"
+                    className="text-[9px] px-2 py-1 rounded bg-emerald-900/20 hover:bg-emerald-900/40 text-white transition-colors disabled:opacity-50"
                   >
                     {rowState.loading ? '...' : 'Approve'}
                   </button>
                   <button
                     onClick={() => handleDenyGrant(pid)}
                     disabled={rowState.loading}
-                    className="text-xs px-2 py-1 rounded bg-red-700 hover:bg-red-600 text-white transition-colors disabled:opacity-50"
+                    className="text-[9px] px-2 py-1 rounded bg-red-700 hover:bg-red-600 text-white transition-colors disabled:opacity-50"
                   >
                     {rowState.loading ? '...' : 'Deny'}
                   </button>
                 </>
               )}
               {rowState.approvalStatus === 'approved' && (
-                <span className="text-xs px-1.5 py-0.5 rounded bg-green-900/50 text-green-400">Grant approved</span>
+                <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-900/20 text-emerald-400">Grant approved</span>
               )}
               {rowState.approvalStatus === 'denied' && (
-                <span className="text-xs px-1.5 py-0.5 rounded bg-red-900/50 text-red-400">Grant denied</span>
+                <span className="text-[9px] px-1.5 py-0.5 rounded bg-red-900/20 text-red-400">Grant denied</span>
               )}
               {/* Default grant/revoke buttons (when no approval flow active) */}
               {!rowState.approvalStatus && canGrant && (
                 <button
                   onClick={() => handleGrant(pid, p)}
                   disabled={rowState.loading}
-                  className="text-xs px-2 py-1 rounded bg-green-900/50 hover:bg-green-800/50 text-green-400 transition-colors disabled:opacity-50"
+                  className="text-[9px] px-2 py-1 rounded bg-emerald-900/20 hover:bg-emerald-900/40 text-emerald-400 transition-colors disabled:opacity-50"
                 >
                   {rowState.loading ? '...' : 'Grant Allow'}
                 </button>
@@ -779,19 +779,19 @@ function PermissionsTab({ core, pluginId }: { core: CoreClient; pluginId: string
                 <button
                   onClick={() => handleRevoke(pid, p)}
                   disabled={rowState.loading}
-                  className="text-xs px-2 py-1 rounded bg-red-900/50 hover:bg-red-800/50 text-red-400 transition-colors disabled:opacity-50"
+                  className="text-[9px] px-2 py-1 rounded bg-red-900/20 hover:bg-red-900/40 text-red-400 transition-colors disabled:opacity-50"
                 >
                   {rowState.loading ? '...' : 'Revoke'}
                 </button>
               )}
               {rowState.error && (
-                <span className="text-xs text-red-400">{rowState.error}</span>
+                <span className="text-[9px] text-red-400">{rowState.error}</span>
               )}
             </div>
             {!!p.constraints && (
               <details className="mt-2">
-                <summary className="text-xs text-gray-600 cursor-pointer hover:text-gray-400">Constraints</summary>
-                <pre className="text-xs text-gray-500 mt-1 bg-gray-950 p-2 rounded">{JSON.stringify(p.constraints, null, 2)}</pre>
+                <summary className="text-[9px] text-gray-600 cursor-pointer hover:text-gray-400">Constraints</summary>
+                <pre className="text-[9px] text-gray-500 mt-1 bg-[#0a0a0a] p-2 rounded">{JSON.stringify(p.constraints, null, 2)}</pre>
               </details>
             )}
           </div>
@@ -802,15 +802,15 @@ function PermissionsTab({ core, pluginId }: { core: CoreClient; pluginId: string
 }
 
 function GrantBadge({ grant }: { grant: Record<string, unknown> | undefined | null }) {
-  if (!grant) return <span className="text-xs text-gray-600">grant: not set</span>;
+  if (!grant) return <span className="text-[9px] text-gray-600">grant: not set</span>;
   const mode = str(grant.mode);
   const colors: Record<string, string> = {
-    allow: 'bg-green-900/50 text-green-400',
+    allow: 'bg-emerald-900/20 text-emerald-400',
     ask: 'bg-yellow-900/50 text-yellow-400',
-    deny: 'bg-red-900/50 text-red-400',
+    deny: 'bg-red-900/20 text-red-400',
   };
   return (
-    <span className={`text-xs px-1.5 py-0.5 rounded ${colors[mode] || 'bg-gray-800 text-gray-500'}`}>
+    <span className={`text-[9px] px-1.5 py-0.5 rounded ${colors[mode] || 'bg-[#1a1a1a] text-gray-500'}`}>
       grant: {mode}
     </span>
   );
@@ -818,12 +818,12 @@ function GrantBadge({ grant }: { grant: Record<string, unknown> | undefined | nu
 
 function DefaultBadge({ value }: { value: string }) {
   const colors: Record<string, string> = {
-    allow: 'bg-green-900/50 text-green-400',
+    allow: 'bg-emerald-900/20 text-emerald-400',
     ask: 'bg-yellow-900/50 text-yellow-400',
-    deny: 'bg-red-900/50 text-red-400',
+    deny: 'bg-red-900/20 text-red-400',
   };
   return (
-    <span className={`text-xs px-1.5 py-0.5 rounded ${colors[value] || 'bg-gray-800 text-gray-500'}`}>{value}</span>
+    <span className={`text-[9px] px-1.5 py-0.5 rounded ${colors[value] || 'bg-[#1a1a1a] text-gray-500'}`}>{value}</span>
   );
 }
 
@@ -858,24 +858,24 @@ function ApprovalsTab({ core, pluginId }: { core: CoreClient; pluginId: string }
     return () => { cancelled = true; };
   }, [core, pluginId]);
 
-  if (loading) return <div className="text-gray-500 text-sm">Loading approvals...</div>;
+  if (loading) return <div className="text-gray-500 text-[10px]">Loading approvals...</div>;
 
   if (requests.length === 0) {
-    return <div className="text-gray-500 text-sm">No pending approvals for this plugin.</div>;
+    return <div className="text-gray-500 text-[10px]">No pending approvals for this plugin.</div>;
   }
 
   return (
     <div className="space-y-2">
       {requests.map((r, i) => (
-        <div key={i} className="flex items-center gap-3 px-4 py-3 bg-gray-900 rounded-lg border border-gray-800">
+        <div key={i} className="flex items-center gap-3 px-4 py-1.5 bg-[#111] rounded border border-gray-800">
           <div className="flex-1">
-            <div className="text-sm text-gray-200">{r.title}</div>
-            <div className="text-xs text-gray-500">ID: {r.requestId}</div>
+            <div className="text-[10px] text-gray-200">{r.title}</div>
+            <div className="text-[9px] text-gray-500">ID: {r.requestId}</div>
           </div>
-          <span className={`text-xs px-2 py-0.5 rounded ${
+          <span className={`text-[9px] px-2 py-0.5 rounded ${
             r.status === 'pending' ? 'bg-yellow-900/50 text-yellow-400' :
-            r.status === 'approved' ? 'bg-green-900/50 text-green-400' :
-            'bg-gray-800 text-gray-500'
+            r.status === 'approved' ? 'bg-emerald-900/20 text-emerald-400' :
+            'bg-[#1a1a1a] text-gray-500'
           }`}>
             {r.status}
           </span>
@@ -985,48 +985,48 @@ function InstallTab({ core, pluginId }: { core: CoreClient; pluginId: string }) 
   return (
     <div className="max-w-2xl space-y-4">
       <div className="flex items-center gap-2">
-        <h3 className="text-sm font-medium text-gray-300">Install Plan</h3>
+        <h3 className="text-[10px] font-mono text-gray-300">Install Plan</h3>
         <button
           onClick={createInstallPlan}
           disabled={install.planLoading}
-          className="text-xs px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white transition-colors disabled:opacity-50"
+          className="text-[9px] px-3 py-1.5 rounded bg-purple-600 hover:bg-purple-500 text-white transition-colors disabled:opacity-50"
         >
           {install.planLoading ? 'Creating...' : 'Create Install Plan'}
         </button>
       </div>
 
-      <p className="text-xs text-gray-600">
+      <p className="text-[9px] text-gray-600">
         Install execution is not implemented by Core yet. Plan can be viewed but not executed.
       </p>
 
-      {install.planError && <p className="text-red-400 text-sm">{install.planError}</p>}
+      {install.planError && <p className="text-red-400 text-[10px]">{install.planError}</p>}
 
       {install.plan && (
-        <div className="space-y-3">
-          <div className="px-3 py-2 bg-gray-900 rounded border border-gray-800 space-y-1">
+        <div className="space-y-1.5">
+          <div className="px-3 py-2 bg-[#111] rounded border border-gray-800 space-y-1">
             <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-500">Plan:</span>
-              <code className="text-xs text-gray-300">{str((install.plan as Record<string, unknown>).planId)}</code>
+              <span className="text-[9px] text-gray-500">Plan:</span>
+              <code className="text-[9px] text-gray-300">{str((install.plan as Record<string, unknown>).planId)}</code>
               <RiskBadge risk={str((install.plan as Record<string, unknown>).risk)} />
-              <span className={`text-xs px-1.5 py-0.5 rounded ${
+              <span className={`text-[9px] px-1.5 py-0.5 rounded ${
                 str((install.plan as Record<string, unknown>).status) === 'pending_approval' ? 'bg-yellow-900/50 text-yellow-400' :
-                str((install.plan as Record<string, unknown>).status) === 'approved' ? 'bg-green-900/50 text-green-400' :
-                'bg-gray-800 text-gray-500'
+                str((install.plan as Record<string, unknown>).status) === 'approved' ? 'bg-emerald-900/20 text-emerald-400' :
+                'bg-[#1a1a1a] text-gray-500'
               }`}>
                 {str((install.plan as Record<string, unknown>).status)}
               </span>
             </div>
-            <p className="text-xs text-gray-400">{str((install.plan as Record<string, unknown>).summary)}</p>
+            <p className="text-[9px] text-gray-400">{str((install.plan as Record<string, unknown>).summary)}</p>
           </div>
 
           {Array.isArray((install.plan as Record<string, unknown>).steps) && (
             <div className="space-y-1">
               {((install.plan as Record<string, unknown>).steps as Array<Record<string, unknown>>).map((step, idx) => (
-                <div key={idx} className="flex items-center gap-3 px-3 py-2 bg-gray-900 rounded border border-gray-800 text-xs">
+                <div key={idx} className="flex items-center gap-3 px-3 py-2 bg-[#111] rounded border border-gray-800 text-[9px]">
                   <span className="text-gray-600 w-4">{str(step.order)}.</span>
                   <span className="text-gray-300 flex-1">{str(step.description)}</span>
                   <RiskBadge risk={str(step.risk)} />
-                  <span className={str(step.status) === 'completed' ? 'text-green-400' : str(step.status) === 'running' ? 'text-blue-400' : 'text-gray-600'}>
+                  <span className={str(step.status) === 'completed' ? 'text-emerald-400' : str(step.status) === 'running' ? 'text-purple-400' : 'text-gray-600'}>
                     {str(step.status)}
                   </span>
                 </div>
@@ -1037,35 +1037,35 @@ function InstallTab({ core, pluginId }: { core: CoreClient; pluginId: string }) 
           <div className="flex items-center gap-2 flex-wrap">
             {!approvalStatus && !install.executing && str((install.plan as Record<string, unknown>).status) === 'pending_approval' && (
               <button onClick={requestApproval}
-                className="text-xs px-3 py-1.5 rounded bg-yellow-600 hover:bg-yellow-500 text-white transition-colors"
+                className="text-[9px] px-3 py-1.5 rounded bg-yellow-600 hover:bg-yellow-500 text-white transition-colors"
               >
                 Request Approval
               </button>
             )}
             {approvalStatus === 'pending' && approvalRequestId && (
               <>
-                <span className="text-xs text-yellow-400">Awaiting approval ({approvalRequestId})</span>
-                <button onClick={approvePlan} className="text-xs px-3 py-1.5 rounded bg-green-600 hover:bg-green-500 text-white transition-colors">Approve</button>
-                <button onClick={denyPlan} className="text-xs px-3 py-1.5 rounded bg-red-600 hover:bg-red-500 text-white transition-colors">Deny</button>
+                <span className="text-[9px] text-yellow-400">Awaiting approval ({approvalRequestId})</span>
+                <button onClick={approvePlan} className="text-[9px] px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white transition-colors">Approve</button>
+                <button onClick={denyPlan} className="text-[9px] px-3 py-1.5 rounded bg-red-600 hover:bg-red-500 text-white transition-colors">Deny</button>
               </>
             )}
-            {approvalStatus === 'requesting' && <span className="text-xs text-gray-400">Requesting approval...</span>}
+            {approvalStatus === 'requesting' && <span className="text-[9px] text-gray-400">Requesting approval...</span>}
             {approvalStatus === 'approved' && (
               <button onClick={executePlan} disabled={install.executing}
-                className="text-xs px-3 py-1.5 rounded bg-green-600 hover:bg-green-500 text-white transition-colors disabled:opacity-50"
+                className="text-[9px] px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white transition-colors disabled:opacity-50"
               >
                 {install.executing ? 'Executing...' : 'Execute Install'}
               </button>
             )}
-            {approvalStatus === 'denied' && <span className="text-xs text-red-400">Plan denied.</span>}
+            {approvalStatus === 'denied' && <span className="text-[9px] text-red-400">Plan denied.</span>}
           </div>
         </div>
       )}
 
       {install.executionResult && (
-        <div className="px-3 py-2 bg-gray-900 rounded border border-gray-800 text-xs space-y-1">
+        <div className="px-3 py-2 bg-[#111] rounded border border-gray-800 text-[9px] space-y-1">
           <div className="flex items-center gap-2">
-            <span className={str(install.executionResult.status) === 'completed' ? 'text-green-400' : 'text-red-400'}>
+            <span className={str(install.executionResult.status) === 'completed' ? 'text-emerald-400' : 'text-red-400'}>
               {str(install.executionResult.status)}
             </span>
             {!!install.executionResult.dryRun && <span className="text-gray-500">(dry-run)</span>}
@@ -1079,11 +1079,11 @@ function InstallTab({ core, pluginId }: { core: CoreClient; pluginId: string }) 
 
 function RiskBadge({ risk }: { risk: string }) {
   const colors: Record<string, string> = {
-    low: 'bg-green-900/50 text-green-400',
+    low: 'bg-emerald-900/20 text-emerald-400',
     medium: 'bg-yellow-900/50 text-yellow-400',
-    high: 'bg-red-900/50 text-red-400',
+    high: 'bg-red-900/20 text-red-400',
   };
-  return <span className={`text-xs px-1.5 py-0.5 rounded ${colors[risk] || 'bg-gray-800 text-gray-500'}`}>{risk}</span>;
+  return <span className={`text-[9px] px-1.5 py-0.5 rounded ${colors[risk] || 'bg-[#1a1a1a] text-gray-500'}`}>{risk}</span>;
 }
 
 // ─── Config ───────────────────────────────────────────────────────
@@ -1157,37 +1157,37 @@ function ConfigTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
     }
   }
 
-  if (loading) return <div className="text-gray-500 text-sm">Loading config...</div>;
-  if (fetchError) return <p className="text-red-400 text-sm">{fetchError}</p>;
-  if (!schema) return <div className="text-gray-500 text-sm">No configuration schema declared.</div>;
+  if (loading) return <div className="text-gray-500 text-[10px]">Loading config...</div>;
+  if (fetchError) return <p className="text-red-400 text-[10px]">{fetchError}</p>;
+  if (!schema) return <div className="text-gray-500 text-[10px]">No configuration schema declared.</div>;
 
   const properties = (schema.properties as Record<string, unknown>) || {};
   const entries = Object.entries(properties);
-  if (entries.length === 0) return <div className="text-gray-500 text-sm">No configuration properties defined.</div>;
+  if (entries.length === 0) return <div className="text-gray-500 text-[10px]">No configuration properties defined.</div>;
 
   return (
-    <div className="max-w-xl space-y-3">
+    <div className="max-w-xl space-y-1.5">
       {entries.map(([key, prop]) => {
         const propObj = prop as Record<string, unknown>;
         const currentVal = config[key];
         return (
-          <div key={key} className="px-4 py-3 bg-gray-900 rounded-lg border border-gray-800">
+          <div key={key} className="px-4 py-1.5 bg-[#111] rounded border border-gray-800">
             <div className="flex items-center justify-between mb-1">
-              <code className="text-sm text-gray-200 font-mono">{key}</code>
-              <span className="text-xs text-gray-600">{String(propObj.type || 'string')}</span>
+              <code className="text-[10px] text-gray-200 font-mono">{key}</code>
+              <span className="text-[9px] text-gray-600">{String(propObj.type || 'string')}</span>
             </div>
-            {!!propObj.description && <p className="text-xs text-gray-500 mb-2">{String(propObj.description)}</p>}
+            {!!propObj.description && <p className="text-[9px] text-gray-500 mb-2">{String(propObj.description)}</p>}
             <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-500">Current:</span>
-              <code className="text-xs text-gray-300 bg-gray-800 px-2 py-0.5 rounded">
+              <span className="text-[9px] text-gray-500">Current:</span>
+              <code className="text-[9px] text-gray-300 bg-[#1a1a1a] px-2 py-0.5 rounded">
                 {currentVal !== undefined ? JSON.stringify(currentVal) : '(not set)'}
               </code>
             </div>
             {Array.isArray(propObj.enum) && (
               <div className="mt-1 flex items-center gap-1">
-                <span className="text-xs text-gray-600">enum:</span>
+                <span className="text-[9px] text-gray-600">enum:</span>
                 {(propObj.enum as string[]).map(e => (
-                  <span key={e} className="text-xs text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded">{e}</span>
+                  <span key={e} className="text-[9px] text-gray-500 bg-[#1a1a1a] px-1.5 py-0.5 rounded">{e}</span>
                 ))}
               </div>
             )}
@@ -1198,12 +1198,12 @@ function ConfigTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
         <button
           onClick={handleSave}
           disabled={saving}
-          className="text-xs px-4 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white transition-colors disabled:opacity-50"
+          className="text-[9px] px-4 py-1.5 rounded bg-purple-600 hover:bg-purple-500 text-white transition-colors disabled:opacity-50"
         >
           {saving ? 'Saving...' : 'Save to Core'}
         </button>
         {saveMsg && (
-          <span className={`text-xs ${saveMsg === 'Saved' ? 'text-green-400' : 'text-red-400'}`}>{saveMsg}</span>
+          <span className={`text-[9px] ${saveMsg === 'Saved' ? 'text-emerald-400' : 'text-red-400'}`}>{saveMsg}</span>
         )}
       </div>
     </div>
@@ -1219,7 +1219,7 @@ function FilesTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
     dataKey="files"
     renderTitle="Files"
     render={(items) => (
-      <table className="w-full text-sm">
+      <table className="w-full text-[10px]">
         <thead>
           <tr className="text-left text-gray-500 border-b border-gray-800">
             <th className="pb-2 pr-4">ID</th>
@@ -1231,10 +1231,10 @@ function FilesTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
         <tbody>
           {items.map((f, i) => (
             <tr key={i} className="border-b border-gray-800/50 text-gray-300">
-              <td className="py-2 pr-4 font-mono text-xs">{str(f.id)}</td>
-              <td className="py-2 pr-4 font-mono text-xs text-gray-400 max-w-xs truncate">{str(f.path)}</td>
-              <td className="py-2 pr-4 text-xs text-gray-500">{str(f.purpose) || str(f.description) || '—'}</td>
-              <td className="py-2">{f.clearable ? <span className="text-xs text-yellow-400">yes</span> : <span className="text-xs text-gray-600">no</span>}</td>
+              <td className="py-2 pr-4 font-mono text-[9px]">{str(f.id)}</td>
+              <td className="py-2 pr-4 font-mono text-[9px] text-gray-400 max-w-xs truncate">{str(f.path)}</td>
+              <td className="py-2 pr-4 text-[9px] text-gray-500">{str(f.purpose) || str(f.description) || '—'}</td>
+              <td className="py-2">{f.clearable ? <span className="text-[9px] text-yellow-400">yes</span> : <span className="text-[9px] text-gray-600">no</span>}</td>
             </tr>
           ))}
         </tbody>
@@ -1312,9 +1312,9 @@ function CacheTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
 
   useEffect(() => { fetchCache(); }, [core, pluginId]);
 
-  if (loading) return <div className="text-gray-500 text-sm">Loading cache...</div>;
-  if (fetchError) return <p className="text-red-400 text-sm">{fetchError}</p>;
-  if (notImpl) return <div className="text-gray-500 text-sm">Cache management is not available in Phase 1.</div>;
+  if (loading) return <div className="text-gray-500 text-[10px]">Loading cache...</div>;
+  if (fetchError) return <p className="text-red-400 text-[10px]">{fetchError}</p>;
+  if (notImpl) return <div className="text-gray-500 text-[10px]">Cache management is not available in Phase 1.</div>;
   if (cacheEntries.length === 0) return <PageEmpty title="No cache entries found" />;
 
   return (
@@ -1322,20 +1322,20 @@ function CacheTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
       {cacheEntries.map((c, i) => {
         const isClearable = c.clearable !== false; // undefined/null/true → clearable
         return (
-        <div key={i} className="flex items-center gap-3 px-4 py-3 bg-gray-900 rounded-lg border border-gray-800">
+        <div key={i} className="flex items-center gap-3 px-4 py-1.5 bg-[#111] rounded border border-gray-800">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
-              <code className="text-sm text-gray-200 font-mono">{str(c.id)}</code>
+              <code className="text-[10px] text-gray-200 font-mono">{str(c.id)}</code>
               {!!c.risk && <RiskBadge risk={str(c.risk)} />}
             </div>
-            <p className="text-xs text-gray-500 mt-0.5 truncate">{str(c.path)}</p>
-            {!!c.description && <p className="text-xs text-gray-600 mt-0.5">{str(c.description)}</p>}
+            <p className="text-[9px] text-gray-500 mt-0.5 truncate">{str(c.path)}</p>
+            {!!c.description && <p className="text-[9px] text-gray-600 mt-0.5">{str(c.description)}</p>}
           </div>
           <button
             onClick={() => handleClear(str(c.id))}
             disabled={!isClearable || clearingId === str(c.id)}
             title={!isClearable ? 'This cache is not clearable' : undefined}
-            className="text-xs px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 disabled:opacity-50 transition-colors"
+            className="text-[9px] px-2 py-1 rounded bg-[#1a1a1a] hover:bg-[#222] text-gray-400 disabled:opacity-50 transition-colors"
           >
             {clearingId === str(c.id) ? '...' : 'Clear'}
           </button>
@@ -1343,7 +1343,7 @@ function CacheTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
         );
       })}
       {clearMsg && (
-        <p className={`text-xs mt-2 ${clearMsg === 'Cleared' ? 'text-green-400' : 'text-gray-500'}`}>{clearMsg}</p>
+        <p className={`text-[9px] mt-2 ${clearMsg === 'Cleared' ? 'text-emerald-400' : 'text-gray-500'}`}>{clearMsg}</p>
       )}
     </div>
   );
@@ -1414,9 +1414,9 @@ function RunsTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
     }
   }
 
-  if (loading) return <div className="text-gray-500 text-sm">Loading runs...</div>;
-  if (fetchError) return <p className="text-red-400 text-sm">{fetchError}</p>;
-  if (runs.length === 0) return <div className="text-gray-500 text-sm">No active runs for this plugin.</div>;
+  if (loading) return <div className="text-gray-500 text-[10px]">Loading runs...</div>;
+  if (fetchError) return <p className="text-red-400 text-[10px]">{fetchError}</p>;
+  if (runs.length === 0) return <div className="text-gray-500 text-[10px]">No active runs for this plugin.</div>;
 
   return (
     <div className="space-y-2">
@@ -1426,17 +1426,17 @@ function RunsTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
         const rowAttach = attachState[runId] || { loading: false, error: null, sessionId: undefined };
         const isRunning = str(run.state) === 'running';
         return (
-        <div key={i} className="px-4 py-3 bg-gray-900 rounded-lg border border-gray-800">
+        <div key={i} className="px-4 py-1.5 bg-[#111] rounded border border-gray-800">
           <div className="flex items-center gap-2">
-            <code className="text-xs text-gray-400 font-mono">{runId}</code>
-            <span className="text-xs text-gray-600">{str(run.kind)}</span>
-            <span className={`text-xs px-1.5 py-0.5 rounded ${
-              str(run.state) === 'running' ? 'bg-green-900/50 text-green-400' :
+            <code className="text-[9px] text-gray-400 font-mono">{runId}</code>
+            <span className="text-[9px] text-gray-600">{str(run.kind)}</span>
+            <span className={`text-[9px] px-1.5 py-0.5 rounded ${
+              str(run.state) === 'running' ? 'bg-emerald-900/20 text-emerald-400' :
               str(run.state) === 'orphaned' ? 'bg-yellow-900/50 text-yellow-400' :
-              str(run.state) === 'restorable' ? 'bg-blue-900/50 text-blue-400' :
-              str(run.state) === 'stopped' ? 'bg-gray-800 text-gray-500' :
-              str(run.state) === 'exited' ? 'bg-gray-800 text-gray-500' :
-              'bg-red-900/50 text-red-400'
+              str(run.state) === 'restorable' ? 'bg-purple-900/20 text-purple-400' :
+              str(run.state) === 'stopped' ? 'bg-[#1a1a1a] text-gray-500' :
+              str(run.state) === 'exited' ? 'bg-[#1a1a1a] text-gray-500' :
+              'bg-red-900/20 text-red-400'
             }`}>
               {str(run.state)}
             </span>
@@ -1445,10 +1445,10 @@ function RunsTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
               onClick={() => handleAttach(runId)}
               disabled={rowAttach.loading}
               title={rowAttach.sessionId ? `Attached session ${rowAttach.sessionId}` : 'Attach to run'}
-              className={`text-xs px-2 py-1 rounded transition-colors disabled:opacity-50 ${
+              className={`text-[9px] px-2 py-1 rounded transition-colors disabled:opacity-50 ${
                 rowAttach.sessionId
-                  ? 'bg-green-900/50 text-green-400'
-                  : 'bg-gray-800 hover:bg-gray-700 text-gray-400'
+                  ? 'bg-emerald-900/20 text-emerald-400'
+                  : 'bg-[#1a1a1a] hover:bg-[#222] text-gray-400'
               }`}
             >
               {rowAttach.loading ? 'Attaching...' : rowAttach.sessionId ? 'Attach verified' : 'Attach'}
@@ -1457,28 +1457,28 @@ function RunsTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
               <button
                 onClick={() => handleStop(runId)}
                 disabled={rowStop.loading}
-                className="text-xs px-2 py-1 rounded bg-red-900/50 hover:bg-red-800/50 text-red-400 transition-colors disabled:opacity-50"
+                className="text-[9px] px-2 py-1 rounded bg-red-900/20 hover:bg-red-900/40 text-red-400 transition-colors disabled:opacity-50"
               >
                 {rowStop.loading ? 'Stopping...' : 'Stop'}
               </button>
             )}
           </div>
-          <div className="text-xs text-gray-500 mt-1 space-x-3">
+          <div className="text-[9px] text-gray-500 mt-1 space-x-3">
             {!!run.sessionId && <span>session: {str(run.sessionId)}</span>}
             {!!run.nodeId && <span>node: {str(run.nodeId)}</span>}
             {!!run.createdAt && <span>created: {str(run.createdAt)}</span>}
           </div>
           {rowStop.error && (
-            <div className="text-xs text-red-400 mt-1">{rowStop.error}</div>
+            <div className="text-[9px] text-red-400 mt-1">{rowStop.error}</div>
           )}
           {rowAttach.sessionId && (
-            <div className="text-xs text-green-400 mt-1">Attached session: {rowAttach.sessionId}</div>
+            <div className="text-[9px] text-emerald-400 mt-1">Attached session: {rowAttach.sessionId}</div>
           )}
           {rowAttach.error && (
-            <div className="text-xs text-red-400 mt-1">{rowAttach.error}</div>
+            <div className="text-[9px] text-red-400 mt-1">{rowAttach.error}</div>
           )}
           {!!run.process && (
-            <div className="text-xs text-gray-600 mt-1">
+            <div className="text-[9px] text-gray-600 mt-1">
               PID {str((run.process as Record<string, unknown>).pid)} | {str((run.process as Record<string, unknown>).state)}
             </div>
           )}
@@ -1520,25 +1520,25 @@ function LogsTab({ core, pluginId }: { core: CoreClient; pluginId: string }) {
 
   useEffect(() => { fetchLogs(); }, [core, pluginId]);
 
-  if (loading) return <div className="text-gray-500 text-sm">Loading logs...</div>;
-  if (fetchError) return <p className="text-red-400 text-sm">{fetchError}</p>;
-  if (logs.length === 0) return <div className="text-gray-500 text-sm">No log entries found for this plugin.</div>;
+  if (loading) return <div className="text-gray-500 text-[10px]">Loading logs...</div>;
+  if (fetchError) return <p className="text-red-400 text-[10px]">{fetchError}</p>;
+  if (logs.length === 0) return <div className="text-gray-500 text-[10px]">No log entries found for this plugin.</div>;
 
   return (
     <div>
       <div className="flex items-center gap-2 mb-3">
         <button onClick={fetchLogs}
-          className="text-xs px-3 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 transition-colors"
+          className="text-[9px] px-3 py-1 rounded bg-[#1a1a1a] hover:bg-[#222] text-gray-400 transition-colors"
         >
           Refresh
         </button>
       </div>
-      <div className="space-y-1 max-h-96 overflow-y-auto font-mono text-xs">
+      <div className="space-y-1 max-h-96 overflow-y-auto font-mono text-[9px]">
         {logs.map((entry, i) => (
-          <div key={i} className="flex gap-2 px-2 py-1 hover:bg-gray-900 rounded">
+          <div key={i} className="flex gap-2 px-2 py-1 hover:bg-[#111] rounded">
             <span className="text-gray-600 flex-shrink-0">{entry.timestamp}</span>
             <span className={`flex-shrink-0 ${
-              entry.level === 'info' ? 'text-blue-400' :
+              entry.level === 'info' ? 'text-purple-400' :
               entry.level === 'warn' ? 'text-yellow-400' :
               entry.level === 'error' ? 'text-red-400' :
               'text-gray-500'
@@ -1587,22 +1587,22 @@ function HistoryTab({ core, pluginId }: { core: CoreClient; pluginId: string }) 
 
   useEffect(() => { fetchHistory(); }, [core, pluginId]);
 
-  if (loading) return <div className="text-gray-500 text-sm">Loading history...</div>;
-  if (fetchError) return <p className="text-red-400 text-sm">{fetchError}</p>;
-  if (notImpl) return <div className="text-gray-500 text-sm">History tracking is not implemented in Phase 1.</div>;
-  if (events.length === 0) return <div className="text-gray-500 text-sm">No history events recorded.</div>;
+  if (loading) return <div className="text-gray-500 text-[10px]">Loading history...</div>;
+  if (fetchError) return <p className="text-red-400 text-[10px]">{fetchError}</p>;
+  if (notImpl) return <div className="text-gray-500 text-[10px]">History tracking is not implemented in Phase 1.</div>;
+  if (events.length === 0) return <div className="text-gray-500 text-[10px]">No history events recorded.</div>;
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-1.5">
       {events.map((evt, i) => (
-        <div key={i} className="flex items-start gap-3 px-4 py-3 bg-gray-900 rounded-lg border border-gray-800">
+        <div key={i} className="flex items-start gap-3 px-4 py-1.5 bg-[#111] rounded border border-gray-800">
           <div className="w-2 h-2 rounded-full bg-gray-600 mt-1.5 flex-shrink-0" />
           <div>
             <div className="flex items-center gap-2">
-              <span className="text-sm text-gray-200">{str(evt.action) || 'event'}</span>
-              {!!evt.version && <span className="text-xs text-gray-600">v{str(evt.version)}</span>}
+              <span className="text-[10px] text-gray-200">{str(evt.action) || 'event'}</span>
+              {!!evt.version && <span className="text-[9px] text-gray-600">v{str(evt.version)}</span>}
             </div>
-            {!!evt.timestamp && <span className="text-xs text-gray-600">{str(evt.timestamp)}</span>}
+            {!!evt.timestamp && <span className="text-[9px] text-gray-600">{str(evt.timestamp)}</span>}
           </div>
         </div>
       ))}
@@ -1613,9 +1613,9 @@ function HistoryTab({ core, pluginId }: { core: CoreClient; pluginId: string }) 
 // ─── Raw Manifest ─────────────────────────────────────────────────
 
 function RawTab({ manifest }: { manifest: Record<string, unknown> | null }) {
-  if (!manifest) return <div className="text-gray-500 text-sm">No manifest data available.</div>;
+  if (!manifest) return <div className="text-gray-500 text-[10px]">No manifest data available.</div>;
   return (
-    <pre className="text-xs text-gray-400 bg-gray-950 p-4 rounded-lg overflow-x-auto max-h-[70vh]">
+    <pre className="text-[10px] text-gray-400 bg-black p-4 rounded overflow-x-auto max-h-[70vh]">
       {JSON.stringify(manifest, null, 2)}
     </pre>
   );
@@ -1670,13 +1670,13 @@ function TabApiFetcher({
     return () => { cancelled = true; };
   }, [core, pluginId, apiMethod, dataKey]);
 
-  if (loading) return <div className="text-gray-500 text-sm">Loading {renderTitle.toLowerCase()}...</div>;
+  if (loading) return <div className="text-gray-500 text-[10px]">Loading {renderTitle.toLowerCase()}...</div>;
   if (permDenied) return <PagePermissionDenied />;
-  if (notImpl) return <div className="text-gray-500 text-sm">This feature is not available in Phase 1.</div>;
+  if (notImpl) return <div className="text-gray-500 text-[10px]">This feature is not available in Phase 1.</div>;
   if (fetchError) return (
     <div>
-      <p className="text-red-400 text-sm mb-2">{fetchError}</p>
-      <p className="text-xs text-gray-600">Core API: {apiMethod} — may not be supported by Go Core.</p>
+      <p className="text-red-400 text-[10px] mb-2">{fetchError}</p>
+      <p className="text-[9px] text-gray-600">Core API: {apiMethod} — may not be supported by Go Core.</p>
     </div>
   );
   if (!data || data.length === 0) return <PageEmpty title={`No ${renderTitle.toLowerCase()} found`} />;
@@ -1686,7 +1686,7 @@ function TabApiFetcher({
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <h3 className="text-xs font-semibold text-gray-400 mb-2 uppercase tracking-wider">{title}</h3>
+      <h3 className="text-[9px] font-mono text-gray-400 mb-2 uppercase tracking-wider">{title}</h3>
       <div className="space-y-1">{children}</div>
     </div>
   );
@@ -1694,9 +1694,9 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex gap-2 text-sm">
-      <span className="text-gray-500 w-28 flex-shrink-0 text-xs">{label}:</span>
-      <span className="text-gray-300 text-xs">{value || '—'}</span>
+    <div className="flex gap-2 text-[10px]">
+      <span className="text-gray-500 w-28 flex-shrink-0 text-[9px]">{label}:</span>
+      <span className="text-gray-300 text-[9px]">{value || '—'}</span>
     </div>
   );
 }

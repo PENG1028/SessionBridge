@@ -6,13 +6,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import React from 'react';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import type { CoreClient } from '../../app/console/core/core-types';
-import { Dashboard } from '../../app/console/system-ui/views/dashboard';
-import { SessionManager } from '../../app/console/system-ui/views/session-manager';
-import { PluginManager } from '../../app/console/system-ui/views/plugin-manager';
-import { NodeManager } from '../../app/console/system-ui/views/node-manager';
-import { Settings } from '../../app/console/system-ui/views/settings';
-import { LogsViewer } from '../../app/console/system-ui/views/logs-viewer';
-import { Approvals } from '../../app/console/system-ui/views/approvals';
+import { Dashboard } from '../../app/console/system-pages/dashboard';
+import { SessionManager } from '../../app/console/system-pages/session-manager';
+import { PluginManager } from '../../app/console/system-pages/plugin-manager';
+import { NodeManager } from '../../app/console/system-pages/node-manager';
+import { Settings } from '../../app/console/system-pages/settings';
+import { LogsViewer } from '../../app/console/system-pages/logs-viewer';
+import { Approvals } from '../../app/console/system-pages/approvals';
 import { ApprovalCenter } from '../../app/console/system-ui/approval-center';
 import type { CoreEvent } from '../../app/console/core/core-types';
 
@@ -61,7 +61,7 @@ describe('Dashboard page', () => {
 
     // Wait for state to settle
     await vi.waitFor(() => {
-      expect(container.querySelector('h1')?.textContent).toContain('Dashboard');
+      expect(screen.getByText('Dashboard')).toBeDefined();
     }, { timeout: 2000 });
   });
 

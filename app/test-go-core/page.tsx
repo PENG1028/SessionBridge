@@ -7,7 +7,6 @@ import { CoreClientImpl } from '../console/core/core-client';
 import { PluginHost } from '../console/plugin-host/plugin-host';
 import {
   registerBuiltinHostComponents,
-  registerPluginManifests,
   registerPluginHostComponents,
 } from '../console/plugin-host';
 import type { SurfaceRenderContext } from '../console/surface/surface-types';
@@ -24,7 +23,6 @@ import type { SurfaceRenderContext } from '../console/surface/surface-types';
 // Register at module level so both SSR and client see the same manifests.
 // Prevents hydration mismatch that would cause WebSocket to disconnect/reconnect.
 registerBuiltinHostComponents();
-registerPluginManifests();
 registerPluginHostComponents();
 
 export default function TestGoCorePage() {

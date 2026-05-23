@@ -34,7 +34,7 @@
 ### Core API Call Chain
 
 ```
-1. A → system-ui shell:  session.create { pluginId:"shell", command:"bash" }
+1. A → App UI built-in system pages:  session.create { pluginId:"shell", command:"bash" }
 2. A → local dispatcher:  stream.write { stream:"stdin", data:"ls\n" }
 3. local → process:       stdout/stderr chunks pushed via connection registry
 4. (time passes, A closes tab)

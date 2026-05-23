@@ -6,6 +6,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { ContextMenu, type ContextMenuItem } from './console/shell/context-menu';
 import { MobileExtraKeys } from './console/chrome/mobile-extra-keys';
+import type { CoreClient } from './console/core/core-types';
 
 const DEBUG_SURFACE = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debugSurface');
 function debugLog(...args: any[]) { if (DEBUG_SURFACE) console.log('[debugSurface]', ...args); }
@@ -17,6 +18,10 @@ interface ShellTerminalProps {
   /** SharedSurface id — when set, use surface protocol (subscribe, replay) */
   _surfaceId?: string;
   onOpenDirectoryPicker?: () => void;
+  /** CoreClient mode — uses stream.write / stream.chunk instead of raw WebSocket */
+  core?: CoreClient;
+  /** sessionId from run.create response, required in CoreClient mode */
+  coreSessionId?: string;
 }
 
 /** Envelope helper matching the v1 protocol. */
@@ -32,7 +37,7 @@ function isTouchDevice(): boolean {
   return navigator.maxTouchPoints > 0 || 'ontouchstart' in window;
 }
 
-export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, onOpenDirectoryPicker }: ShellTerminalProps) {
+export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, onOpenDirectoryPicker, core, coreSessionId }: ShellTerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -41,10 +46,19 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, on
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
   const inputLogFirstRef = useRef(true);
+  const coreHandlerRef = useRef<((event: any) => void) | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
   const [terminalFocused, setTerminalFocused] = useState(false);
 
   const sendTerminalData = useCallback((data: string) => {
+    // CoreClient mode: use stream.write via the shared CoreClient connection
+    if (core && coreSessionId && !_surfaceId) {
+      if (core.isConnected) {
+        core.call('stream.write', { sessionId: coreSessionId, data }).catch(() => {});
+      }
+      return;
+    }
+
     const ws = wsRef.current;
     if (ws?.readyState !== WebSocket.OPEN) return;
 
@@ -64,7 +78,7 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, on
     const body: Record<string, unknown> = { data };
     if (instanceId) body.instanceId = instanceId;
     ws.send(env('shell.input', body));
-  }, [_surfaceId, instanceId]);
+  }, [_surfaceId, instanceId, core, coreSessionId]);
 
   /** Connect (or reconnect) the WebSocket for this terminal. */
   function connect(term: Terminal, fitAddon: FitAddon) {
@@ -223,6 +237,24 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, on
     };
   }
 
+  /** Connect via CoreClient stream — subscribe to stream.chunk events for this session. */
+  function connectCore(term: Terminal, _fitAddon: FitAddon) {
+    if (!mountedRef.current) return;
+    if (!core || !coreSessionId) return;
+
+    term.writeln('\x1b[36mConnected to core stream...\x1b[0m');
+    if (!isTouchDevice()) term.focus();
+
+    const handler = (event: any) => {
+      if (event.type !== 'stream.chunk') return;
+      if (event.sessionId !== coreSessionId) return;
+      if (event.data) term.write(event.data);
+    };
+
+    core.on('stream.chunk', handler);
+    coreHandlerRef.current = handler;
+  }
+
   useEffect(() => {
     mountedRef.current = true;
     inputLogFirstRef.current = true;
@@ -336,8 +368,11 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, on
 
     if (!isTouchDevice()) term.focus();
 
-    // ── Initial WebSocket connection ──
-    if (_surfaceId) {
+    // ── Initial connection ──
+    if (core && coreSessionId && !_surfaceId) {
+      debugLog('ShellTerminal: connecting via CoreClient stream protocol', { coreSessionId });
+      connectCore(term, fitAddon);
+    } else if (_surfaceId) {
       debugLog('ShellTerminal: connecting via SURFACE protocol', { _surfaceId, instanceId });
       connectSurface(term, fitAddon);
     } else {
@@ -348,13 +383,20 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, on
     // ── Resize observer ──
     const ro = new ResizeObserver(() => {
       fitAddon.fit();
+      const dims = fitAddon.proposeDimensions();
+      if (!dims) return;
+
+      // CoreClient mode: use process.resize
+      if (core && coreSessionId) {
+        if (core.isConnected) {
+          core.call('process.resize', { sessionId: coreSessionId, cols: dims.cols, rows: dims.rows }).catch(() => {});
+        }
+        return;
+      }
       if (_surfaceId) return; // surface mode: resize is N/A for shared terminal replay
       const ws = wsRef.current;
       if (ws?.readyState === WebSocket.OPEN) {
-        const dims = fitAddon.proposeDimensions();
-        if (dims) {
-          ws.send(env("shell.resize", { cols: dims.cols, rows: dims.rows }));
-        }
+        ws.send(env("shell.resize", { cols: dims.cols, rows: dims.rows }));
       }
     });
     ro.observe(containerRef.current);
@@ -382,12 +424,17 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, on
         clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
       }
+      // CoreClient mode: unsubscribe events instead of closing WebSocket
+      if (coreHandlerRef.current) {
+        core?.off('stream.chunk', coreHandlerRef.current);
+        coreHandlerRef.current = null;
+      }
       wsRef.current?.close();
       wsRef.current = null;
       term.dispose();
       termRef.current = null;
     };
-  }, [wsUrl, token, instanceId, _surfaceId, sendTerminalData]);
+  }, [wsUrl, token, instanceId, _surfaceId, core, coreSessionId, sendTerminalData]);
 
   // Re-focus terminal after React re-renders (prevents focus-steal from parent updates)
   // Only when WebSocket is open — avoids stealing focus from other tabs/elements

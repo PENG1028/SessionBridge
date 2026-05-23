@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import type { CoreClient } from '../../core/core-types';
+import type { CoreClient } from '../core/core-types';
 import { PageHeader, PageEmpty } from './page-utils';
 
 type AccessControlTab = 'users' | 'groups' | 'roles' | 'policy-bindings' | 'service-tokens' | 'plugin-grants' | 'audit';
@@ -36,14 +36,14 @@ export function AccessControl({ core: _core }: AccessControlProps) {
       <PageHeader title="Access Control" />
 
       {/* Tab nav */}
-      <div className="flex border-b border-gray-800 px-6 overflow-x-auto">
+      <div className="flex border-b border-gray-800 px-4 overflow-x-auto">
         {TABS.map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-2.5 text-sm whitespace-nowrap border-b-2 transition-colors ${
+            className={`px-3 py-1.5 text-[10px] font-mono whitespace-nowrap border-b-2 transition-colors ${
               activeTab === tab.id
-                ? 'border-blue-500 text-blue-400'
+                ? 'border-purple-500 text-purple-400'
                 : 'border-transparent text-gray-500 hover:text-gray-300'
             }`}
           >
@@ -53,7 +53,7 @@ export function AccessControl({ core: _core }: AccessControlProps) {
       </div>
 
       {/* Content area */}
-      <div className="flex-1 p-6">
+      <div className="flex-1 p-4">
         {activeTab === 'users' && (
           <EmptySection
             title="Users"
@@ -111,10 +111,10 @@ export function AccessControl({ core: _core }: AccessControlProps) {
 function EmptySection({ title, description, api }: { title: string; description: string; api: string }) {
   return (
     <div>
-      <h3 className="text-sm font-medium text-gray-400 mb-1">{title} (Phase 2)</h3>
-      <p className="text-sm text-gray-500 mb-2">{description}</p>
-      <p className="text-xs text-gray-600">Core API: {api}</p>
-      <div className="mt-6">
+      <h3 className="text-[11px] font-mono text-gray-400 mb-1">{title} (Phase 2)</h3>
+      <p className="text-[10px] text-gray-500 mb-2">{description}</p>
+      <p className="text-[9px] text-gray-600">Core API: {api}</p>
+      <div className="mt-4">
         <PageEmpty title={`No ${title.toLowerCase()} yet`} description="Full implementation deferred to Phase 2." />
       </div>
     </div>

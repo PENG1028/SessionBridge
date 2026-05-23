@@ -5,6 +5,8 @@ import type { CoreClient, CoreEvent, CoreConnectionStatus } from './core-types';
 // ─── CoreClient Config ──────────────────────────────────────────
 export interface CoreClientConfig {
   wsUrl?: string;
+  /** Authentication token, sent as ?token= query param on WebSocket URL. */
+  token?: string;
   pluginId: string;
   /** Timeout for Core calls in ms. Default 10_000. */
   callTimeout?: number;
@@ -35,7 +37,11 @@ export class CoreClientImpl implements CoreClient {
 
   constructor(config: CoreClientConfig) {
     this.pluginId = config.pluginId;
-    this.wsUrl = config.wsUrl || (typeof window !== 'undefined' ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws` : 'ws://localhost:8080/ws');
+    let baseUrl = config.wsUrl || (typeof window !== 'undefined' ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws` : 'ws://localhost:8080/ws');
+    if (config.token) {
+      baseUrl += (baseUrl.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(config.token);
+    }
+    this.wsUrl = baseUrl;
     this._callTimeout = config.callTimeout ?? 10_000;
     this._reconnectInterval = config.reconnectInterval ?? 5_000;
     this._maxReconnectAttempts = config.maxReconnectAttempts ?? -1;

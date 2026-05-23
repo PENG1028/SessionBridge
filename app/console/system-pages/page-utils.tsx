@@ -14,7 +14,7 @@ export interface UsePageDataResult<T> {
 
 // ─── Data fetcher hook ─────────────────────────────────────────
 import { useState, useEffect, useCallback } from 'react';
-import type { CoreClient } from '../../core/core-types';
+import type { CoreClient } from '../core/core-types';
 
 export function usePageData<T>(
   core: CoreClient | null,
@@ -65,9 +65,9 @@ export function usePageData<T>(
 
 export function PageLoading({ rows = 6 }: { rows?: number }) {
   return (
-    <div className="p-6 space-y-3 animate-pulse">
+    <div className="p-4 space-y-2 animate-pulse">
       {Array.from({ length: rows }).map((_, i) => (
-        <div key={i} className="h-12 bg-gray-800 rounded" style={{ opacity: 1 - i * 0.1 }} />
+        <div key={i} className="h-8 bg-[#1a1a1a] rounded border border-gray-800" style={{ opacity: 1 - i * 0.1 }} />
       ))}
     </div>
   );
@@ -75,13 +75,13 @@ export function PageLoading({ rows = 6 }: { rows?: number }) {
 
 export function PageError({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
-    <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-      <div className="text-red-400 text-lg font-medium mb-2">Error</div>
-      <p className="text-gray-400 text-sm mb-4 max-w-md">{message}</p>
+    <div className="flex-1 flex flex-col items-center justify-center p-4 text-center">
+      <div className="text-red-400 text-[11px] font-mono mb-2">Error</div>
+      <p className="text-gray-400 text-[10px] mb-4 max-w-md">{message}</p>
       {onRetry && (
         <button
           onClick={onRetry}
-          className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-200 rounded text-sm transition-colors"
+          className="px-3 py-1.5 bg-[#1a1a1a] border border-gray-700 hover:border-purple-500 text-gray-300 rounded text-[10px] transition-colors"
         >
           Retry
         </button>
@@ -92,27 +92,27 @@ export function PageError({ message, onRetry }: { message: string; onRetry?: () 
 
 export function PageEmpty({ title, description }: { title: string; description?: string }) {
   return (
-    <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-      <div className="text-gray-500 text-lg font-medium mb-2">{title}</div>
-      {description && <p className="text-gray-600 text-sm max-w-md">{description}</p>}
+    <div className="flex-1 flex flex-col items-center justify-center p-4 text-center">
+      <div className="text-gray-500 text-[11px] font-mono mb-2">{title}</div>
+      {description && <p className="text-gray-600 text-[10px] max-w-md">{description}</p>}
     </div>
   );
 }
 
 export function PageOffline() {
   return (
-    <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-      <div className="text-yellow-500 text-lg font-medium mb-2">Offline</div>
-      <p className="text-gray-500 text-sm">Core connection lost. Showing last known data.</p>
+    <div className="flex-1 flex flex-col items-center justify-center p-4 text-center">
+      <div className="text-yellow-500 text-[11px] font-mono mb-2">Offline</div>
+      <p className="text-gray-500 text-[10px]">Core connection lost. Showing last known data.</p>
     </div>
   );
 }
 
 export function PagePermissionDenied() {
   return (
-    <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-      <div className="text-gray-500 text-lg font-medium mb-2">Permission Denied</div>
-      <p className="text-gray-600 text-sm">You do not have permission to view this page.</p>
+    <div className="flex-1 flex flex-col items-center justify-center p-4 text-center">
+      <div className="text-gray-500 text-[11px] font-mono mb-2">Permission Denied</div>
+      <p className="text-gray-600 text-[10px]">You do not have permission to view this page.</p>
     </div>
   );
 }
@@ -125,8 +125,8 @@ export function PageHeader({
   actions?: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center justify-between px-6 py-3 border-b border-gray-800">
-      <h1 className="text-lg font-semibold text-gray-100">{title}</h1>
+    <div className="flex items-center justify-between px-4 py-1.5 border-b border-gray-800">
+      <span className="text-[11px] font-mono tracking-wider uppercase text-gray-300">{title}</span>
       {actions && <div className="flex items-center gap-2">{actions}</div>}
     </div>
   );

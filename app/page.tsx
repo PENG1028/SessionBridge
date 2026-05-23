@@ -15,15 +15,13 @@ import { LeftSidebar } from './console/sidebar/left-sidebar';
 import { RightSidebar } from './console/sidebar/right-sidebar';
 import { StatusBar } from './console/shell/status-bar';
 import { ConsoleHeader } from './console/shell/console-header';
-import { getAdapterViewId, getAdapterCapabilities, syncAdapterViewsFromExtensionData, syncAdapterMetaFromExtensionData, syncAdapterCapabilitiesFromExtensionData, getViewEntry, getAllAdapterTypes, resolveChromePolicy, type ChromePolicy } from './console/main/view-registry';
-import { __coreViewsRegistered } from './console/main/register-core-views';
-import { syncExtensionPanels } from './console/panels/panel-registry';
-import { __extensionPanelComponentsRegistered } from './console/panels/register-panel-components';
-import { syncChromeContributions } from './console/chrome/chrome-registry';
-import { syncContextMenus } from './console/menus/context-menu-registry';
-import { evaluateWhen } from '../lib/evaluate-when';
-void __extensionPanelComponentsRegistered;
-void __coreViewsRegistered;
+import { getAdapterViewId, getAdapterCapabilities, getViewEntry, getAllAdapterTypes, resolveChromePolicy, type ChromePolicy } from './console/main/view-registry';
+import { ensureBootstrapped } from './console/bootstrap';
+import { CoreClientProvider, useCore } from './console/core/core-client-provider';
+import { useCorePluginRegistrySync } from './console/core/use-core-plugin-sync';
+
+
+ensureBootstrapped();
 import { useNotification } from './console/shared/notification-context';
 import { sessionStore } from '../lib/session-store';
 import { useMessageSessions } from './console/hooks/use-message-sessions';
@@ -33,14 +31,11 @@ import { useKeyboardShortcuts } from './console/hooks/use-keyboard-shortcuts';
 import { useContextMenu } from './console/hooks/use-context-menu';
 import type { ContextMenuRequest, ContextMenuItemSpec } from './console/menus/context-menu-types';
 import { registerBuiltinCommands } from './console/commands/register-builtin-commands';
-import { registerBuiltinHostComponents, registerPluginManifests, registerPluginHostComponents } from './console/plugin-host';
+import { registerBuiltinHostComponents, registerPluginHostComponents } from './console/plugin-host';
 import { registerCommand, getCommand } from './console/commands/command-registry';
-import { __coreActionsRegistered } from './console/actions/register-core-actions';
 import { getAction, getActions } from './console/actions/action-registry';
 import { runWorkbenchCommand } from './console/actions/workbench-command-dispatch';
 import type { ActionRunContext } from './console/actions/action-types';
-// Register core actions into action registry (module-level side effect)
-void __coreActionsRegistered;
 import type { ContextMenuItem } from './console/shell/context-menu';
 import { ConsoleOverlays } from './console/overlays/console-overlays';
 import { getLastActiveDir, setLastActiveDir, getRestoreLastPath, addPathBookmark, setBookmarkScope } from './lib/path-bookmarks';
@@ -251,18 +246,36 @@ export default function Page() {
   );
 }
 
+/**
+ * Computes wsUrl / token from search params and localStorage, then
+ * wraps the app in CoreClientProvider so useCore() receives the same
+ * wsUrl / token that useSession() uses.
+ */
 function PageContent() {
-  // ── Connection state: default to localhost, persist last known URL ──
   const defaultUrl = typeof window !== 'undefined'
     ? `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}`
     : 'ws://localhost:8080';
   const params = typeof window !== 'undefined' ? new URL(window.location.href).searchParams : new URLSearchParams();
   const urlParam = params.get('url');
   const tokenParam = params.get('token');
-  // Use default URL initially for SSR/CSR consistency; restore from localStorage after mount
   const [wsUrl, setWsUrl] = useState(() => urlParam || defaultUrl);
   const [token, setToken] = useState<string | undefined>(tokenParam || undefined);
 
+  return (
+    <CoreClientProvider wsUrl={wsUrl} token={token} forceOffline={false}>
+      <AppCore wsUrl={wsUrl} setWsUrl={setWsUrl} token={token} setToken={setToken} />
+    </CoreClientProvider>
+  );
+}
+
+interface AppCoreProps {
+  wsUrl: string;
+  setWsUrl: (url: string) => void;
+  token: string | undefined;
+  setToken: (token: string | undefined) => void;
+}
+
+function AppCore({ wsUrl, setWsUrl, token, setToken }: AppCoreProps) {
   // ── Page access mode: LOCAL (localhost) vs VIEW (remote) ──
   // Use state + effect to avoid SSR/CSR hydration mismatch
   const [isLocalPage, setIsLocalPage] = useState(false);
@@ -280,7 +293,7 @@ function PageContent() {
 
   // Hydrate wsUrl from localStorage on mount (avoids SSR/CSR mismatch)
   useEffect(() => {
-    if (urlParam) return; // URL param takes precedence, already set
+    if (typeof window !== 'undefined' && new URL(window.location.href).searchParams.has('url')) return; // URL param takes precedence
     // When page is loaded from localhost, always use local relay
     // Don't restore a potentially stale remote wsUrl from localStorage
     const host = window.location.hostname;
@@ -683,7 +696,14 @@ function PageContent() {
     }
   }, []);
 
-  const { connStatus, msgLog, sendInput, sendCommand, serverBlocks, sessions, activeSessionId, activateSession, spawnSession, isWorkspace, queueStatus, instances, activeInstanceId, activateInstance, createInstance, killInstance, extensionPointsData, sendMessage } = useSession(wsUrl, token ?? undefined, undefined, undefined, undefined, onSystemNotify, dismiss, handleSystemMessage);
+  const { connStatus, msgLog, sendInput, sendCommand, serverBlocks, sessions, activeSessionId, activateSession, spawnSession, isWorkspace, queueStatus, instances, activeInstanceId, activateInstance, createInstance, killInstance, sendMessage } = useSession(wsUrl, token ?? undefined, undefined, undefined, undefined, onSystemNotify, dismiss, handleSystemMessage);
+  const core = useCore();
+
+  // ── Core plugin manifest → extension points sync ──
+  const handleCorePluginCommand = useCallback((commandId: string) => {
+    sendCommand(commandId, {});
+  }, [sendCommand]);
+  useCorePluginRegistrySync(core, handleCorePluginCommand);
 
   // ── 30s grace before showing disconnect banner ──
   const [showBanner, setShowBanner] = useState(false);
@@ -706,22 +726,7 @@ function PageContent() {
   // from paneFocus below — context menu and extension commands follow the
   // current tab's binding, not the global activeInstanceId.
 
-  // Sync adapter→viewId mapping and extension panels from extension points data
-  useEffect(() => {
-    syncAdapterViewsFromExtensionData(extensionPointsData);
-    syncAdapterMetaFromExtensionData(extensionPointsData);
-    syncAdapterCapabilitiesFromExtensionData(extensionPointsData);
-    if (extensionPointsData?.views) {
-      const views = extensionPointsData.views as Record<string, any>;
-      syncExtensionPanels(views['sidebar-left'], views['sidebar-right']);
-    }
-    if (extensionPointsData?.chrome) {
-      syncChromeContributions(extensionPointsData.chrome);
-    }
-    if (extensionPointsData?.menus) {
-      syncContextMenus(extensionPointsData.menus);
-    }
-  }, [extensionPointsData]);
+  // Plugin contributions are registered by useCorePluginRegistrySync via CoreClient.
 
   // ── Workbench pane/tab layout state (Phase 4N: per-instance workbench) ──
   const [appState, setAppState] = useState<AppWorkbenchState>(() => createAppInitialState());
@@ -789,6 +794,35 @@ function PageContent() {
     const nodeId = appState.activeInstanceId;
     return nodeId?.startsWith('upstream:') ? nodeId.slice('upstream:'.length) : wsUrl;
   }, [appState.activeInstanceId, wsUrl]);
+
+  // ── File open: CoreClient fs.read → relay HTTP fallback ──
+  const handleOpenFile = useCallback((filePath: string) => {
+    const fetchRelay = () => {
+      const prefix = activeNodeWsUrl === wsUrl ? '' : wsToHttpUrl(activeNodeWsUrl);
+      fetch(`${prefix}/api/read-file?path=${encodeURIComponent(filePath)}`)
+        .then(r => r.json())
+        .then(data => {
+          if (data.content !== undefined) {
+            setViewingFile({ path: data.path || filePath, content: data.content });
+          }
+        })
+        .catch(() => {});
+    };
+
+    if (core?.isConnected) {
+      core.call<{ path: string; content: string }>('fs.read', { path: filePath })
+        .then(data => {
+          if (data.content !== undefined) {
+            setViewingFile({ path: data.path || filePath, content: data.content });
+          }
+        })
+        .catch(() => fetchRelay());
+      return;
+    }
+
+    fetchRelay();
+  }, [core, activeNodeWsUrl, wsUrl]);
+
   // Derived active-node file tree values
   const fileTree = nodeFileTree[activeNodeWsUrl] || {};
   const expandedDirs = new Set(nodeExpandedDirs[activeNodeWsUrl] || ['.']);
@@ -804,6 +838,25 @@ function PageContent() {
   }, [activeNodeWsUrl, wsUrl]);
 
   const fetchDir = useCallback(async (dir: string) => {
+    // Prefer CoreClient fs.list when connected
+    if (core?.isConnected) {
+      try {
+        const res = await core.call<{ path: string; entries: Array<{ name: string; isDir: boolean; size: number; mode: string }> }>('fs.list', { path: dir });
+        const entries = res?.entries ?? [];
+        const items = entries.map((e: { name: string; isDir: boolean }) => ({ name: e.name, type: e.isDir ? 'dir' : 'file' }));
+        setNodeFileTree(prev => ({
+          ...prev,
+          [activeNodeWsUrl]: { ...(prev[activeNodeWsUrl] || {}), [dir]: {items, loaded: true} }
+        }));
+      } catch (err) {
+        setNodeFileTree(prev => ({
+          ...prev,
+          [activeNodeWsUrl]: { ...(prev[activeNodeWsUrl] || {}), [dir]: {items: [], loaded: true, error: String(err)} }
+        }));
+      }
+      return;
+    }
+    // Fallback: relay HTTP API
     const prefix = activeNodeWsUrl !== wsUrl ? wsToHttpUrl(activeNodeWsUrl) : '';
     const apiUrl = `${prefix}/api/list?dir=${encodeURIComponent(dir)}`;
     try {
@@ -827,7 +880,7 @@ function PageContent() {
         [activeNodeWsUrl]: { ...(prev[activeNodeWsUrl] || {}), [dir]: {items: [], loaded: true, error: String(err)} }
       }));
     }
-  }, [activeNodeWsUrl, wsUrl]);
+  }, [activeNodeWsUrl, wsUrl, core]);
   // Fetch root when active node changes
   useEffect(() => { fetchDir('.'); }, [fetchDir]);
 
@@ -884,41 +937,24 @@ function PageContent() {
     : activeSidebarReqs?.right === 'shown' ? true
     : state.rightSidebarOpen;
 
-  // ── Focus-based context (for context menu + extCommands) ───
-  // Phase 4I: These follow the pane focus (current tab's binding), NOT the
-  // global activeInstanceId. When the tab has no bound instance, adapterId
-  // and viewId are '' so when-conditions don't accidentally fire.
+  // ── Focus-based context (for context menu + command palette) ───
   const focusInstanceId = paneFocus?.instanceId ?? null;
   const focusAdapterId = focusInstanceId
     ? instances.find(i => i.id === focusInstanceId)?.adapterId ?? ''
     : '';
-  // viewId comes from the pane's viewType. Empty when no pane/relevant view,
-  // so when-conditions like `view == "terminal"` won't fire on blank tabs.
   const focusViewId = paneFocus?.viewType || '';
   const focusIsRunning = focusInstanceId
     ? instances.some(i => i.id === focusInstanceId && i.status === 'running')
     : false;
   const focusWhenContext = { activeAdapterId: focusAdapterId, view: focusViewId, isRunning: focusIsRunning };
 
-  // Filter extension commands by when-condition (uses focus-based context)
-  const extCommands = useMemo(() => {
-    if (!extensionPointsData?.commands) return [];
-    const cmds = extensionPointsData.commands as Array<{ id: string; title: string; category?: string; when?: string }>;
-    return cmds.filter(cmd => {
-      if (!cmd.when) return true;
-      return evaluateWhen(cmd.when, focusWhenContext);
-    });
-  }, [extensionPointsData, focusWhenContext]);
-
-  // Phase 4E: Merge extension commands with action registry commands for command palette.
+  // Command palette entries come from the action registry only.
+  // Plugin commands are registered directly by useCorePluginRegistrySync.
   const paletteCommands = useMemo(() => {
     const registryActions: Array<{ id: string; title: string; category?: string }>
       = getActions('commandPalette', focusWhenContext as Record<string, unknown>);
-    return [
-      ...extCommands.map(c => ({ id: c.id, title: c.title, category: c.category || 'Extension' })),
-      ...registryActions.map(a => ({ id: a.id, title: a.title, category: a.category || 'Core' })),
-    ];
-  }, [extCommands, focusWhenContext]);
+    return registryActions.map(a => ({ id: a.id, title: a.title, category: a.category || 'Core' }));
+  }, [focusWhenContext]);
 
   // ── Command registry setup (Phase 4E) ──────────────────
   // Built-in commands + extension commands are registered into the
@@ -935,26 +971,10 @@ function PageContent() {
       reload: () => window.location.reload(),
     });
 
-    // Plugin host initialization: register builtin host components,
-    // plugin manifests (for ContributionRegistry), and plugin host
-    // components (TerminalView, SystemInfoPanel, etc.).
+    // Plugin host initialization: register builtin host components
+    // and plugin host components (TerminalView, SystemInfoPanel, etc.).
     registerBuiltinHostComponents();
-    registerPluginManifests();
     registerPluginHostComponents();
-
-    // Sync extension manifest commands into the registry.
-    // Each dispatches sendCommand with its ID as the command name.
-    const allExtCmds = (extensionPointsData?.commands as any[]) || [];
-    for (const cmd of allExtCmds) {
-      const id = cmd.id as string;
-      if (getCommand(id)) continue; // built-in takes precedence
-      registerCommand({
-        id,
-        title: cmd.title || id,
-        category: cmd.category,
-        handler: () => sendCommand(id),
-      });
-    }
 
     // Phase 4N: keep/unkeep tab commands for context menu
     registerCommand({
@@ -971,7 +991,7 @@ function PageContent() {
         if (args?.tabId) appDispatch({ type: 'UNKEEP_TAB', tabId: args.tabId });
       },
     });
-  }, [sendCommand, sendInput, killInstance, activeSessionId, extensionPointsData]);
+  }, [sendCommand, sendInput, killInstance, activeSessionId]);
 
   // Close command palette when the active view disables it
   useEffect(() => {
@@ -1828,11 +1848,15 @@ function PageContent() {
       // Kept tabs survive tab close (≡ menu revival). Non-kept → kill process.
       const isKept = appStateRef.current.persistentTabs.some(t => t.id === tab.id);
       if (!isKept) {
+        // CoreClient mode: stop the run first, then fallback to relay killInstance
+        if (core?.isConnected) {
+          core.call('run.stop', { runId: instId }).catch(() => {});
+        }
         killInstance(instId);
         setAppState(prev => appReducer(prev, { type: 'REMOVE_INSTANCE_LAYOUT', instanceId: instId }));
       }
     }
-  }, [killInstance]);
+  }, [killInstance, core]);
 
   // ── Workbench context value (provides session/chat state to all view components) ──
   const workbenchContextValue = useMemo(() => ({
@@ -1990,16 +2014,7 @@ function PageContent() {
               return { ...prev, [activeNodeWsUrl]: next };
             });
           }}
-          onOpenFile={(filePath) => {
-            fetch(`${activeNodeWsUrl === wsUrl ? '' : wsToHttpUrl(activeNodeWsUrl)}/api/read-file?path=${encodeURIComponent(filePath)}`)
-              .then(r => r.json())
-              .then(data => {
-                if (data.content !== undefined) {
-                  setViewingFile({ path: data.path || filePath, content: data.content });
-                }
-              })
-              .catch(() => {});
-          }}
+          onOpenFile={handleOpenFile}
           onSendFile={(filePath) => {
             setInputValue(prev => prev + `@${filePath} `);
           }}
@@ -2116,14 +2131,7 @@ function PageContent() {
           onLoadSnapshot={loadSnapshotWrapper}
           onForkSnapshot={forkFromSnapshotWrapper}
           knownFiles={knownFiles}
-          onOpenFile={(filePath) => {
-            fetch(`${activeNodeWsUrl === wsUrl ? '' : wsToHttpUrl(activeNodeWsUrl)}/api/read-file?path=${encodeURIComponent(filePath)}`)
-              .then(r => r.json())
-              .then(data => {
-                if (data.content !== undefined) setViewingFile({ path: data.path || filePath, content: data.content });
-              })
-              .catch(() => {});
-          }}
+          onOpenFile={handleOpenFile}
           shortenPath={shortenPath}
           logs={logs}
           msgLog={msgLog}
@@ -2212,16 +2220,7 @@ function PageContent() {
             return { ...prev, [activeNodeWsUrl]: next };
           });
         }}
-        onOpenFile={(filePath) => {
-          fetch(`${activeNodeWsUrl === wsUrl ? '' : wsToHttpUrl(activeNodeWsUrl)}/api/read-file?path=${encodeURIComponent(filePath)}`)
-            .then(r => r.json())
-            .then(data => {
-              if (data.content !== undefined) {
-                setViewingFile({ path: data.path || filePath, content: data.content });
-              }
-            })
-            .catch(() => {});
-        }}
+        onOpenFile={handleOpenFile}
         onSendFile={(filePath) => {
           setInputValue(prev => prev + `@${filePath} `);
         }}
@@ -2245,14 +2244,7 @@ function PageContent() {
         onLoadSnapshot={loadSnapshotWrapper}
         onForkSnapshot={forkFromSnapshotWrapper}
         knownFiles={knownFiles}
-        onOpenFile={(filePath) => {
-          fetch(`${activeNodeWsUrl === wsUrl ? '' : wsToHttpUrl(activeNodeWsUrl)}/api/read-file?path=${encodeURIComponent(filePath)}`)
-            .then(r => r.json())
-            .then(data => {
-              if (data.content !== undefined) setViewingFile({ path: data.path || filePath, content: data.content });
-            })
-            .catch(() => {});
-        }}
+        onOpenFile={handleOpenFile}
         shortenPath={shortenPath}
         logs={logs}
         msgLog={msgLog}

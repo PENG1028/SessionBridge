@@ -19,6 +19,8 @@ interface CoreClientProviderProps {
   children: ReactNode;
   /** Explicit WebSocket URL override. Auto-detected from window.location if omitted. */
   wsUrl?: string;
+  /** Authentication token, sent as ?token= query param on WebSocket URL. */
+  token?: string;
   /** Force offline/mock mode even if Core is reachable. */
   forceOffline?: boolean;
   /** Mock data maps method name -> result for offline mode. */
@@ -28,6 +30,7 @@ interface CoreClientProviderProps {
 export function CoreClientProvider({
   children,
   wsUrl,
+  token,
   forceOffline = false,
   mockData,
 }: CoreClientProviderProps) {
@@ -35,7 +38,7 @@ export function CoreClientProvider({
   const [core, setCore] = useState<CoreClient>(() =>
     forceOffline
       ? createMockCoreClient(mockData)
-      : createCoreClient({ wsUrl }),
+      : createCoreClient({ wsUrl, token }),
   );
   const [isOffline, setIsOffline] = useState(forceOffline);
 
@@ -47,7 +50,7 @@ export function CoreClientProvider({
       return;
     }
 
-    const instance = createCoreClient({ wsUrl }) as CoreClientImpl;
+    const instance = createCoreClient({ wsUrl, token }) as CoreClientImpl;
     const unsubStatus = instance.onStatusChange(setStatus);
 
     // Auto-connect
@@ -60,7 +63,7 @@ export function CoreClientProvider({
       unsubStatus();
       instance.disconnect();
     };
-  }, [wsUrl, forceOffline]);
+  }, [wsUrl, token, forceOffline]);
 
   // eslint-disable-next-line react-perf/jsx-no-new-object-as-prop
   const value = { core, status, isOffline };

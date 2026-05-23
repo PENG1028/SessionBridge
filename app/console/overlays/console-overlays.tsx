@@ -6,6 +6,8 @@ import { CommandPalette } from '../shell/command-palette';
 import { ForkDialog } from '../shell/fork-dialog';
 import { SearchResultsPanel } from '../shell/search-results-panel';
 import { SettingsPanel } from '../shell/settings-panel';
+import { useCore } from '../core/core-client-provider';
+import { ApprovalCenter } from '../system-ui/approval-center';
 
 interface ConsoleOverlaysProps {
   // Search
@@ -50,6 +52,8 @@ interface ConsoleOverlaysProps {
 }
 
 export function ConsoleOverlays(props: ConsoleOverlaysProps) {
+  const core = useCore();
+
   return (
     <>
       {/* ═══ SEARCH SESSIONS PANEL (overlay) ════ */}
@@ -144,6 +148,9 @@ export function ConsoleOverlays(props: ConsoleOverlaysProps) {
       {props.ctxMenu && (
         <ContextMenu items={props.ctxMenu.items} x={props.ctxMenu.x} y={props.ctxMenu.y} onClose={props.onCloseContextMenu} />
       )}
+
+      {/* ═══ APPROVAL CENTER (global overlay) ════ */}
+      <ApprovalCenter core={core} />
     </>
   );
 }

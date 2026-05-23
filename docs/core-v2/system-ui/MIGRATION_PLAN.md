@@ -242,21 +242,21 @@ function SurfaceRenderer({ context }: { context: SurfaceRenderContext }) {
 | `fetch('/api/configuration/...')` | `coreClient.request('config.*')` |
 | `fetch('/api/auth/...')` | `coreClient.request('auth.*')` |
 | `fetch('/api/check-update')` | `coreClient.request('update.check')` |
-| 无 Plugin Manager | 新增 `system-ui/views/plugin-manager.tsx` |
-| 无 Plugin Detail | 新增 `system-ui/views/plugin-detail.tsx` |
-| 无 Permission Grant UI | 新增 `system-ui/views/permission-dialog.tsx` |
+| 无 Plugin Manager | 新增 `system-pages/plugin-manager.tsx` |
+| 无 Plugin Detail | 新增 `system-pages/plugin-detail.tsx` |
+| 无 Permission Grant UI | 新增 `system-pages/permission-dialog.tsx` |
 
 ### 新增功能
 
 | 功能 | 文件 | 优先级 |
 |------|------|--------|
-| Plugin Manager 列表页 | `system-ui/views/plugin-manager.tsx` | P1 |
-| Plugin Detail 页 | `system-ui/views/plugin-detail.tsx` | P2 |
-| Environment Check tab | `system-ui/views/plugin-detail/environment-tab.tsx` | P2 |
-| Install Plan/Execute tab | `system-ui/views/plugin-detail/install-tab.tsx` | P2 |
-| Files/Cache tab | `system-ui/views/plugin-detail/files-tab.tsx` | P2 |
-| Permission Grant tab | `system-ui/views/plugin-detail/permissions-tab.tsx` | P1 |
-| Permission Grant dialog | `system-ui/views/permission-dialog.tsx` | P1 |
+| Plugin Manager 列表页 | `system-pages/plugin-manager.tsx` | P1 |
+| Plugin Detail 页 | `system-pages/plugin-detail.tsx` | P2 |
+| Environment Check tab | `system-pages/plugin-detail/environment-tab.tsx` | P2 |
+| Install Plan/Execute tab | `system-pages/plugin-detail/install-tab.tsx` | P2 |
+| Files/Cache tab | `system-pages/plugin-detail/files-tab.tsx` | P2 |
+| Permission Grant tab | `system-pages/plugin-detail/permissions-tab.tsx` | P1 |
+| Permission Grant dialog | `system-pages/permission-dialog.tsx` | P1 |
 
 ### 风险
 

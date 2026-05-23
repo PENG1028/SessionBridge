@@ -5,8 +5,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import React from 'react';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
-import { PluginManager } from '../../app/console/system-ui/views/plugin-manager';
-import { PluginDetail } from '../../app/console/system-ui/views/plugin-detail';
+import { PluginManager } from '../../app/console/system-pages/plugin-manager';
+import { PluginDetail } from '../../app/console/system-pages/plugin-detail';
 import { createMockCoreClient } from '../../app/console/core/core-client';
 import type { CoreClient } from '../../app/console/core/core-types';
 import { registerView, unregisterView } from '../../app/console/main/view-registry';
@@ -498,7 +498,7 @@ describe('PluginManager: List Display Completeness', () => {
       expect(screen.getByText('check: ok')).toBeDefined();
     });
 
-    const greenDots = document.querySelectorAll('.bg-green-500');
+    const greenDots = document.querySelectorAll('.bg-emerald-500');
     expect(greenDots.length).toBeGreaterThanOrEqual(1);
 
     expect(screen.getByText('2.0.0')).toBeDefined();

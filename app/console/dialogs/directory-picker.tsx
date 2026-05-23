@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
 import { FloatingWindow } from '../shared/floating-window';
 import { Search, ChevronRight, Folder, File, Check, ArrowLeft, ArrowRightFromLine } from 'lucide-react';
+import { useCore } from '../core/core-client-provider';
 
 interface DirEntry {
   name: string;
@@ -95,6 +96,7 @@ export function DirectoryPicker({
   title = 'Select Directory',
   baseUrl = '',
 }: DirectoryPickerProps) {
+  const core = useCore();
   const [tree, setTree] = useState<Record<string, { items: DirEntry[]; loaded: boolean }>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set(['.']));
   const [selected, setSelected] = useState(initialPath);
@@ -105,6 +107,15 @@ export function DirectoryPicker({
 
   const fetchDir = useCallback(async (dir: string) => {
     try {
+      // Prefer CoreClient fs.list when connected
+      if (core?.isConnected) {
+        const res = await core.call<{ path: string; entries: Array<{ name: string; isDir: boolean; size: number; mode: string }> }>('fs.list', { path: dir });
+        const entries = res?.entries ?? [];
+        const items: DirEntry[] = entries.map(e => ({ name: e.name, type: e.isDir ? 'dir' : 'file' }));
+        setTree(prev => ({ ...prev, [dir]: { items, loaded: true } }));
+        return;
+      }
+      // Fallback: relay HTTP API
       const r = await fetch(`${baseUrl}/api/list?dir=${encodeURIComponent(dir)}`);
       const d = await r.json();
       if (d.items) {
@@ -112,7 +123,7 @@ export function DirectoryPicker({
         setTree(prev => ({ ...prev, [dir]: { items: d.items, loaded: true } }));
       }
     } catch {}
-  }, [baseUrl]);
+  }, [baseUrl, core]);
 
   useEffect(() => {
     if (open) {
@@ -139,6 +150,18 @@ export function DirectoryPicker({
     setSelected(path);
     setExpanded(new Set(['.']));
     const q = path.replace(/^([A-Za-z]):$/, '$1:/'); // fix bare drive letter
+
+    if (core?.isConnected) {
+      core.call<{ path: string; entries: Array<{ name: string; isDir: boolean; size: number; mode: string }> }>('fs.list', { path: q })
+        .then(res => {
+          const entries = res?.entries ?? [];
+          const items: DirEntry[] = entries.map(e => ({ name: e.name, type: e.isDir ? 'dir' : 'file' }));
+          setTree(prev => ({ ...prev, '.': { items, loaded: true } }));
+        })
+        .catch(() => {});
+      return;
+    }
+
     fetch(`${baseUrl}/api/list?dir=${encodeURIComponent(q)}`)
       .then(r => r.json())
       .then(d => {
@@ -148,7 +171,7 @@ export function DirectoryPicker({
         }
       })
       .catch(() => {});
-  }, [baseUrl]);
+  }, [baseUrl, core]);
 
   const rootLabelStr = useMemo(() => rootLabel(rootCwd), [rootCwd]);
   const breadcrumb = useMemo(() => pathSegments(selected, rootLabelStr), [selected, rootLabelStr]);

@@ -53,7 +53,7 @@ Failure States:
 Migration From Existing Code:
   - 现有代码没有专门的 Dashboard
   - 现有 page.tsx 中 `instances`、`logs` 等数据可以复用
-  - 需要新增 `system-ui/views/dashboard.tsx`
+  - 需要新增 `system-pages/dashboard.tsx`
 ```
 
 ---
@@ -103,7 +103,7 @@ Failure States:
 
 Migration From Existing Code:
   - 无现有 Node Manager 代码
-  - 新增 `system-ui/views/node-manager.tsx`
+  - 新增 `system-pages/node-manager.tsx`
   - Sidebar 中的 SystemPanel 可提供灵感（显示 hostname/platform/uptime）
 ```
 
@@ -156,7 +156,7 @@ Failure States:
 
 Migration From Existing Code:
   - 现有 page.tsx 的 `instances` 列表可复用概念
-  - 需要新增 `system-ui/views/session-manager.tsx`
+  - 需要新增 `system-pages/session-manager.tsx`
   - Event replay UI 可参考现有 WorkbenchContext 的消息渲染
 ```
 
@@ -208,7 +208,7 @@ Failure States:
 
 Migration From Existing Code:
   - 无现有 Plugin Manager 代码
-  - 新增 `system-ui/views/plugin-manager.tsx`
+  - 新增 `system-pages/plugin-manager.tsx`
   - 现有 panel-registry 中的 ProcessPanel 可提供概念参考
 ```
 
@@ -273,7 +273,7 @@ Failure States:
 
 Migration From Existing Code:
   - 无现有 Plugin Detail 代码
-  - 新增 `system-ui/views/plugin-detail.tsx`
+  - 新增 `system-pages/plugin-detail.tsx`
   - 参考现有 SettingsPanel 的 ConfigField 风格渲染配置
 ```
 
@@ -319,7 +319,7 @@ Failure States:
 
 Migration From Existing Code:
   - 无现有代码
-  - 新增 `system-ui/views/plugin-detail/environment-tab.tsx`
+  - 新增 `system-pages/plugin-detail/environment-tab.tsx`
 ```
 
 ---
@@ -382,7 +382,7 @@ Failure States:
 
 Migration From Existing Code:
   - 无现有代码
-  - 新增 `system-ui/views/plugin-detail/install-tab.tsx`
+  - 新增 `system-pages/plugin-detail/install-tab.tsx`
 ```
 
 ---
@@ -503,8 +503,8 @@ Failure States:
 
 Migration From Existing Code:
   - 无现有权限管理 UI
-  - 新增 `system-ui/views/plugin-detail/permissions-tab.tsx`
-  - 新增 `system-ui/views/permission-dialog.tsx`
+  - 新增 `system-pages/plugin-detail/permissions-tab.tsx`
+  - 新增 `system-pages/permission-dialog.tsx`
 ```
 
 ---
@@ -617,7 +617,7 @@ Failure States:
 Migration From Existing Code:
   - 无现有 Logs Viewer 组件
   - 现有 LogsPanel（extension-panels.tsx）可提供日志行渲染参考
-  - 新增 `system-ui/views/logs-viewer.tsx`
+  - 新增 `system-pages/logs-viewer.tsx`
 ```
 
 ---
@@ -672,7 +672,7 @@ Failure States:
 
 Migration From Existing Code:
   - 无现有 Notification Center
-  - 新增 `system-ui/views/notification-center.tsx`
+  - 新增 `system-pages/notification-center.tsx`
   - Toast 通知可参考现有 `useWorkbench().notify` 模式
 ```
 
@@ -717,7 +717,7 @@ Failure States:
 
 Migration From Existing Code:
   - `app/console/commands/command-registry.ts` → 直接复用
-  - 新增 `system-ui/views/command-palette.tsx`
+  - 新增 `system-pages/command-palette.tsx`
   - 参考现有 ViewSelector 的 UI 风格
 ```
 

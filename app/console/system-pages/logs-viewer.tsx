@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { RefreshCw } from 'lucide-react';
-import type { CoreClient } from '../../core/core-types';
+import type { CoreClient } from '../core/core-types';
 import { PageHeader, PageLoading, PageError, PageOffline, type PageState } from './page-utils';
 
 type LogTab = 'core' | 'audit' | 'plugin-logs' | 'events' | 'install';
@@ -99,7 +99,7 @@ export function LogsViewer({ core }: LogsViewerProps) {
         actions={
           <button
             onClick={activeTab === 'audit' ? fetchAuditLogs : fetchCoreLogs}
-            className="p-2 rounded hover:bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
+            className="p-1.5 rounded hover:bg-[#1a1a1a] text-gray-400 hover:text-gray-200 transition-colors"
             title="Refresh"
           >
             <RefreshCw size={16} />
@@ -108,14 +108,14 @@ export function LogsViewer({ core }: LogsViewerProps) {
       />
 
       {/* Tab switcher */}
-      <div className="flex border-b border-gray-800 px-6 overflow-x-auto">
+      <div className="flex border-b border-gray-800 px-4 overflow-x-auto">
         {LOG_TABS.map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-2.5 text-sm whitespace-nowrap border-b-2 transition-colors ${
+            className={`px-3 py-1.5 text-[10px] font-mono whitespace-nowrap border-b-2 transition-colors ${
               activeTab === tab.id
-                ? 'border-blue-500 text-blue-400'
+                ? 'border-purple-500 text-purple-400'
                 : 'border-transparent text-gray-500 hover:text-gray-300'
             }`}
           >
@@ -129,9 +129,9 @@ export function LogsViewer({ core }: LogsViewerProps) {
         {activeTab === 'audit' ? (
           <AuditContent entries={auditEntries} />
         ) : activeTab === 'events' ? (
-          <div className="text-gray-500 text-sm">Session events timeline (Phase 2). Uses session.events API.</div>
+          <div className="text-gray-500 text-[10px] font-mono">Session events timeline (Phase 2). Uses session.events API.</div>
         ) : activeTab === 'install' ? (
-          <div className="text-gray-500 text-sm">Plugin install history (Phase 2). Uses plugin.history API.</div>
+          <div className="text-gray-500 text-[10px] font-mono">Plugin install history (Phase 2). Uses plugin.history API.</div>
         ) : (
           <LogContent lines={logLines} />
         )}
@@ -142,20 +142,20 @@ export function LogsViewer({ core }: LogsViewerProps) {
 
 function LogContent({ lines }: { lines: LogEntry[] }) {
   if (lines.length === 0) {
-    return <div className="text-gray-500 text-sm">No log entries.</div>;
+    return <div className="text-gray-500 text-[10px] font-mono">No log entries.</div>;
   }
 
   const levelColors: Record<string, string> = {
-    INFO: 'text-blue-400',
+    INFO: 'text-gray-400',
     WARN: 'text-yellow-400',
     ERROR: 'text-red-400',
-    DEBUG: 'text-gray-500',
+    DEBUG: 'text-gray-600',
   };
 
   return (
-    <div className="font-mono text-xs space-y-0.5">
+    <div className="font-mono text-[10px] space-y-0.5 bg-black rounded p-2">
       {lines.map((line, i) => (
-        <div key={i} className="flex gap-2 hover:bg-gray-900 px-2 py-0.5 rounded">
+        <div key={i} className="flex gap-2 hover:bg-[#111] px-2 py-0.5 rounded">
           <span className="text-gray-600 flex-shrink-0">{line.timestamp}</span>
           <span className={`flex-shrink-0 ${levelColors[line.level] || 'text-gray-400'}`}>
             {line.level.padEnd(5)}
@@ -170,20 +170,20 @@ function LogContent({ lines }: { lines: LogEntry[] }) {
 
 function AuditContent({ entries }: { entries: AuditEntry[] }) {
   if (entries.length === 0) {
-    return <div className="text-gray-500 text-sm">No audit entries.</div>;
+    return <div className="text-gray-500 text-[10px] font-mono">No audit entries.</div>;
   }
 
   return (
-    <div className="w-full text-sm">
-      <div className="grid grid-cols-4 gap-4 px-3 py-2 text-xs text-gray-500 font-medium border-b border-gray-800">
+    <div className="w-full">
+      <div className="grid grid-cols-4 gap-4 px-3 py-1.5 text-[9px] text-gray-500 font-mono tracking-wider border-b border-gray-800">
         <span>Time</span>
         <span>Type</span>
         <span>Actor</span>
         <span>Target</span>
       </div>
       {entries.map((entry, i) => (
-        <div key={i} className="grid grid-cols-4 gap-4 px-3 py-2 text-sm border-b border-gray-800/50 hover:bg-gray-900">
-          <span className="text-gray-500 font-mono text-xs">{entry.timestamp}</span>
+        <div key={i} className="grid grid-cols-4 gap-4 px-3 py-1.5 text-[10px] border-b border-gray-800/50 hover:bg-[#111]">
+          <span className="text-gray-500 font-mono text-[9px]">{entry.timestamp}</span>
           <span className="text-gray-300">{entry.type}</span>
           <span className="text-gray-400">{entry.actor}</span>
           <span className="text-gray-400">{entry.target}</span>

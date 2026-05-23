@@ -7,9 +7,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import React from 'react';
 import { render, screen, fireEvent, waitFor, cleanup, act } from '@testing-library/react';
-import { PluginManager } from '../../app/console/system-ui/views/plugin-manager';
-import { PluginDetail } from '../../app/console/system-ui/views/plugin-detail';
-import { Settings } from '../../app/console/system-ui/views/settings';
+import { PluginManager } from '../../app/console/system-pages/plugin-manager';
+import { PluginDetail } from '../../app/console/system-pages/plugin-detail';
+import { Settings } from '../../app/console/system-pages/settings';
 import { ApprovalCenter } from '../../app/console/system-ui/approval-center';
 import type { CoreClient, CoreEvent, BlockerEntry } from '../../app/console/core/core-types';
 

@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { RefreshCw } from 'lucide-react';
-import type { CoreClient, ConfigEntry, UpdateSource, UpdatePolicy, UpdateStatus } from '../../core/core-types';
+import type { CoreClient, ConfigEntry, UpdateSource, UpdatePolicy, UpdateStatus } from '../core/core-types';
 import { PageLoading, PageError, PageOffline, type PageState } from './page-utils';
 import { listFromResponse } from './core-response-utils';
 
@@ -242,11 +242,11 @@ export function Settings({ core }: SettingsProps) {
 
   return (
     <div className="flex-1 flex flex-col overflow-y-auto">
-      <div className="flex items-center justify-between px-6 py-3 border-b border-gray-800">
-        <h1 className="text-lg font-semibold text-gray-100">Settings</h1>
+      <div className="flex items-center justify-between px-4 py-1.5 border-b border-gray-800">
+        <h1 className="text-[11px] font-mono tracking-wider uppercase text-gray-300">Settings</h1>
         <button
           onClick={fetchConfigs}
-          className="p-2 rounded hover:bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
+          className="p-1.5 rounded hover:bg-[#1a1a1a] text-gray-400 hover:text-gray-200 transition-colors"
           title="Refresh"
         >
           <RefreshCw size={16} />
@@ -254,7 +254,7 @@ export function Settings({ core }: SettingsProps) {
       </div>
 
       {saveError && (
-        <div className="mx-6 mt-3 px-4 py-2 bg-red-900/50 border border-red-800 rounded text-sm text-red-400">
+        <div className="mx-4 mt-2 px-3 py-1.5 bg-red-900/20 border border-red-800 rounded text-[10px] text-red-400">
           {saveError}
           <button onClick={() => setSaveError(null)} className="ml-2 underline">Dismiss</button>
         </div>
@@ -262,15 +262,15 @@ export function Settings({ core }: SettingsProps) {
 
       <div className="flex flex-1">
         {/* Category nav */}
-        <nav className="w-48 border-r border-gray-800 p-3 flex-shrink-0">
+        <nav className="w-48 border-r border-gray-800 p-2 flex-shrink-0">
           {CATEGORIES.map(cat => (
             <button
               key={cat.id}
               onClick={() => setActiveCategory(cat.id)}
-              className={`w-full text-left px-3 py-2 text-sm rounded transition-colors ${
+              className={`w-full text-left px-3 py-1.5 text-[10px] font-mono rounded transition-colors ${
                 activeCategory === cat.id
-                  ? 'bg-blue-900/30 text-blue-400'
-                  : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
+                  ? 'bg-purple-900/20 text-purple-400'
+                  : 'text-gray-500 hover:text-gray-300 hover:bg-[#1a1a1a]'
               }`}
             >
               {cat.label}
@@ -280,93 +280,93 @@ export function Settings({ core }: SettingsProps) {
 
         {/* Config content or Update tab */}
         {activeCategory === 'update' ? (
-          <div className="flex-1 p-6 overflow-y-auto">
-            <h2 className="text-sm font-medium text-gray-300 mb-4">Update Configuration</h2>
+          <div className="flex-1 p-4 overflow-y-auto">
+            <h2 className="text-[10px] font-mono text-gray-300 mb-3">Update Configuration</h2>
 
-            <div className="space-y-6 max-w-2xl">
+            <div className="space-y-4 max-w-2xl">
               {/* Update Source */}
-              <section className="p-4 bg-gray-900 rounded-lg border border-gray-800">
-                <h3 className="text-sm font-semibold text-gray-200 mb-3">Update Source</h3>
-                <div className="grid grid-cols-2 gap-3">
+              <section className="p-3 bg-[#111] rounded border border-gray-800">
+                <h3 className="text-[10px] font-mono text-gray-200 mb-2">Update Source</h3>
+                <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <label className="text-xs text-gray-500">Type</label>
-                    <input type="text" value={updateSource.type} readOnly className="w-full px-3 py-1.5 bg-gray-950 border border-gray-700 rounded text-sm text-gray-400 font-mono" />
+                    <label className="text-[9px] text-gray-500">Type</label>
+                    <input type="text" value={updateSource.type} readOnly className="w-full px-2.5 py-1 bg-[#1a1a1a] border border-gray-700 rounded text-[10px] text-gray-400 font-mono" />
                   </div>
                   <div>
-                    <label className="text-xs text-gray-500">Mode</label>
-                    <select value={updateSource.mode} onChange={e => setUpdateSource({ ...updateSource, mode: e.target.value })} className="w-full px-3 py-1.5 bg-gray-950 border border-gray-700 rounded text-sm text-gray-200 font-mono">
+                    <label className="text-[9px] text-gray-500">Mode</label>
+                    <select value={updateSource.mode} onChange={e => setUpdateSource({ ...updateSource, mode: e.target.value })} className="w-full px-2.5 py-1 bg-[#1a1a1a] border border-gray-700 rounded text-[10px] text-gray-200 font-mono">
                       <option value="manual">manual</option>
                       <option value="auto-check">auto-check</option>
                     </select>
                   </div>
                   <div>
-                    <label className="text-xs text-gray-500">Remote</label>
-                    <input type="text" value={updateSource.remote} onChange={e => setUpdateSource({ ...updateSource, remote: e.target.value })} className="w-full px-3 py-1.5 bg-gray-950 border border-gray-700 rounded text-sm text-gray-200 font-mono focus:outline-none focus:border-blue-700" />
+                    <label className="text-[9px] text-gray-500">Remote</label>
+                    <input type="text" value={updateSource.remote} onChange={e => setUpdateSource({ ...updateSource, remote: e.target.value })} className="w-full px-2.5 py-1 bg-[#1a1a1a] border border-gray-700 rounded text-[10px] text-gray-200 font-mono focus:outline-none focus:border-purple-500" />
                   </div>
                   <div>
-                    <label className="text-xs text-gray-500">Branch</label>
-                    <input type="text" value={updateSource.branch} onChange={e => setUpdateSource({ ...updateSource, branch: e.target.value })} className="w-full px-3 py-1.5 bg-gray-950 border border-gray-700 rounded text-sm text-gray-200 font-mono focus:outline-none focus:border-blue-700" />
+                    <label className="text-[9px] text-gray-500">Branch</label>
+                    <input type="text" value={updateSource.branch} onChange={e => setUpdateSource({ ...updateSource, branch: e.target.value })} className="w-full px-2.5 py-1 bg-[#1a1a1a] border border-gray-700 rounded text-[10px] text-gray-200 font-mono focus:outline-none focus:border-purple-500" />
                   </div>
                   <div className="col-span-2">
-                    <label className="text-xs text-gray-500">Repo URL</label>
-                    <input type="text" value={updateSource.repoUrl} onChange={e => setUpdateSource({ ...updateSource, repoUrl: e.target.value })} className="w-full px-3 py-1.5 bg-gray-950 border border-gray-700 rounded text-sm text-gray-200 font-mono focus:outline-none focus:border-blue-700" />
+                    <label className="text-[9px] text-gray-500">Repo URL</label>
+                    <input type="text" value={updateSource.repoUrl} onChange={e => setUpdateSource({ ...updateSource, repoUrl: e.target.value })} className="w-full px-2.5 py-1 bg-[#1a1a1a] border border-gray-700 rounded text-[10px] text-gray-200 font-mono focus:outline-none focus:border-purple-500" />
                   </div>
                 </div>
-                <button onClick={handleUpdateSourceSave} disabled={saving} className="mt-3 px-4 py-1.5 bg-blue-700 hover:bg-blue-600 text-white text-xs rounded transition-colors disabled:opacity-50">
+                <button onClick={handleUpdateSourceSave} disabled={saving} className="mt-2 px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white text-[10px] rounded transition-colors disabled:opacity-50">
                   {saving ? 'Saving...' : 'Save Source'}
                 </button>
               </section>
 
               {/* Update Policy */}
-              <section className="p-4 bg-gray-900 rounded-lg border border-gray-800">
-                <h3 className="text-sm font-semibold text-gray-200 mb-3">Update Policy</h3>
-                <div className="grid grid-cols-2 gap-3">
+              <section className="p-3 bg-[#111] rounded border border-gray-800">
+                <h3 className="text-[10px] font-mono text-gray-200 mb-2">Update Policy</h3>
+                <div className="grid grid-cols-2 gap-2">
                   <div className="flex items-center gap-2">
                     <input type="checkbox" id="autoCheck" checked={updatePolicy.autoCheck} onChange={e => setUpdatePolicy({ ...updatePolicy, autoCheck: e.target.checked })} className="rounded" />
-                    <label htmlFor="autoCheck" className="text-sm text-gray-300">Auto Check</label>
+                    <label htmlFor="autoCheck" className="text-[10px] text-gray-300">Auto Check</label>
                   </div>
                   <div className="flex items-center gap-2">
                     <input type="checkbox" id="autoApply" checked={updatePolicy.autoApply} disabled className="rounded opacity-50" />
-                    <label htmlFor="autoApply" className="text-sm text-gray-500">Auto Apply (disabled — not supported)</label>
+                    <label htmlFor="autoApply" className="text-[10px] text-gray-500">Auto Apply (disabled — not supported)</label>
                   </div>
                   <div>
-                    <label className="text-xs text-gray-500">Check Interval (seconds)</label>
-                    <input type="number" value={updatePolicy.checkIntervalSeconds} onChange={e => setUpdatePolicy({ ...updatePolicy, checkIntervalSeconds: parseInt(e.target.value) || 0 })} className="w-full px-3 py-1.5 bg-gray-950 border border-gray-700 rounded text-sm text-gray-200 font-mono focus:outline-none focus:border-blue-700" />
+                    <label className="text-[9px] text-gray-500">Check Interval (seconds)</label>
+                    <input type="number" value={updatePolicy.checkIntervalSeconds} onChange={e => setUpdatePolicy({ ...updatePolicy, checkIntervalSeconds: parseInt(e.target.value) || 0 })} className="w-full px-2.5 py-1 bg-[#1a1a1a] border border-gray-700 rounded text-[10px] text-gray-200 font-mono focus:outline-none focus:border-purple-500" />
                   </div>
                   <div className="flex items-center gap-2">
                     <input type="checkbox" id="allowDirty" checked={updatePolicy.allowDirtyWorktree} onChange={e => setUpdatePolicy({ ...updatePolicy, allowDirtyWorktree: e.target.checked })} className="rounded" />
-                    <label htmlFor="allowDirty" className="text-sm text-gray-300">Allow Dirty Worktree</label>
+                    <label htmlFor="allowDirty" className="text-[10px] text-gray-300">Allow Dirty Worktree</label>
                   </div>
                   <div className="flex items-center gap-2">
                     <input type="checkbox" id="allowRuns" checked={updatePolicy.allowWhenRunsActive} onChange={e => setUpdatePolicy({ ...updatePolicy, allowWhenRunsActive: e.target.checked })} className="rounded" />
-                    <label htmlFor="allowRuns" className="text-sm text-gray-300">Allow When Runs Active</label>
+                    <label htmlFor="allowRuns" className="text-[10px] text-gray-300">Allow When Runs Active</label>
                   </div>
                 </div>
-                <button onClick={handleUpdatePolicySave} disabled={saving} className="mt-3 px-4 py-1.5 bg-blue-700 hover:bg-blue-600 text-white text-xs rounded transition-colors disabled:opacity-50">
+                <button onClick={handleUpdatePolicySave} disabled={saving} className="mt-2 px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white text-[10px] rounded transition-colors disabled:opacity-50">
                   {saving ? 'Saving...' : 'Save Policy'}
                 </button>
               </section>
 
               {/* Update Status */}
-              <section className="p-4 bg-gray-900 rounded-lg border border-gray-800">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-semibold text-gray-200">Update Status</h3>
-                  <div className="flex gap-2">
-                    <button onClick={handleUpdateCheck} disabled={updateChecking} className="px-3 py-1.5 bg-green-700 hover:bg-green-600 text-white text-xs rounded transition-colors disabled:opacity-50">
+              <section className="p-3 bg-[#111] rounded border border-gray-800">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-[10px] font-mono text-gray-200">Update Status</h3>
+                  <div className="flex gap-1.5">
+                    <button onClick={handleUpdateCheck} disabled={updateChecking} className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] rounded transition-colors disabled:opacity-50">
                       {updateChecking ? 'Checking...' : 'Check Now'}
                     </button>
-                    <button onClick={handleUpdatePlan} className="px-3 py-1.5 bg-purple-700 hover:bg-purple-600 text-white text-xs rounded transition-colors">
+                    <button onClick={handleUpdatePlan} className="px-2.5 py-1 bg-purple-600 hover:bg-purple-500 text-white text-[10px] rounded transition-colors">
                       Plan
                     </button>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-3 text-sm">
+                <div className="grid grid-cols-2 gap-2 text-[10px]">
                   <div>
                     <span className="text-gray-500">Status: </span>
                     <span className={`font-mono ${
-                      updateStatus.status === 'up-to-date' ? 'text-green-400' :
+                      updateStatus.status === 'up-to-date' ? 'text-emerald-400' :
                       updateStatus.status === 'update-available' ? 'text-yellow-400' :
-                      updateStatus.status === 'checking' ? 'text-blue-400' :
+                      updateStatus.status === 'checking' ? 'text-purple-400' :
                       updateStatus.status === 'error' ? 'text-red-400' : 'text-gray-400'
                     }`}>{updateStatus.status}</span>
                   </div>
@@ -376,7 +376,7 @@ export function Settings({ core }: SettingsProps) {
                   </div>
                   <div>
                     <span className="text-gray-500">Dirty: </span>
-                    <span className={`font-mono ${updateStatus.dirty ? 'text-yellow-400' : 'text-green-400'}`}>{String(updateStatus.dirty)}</span>
+                    <span className={`font-mono ${updateStatus.dirty ? 'text-yellow-400' : 'text-emerald-400'}`}>{String(updateStatus.dirty)}</span>
                   </div>
                   <div>
                     <span className="text-gray-500">Requires Restart: </span>
@@ -384,38 +384,38 @@ export function Settings({ core }: SettingsProps) {
                   </div>
                   <div className="col-span-2">
                     <span className="text-gray-500">Current: </span>
-                    <span className="font-mono text-xs text-gray-300">{updateStatus.currentCommit || '(unknown)'}</span>
+                    <span className="font-mono text-[9px] text-gray-300">{updateStatus.currentCommit || '(unknown)'}</span>
                   </div>
                   <div className="col-span-2">
                     <span className="text-gray-500">Remote: </span>
-                    <span className="font-mono text-xs text-gray-300">{updateStatus.remoteCommit || '(unknown)'}</span>
+                    <span className="font-mono text-[9px] text-gray-300">{updateStatus.remoteCommit || '(unknown)'}</span>
                   </div>
                   {updateStatus.lastCheckedAt > 0 && (
                     <div className="col-span-2">
                       <span className="text-gray-500">Last Checked: </span>
-                      <span className="text-xs text-gray-400">{new Date(updateStatus.lastCheckedAt).toLocaleString()}</span>
+                      <span className="text-[9px] text-gray-400">{new Date(updateStatus.lastCheckedAt).toLocaleString()}</span>
                     </div>
                   )}
                   {updateStatus.lastCheckError && (
                     <div className="col-span-2">
                       <span className="text-gray-500">Error: </span>
-                      <span className="text-xs text-red-400">{updateStatus.lastCheckError}</span>
+                      <span className="text-[9px] text-red-400">{updateStatus.lastCheckError}</span>
                     </div>
                   )}
                 </div>
               </section>
 
               {/* Ignored Versions */}
-              <section className="p-4 bg-gray-900 rounded-lg border border-gray-800">
-                <h3 className="text-sm font-semibold text-gray-200 mb-3">Ignored Versions</h3>
+              <section className="p-3 bg-[#111] rounded border border-gray-800">
+                <h3 className="text-[10px] font-mono text-gray-200 mb-2">Ignored Versions</h3>
                 {updatePolicy.ignoredVersions.length === 0 ? (
-                  <p className="text-xs text-gray-500">No ignored versions.</p>
+                  <p className="text-[9px] text-gray-500">No ignored versions.</p>
                 ) : (
                   <ul className="space-y-1">
                     {updatePolicy.ignoredVersions.map(v => (
-                      <li key={v} className="flex items-center justify-between text-sm font-mono text-gray-300">
+                      <li key={v} className="flex items-center justify-between text-[10px] font-mono text-gray-300">
                         <span>{v.slice(0, 12)}...</span>
-                        <button onClick={() => handleUpdateIgnore(v)} className="text-xs text-gray-500 hover:text-red-400">un-ignore</button>
+                        <button onClick={() => handleUpdateIgnore(v)} className="text-[9px] text-gray-500 hover:text-red-400">un-ignore</button>
                       </li>
                     ))}
                   </ul>
@@ -424,16 +424,16 @@ export function Settings({ core }: SettingsProps) {
 
               {/* Plan Result */}
               {updatePlanResult && (
-                <section className="p-4 bg-gray-900 rounded-lg border border-gray-800">
-                  <h3 className="text-sm font-semibold text-gray-200 mb-3">Update Plan</h3>
+                <section className="p-3 bg-[#111] rounded border border-gray-800">
+                  <h3 className="text-[10px] font-mono text-gray-200 mb-2">Update Plan</h3>
                   {updatePlanResult.canUpdate ? (
-                    <div className="text-sm text-green-400 mb-2">Ready to update — no blockers.</div>
+                    <div className="text-[10px] text-emerald-400 mb-2">Ready to update — no blockers.</div>
                   ) : (
-                    <div className="mb-3">
-                      <div className="text-sm text-yellow-400 mb-2">Update blocked — the following conditions must be resolved:</div>
-                      <ul className="space-y-2">
+                    <div className="mb-2">
+                      <div className="text-[10px] text-yellow-400 mb-2">Update blocked — the following conditions must be resolved:</div>
+                      <ul className="space-y-1.5">
                         {(Array.isArray(updatePlanResult.blockers) ? updatePlanResult.blockers as Array<Record<string, unknown>> : []).map((b: Record<string, unknown>, i: number) => (
-                          <li key={i} className="text-xs text-gray-300 bg-gray-800 rounded p-2 border border-gray-700">
+                          <li key={i} className="text-[9px] text-gray-300 bg-[#1a1a1a] rounded p-2 border border-gray-700">
                             <span className="font-mono text-yellow-400">{b.kind as string || 'unknown'}</span>
                             <span className="mx-2 text-gray-600">—</span>
                             <span>{renderBlockerMessage(b)}</span>
@@ -443,8 +443,8 @@ export function Settings({ core }: SettingsProps) {
                     </div>
                   )}
                   <details>
-                    <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-400">Raw response</summary>
-                    <pre className="text-xs text-gray-500 font-mono whitespace-pre-wrap overflow-x-auto max-h-32 mt-2">
+                    <summary className="text-[9px] text-gray-500 cursor-pointer hover:text-gray-400">Raw response</summary>
+                    <pre className="text-[9px] text-gray-500 font-mono whitespace-pre-wrap overflow-x-auto max-h-32 mt-2">
                       {JSON.stringify(updatePlanResult, null, 2)}
                     </pre>
                   </details>
@@ -453,26 +453,26 @@ export function Settings({ core }: SettingsProps) {
             </div>
           </div>
         ) : (
-          <div className="flex-1 p-6 overflow-y-auto">
-            <h2 className="text-sm font-medium text-gray-300 mb-4">
+          <div className="flex-1 p-4 overflow-y-auto">
+            <h2 className="text-[10px] font-mono text-gray-300 mb-3">
               {CATEGORIES.find(c => c.id === activeCategory)?.label || 'General'} Configuration
             </h2>
 
             {categoryConfigs.length === 0 && (
-              <p className="text-gray-600 text-sm">No configuration entries for this category.</p>
+              <p className="text-gray-600 text-[10px]">No configuration entries for this category.</p>
             )}
 
-            <div className="space-y-3 max-w-2xl">
+            <div className="space-y-2 max-w-2xl">
               {categoryConfigs.map(config => {
                 const isDirty = dirtyValues[config.key] !== undefined;
                 const displayValue = isDirty ? dirtyValues[config.key].value : config.value;
 
                 return (
-                  <div key={config.key} className="p-3 bg-gray-900 rounded-lg border border-gray-800">
+                  <div key={config.key} className="p-3 bg-[#111] rounded border border-gray-800">
                     <div className="flex items-center justify-between mb-1">
-                      <label className="text-sm font-mono text-gray-300">{config.key}</label>
+                      <label className="text-[10px] font-mono text-gray-200">{config.key}</label>
                       {isDirty && (
-                        <span className="text-xs text-yellow-500">modified</span>
+                        <span className="text-[9px] text-yellow-500">modified</span>
                       )}
                     </div>
                     <div className="flex gap-2">
@@ -480,13 +480,13 @@ export function Settings({ core }: SettingsProps) {
                         type="text"
                         value={String(displayValue ?? '')}
                         onChange={e => handleValueChange(config.key, e.target.value)}
-                        className="flex-1 px-3 py-1.5 bg-gray-950 border border-gray-700 rounded text-sm text-gray-200 font-mono focus:outline-none focus:border-blue-700"
+                        className="flex-1 px-2.5 py-1 bg-[#1a1a1a] border border-gray-700 rounded text-[10px] text-gray-200 font-mono focus:outline-none focus:border-purple-500"
                       />
                       {isDirty && (
                         <button
                           onClick={() => handleSave(config.key)}
                           disabled={saving}
-                          className="px-3 py-1.5 bg-blue-700 hover:bg-blue-600 text-white text-xs rounded transition-colors disabled:opacity-50"
+                          className="px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white text-[10px] rounded transition-colors disabled:opacity-50"
                         >
                           {saving ? '...' : 'Save'}
                         </button>
@@ -494,12 +494,12 @@ export function Settings({ core }: SettingsProps) {
                       <button
                         onClick={() => handleReset(config.key)}
                         disabled={saving}
-                        className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-400 text-xs rounded transition-colors"
+                        className="px-3 py-1 bg-[#1a1a1a] hover:bg-[#222] text-gray-400 text-[10px] rounded transition-colors"
                       >
                         Reset
                       </button>
                     </div>
-                    <div className="text-xs text-gray-600 mt-1">
+                    <div className="text-[9px] text-gray-600 mt-1">
                       revision: {config.revision}
                     </div>
                   </div>

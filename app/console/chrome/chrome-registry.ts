@@ -1,13 +1,50 @@
 'use client';
 
-import type {
-  HeaderChromeContribution,
-  StatusBarChromeContribution,
-  KeyHintChromeContribution,
-  ContextControlContribution,
-  ContextControlPlacement,
-} from '../../../extensions/types';
 import { evaluateWhen, type WhenContext } from '../../../lib/evaluate-when';
+
+// ─── Local chrome types (no cross-layer import from extensions/) ──
+
+export type ContextControlPlacement =
+  | 'bottom-left'
+  | 'bottom-right'
+  | 'header-right'
+  | 'status-left'
+  | 'status-right'
+  | 'auto';
+
+export type ContextControlKind =
+  | 'hint' | 'button' | 'toggle' | 'menu' | 'progress' | 'approval' | 'jump';
+
+export interface HeaderChromeContribution {
+  id: string; title?: string; text?: string; icon?: string;
+  side?: 'left' | 'right'; group?: string; order?: number;
+  when?: string; command?: string; priority?: 'low' | 'normal' | 'high';
+  mobile?: 'show' | 'collapse' | 'hide';
+}
+
+export interface StatusBarChromeContribution {
+  id: string; text: string; title?: string; icon?: string;
+  side?: 'left' | 'right'; group?: string; order?: number;
+  when?: string; command?: string; priority?: 'low' | 'normal' | 'high';
+  mobile?: 'show' | 'collapse' | 'hide';
+}
+
+export interface KeyHintChromeContribution {
+  id: string; label: string; keys: string; order?: number;
+  when?: string; command?: string; group?: string;
+  priority?: 'low' | 'normal' | 'high'; mobile?: 'show' | 'collapse' | 'hide';
+}
+
+export interface ContextControlContribution {
+  id: string; kind: ContextControlKind; label: string;
+  icon?: string; keys?: string; placement?: ContextControlPlacement;
+  command?: string; when?: string; order?: number;
+  priority?: number; group?: string; ttlMs?: number;
+  collapsible?: boolean; defaultCollapsed?: boolean;
+  mobile?: 'show' | 'collapse' | 'hide';
+  variant?: 'default' | 'primary' | 'danger' | 'warning' | 'success';
+  reason?: string;
+}
 
 // ─── State ───────────────────────────────────────────────────
 
@@ -27,8 +64,8 @@ const warnedMissingCommands = new Set<string>();
 // ─── Sync ────────────────────────────────────────────────────
 
 /**
- * Accept raw chrome contributions from server extension points data.
- * Called in page.tsx when extensionPointsData changes.
+ * Accept raw chrome contributions from Go Core plugin manifests.
+ * Called by useCorePluginRegistrySync when plugin data changes.
  * Replaces any previously synced items.
  * Supports both legacy keyHints and new contextControls.
  */

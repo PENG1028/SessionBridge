@@ -1,16 +1,11 @@
 'use client';
 
-import { Activity, List, Orbit } from 'lucide-react';
+import { Activity, List, Orbit, LayoutDashboard, Server, Monitor, Puzzle, Wrench, ScrollText, CheckCircle, Shield } from 'lucide-react';
 import { registerView } from './view-registry';
 import { DashboardView } from './dashboard-view';
 import { LogsView } from './logs-view';
 import { AgentMonitorView } from './agent-monitor-view';
-
-// ── Adapter view registrations ─────────────────────────────
-// The adapters directory owns its registrations. Core imports a single
-// aggregation point — not individual adapter modules.
-import { ensureAdapterViewsLoaded } from '../../../extensions/client-index';
-ensureAdapterViewsLoaded();
+import { SystemViewWrapper } from './system-view-wrapper';
 
 /** Prevent tree-shaking of module-level side effects. */
 export const __coreViewsRegistered = true;
@@ -30,4 +25,47 @@ registerView('logs', {
 registerView('agent-monitor', {
   component: AgentMonitorView,
   meta: { title: 'Agent Monitor', icon: Orbit, showInSelector: true, launchable: true, launchMode: 'direct', category: 'workspace', viewType: 'main.editor', sidebarRequirements: { left: 'auto', right: 'shown' } },
+});
+
+// ── System management views ─────────────────────────────
+
+// Primary dotted-format view IDs (Go Core convention)
+registerView('system.dashboard', {
+  component: SystemViewWrapper,
+  meta: { title: 'Dashboard', icon: LayoutDashboard, showInSelector: true, launchable: true, launchMode: 'direct', category: 'system', viewType: 'main.editor' },
+});
+
+registerView('system.nodes', {
+  component: SystemViewWrapper,
+  meta: { title: 'Nodes', icon: Server, showInSelector: true, launchable: true, launchMode: 'direct', category: 'system', viewType: 'main.editor' },
+});
+
+registerView('system.sessions', {
+  component: SystemViewWrapper,
+  meta: { title: 'Sessions', icon: Monitor, showInSelector: true, launchable: true, launchMode: 'direct', category: 'system', viewType: 'main.editor' },
+});
+
+registerView('system.plugins', {
+  component: SystemViewWrapper,
+  meta: { title: 'Plugins', icon: Puzzle, showInSelector: true, launchable: true, launchMode: 'direct', category: 'system', viewType: 'main.editor' },
+});
+
+registerView('system.settings', {
+  component: SystemViewWrapper,
+  meta: { title: 'Settings', icon: Wrench, showInSelector: true, launchable: true, launchMode: 'direct', category: 'system', viewType: 'main.editor' },
+});
+
+registerView('system.logs', {
+  component: SystemViewWrapper,
+  meta: { title: 'Logs & Audit', icon: ScrollText, showInSelector: true, launchable: true, launchMode: 'direct', category: 'system', viewType: 'main.editor' },
+});
+
+registerView('system.approvals', {
+  component: SystemViewWrapper,
+  meta: { title: 'Approvals', icon: CheckCircle, showInSelector: true, launchable: true, launchMode: 'direct', category: 'system', viewType: 'main.editor' },
+});
+
+registerView('system.accessControl', {
+  component: SystemViewWrapper,
+  meta: { title: 'Access Control', icon: Shield, showInSelector: true, launchable: true, launchMode: 'direct', category: 'system', viewType: 'main.editor' },
 });

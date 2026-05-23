@@ -41,8 +41,8 @@ let menuEntries: MenuEntry[] = [];
 // ─── Sync ────────────────────────────────────────────────────
 
 /**
- * Accept raw menu contributions from server extension points data.
- * Called in page.tsx when extensionPointsData changes.
+ * Accept raw menu contributions from Go Core plugin manifests.
+ * Called by useCorePluginRegistrySync when plugin data changes.
  */
 export function syncContextMenus(data: unknown): void {
   menuEntries = [];

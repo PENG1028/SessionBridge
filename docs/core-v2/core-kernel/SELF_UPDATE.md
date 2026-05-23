@@ -199,7 +199,7 @@ The `Manager` loads from disk on creation and persists on every mutation.
 
 ## 8. UI Integration
 
-The Settings page (`app/console/system-ui/views/settings.tsx`) includes an "Update" tab with:
+The Settings page (`app/console/system-pages/settings.tsx`) includes an "Update" tab with:
 
 - **Source Section**: Type (read-only: git), Mode (manual/auto-check), Remote, Branch, Repo URL
 - **Policy Section**: Auto Check toggle, Check Interval, Allow Dirty Worktree, Allow When Runs Active

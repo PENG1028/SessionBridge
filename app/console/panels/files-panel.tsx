@@ -3,6 +3,7 @@
 import { useRef, useCallback } from 'react';
 import { Upload } from 'lucide-react';
 import { FileExplorer } from '../sidebar/file-explorer';
+import { useCore } from '../core/core-client-provider';
 
 interface FilesPanelProps {
   fileTree?: Record<string, { items: any[]; loaded: boolean; error?: string }>;
@@ -15,6 +16,7 @@ interface FilesPanelProps {
 
 export function FilesPanel(props: FilesPanelProps) {
   const { fileTree, expandedDirs, onToggleDir, onOpenFile, onSendFile, onBookmarkDir } = props;
+  const core = useCore();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -22,18 +24,25 @@ export function FilesPanel(props: FilesPanelProps) {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = async () => {
-      const data = (reader.result as string).split(',')[1] || '';
-      try {
-        await fetch('/api/upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ path: file.name, data, encoding: 'base64' }),
-        });
-      } catch {}
+      const content = reader.result as string;
+      // Prefer CoreClient fs.write when connected
+      if (core?.isConnected) {
+        const data = content.startsWith('data:') ? atob(content.split(',')[1] || '') : content;
+        core.call('fs.write', { path: file.name, data }).catch(() => {});
+      } else {
+        const b64 = content.split(',')[1] || '';
+        try {
+          await fetch('/api/upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: file.name, data: b64, encoding: 'base64' }),
+          });
+        } catch {}
+      }
     };
     reader.readAsDataURL(file);
     e.target.value = '';
-  }, []);
+  }, [core]);
 
   return (
     <>

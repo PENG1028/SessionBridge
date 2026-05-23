@@ -38,8 +38,8 @@
 | Area | Path | Lines | Responsibility | Cleanliness | Notes |
 |---|---|---|---|---|---|
 | Plugin Host | `app/console/plugin-host/` | ~1000 | 插件渲染宿主、组件注册、manifest 桥接 | **Acceptable Debt** | `host-component-registry.tsx` (311 行改动中) 成长快 |
-| Plugin Manager | `app/console/system-ui/views/plugin-manager.tsx` | ~600 | 插件列表、搜索、过滤、enable/disable | **Acceptable Debt** | 5 种页面状态处理得当，但与其他视图耦合度待观察 |
-| Plugin Detail | `app/console/system-ui/views/plugin-detail.tsx` | ~900 | 单插件详情：8 个 tab（概览/环境/权限/文件/缓存/设置/日志/历史） | **Acceptable Debt** | 8 tab 内聚在单文件，若继续加 tab 需拆分 |
+| Plugin Manager | `app/console/system-pages/plugin-manager.tsx` | ~600 | 插件列表、搜索、过滤、enable/disable | **Acceptable Debt** | 5 种页面状态处理得当，但与其他视图耦合度待观察 |
+| Plugin Detail | `app/console/system-pages/plugin-detail.tsx` | ~900 | 单插件详情：8 个 tab（概览/环境/权限/文件/缓存/设置/日志/历史） | **Acceptable Debt** | 8 tab 内聚在单文件，若继续加 tab 需拆分 |
 | Manifest Types | `app/console/plugin-host/plugin-manifest-types.ts` | ~130 | TS 侧 manifest 类型定义 | **Clean** | 与 Go 侧 `pluginmanifest/manifest.go` 独立演进，无共享 schema |
 | Test Harness | `app/test-go-core/page.tsx` | ~80 | E2E 测试专用页，连接 Go Core WS | **Clean** | 独立测试页，不污染主 app |
 

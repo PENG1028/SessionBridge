@@ -80,6 +80,10 @@ export class ContributionRegistry {
     return Array.from(this._manifests.values());
   }
 
+  getView(viewId: string): { manifest: PluginManifest; view: PluginViewContribution; surface: SurfaceType } | undefined {
+    return this._views.get(viewId);
+  }
+
   getViewsForSurface(surface: SurfaceType): Array<{ manifest: PluginManifest; view: PluginViewContribution }> {
     return Array.from(this._views.values()).filter(v => v.surface === surface);
   }

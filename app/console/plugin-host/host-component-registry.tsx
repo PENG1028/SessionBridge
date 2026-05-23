@@ -3,6 +3,12 @@
 import React, { useState, useEffect } from 'react';
 import type { ComponentType } from 'react';
 import type { CoreClient } from '../core/core-types';
+import { Badge } from '../components/Badge';
+import { Button } from '../components/Button';
+import { Card } from '../components/Card';
+import { Table } from '../components/Table';
+import type { TableColumn } from '../components/Table';
+import { StatusIndicator } from './StatusIndicator';
 
 // ─── HostComponentProps — props for host-rendered components ───
 export interface HostComponentProps {
@@ -70,19 +76,19 @@ function useCoreCall<T>(core: CoreClient, method: string, params: Record<string,
 export function PluginPermissionPanel({ core, config }: HostComponentProps) {
   const { data, loading, error } = useCoreCall<Record<string, unknown>>(core, 'plugin.permissions.list', { pluginId: config.pluginId });
 
-  if (loading) return <div className="p-4 text-sm text-gray-500">Loading permissions...</div>;
-  if (error) return <div className="p-4 text-sm text-red-400">{error}</div>;
+  if (loading) return <div className="p-4 text-[11px] text-gray-500">Loading permissions...</div>;
+  if (error) return <div className="p-4 text-[11px] text-red-400">{error}</div>;
 
   const perms = safeArray(data?.permissions);
 
-  if (perms.length === 0) return <div className="p-4 text-sm text-gray-500">No permissions declared.</div>;
+  if (perms.length === 0) return <div className="p-4 text-[11px] text-gray-500">No permissions declared.</div>;
 
   return (
     <div className="p-4">
-      <h3 className="text-sm font-medium text-gray-300 mb-3">Declared Permissions</h3>
+      <h3 className="text-[11px] font-medium text-gray-300 mb-3">Declared Permissions</h3>
       <div className="space-y-2">
         {perms.map((p, i) => (
-          <div key={i} className="px-3 py-2 bg-gray-900 rounded-lg border border-gray-800">
+          <Card key={i} className="p-3">
             <div className="flex items-center gap-2 mb-1">
               <code className="text-xs text-gray-200 font-mono">{str(p.id)}</code>
               <DefaultBadge value={str(p.default)} />
@@ -91,77 +97,60 @@ export function PluginPermissionPanel({ core, config }: HostComponentProps) {
             <p className="text-xs text-gray-500 mb-1">{str(p.description)}</p>
             {Array.isArray(p.capabilities) && (
               <div className="flex flex-wrap gap-1">
-                {(p.capabilities as string[]).map(c => (
-                  <span key={c} className="text-xs px-1 py-0.5 bg-gray-800 text-gray-500 rounded">{c}</span>
-                ))}
+                {(p.capabilities as string[]).map(c => <Badge key={c}>{c}</Badge>)}
               </div>
             )}
-          </div>
+          </Card>
         ))}
       </div>
     </div>
   );
 }
 
+function grantVariant(mode: string): 'success' | 'warning' | 'danger' | 'default' {
+  if (mode === 'allow') return 'success';
+  if (mode === 'ask') return 'warning';
+  if (mode === 'deny') return 'danger';
+  return 'default';
+}
+
 function GrantBadge({ grant }: { grant: Record<string, unknown> | undefined | null }) {
-  if (!grant) return <span className="text-xs text-gray-600">grant: not set</span>;
+  if (!grant) return <span className="text-[10px] text-gray-600">grant: not set</span>;
   const mode = str(grant.mode);
-  const colors: Record<string, string> = {
-    allow: 'bg-green-900/50 text-green-400',
-    ask: 'bg-yellow-900/50 text-yellow-400',
-    deny: 'bg-red-900/50 text-red-400',
-  };
-  return (
-    <span className={`text-xs px-1.5 py-0.5 rounded ${colors[mode] || 'bg-gray-800 text-gray-500'}`}>
-      grant: {mode}
-    </span>
-  );
+  return <Badge variant={grantVariant(mode)}>grant: {mode}</Badge>;
 }
 
 function DefaultBadge({ value }: { value: string }) {
-  const colors: Record<string, string> = {
-    allow: 'bg-green-900/50 text-green-400',
-    ask: 'bg-yellow-900/50 text-yellow-400',
-    deny: 'bg-red-900/50 text-red-400',
-  };
-  return (
-    <span className={`text-xs px-1.5 py-0.5 rounded ${colors[value] || 'bg-gray-800 text-gray-500'}`}>{value}</span>
-  );
+  return <Badge variant={grantVariant(value)}>{value}</Badge>;
 }
 
 // ─── PluginFilesTable ───────────────────────────────────────────────
 
+const fileColumns: TableColumn<Record<string, unknown>>[] = [
+  { key: 'id', label: 'ID', className: 'font-mono' },
+  {
+    key: 'path', label: 'Path',
+    render: v => <span className="text-gray-500 font-mono max-w-60 truncate block" title={String(v)}>{String(v)}</span>,
+    className: 'font-mono',
+  },
+  {
+    key: 'clearable', label: 'Clearable',
+    render: v => v ? <Badge variant="warning">yes</Badge> : <span className="text-gray-600 text-[10px]">no</span>,
+  },
+];
+
 export function PluginFilesTable({ core, config }: HostComponentProps) {
   const { data, loading, error } = useCoreCall<Record<string, unknown>>(core, 'plugin.files.list', { pluginId: config.pluginId });
 
-  if (loading) return <div className="p-4 text-sm text-gray-500">Loading files...</div>;
-  if (error) return <div className="p-4 text-sm text-red-400">{error}</div>;
+  if (loading) return <div className="p-4 text-[11px] text-gray-500">Loading files...</div>;
+  if (error) return <div className="p-4 text-[11px] text-red-400">{error}</div>;
 
   const files = safeArray(data?.files);
 
-  if (files.length === 0) return <div className="p-4 text-sm text-gray-500">No files declared.</div>;
-
   return (
     <div className="p-4">
-      <h3 className="text-sm font-medium text-gray-300 mb-3">File Locations</h3>
-      <table className="w-full text-xs">
-        <thead>
-          <tr className="text-left text-gray-500 border-b border-gray-800">
-            <th className="pb-2 pr-3">ID</th>
-            <th className="pb-2 pr-3">Path</th>
-            <th className="pb-2">Clearable</th>
-          </tr>
-        </thead>
-        <tbody>
-          {files.map((f, i) => (
-            <tr key={i} className="border-b border-gray-800/50 text-gray-400">
-              <td className="py-1.5 pr-3 font-mono">{str(f.id)}</td>
-              <td className="py-1.5 pr-3 font-mono text-gray-500 max-w-60 truncate" title={str(f.path)}>{str(f.path)}</td>
-              <td className="py-1.5">{f.clearable ? <span className="text-yellow-400">yes</span> : <span className="text-gray-600">no</span>}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <h3 className="text-[11px] font-medium text-gray-300 mb-3">File Locations</h3>
+      <Table columns={fileColumns} data={files} emptyMessage="No files declared." />
     </div>
   );
 }
@@ -171,42 +160,42 @@ export function PluginFilesTable({ core, config }: HostComponentProps) {
 export function PluginCacheTable({ core, config }: HostComponentProps) {
   const { data, loading, error } = useCoreCall<Record<string, unknown>>(core, 'plugin.cache.list', { pluginId: config.pluginId });
 
-  if (loading) return <div className="p-4 text-sm text-gray-500">Loading cache entries...</div>;
-  if (error) return <div className="p-4 text-sm text-red-400">{error}</div>;
+  if (loading) return <div className="p-4 text-[11px] text-gray-500">Loading cache entries...</div>;
+  if (error) return <div className="p-4 text-[11px] text-red-400">{error}</div>;
 
   const caches = safeArray(data?.caches);
 
-  if (caches.length === 0) return <div className="p-4 text-sm text-gray-500">No cache entries declared.</div>;
+  if (caches.length === 0) return <div className="p-4 text-[11px] text-gray-500">No cache entries declared.</div>;
 
   return (
     <div className="p-4">
-      <h3 className="text-sm font-medium text-gray-300 mb-3">Cache Entries</h3>
+      <h3 className="text-[11px] font-medium text-gray-300 mb-3">Cache Entries</h3>
       <div className="space-y-2">
         {caches.map((c, i) => (
-          <div key={i} className="flex items-center gap-3 px-3 py-2 bg-gray-900 rounded-lg border border-gray-800">
+          <Card key={i} className="p-3 flex items-center gap-3">
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
                 <code className="text-xs text-gray-200 font-mono">{str(c.id)}</code>
-                {!!c.risk && (
-                  <RiskBadge risk={str(c.risk)} />
-                )}
+                {!!c.risk && <RiskBadge risk={str(c.risk)} />}
               </div>
               <p className="text-xs text-gray-500 truncate">{str(c.path)}</p>
             </div>
-          </div>
+          </Card>
         ))}
       </div>
     </div>
   );
 }
 
+function riskVariant(risk: string): 'success' | 'warning' | 'danger' | 'default' {
+  if (risk === 'low') return 'success';
+  if (risk === 'medium') return 'warning';
+  if (risk === 'high') return 'danger';
+  return 'default';
+}
+
 function RiskBadge({ risk }: { risk: string }) {
-  const colors: Record<string, string> = {
-    low: 'bg-green-900/50 text-green-400',
-    medium: 'bg-yellow-900/50 text-yellow-400',
-    high: 'bg-red-900/50 text-red-400',
-  };
-  return <span className={`text-xs px-1.5 py-0.5 rounded ${colors[risk] || 'bg-gray-800 text-gray-500'}`}>{risk}</span>;
+  return <Badge variant={riskVariant(risk)}>{risk}</Badge>;
 }
 
 // ─── PluginConfigForm ───────────────────────────────────────────────
@@ -262,46 +251,42 @@ export function PluginConfigForm({ core, config }: HostComponentProps) {
     }
   }
 
-  if (loading) return <div className="p-4 text-sm text-gray-500">Loading config...</div>;
-  if (error) return <div className="p-4 text-sm text-red-400">{error}</div>;
-  if (!schema) return <div className="p-4 text-sm text-gray-500">No configuration schema.</div>;
+  if (loading) return <div className="p-4 text-[11px] text-gray-500">Loading config...</div>;
+  if (error) return <div className="p-4 text-[11px] text-red-400">{error}</div>;
+  if (!schema) return <div className="p-4 text-[11px] text-gray-500">No configuration schema.</div>;
 
   const properties = (schema.properties as Record<string, unknown>) || {};
   const entries = Object.entries(properties);
 
-  if (entries.length === 0) return <div className="p-4 text-sm text-gray-500">No configuration properties.</div>;
+  if (entries.length === 0) return <div className="p-4 text-[11px] text-gray-500">No configuration properties.</div>;
 
   return (
     <div className="p-4">
-      <h3 className="text-sm font-medium text-gray-300 mb-3">Configuration</h3>
+      <h3 className="text-[11px] font-medium text-gray-300 mb-3">Configuration</h3>
       <div className="space-y-3">
         {entries.map(([key, prop]) => {
           const p = prop as Record<string, unknown>;
           const currentVal = values[key];
           return (
-            <div key={key} className="px-3 py-2 bg-gray-900 rounded-lg border border-gray-800">
+            <Card key={key} className="p-3">
               <div className="flex items-center justify-between mb-1">
                 <code className="text-xs text-gray-200 font-mono">{key}</code>
-                <span className="text-xs text-gray-600">{String(p.type || 'string')}</span>
+                <Badge variant="default">{String(p.type || 'string')}</Badge>
               </div>
               {!!p.description && <p className="text-xs text-gray-500 mb-1">{String(p.description)}</p>}
-              <code className="text-xs text-gray-400 bg-gray-800 px-2 py-0.5 rounded">
+              <code className="text-xs text-gray-400 bg-gray-800 px-2 py-0.5 rounded block truncate">
                 {currentVal !== undefined ? JSON.stringify(currentVal) : '(not set)'}
               </code>
-            </div>
+            </Card>
           );
         })}
       </div>
       <div className="flex items-center gap-3 pt-2">
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="text-xs px-4 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white transition-colors disabled:opacity-50"
-        >
-          {saving ? 'Saving...' : 'Save to Core'}
-        </button>
+        <Button variant="primary" size="md" onClick={handleSave} loading={saving}>
+          Save to Core
+        </Button>
         {saveMsg && (
-          <span className={`text-xs ${saveMsg === 'Saved' ? 'text-green-400' : 'text-red-400'}`}>{saveMsg}</span>
+          <span className={`text-[10px] ${saveMsg === 'Saved' ? 'text-green-400' : 'text-red-400'}`}>{saveMsg}</span>
         )}
       </div>
     </div>
@@ -314,27 +299,27 @@ export function PluginInstallHistoryPanel({ core, config }: HostComponentProps) 
   const { data, loading, error } = useCoreCall<Record<string, unknown>>(core, 'plugin.history', { pluginId: config.pluginId });
   const notImpl = (data?.status as string) === 'not_implemented';
 
-  if (loading) return <div className="p-4 text-sm text-gray-500">Loading history...</div>;
-  if (error) return <div className="p-4 text-sm text-red-400">{error}</div>;
-  if (notImpl) return <div className="p-4 text-sm text-gray-500">History tracking not available in Phase 1.</div>;
+  if (loading) return <div className="p-4 text-[11px] text-gray-500">Loading history...</div>;
+  if (error) return <div className="p-4 text-[11px] text-red-400">{error}</div>;
+  if (notImpl) return <div className="p-4 text-[11px] text-gray-500">History tracking not available in Phase 1.</div>;
 
   const events = safeArray(data?.events);
 
-  if (events.length === 0) return <div className="p-4 text-sm text-gray-500">No install history.</div>;
+  if (events.length === 0) return <div className="p-4 text-[11px] text-gray-500">No install history.</div>;
 
   return (
     <div className="p-4">
-      <h3 className="text-sm font-medium text-gray-300 mb-3">Install History</h3>
+      <h3 className="text-[11px] font-medium text-gray-300 mb-3">Install History</h3>
       <div className="space-y-2">
         {events.map((evt, i) => (
-          <div key={i} className="flex items-start gap-3 px-3 py-2 bg-gray-900 rounded-lg border border-gray-800">
-            <div className="w-1.5 h-1.5 rounded-full bg-gray-600 mt-1.5 flex-shrink-0" />
+          <Card key={i} className="p-3 flex items-start gap-3">
+            <StatusIndicator status="idle" className="mt-1.5" />
             <div>
               <span className="text-xs text-gray-300">{str(evt.action) || 'event'}</span>
               {!!evt.version && <span className="text-xs text-gray-600 ml-2">v{str(evt.version)}</span>}
               {!!evt.timestamp && <p className="text-xs text-gray-600 mt-0.5">{str(evt.timestamp)}</p>}
             </div>
-          </div>
+          </Card>
         ))}
       </div>
     </div>

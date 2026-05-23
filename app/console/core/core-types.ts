@@ -46,6 +46,28 @@ export type StreamSubscribeParams = { sessionId: string; streamType: StreamType 
 export type StreamReplayParams = { sessionId: string; streamType: StreamType; fromSeq?: number };
 export type StreamTailParams = { sessionId: string; streamType: StreamType; lines?: number };
 export type StreamWriteParams = { sessionId: string; data: string; streamType?: StreamType };
+export type StreamListParams = { sessionId: string };
+
+// ─── process ──────────────────────────────────────────────────────
+export type ProcessResizeParams = { sessionId: string; cols: number; rows: number };
+export type ProcessSignalParams = { sessionId: string; signal: string; tree?: boolean };
+export type ProcessListParams = { pluginId?: string; kind?: string; sessionId?: string };
+
+// ─── fs ───────────────────────────────────────────────────────────
+export interface FsEntry {
+  name: string;
+  isDir: boolean;
+  size: number;
+  mode: string;
+}
+
+export type FsListParams = { path: string };
+export type FsReadParams = { path: string };
+export type FsWriteParams = { path: string; data: string };
+export type FsMkdirParams = { path: string; all?: boolean; mode?: number };
+export type FsRemoveParams = { path: string; recursive?: boolean };
+export type FsRenameParams = { oldPath: string; newPath: string };
+export type FsStatParams = { path: string };
 
 // ─── plugin ─────────────────────────────────────────────────────
 export interface PluginInfo {
@@ -55,7 +77,21 @@ export interface PluginInfo {
   type?: 'builtin' | 'feature';
   description?: string;
   capabilities?: string[];
+  contributes?: PluginContributes;
   error?: string;
+}
+
+export interface PluginContributes {
+  views?: Array<{ id: string; title: string; category?: string; icon?: string; launchable?: boolean }>;
+  commands?: Array<{ id: string; title: string; category?: string }>;
+  menus?: Record<string, Array<{ command: string; group?: string; when?: string }>>;
+  chrome?: {
+    header?: Array<{ id: string; title: string; text?: string; side?: string; command?: string }>;
+    statusBar?: Array<{ id: string; text: string; side?: string; group?: string }>;
+    contextControls?: Array<{ id: string; kind: string; label: string; placement?: string; command?: string }>;
+    keyHints?: Array<{ id: string; label: string; keys: string; command?: string }>;
+  };
+  configuration?: Record<string, unknown>;
 }
 
 export type PluginStatus = 'loaded' | 'enabled' | 'disabled' | 'error';
