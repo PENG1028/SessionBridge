@@ -2,7 +2,7 @@
 
 import { X } from 'lucide-react';
 
-import type { InstanceInfo } from '../../../lib/ws-client';
+import type { InstanceInfo } from '../../../lib/use-ws';
 export type { InstanceInfo };
 
 interface InstanceListProps {

@@ -3,7 +3,7 @@
 import { useState, useCallback } from 'react';
 import { Plus, LayoutDashboard } from 'lucide-react';
 import { getAdapterMeta, type AdapterMeta } from './view-registry';
-import type { InstanceInfo } from '../../../lib/ws-client';
+import type { InstanceInfo } from '../../../lib/use-ws';
 
 interface InstanceTabBarProps {
   instances: InstanceInfo[];

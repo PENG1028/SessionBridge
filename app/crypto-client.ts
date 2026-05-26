@@ -2,7 +2,7 @@
 // Web Crypto API implementation of the ECDH + AES-256-GCM handshake.
 // This is the browser equivalent of src/crypto-layer.ts.
 //
-// Used by the existing Web UI (lib/ws-client.ts) when the server
+// Used by the CoreClient WebSocket connection when the server
 // supports crypto_v1. Backward-compatible: if Web Crypto doesn't
 // support X25519 (older browsers), encryption is skipped and the
 // connection falls back to plain WebSocket.

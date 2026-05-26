@@ -421,7 +421,7 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
     if (msg.type === 'peer.list' && Array.isArray(msg.peers)) {
       setPeers(msg.peers);
       if (Array.isArray(msg.links)) setPeerLinks(msg.links);
-      // Re-read browserId — ws-client may have just generated it in onopen
+      // Re-read browserId
       try {
         const id = sessionStorage.getItem('bridge-browser-id');
         if (id) setBrowserId(id);
@@ -1119,71 +1119,24 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
     setCurrentActivity('Interrupted');
   }, [sendCommand, addLog]);
 
-  // ── Hook integration (extracted from page.tsx to reduce size) ──
-  const [nodeProjectInfo, setNodeProjectInfo] = useState<Record<string, { cwd: string; projectName: string; homeDir?: string }>>({});
-  useEffect(() => {
-    if (activeNodeWsUrl === wsUrl) return;
-    let cancelled = false;
-    fetch(`${wsToHttpUrl(activeNodeWsUrl)}/api/info`)
-      .then(r => r.json())
-      .then(info => {
-        if (cancelled || !info?.cwd) return;
-        setNodeProjectInfo(prev => ({
-          ...prev,
-          [activeNodeWsUrl]: {
-            cwd: info.cwd,
-            projectName: info.projectName || info.cwd,
-            homeDir: info.homeDir,
-          },
-        }));
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [activeNodeWsUrl, wsUrl]);
-
+  // ── Remote node project info (legacy /api/info removed; uses hostname fallback) ──
   const activeNodeProjectInfo = useMemo(() => {
     if (activeNodeWsUrl === wsUrl) return projectInfo;
-    const known = nodeProjectInfo[activeNodeWsUrl];
-    if (known) return known;
     try {
       const host = new URL(activeNodeWsUrl).hostname;
       return { cwd: '.', projectName: host, homeDir: '.' };
     } catch {
       return { cwd: '.', projectName: 'remote', homeDir: '.' };
     }
-  }, [activeNodeWsUrl, wsUrl, projectInfo, nodeProjectInfo]);
+  }, [activeNodeWsUrl, wsUrl, projectInfo]);
 
   const createNodeInstance = useCallback(async (dir: string, label?: string, adapterId?: string) => {
-    const targetNodeId = appStateRef.current.activeInstanceId || undefined;
-    if (activeNodeWsUrl === wsUrl) {
-      try {
-        const res = await fetch(`${wsToHttpUrl(wsUrl)}/api/instances`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ dir, label, adapterId, targetNodeId }),
-        });
-        const result = await res.json();
-        if (!res.ok && !result.error) result.error = `${res.status} ${res.statusText}`;
-        return result;
-      } catch {
-        return createInstance(dir, label, adapterId);
-      }
+    if (activeNodeWsUrl !== wsUrl) {
+      const errMsg = 'Remote instance creation now requires Core mesh run.create routing; legacy /api/instances removed.';
+      addLog(`[Error] ${errMsg}`);
+      return { success: false, error: errMsg };
     }
-    try {
-      const res = await fetch(`${wsToHttpUrl(activeNodeWsUrl)}/api/instances`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dir, label, adapterId, targetNodeId }),
-      });
-      const result = await res.json();
-      if (!res.ok && !result.error) result.error = `${res.status} ${res.statusText}`;
-      addLog(`[System] Created remote instance on ${new URL(activeNodeWsUrl).hostname}: ${result.success ? 'OK' : result.error}`);
-      return result;
-    } catch (err) {
-      const apiUrl = `${wsToHttpUrl(activeNodeWsUrl)}/api/instances`;
-      addLog(`[Error] Remote instance create failed (${apiUrl}): ${err}`);
-      return { success: false, error: `Failed to fetch ${apiUrl}: ${String(err)}` };
-    }
+    return createInstance(dir, label, adapterId);
   }, [activeNodeWsUrl, wsUrl, createInstance, addLog]);
 
   const { messagesBySession, setMessagesBySession, messages, sessionKey, updateSession, handleNewSession, isRestoring, snapshots, saveSnapshot, loadSnapshot, forkFromSnapshot, knownFiles } = useMessageSessions(
@@ -1331,49 +1284,9 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
     runWorkbenchCommand({ command: cmdId }, actionRunContext);
   }, [actionRunContext]);
 
-  const handleLoadSession = useCallback(async (sessionId: string, project: string, display?: string) => {
-    setSearchLoading(true);
-    try {
-      const res = await fetch(`/api/sessions/detail?id=${encodeURIComponent(sessionId)}&project=${encodeURIComponent(project)}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-
-      if (data.messages && data.messages.length > 0) {
-        // Filter out empty user messages (content was string not array in session jsonl)
-        const filtered = data.messages.filter((m: any) =>
-          m.role !== 'user' || m.text?.trim() || (m.blocks && m.blocks.length > 0)
-        );
-        const loadedMsgs: Message[] = filtered.map((m: any) => ({
-          id: genId(),
-          role: m.role === 'user' ? 'user' : 'assistant',
-          content: m.text || '',
-          timestamp: m.timestamp ? new Date(m.timestamp).toLocaleTimeString() : getTime(),
-          blocks: parseSessionBlocks(m.blocks || []),
-          isPending: false,
-          isCompactSummary: m.isCompactSummary === true,
-        }));
-        updateSession(sessionKey, () => loadedMsgs);
-        setActiveExternalSession(display || sessionId);
-        try { localStorage.setItem('sessionbridge-active-session', JSON.stringify({ id: sessionId, display: display || sessionId })); } catch {}
-        addLog(`[System] Loaded historical session: ${display || sessionId} (${filtered.length} messages)`);
-        // Log summary of block types in last message
-        const last = loadedMsgs[loadedMsgs.length - 1];
-        if (last && last.blocks.length > 0) {
-          const types = last.blocks.map(b => b.type);
-          addLog(`[System] Last message blocks: ${[...new Set(types)].join(', ')}`);
-        }
-      } else {
-        addLog(`[System] Session "${display || sessionId}" is empty`);
-        updateSession(sessionKey, () => []);
-      }
-      setPhase('done');
-      setCurrentActivity('Loaded from history');
-    } catch (err) {
-      addLog(`[Error] Failed to load session: ${err}`);
-    }
-    setSearchLoading(false);
-    setShowSearch(false);
-  }, [sessionKey, updateSession, addLog]);
+  const handleLoadSession = useCallback(async (_sessionId: string, _project: string, _display?: string) => {
+    addLog('[System] Session detail loading uses Core runs API — legacy /api/sessions/detail removed.');
+  }, [addLog]);
 
   // Close search panel on outside click
   useEffect(() => {
@@ -1618,117 +1531,41 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
     }
   }, [activeWorkbenchDispatch]);
 
-  // ── Upstream relay connection (local node connected as leaf) ──
+  // ── Upstream relay connection (removed — use Core mesh node.invite/node.peer instead) ──
   const [upstreamUrl, setUpstreamUrl] = useState<string | undefined>(undefined);
   const [upstreamConnectingUrl, setUpstreamConnectingUrl] = useState<string | undefined>(undefined);
   const [upstreamError, setUpstreamError] = useState<string | undefined>(undefined);
   const [upstreamErrorUrl, setUpstreamErrorUrl] = useState<string | undefined>(undefined);
-  useEffect(() => {
-    fetch('/api/connect', { method: 'GET' }).then(r => r.json()).then(data => {
-      if (data?.relayUrl) setUpstreamUrl(data.relayUrl);
-    }).catch(() => {});
-  }, []);
 
-  // ── Handle connect local node as leaf to a remote relay ──
+  // ── Handle connect local node as leaf to a remote relay (removed) ──
   const handleConnectUpstream = useCallback(async (url: string) => {
+    addLog(`[System] Relay upstream connections removed — use Core mesh (node.invite.* / node.peer.*). Ignored connect to ${url}`);
+    setUpstreamConnectingUrl(undefined);
+    setUpstreamError('Use Core mesh instead of legacy relay connections');
+    setUpstreamErrorUrl(url);
+  }, [addLog]);
+
+  // ── Handle disconnect upstream (removed) ──
+  const handleDisconnectUpstream = useCallback(async () => {
+    addLog('[System] Relay upstream disconnect removed — use Core mesh (node.peer.*)');
+    setUpstreamUrl(undefined);
     setUpstreamError(undefined);
     setUpstreamErrorUrl(undefined);
-    setUpstreamConnectingUrl(url);
-    addLog(`[System] Connecting local node upstream to ${url}...`);
-    try {
-      const res = await fetch('/api/connect', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ relayUrl: url }),
-      });
-      const data = await res.json();
-      setUpstreamConnectingUrl(undefined);
-      if (data.ok) {
-        setUpstreamUrl(url);
-        setUpstreamError(undefined);
-        setUpstreamErrorUrl(undefined);
-      } else {
-        const errMsg = data.error || '连接失败';
-        setUpstreamError(errMsg);
-        setUpstreamErrorUrl(url);
-        addLog(`[Error] Failed to connect: ${errMsg}`);
-      }
-    } catch (err) {
-      setUpstreamConnectingUrl(undefined);
-      const errMsg = String(err);
-      setUpstreamError(errMsg);
-      setUpstreamErrorUrl(url);
-      addLog(`[Error] Failed to connect: ${errMsg}`);
-    }
   }, [addLog]);
 
-  // ── Handle disconnect upstream ──
-  const handleDisconnectUpstream = useCallback(async () => {
-    try {
-      const res = await fetch('/api/connect', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ disconnect: true }),
-      });
-      const data = await res.json();
-      if (data.ok) {
-        addLog('[System] Disconnected upstream');
-        setUpstreamUrl(undefined);
-        setUpstreamError(undefined);
-        setUpstreamErrorUrl(undefined);
-      } else {
-        addLog(`[Error] Failed to disconnect: ${data.error || 'unknown error'}`);
-      }
-    } catch (err) {
-      addLog(`[Error] Failed to disconnect: ${err}`);
-    }
-  }, [addLog]);
-
-  // ── Saved connections (project-level) ──────────────
+  // ── Saved connections (removed — saved relay connections no longer supported) ──
   const [connections, setConnections] = useState<any[]>([]);
   const [newConnUrl, setNewConnUrl] = useState('');
   const autoUpstreamAttemptedRef = useRef(false);
-  useEffect(() => {
-    fetch('/api/connections').then(r => r.json()).then((data: any) => {
-      if (data?.connections) setConnections(data.connections);
-    }).catch(() => {});
-  }, []);
-  useEffect(() => {
-    if (autoUpstreamAttemptedRef.current || upstreamUrl) return;
-    const remoteConnections = connections.filter((c: any) => !isLocalUrl(c.url));
-    if (remoteConnections.length !== 1) return;
-    autoUpstreamAttemptedRef.current = true;
-    void handleConnectUpstream(remoteConnections[0].url);
-  }, [connections, upstreamUrl, handleConnectUpstream]);
-  const handleDeleteConnection = useCallback(async (id: string) => {
-    try {
-      const res = await fetch(`/api/connections/${id}`, { method: 'DELETE' });
-      const data = await res.json();
-      if (data?.connections) setConnections(data.connections);
-    } catch {}
+  const handleDeleteConnection = useCallback(async (_id: string) => {
+    // no-op: relay connections removed
   }, []);
   const handleAddConnection = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newConnUrl.trim()) return;
-    const id = 'conn_' + Date.now().toString(36);
-    const name = newConnUrl.replace(/^wss?:\/\//, '').split(':')[0] || 'server';
-    // Rough network type classification
-    const urlLower = newConnUrl.toLowerCase();
-    const networkType = urlLower.includes('127.0.0.1') || urlLower.includes('localhost') ? 'loopback'
-      : urlLower.match(/^wss?:\/\/(10\.|192\.168\.)/) ? 'lan'
-      : urlLower.match(/^wss?:\/\/(172\.(1[6-9]|2\d|3[01])\.)/) ? 'lan'
-      : 'wan';
-    try {
-      const res = await fetch('/api/connections', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, name, url: newConnUrl.trim(), networkType }),
-      });
-      const data = await res.json();
-      if (data?.connections) setConnections(data.connections);
-      setNewConnUrl('');
-    } catch {}
-  }, [newConnUrl]);
+    addLog('[System] Saved connections removed — use Core mesh for peer connections. Ignored add.');
+    setNewConnUrl('');
+  }, [newConnUrl, addLog]);
 
   const nodeBarPeers = useMemo(() => {
     if (!upstreamUrl || isLocalUrl(upstreamUrl)) return peers;

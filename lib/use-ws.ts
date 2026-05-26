@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useCallback, useMemo, useState } from 'react';
-import { WSClient, SessionInfo, QueueStatus, InstanceInfo } from './ws-client';
+import { useCore } from '../app/console/core/core-client-provider';
 
 export interface ConnStatus {
   status: 'connecting' | 'connected' | 'disconnected' | 'error';
@@ -17,53 +17,116 @@ export interface MsgLog {
   size: number;
 }
 
+export type SessionInfo = {
+  id: string;
+  directory: string;
+  label: string;
+  hasBridge: boolean;
+  hasClient: boolean;
+  webUrl: string;
+};
+
+export type InstanceInfo = {
+  id: string;
+  dir: string;
+  label: string;
+  status: string;
+  source: string;
+  adapterId?: string;
+  model: string | null;
+  blockCount: number;
+  outputSize: number;
+  checkpointCount: number;
+  createdAt: number;
+};
+
+export type QueueStatus = {
+  processing: boolean;
+  source: string | null;
+  queueDepth: number;
+};
+
+type RunLike = {
+  runId?: string;
+  sessionId?: string;
+  kind?: string;
+  label?: string;
+  pluginId?: string;
+  state?: string;
+  createdAt?: number;
+  metadata?: Record<string, string>;
+  process?: { command?: string };
+};
+
+function nowTime() {
+  return new Date().toISOString().slice(11, 23);
+}
+
+function shellCommandForClient() {
+  if (typeof navigator !== 'undefined' && /win/i.test(navigator.platform)) {
+    return 'powershell.exe';
+  }
+  return 'bash';
+}
+
+function mapRunToInstance(run: RunLike): InstanceInfo {
+  const id = run.runId || run.sessionId || '';
+  return {
+    id,
+    dir: run.metadata?.cwd || '.',
+    label: run.label || run.kind || run.process?.command || id || 'Run',
+    status: run.state || 'unknown',
+    source: 'local',
+    adapterId: run.pluginId || run.kind || 'terminal',
+    model: null,
+    blockCount: 0,
+    outputSize: 0,
+    checkpointCount: 0,
+    createdAt: run.createdAt || Date.now(),
+  };
+}
+
+/**
+ * CoreClient-backed replacement for the old relay WS hook.
+ *
+ * The return shape intentionally matches the old hook so existing App UI code
+ * can migrate incrementally, but this hook does not open its own WebSocket,
+ * does not send relay "hello" messages, and does not call legacy /api endpoints.
+ */
 export function useSession(
-  wsUrl: string,
-  token?: string,
-  initialCols?: number,
-  initialRows?: number,
+  _wsUrl: string,
+  _token?: string,
+  _initialCols?: number,
+  _initialRows?: number,
   onChunk?: (data: string) => void,
   onSystemNotify?: (notification: { type: string; title: string; message?: string; scenarioId?: string; id?: string; duration?: number }) => void,
-  onSystemNotifyDismiss?: (id: string) => void,
+  _onSystemNotifyDismiss?: (id: string) => void,
   onSystemMessage?: (msg: any) => void,
 ) {
-  const clientRef = useRef<WSClient | null>(null);
-  const [connStatus, setConnStatus] = useState<ConnStatus>({ status: 'connecting' });
-  const [output, setOutput] = useState<string>('');
+  const core = useCore();
+  const [connStatus, setConnStatus] = useState<ConnStatus>({
+    status: core.isConnected ? 'connected' : 'connecting',
+  });
+  const [output, setOutput] = useState('');
   const [msgLog, setMsgLog] = useState<MsgLog[]>([]);
-  const [serverBlocks, setServerBlocks] = useState<any[]>([]);
-  const [queueStatus, setQueueStatus] = useState<QueueStatus>({ processing: false, source: null, queueDepth: 0 });
-  const outputRef = useRef('');
-  const msgIdRef = useRef(0);
-  const blocksRef = useRef<any[]>([]);
-
-  // Workspace mode state
+  const [serverBlocks] = useState<any[]>([]);
+  const [queueStatus] = useState<QueueStatus>({ processing: false, source: null, queueDepth: 0 });
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const activeSessionIdRef = useRef<string | null>(null);
-  const isWorkspace = !token; // workspace mode when no token
-
-  // Instance management state
   const [instances, setInstances] = useState<InstanceInfo[]>([]);
   const [activeInstanceId, setActiveInstanceId] = useState<string | null>(null);
   const activeInstanceIdRef = useRef<string | null>(null);
-
-  const appendOutput = useCallback((data: string) => {
-    outputRef.current += data;
-    // Keep only last 500KB to avoid memory issues
-    if (outputRef.current.length > 500 * 1024) {
-      outputRef.current = outputRef.current.slice(-500 * 1024);
-    }
-    setOutput(outputRef.current);
-  }, []);
+  const msgIdRef = useRef(0);
+  const outputRef = useRef('');
 
   const addMsgLog = useCallback((type: string, data: string) => {
     msgIdRef.current++;
     const entry: MsgLog = {
       id: msgIdRef.current,
-      time: new Date().toISOString().slice(11, 23),
+      time: nowTime(),
       type,
-      data: data.length > 200 ? data.slice(0, 200) + '...' : data,
+      data: data.length > 200 ? `${data.slice(0, 200)}...` : data,
       size: data.length,
     };
     setMsgLog(prev => {
@@ -72,157 +135,75 @@ export function useSession(
     });
   }, []);
 
-  const sendInput = useCallback((text: string, sessionId?: string) => {
-    const sid = sessionId || activeSessionIdRef.current || undefined;
-    const iid = activeInstanceIdRef.current || undefined;
-    clientRef.current?.sendInput(text, sid, iid);
-    addMsgLog('input', text);
-  }, [addMsgLog]);
-
-  const sendCommand = useCallback((name: string, args?: Record<string, string>, sessionId?: string) => {
-    const sid = sessionId || activeSessionIdRef.current || undefined;
-    const iid = activeInstanceIdRef.current || undefined;
-    clientRef.current?.sendCommand(name, args, sid, iid);
-    addMsgLog('command', name);
-  }, [addMsgLog]);
-
-  const sendShellInput = useCallback((data: string, instanceId: string) => {
-    clientRef.current?.sendShellInput(data, instanceId);
-  }, []);
-
-  const sendMessage = useCallback((type: string, body: Record<string, unknown> = {}) => {
-    if (!clientRef.current?.isOpen) {
-      console.warn(`[sendMessage] WebSocket not open, dropping ${type}`, body);
-      return false;
+  const appendOutput = useCallback((data: string) => {
+    outputRef.current += data;
+    if (outputRef.current.length > 500 * 1024) {
+      outputRef.current = outputRef.current.slice(-500 * 1024);
     }
-    clientRef.current.send(type, body);
-    addMsgLog('system', type);
-    return true;
-  }, [addMsgLog]);
+    setOutput(outputRef.current);
+    onChunk?.(data);
+  }, [onChunk]);
 
-  const sendResize = useCallback((cols: number, rows: number) => {
-    clientRef.current?.sendResize(cols, rows);
-  }, []);
-
-  // Collect server-side blocks, deduplicate by a simple hash
-  const addBlock = useCallback((block: any) => {
-    blocksRef.current = [...blocksRef.current, block];
-    if (blocksRef.current.length > 200) {
-      blocksRef.current = blocksRef.current.slice(-200);
+  const refreshRuns = useCallback(async () => {
+    if (!core.isConnected) return;
+    try {
+      const result = await core.call<{ runs?: RunLike[]; entries?: RunLike[] } | RunLike[]>('run.list', {});
+      const runs = Array.isArray(result) ? result : (result?.runs || result?.entries || []);
+      const mapped = runs.map(mapRunToInstance).filter(i => i.id);
+      setInstances(mapped);
+      setSessions(mapped.map(i => ({
+        id: i.id,
+        directory: i.dir,
+        label: i.label,
+        hasBridge: true,
+        hasClient: true,
+        webUrl: '',
+      })));
+      if (!activeInstanceIdRef.current && mapped.length > 0) {
+        activeInstanceIdRef.current = mapped[0].id;
+        setActiveInstanceId(mapped[0].id);
+      }
+      if (!activeSessionIdRef.current && mapped.length > 0) {
+        activeSessionIdRef.current = mapped[0].id;
+        setActiveSessionId(mapped[0].id);
+      }
+    } catch (err) {
+      addMsgLog('error', `run.list failed: ${String(err)}`);
     }
-    setServerBlocks(blocksRef.current);
-  }, []);
+  }, [core, addMsgLog]);
 
   useEffect(() => {
-    const ws = new WSClient(wsUrl, token ?? '', {
-      onStatusChange: (info) => {
-        if (info.authenticated) {
-          setConnStatus({ status: 'connected', sessionId: info.sessionId });
-        } else if (info.retryCount) {
-          setConnStatus(prev => ({ ...prev, status: 'disconnected', retryCount: info.retryCount }));
-        } else {
-          setConnStatus({ status: 'error', sessionId: info.sessionId });
-        }
-      },
-      onOutput: (data) => {
-        appendOutput(data);
-        addMsgLog('output', data);
-        onChunk?.(data);
-      },
-      onBlock: (block) => {
-        addBlock(block);
-        addMsgLog('block', `${block.blockType}: ${block.text ?? block.name ?? ''}`);
-      },
-      onCommandResult: (result) => {
-        addMsgLog('command_result', JSON.stringify(result));
-      },
-      onError: (msg) => {
-        addMsgLog('error', msg);
-        setConnStatus(prev => ({ ...prev, status: 'error' }));
-      },
-      onDisconnect: () => {
-        setConnStatus({ status: 'disconnected' });
-      },
-      onQueueStatus: (status) => {
-        setQueueStatus(status);
-        addMsgLog('queue', `Queue: ${status.processing ? `processing (${status.source})` : 'idle'} [${status.queueDepth} pending]`);
-      },
-      // Workspace mode callbacks
-      onSessionsList: (list) => {
-        setSessions(list);
-        // Auto-select first session if none active
-        if (list.length > 0 && !activeSessionIdRef.current) {
-          const first = list[0].id;
-          activeSessionIdRef.current = first;
-          setActiveSessionId(first);
-        }
-      },
-      onSessionAdded: (session) => {
-        setSessions(prev => {
-          const exists = prev.find(s => s.id === session.id);
-          return exists ? prev : [...prev, session];
-        });
-        if (!activeSessionIdRef.current) {
-          activeSessionIdRef.current = session.id;
-          setActiveSessionId(session.id);
-        }
-      },
-      onSessionRemoved: (id) => {
-        setSessions(prev => prev.filter(s => s.id !== id));
-        if (activeSessionIdRef.current === id) {
-          activeSessionIdRef.current = null;
-          setActiveSessionId(null);
-        }
-      },
-      onWorkspaceConnected: () => {
-        setConnStatus({ status: 'connected', sessionId: 'workspace' });
-      },
-      // Instance management callbacks
-      onInstanceList: (list, activeId) => {
-        setInstances(list);
-        if (activeId) {
-          activeInstanceIdRef.current = activeId;
-          setActiveInstanceId(activeId);
-        }
-      },
-      onInstanceAdded: (instance) => {
-        setInstances(prev => {
-          const exists = prev.find(i => i.id === instance.id);
-          return exists ? prev : [...prev, instance];
-        });
-      },
-      onInstanceRemoved: (id) => {
-        setInstances(prev => prev.filter(i => i.id !== id));
-        if (activeInstanceIdRef.current === id) {
-          activeInstanceIdRef.current = null;
-          setActiveInstanceId(null);
-        }
-      },
-      onInstanceSwitched: (id) => {
-        activeInstanceIdRef.current = id;
-        setActiveInstanceId(id);
-      },
-      onInstanceUpdated: (instance) => {
-        setInstances(prev => prev.map(i => i.id === instance.id ? { ...i, ...instance } : i));
-      },
-      onSystemNotify,
-      onSystemNotifyDismiss,
-      onSystemMessage: (msg: any) => {
-        addMsgLog('system', `${msg.title || msg.type || 'message'}: ${msg.detail || msg.message || ''}`);
-        onSystemMessage?.(msg);
-      },
+    setConnStatus({ status: core.isConnected ? 'connected' : 'connecting' });
+    void refreshRuns();
+
+    const offStatus = core.on('connectionStatus', (event: any) => {
+      setConnStatus({ status: event.status === 'connected' ? 'connected' : event.status });
+      if (event.status === 'connected') void refreshRuns();
+    });
+    const offConnected = core.on('connected', () => {
+      setConnStatus({ status: 'connected' });
+      void refreshRuns();
+    });
+    const offChunk = core.on('stream.chunk', (event: any) => {
+      if (event?.data != null) {
+        appendOutput(String(event.data));
+        addMsgLog('output', String(event.data));
+      }
+    });
+    const offSessionStopped = core.on('session.stopped', (event: any) => {
+      const id = event.sessionId;
+      if (!id) return;
+      setInstances(prev => prev.map(i => i.id === id ? { ...i, status: 'stopped' } : i));
     });
 
-    ws.connect(initialCols, initialRows, isWorkspace);
-    clientRef.current = ws;
-
     return () => {
-      ws.disconnect();
-      clientRef.current = null;
+      offStatus();
+      offConnected();
+      offChunk();
+      offSessionStopped();
     };
-  }, [wsUrl, token, appendOutput, addMsgLog, initialCols, initialRows, onSystemNotify]);
+  }, [core, appendOutput, addMsgLog, refreshRuns]);
 
-  // Sync refs with state
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId;
   }, [activeSessionId]);
@@ -231,81 +212,131 @@ export function useSession(
     activeInstanceIdRef.current = activeInstanceId;
   }, [activeInstanceId]);
 
+  const sendInput = useCallback((text: string, sessionId?: string) => {
+    const sid = sessionId || activeSessionIdRef.current || activeInstanceIdRef.current || undefined;
+    if (sid && core.isConnected) {
+      core.call('stream.write', { sessionId: sid, data: text }).catch(err => {
+        addMsgLog('error', `stream.write failed: ${String(err)}`);
+      });
+    }
+    addMsgLog('input', text);
+  }, [core, addMsgLog]);
+
+  const sendCommand = useCallback((name: string, args?: Record<string, string>, sessionId?: string) => {
+    const sid = sessionId || activeSessionIdRef.current || activeInstanceIdRef.current || undefined;
+    if (name === 'interrupt' && sid && core.isConnected) {
+      core.call('run.stop', { runId: sid, signal: 'interrupt' }).catch(err => {
+        addMsgLog('error', `run.stop failed: ${String(err)}`);
+      });
+    }
+    if (name === 'clear') {
+      outputRef.current = '';
+      setOutput('');
+    }
+    addMsgLog('command', `${name}${args ? ` ${JSON.stringify(args)}` : ''}`);
+  }, [core, addMsgLog]);
+
+  const sendShellInput = useCallback((data: string, instanceId: string) => {
+    if (core.isConnected) {
+      core.call('stream.write', { sessionId: instanceId, data }).catch(err => {
+        addMsgLog('error', `stream.write failed: ${String(err)}`);
+      });
+    }
+  }, [core, addMsgLog]);
+
+  const sendResize = useCallback((cols: number, rows: number) => {
+    const sid = activeSessionIdRef.current || activeInstanceIdRef.current;
+    if (sid && core.isConnected) {
+      core.call('process.resize', { sessionId: sid, cols, rows }).catch(() => {});
+    }
+  }, [core]);
+
+  const sendMessage = useCallback((type: string, body: Record<string, unknown> = {}) => {
+    addMsgLog('system', type);
+    onSystemMessage?.({ type, ...body });
+    return false;
+  }, [addMsgLog, onSystemMessage]);
+
   const activateSession = useCallback((id: string) => {
+    activeSessionIdRef.current = id;
+    setActiveSessionId(id);
+    activeInstanceIdRef.current = id;
+    setActiveInstanceId(id);
+  }, []);
+
+  const activateInstance = useCallback((id: string) => {
+    activeInstanceIdRef.current = id;
+    setActiveInstanceId(id);
     activeSessionIdRef.current = id;
     setActiveSessionId(id);
   }, []);
 
-  // Instance management functions
-  const activateInstance = useCallback((id: string) => {
-    activeInstanceIdRef.current = id;
-    setActiveInstanceId(id);
-    clientRef.current?.sendCommand('switch-instance', { instanceId: id });
-  }, []);
-
   const createInstance = useCallback(async (dir: string, label?: string, adapterId?: string) => {
-    const httpBase = wsUrl.replace(/^ws/, 'http');
+    if (!core.isConnected) {
+      return { success: false, error: 'Core is not connected' };
+    }
     try {
-      const res = await fetch(`${httpBase}/api/instances`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dir, label, adapterId }),
+      const command = adapterId === 'claude-code' ? 'claude' : shellCommandForClient();
+      const result = await core.call<any>('run.create', {
+        kind: adapterId || 'terminal',
+        pluginId: adapterId || 'terminal',
+        label: label || adapterId || 'Terminal',
+        command,
+        cwd: dir || '.',
+        pty: true,
+        policy: {
+          onDisconnect: 'keep_running',
+          onCoreShutdown: 'keep_running',
+          persistHistory: true,
+          restartRestore: false,
+        },
+        metadata: { source: 'app-ui', cwd: dir || '.', adapterId: adapterId || 'terminal' },
       });
-      const result = await res.json();
-      addMsgLog('system', `Created instance in ${dir}: ${result.success ? 'OK' : result.error}`);
-      if (result.success && result.instance) {
-        setInstances(prev => {
-          const exists = prev.find(i => i.id === result.instance.id);
-          return exists ? prev : [...prev, result.instance];
-        });
-      }
-      return result;
+      const run = result?.run || result;
+      const instance = mapRunToInstance({
+        runId: run.runId,
+        sessionId: run.sessionId,
+        kind: adapterId || run.kind,
+        pluginId: adapterId || run.pluginId,
+        label: label || run.label,
+        state: run.state || 'running',
+        createdAt: run.createdAt,
+        metadata: { cwd: dir || '.', adapterId: adapterId || 'terminal' },
+      });
+      setInstances(prev => prev.some(i => i.id === instance.id) ? prev : [...prev, instance]);
+      activateInstance(instance.id);
+      addMsgLog('system', `Created run ${instance.id}`);
+      return { success: true, instance, runId: instance.id, sessionId: run.sessionId || instance.id };
     } catch (err) {
-      addMsgLog('error', `Create instance failed: ${err}`);
+      addMsgLog('error', `Create run failed: ${String(err)}`);
       return { success: false, error: String(err) };
     }
-  }, [wsUrl, addMsgLog]);
+  }, [core, addMsgLog, activateInstance]);
 
   const killInstance = useCallback(async (id: string) => {
-    const httpBase = wsUrl.replace(/^ws/, 'http');
-    // Optimistic removal from local state so the instance disappears from
-    // the UI immediately — prevents repeated clicks while the API call is
-    // in flight. The server broadcast (instance.removed) handles cleanup
-    // for other clients; this is just for local responsiveness.
     setInstances(prev => prev.filter(i => i.id !== id));
-    try {
-      const res = await fetch(`${httpBase}/api/instances/${id}`, { method: 'DELETE' });
-      const result = await res.json();
-      addMsgLog('system', `Killed instance ${id}: ${result.success ? 'OK' : result.error}`);
-      return result;
-    } catch (err) {
-      addMsgLog('error', `Kill instance failed: ${err}`);
-      return { success: false, error: String(err) };
+    if (activeInstanceIdRef.current === id) {
+      activeInstanceIdRef.current = null;
+      setActiveInstanceId(null);
     }
-  }, [wsUrl, addMsgLog, setInstances]);
+    if (core.isConnected) {
+      try {
+        await core.call('run.stop', { runId: id, signal: 'kill', tree: true });
+        addMsgLog('system', `Stopped run ${id}`);
+        return { success: true };
+      } catch (err) {
+        addMsgLog('error', `Stop run failed: ${String(err)}`);
+        return { success: false, error: String(err) };
+      }
+    }
+    return { success: false, error: 'Core is not connected' };
+  }, [core, addMsgLog]);
 
   const spawnSession = useCallback(async (directory: string, label?: string) => {
-    const httpBase = wsUrl.replace(/^ws/, 'http');
-    try {
-      const res = await fetch(`${httpBase}/api/spawn`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ directory, label }),
-      });
-      const result = await res.json();
-      addMsgLog('system', `Spawning agent in ${directory}: ${result.success ? 'OK' : result.error}`);
-      return result;
-    } catch (err) {
-      addMsgLog('error', `Spawn failed: ${err}`);
-      return { success: false, error: String(err) };
-    }
-  }, [wsUrl, addMsgLog]);
+    return createInstance(directory, label, 'terminal');
+  }, [createInstance]);
 
-  // Block filtering by active session
-  const activeBlocks = useMemo(() => {
-    if (!isWorkspace) return serverBlocks;
-    return serverBlocks.filter((b: any) => !b.sessionId || b.sessionId === activeSessionId);
-  }, [serverBlocks, activeSessionId, isWorkspace]);
+  const activeBlocks = useMemo(() => serverBlocks, [serverBlocks]);
 
   return {
     connStatus,
@@ -317,20 +348,17 @@ export function useSession(
     sendShellInput,
     sendResize,
     queueStatus,
-    // Workspace state
     sessions,
     activeSessionId,
     activateSession,
     spawnSession,
     activeBlocks,
-    isWorkspace,
-    // Instance management
+    isWorkspace: true,
     instances,
     activeInstanceId,
     activateInstance,
     createInstance,
     killInstance,
-    // Generic message send
     sendMessage,
   };
 }
