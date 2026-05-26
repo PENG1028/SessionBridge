@@ -455,10 +455,13 @@ export function SettingsPanel({ open, onClose, wsUrl, token, onWsUrlChange, onTo
               <div className="py-2">
                 <button
                   onClick={() => {
-                    // Normalize: strip any token from URL, use explicit token field
-                    const { wsUrl: cleanUrl } = normalizeWsUrlAndToken(connectionEditUrl, connectionEditToken || undefined);
+                    // Normalize: strip any token from URL, extract token from URL if
+                    // token field is empty; explicit token field always wins.
+                    const { wsUrl: cleanUrl, token: normalizedToken } = normalizeWsUrlAndToken(connectionEditUrl, connectionEditToken || undefined);
                     onWsUrlChange(cleanUrl);
-                    onTokenChange(connectionEditToken || undefined);
+                    onTokenChange(normalizedToken);
+                    setConnectionEditUrl(cleanUrl);
+                    setConnectionEditToken(normalizedToken || '');
                     setConnectionChanged(false);
                     // Reconnect automatically after changing URL
                     setTimeout(onReconnect, 100);

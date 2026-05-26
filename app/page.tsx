@@ -19,7 +19,7 @@ import { getAdapterViewId, getAdapterCapabilities, getViewEntry, getAllAdapterTy
 import { ensureBootstrapped } from './console/bootstrap';
 import { CoreClientProvider, useCore } from './console/core/core-client-provider';
 import { useCorePluginRegistrySync } from './console/core/use-core-plugin-sync';
-import { normalizeWsUrlAndToken } from './console/core/core-url';
+import { normalizeWsUrlAndToken, stripTokenFromWsUrl } from './console/core/core-url';
 
 
 ensureBootstrapped();
@@ -278,7 +278,7 @@ interface AppCoreProps {
   wsUrl: string;
   setWsUrl: (url: string) => void;
   token: string | undefined;
-  setToken: (token: string | undefined) => void;
+  setToken: React.Dispatch<React.SetStateAction<string | undefined>>;
   onReconnect: () => void;
 }
 
@@ -314,8 +314,14 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
           const savedHost = new URL(saved).hostname;
           if (savedHost === host) {
             // Migrate: strip any token from old localStorage value
-            const { wsUrl: cleanUrl } = normalizeWsUrlAndToken(saved);
+            const { wsUrl: cleanUrl, token: migratedToken } = normalizeWsUrlAndToken(saved);
             setWsUrl(cleanUrl);
+            // If the old URL had a token and no explicit token is set, migrate it
+            if (migratedToken) {
+              setToken(prev => prev ?? migratedToken);
+            }
+            // Immediately persist clean URL (no token) to localStorage
+            localStorage.setItem('bridge-ws-url', cleanUrl);
           }
         } catch {
           // Invalid URL in storage, ignore
@@ -329,7 +335,7 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
     try {
       const curHost = window.location.hostname;
       const urlHost = new URL(wsUrl).hostname;
-      if (urlHost === curHost) localStorage.setItem('bridge-ws-url', wsUrl); // wsUrl guaranteed sanitized — no token in state
+      if (urlHost === curHost) localStorage.setItem('bridge-ws-url', stripTokenFromWsUrl(wsUrl)); // belt-and-suspenders: strip in case state somehow has token
     } catch {} // ignore cross-origin or invalid URLs
   }, [wsUrl]);
   const [settingsOpen, setSettingsOpen] = useState(false);

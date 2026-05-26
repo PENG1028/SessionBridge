@@ -1,7 +1,7 @@
 'use client';
 
 import type { CoreClient, CoreEvent, CoreConnectionStatus } from './core-types';
-import { normalizeWsUrlAndToken, sanitizeWsUrlForDisplay } from './core-url';
+import { normalizeWsUrlAndToken, buildConnectUrl } from './core-url';
 
 // ─── CoreClient Config ──────────────────────────────────────────
 export interface CoreClientConfig {
@@ -55,10 +55,8 @@ export class CoreClientImpl implements CoreClient {
     this.wsUrl = normalized.wsUrl;
 
     // Build real connect URL with token (never exposed to DOM/logs)
-    this._connectUrl = normalized.wsUrl;
-    if (normalized.token) {
-      this._connectUrl += '?token=' + encodeURIComponent(normalized.token);
-    }
+    // buildConnectUrl handles ? vs & and hash preservation correctly
+    this._connectUrl = buildConnectUrl(normalized.wsUrl, normalized.token);
 
     this._callTimeout = config.callTimeout ?? 10_000;
     this._reconnectInterval = config.reconnectInterval ?? 5_000;

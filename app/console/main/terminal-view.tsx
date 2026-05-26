@@ -142,18 +142,7 @@ export function TerminalView({ instanceId, _surfaceId }: TerminalViewProps) {
       core.call('stream.write', { sessionId: coreSessionId, data: cdCmd }).catch(() => {});
       return;
     }
-
-    // Fallback: transient WebSocket for relay
-    const ws = new WebSocket(wsUrl);
-    ws.onopen = () => {
-      const helloBody: Record<string, unknown> = { role: 'browser', features: ['cd-helper'] };
-      if (token) helloBody.token = token;
-      ws.send(env('hello', helloBody));
-      ws.send(env('shell.input', { data: cdCmd, instanceId }));
-      setTimeout(() => ws.close(), 500);
-    };
-    ws.onerror = () => {};
-  }, [instanceId, coreSessionId, core, wsUrl, token, resolveRel]);
+  }, [instanceId, coreSessionId, core, resolveRel]);
 
   const handleSelectDir = useCallback((path: string) => {
     sendCd(path);

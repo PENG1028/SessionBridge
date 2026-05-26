@@ -7,6 +7,7 @@ import '@xterm/xterm/css/xterm.css';
 import { ContextMenu, type ContextMenuItem } from './console/shell/context-menu';
 import { MobileExtraKeys } from './console/chrome/mobile-extra-keys';
 import type { CoreClient } from './console/core/core-types';
+import { buildConnectUrl } from './console/core/core-url';
 
 const DEBUG_SURFACE = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debugSurface');
 function debugLog(...args: any[]) { if (DEBUG_SURFACE) console.log('[debugSurface]', ...args); }
@@ -90,7 +91,7 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, on
     // only when a valid instanceId is available.
     if (!instanceId) return;
 
-    const ws = new WebSocket(wsUrl);
+    const ws = new WebSocket(buildConnectUrl(wsUrl, token));
     wsRef.current = ws;
 
     // Show connection progress in the terminal itself
@@ -108,7 +109,6 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, on
         features: ["shell"],
         clientToken: `shell:${instanceId}`,
       };
-      if (token) helloBody.token = token;
       ws.send(env("hello", helloBody));
       ws.send(env("shell.spawn", { instanceId }));
       // Initial resize
@@ -167,7 +167,7 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, on
     if (!mountedRef.current) return;
     if (!_surfaceId) return;
 
-    const ws = new WebSocket(wsUrl);
+    const ws = new WebSocket(buildConnectUrl(wsUrl, token));
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -179,7 +179,6 @@ export default function ShellTerminal({ wsUrl, instanceId, token, _surfaceId, on
         features: ['shell'],
         clientToken: `surface:${_surfaceId}`,
       };
-      if (token) helloBody.token = token;
       ws.send(env('hello', helloBody));
       // Surface connections do not send shell.spawn — the shell is already
       // running on the node that created the surface. We only subscribe to
