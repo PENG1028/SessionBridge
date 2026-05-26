@@ -5,6 +5,7 @@ import { RefreshCw, ChevronDown, ChevronRight, Plus, X, Copy, Check, Activity } 
 import type { CoreClient, NodeInfo, NodeIdentity, PeerEntry, NodeInvite, ReachabilityResult } from '../core/core-types';
 import { PageHeader, PageLoading, PageError, PageEmpty, PageOffline, type PageState } from './page-utils';
 import { listFromResponse, normalizeNodeInfo } from './core-response-utils';
+import { sanitizeWsUrlForDisplay } from '../core/core-url';
 
 interface NodeManagerProps {
   core: CoreClient;
@@ -617,7 +618,7 @@ export function NodeManager({ core }: NodeManagerProps) {
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full flex-shrink-0 bg-emerald-500" />
               <span className="text-gray-400">WebSocket:</span>
-              <span className="font-mono text-gray-300">{core.wsUrl ? core.wsUrl.split('?')[0] : '-'}</span>
+              <span className="font-mono text-gray-300">{core.wsUrl ? sanitizeWsUrlForDisplay(core.wsUrl) : '-'}</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full flex-shrink-0 bg-emerald-500" />

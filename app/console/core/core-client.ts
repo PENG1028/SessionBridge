@@ -1,6 +1,7 @@
 'use client';
 
 import type { CoreClient, CoreEvent, CoreConnectionStatus } from './core-types';
+import { normalizeWsUrlAndToken, sanitizeWsUrlForDisplay } from './core-url';
 
 // ─── CoreClient Config ──────────────────────────────────────────
 export interface CoreClientConfig {
@@ -40,38 +41,28 @@ export class CoreClientImpl implements CoreClient {
 
   constructor(config: CoreClientConfig) {
     this.pluginId = config.pluginId;
-    this.hasToken = !!config.token;
-    this.authMode = config.token ? 'token' : 'none';
 
-    let baseUrl = config.wsUrl || (typeof window !== 'undefined' ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws` : 'ws://localhost:8080/ws');
+    // Normalise: if config.wsUrl carries a token query param and config.token
+    // is not set, extract the token. explicit token always wins.
+    const defaultUrl = typeof window !== 'undefined'
+      ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws`
+      : 'ws://localhost:8080/ws';
+    const rawUrl = config.wsUrl || defaultUrl;
+    const normalized = normalizeWsUrlAndToken(rawUrl, config.token);
 
-    // Build real connect URL with token
-    this._connectUrl = baseUrl;
-    if (config.token) {
-      this._connectUrl += (baseUrl.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(config.token);
+    this.hasToken = !!normalized.token;
+    this.authMode = normalized.token ? 'token' : 'none';
+    this.wsUrl = normalized.wsUrl;
+
+    // Build real connect URL with token (never exposed to DOM/logs)
+    this._connectUrl = normalized.wsUrl;
+    if (normalized.token) {
+      this._connectUrl += '?token=' + encodeURIComponent(normalized.token);
     }
-
-    // Sanitize wsUrl for display — strip any token
-    this.wsUrl = this._sanitizeUrl(baseUrl);
 
     this._callTimeout = config.callTimeout ?? 10_000;
     this._reconnectInterval = config.reconnectInterval ?? 5_000;
     this._maxReconnectAttempts = config.maxReconnectAttempts ?? -1;
-  }
-
-  /**
-   * Strip token query parameter from a URL string for safe display.
-   * The token is NEVER rendered in the DOM — only _connectUrl contains it.
-   */
-  private _sanitizeUrl(url: string): string {
-    const tokenIdx = url.indexOf('token=');
-    if (tokenIdx === -1) return url;
-    const prefix = url.substring(0, tokenIdx);
-    const suffix = url.substring(tokenIdx);
-    const ampIdx = suffix.indexOf('&');
-    const cleanSuffix = ampIdx >= 0 ? suffix.substring(ampIdx) : '';
-    const result = prefix + (cleanSuffix.startsWith('&') ? cleanSuffix : '');
-    return result.endsWith('?') ? result.slice(0, -1) : result;
   }
 
   get isConnected(): boolean {

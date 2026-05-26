@@ -5,6 +5,7 @@ import { RefreshCw, ShieldCheck, ShieldAlert, Globe, Lock, Unlock } from 'lucide
 import type { CoreClient, ConfigEntry, UpdateSource, UpdatePolicy, UpdateStatus } from '../core/core-types';
 import { PageLoading, PageError, PageOffline, type PageState } from './page-utils';
 import { listFromResponse } from './core-response-utils';
+import { sanitizeWsUrlForDisplay } from '../core/core-url';
 
 type SettingsCategory = 'general' | 'core' | 'node' | 'plugins' | 'access-control' | 'connection' | 'update';
 
@@ -473,7 +474,7 @@ export function Settings({ core }: SettingsProps) {
                   </div>
                   <div>
                     <span className="text-gray-500 block mb-0.5">WebSocket URL:</span>
-                    <code className="font-mono text-[9px] text-gray-300 break-all bg-black px-2 py-1 rounded block">{core.wsUrl}</code>
+                    <code className="font-mono text-[9px] text-gray-300 break-all bg-black px-2 py-1 rounded block">{sanitizeWsUrlForDisplay(core.wsUrl)}</code>
                   </div>
                   <DetailRow label="Plugin ID" value={core.pluginId} />
                   {core.lastError && <DetailRow label="Last Error" value={core.lastError} />}

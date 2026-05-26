@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { X, Search, ChevronRight } from 'lucide-react';
 import { useCoreStatus, useCoreClient, useCore } from '../core/core-client-provider';
+import { sanitizeWsUrlForDisplay, normalizeWsUrlAndToken } from '../core/core-url';
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -402,7 +403,7 @@ export function SettingsPanel({ open, onClose, wsUrl, token, onWsUrlChange, onTo
                 {connectionStatusLabel(coreStatus)}
               </span>
               {coreStatus === 'connected' && (
-                <span className="text-[9px] text-gray-600 font-mono truncate ml-1">{wsUrl}</span>
+                <span className="text-[9px] text-gray-600 font-mono truncate ml-1">{sanitizeWsUrlForDisplay(wsUrl)}</span>
               )}
               {coreStatus === 'disconnected' && !isOffline && (
                 <button
@@ -454,7 +455,9 @@ export function SettingsPanel({ open, onClose, wsUrl, token, onWsUrlChange, onTo
               <div className="py-2">
                 <button
                   onClick={() => {
-                    onWsUrlChange(connectionEditUrl);
+                    // Normalize: strip any token from URL, use explicit token field
+                    const { wsUrl: cleanUrl } = normalizeWsUrlAndToken(connectionEditUrl, connectionEditToken || undefined);
+                    onWsUrlChange(cleanUrl);
                     onTokenChange(connectionEditToken || undefined);
                     setConnectionChanged(false);
                     // Reconnect automatically after changing URL
@@ -489,7 +492,7 @@ export function SettingsPanel({ open, onClose, wsUrl, token, onWsUrlChange, onTo
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-[10px] text-gray-500">WebSocket</span>
-                <span className="text-[10px] text-gray-500 font-mono truncate max-w-[200px] text-right">{wsUrl}</span>
+                <span className="text-[10px] text-gray-500 font-mono truncate max-w-[200px] text-right">{sanitizeWsUrlForDisplay(wsUrl)}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-[10px] text-gray-500">Auth Token</span>

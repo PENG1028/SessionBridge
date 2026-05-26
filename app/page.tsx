@@ -19,6 +19,7 @@ import { getAdapterViewId, getAdapterCapabilities, getViewEntry, getAllAdapterTy
 import { ensureBootstrapped } from './console/bootstrap';
 import { CoreClientProvider, useCore } from './console/core/core-client-provider';
 import { useCorePluginRegistrySync } from './console/core/use-core-plugin-sync';
+import { normalizeWsUrlAndToken } from './console/core/core-url';
 
 
 ensureBootstrapped();
@@ -260,8 +261,10 @@ function PageContent() {
   const params = typeof window !== 'undefined' ? new URL(window.location.href).searchParams : new URLSearchParams();
   const urlParam = params.get('url');
   const tokenParam = params.get('token');
-  const [wsUrl, setWsUrl] = useState(() => urlParam || defaultUrl);
-  const [token, setToken] = useState<string | undefined>(tokenParam || undefined);
+  // Normalize: extract any token from urlParam, explicit tokenParam wins
+  const initNormalized = normalizeWsUrlAndToken(urlParam || defaultUrl, tokenParam || undefined);
+  const [wsUrl, setWsUrl] = useState(() => initNormalized.wsUrl);
+  const [token, setToken] = useState<string | undefined>(initNormalized.token);
   const [reconnectKey, setReconnectKey] = useState(0);
 
   return (
@@ -309,7 +312,11 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
       if (saved && saved !== wsUrl) {
         try {
           const savedHost = new URL(saved).hostname;
-          if (savedHost === host) setWsUrl(saved);
+          if (savedHost === host) {
+            // Migrate: strip any token from old localStorage value
+            const { wsUrl: cleanUrl } = normalizeWsUrlAndToken(saved);
+            setWsUrl(cleanUrl);
+          }
         } catch {
           // Invalid URL in storage, ignore
         }
@@ -322,7 +329,7 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
     try {
       const curHost = window.location.hostname;
       const urlHost = new URL(wsUrl).hostname;
-      if (urlHost === curHost) localStorage.setItem('bridge-ws-url', wsUrl);
+      if (urlHost === curHost) localStorage.setItem('bridge-ws-url', wsUrl); // wsUrl guaranteed sanitized — no token in state
     } catch {} // ignore cross-origin or invalid URLs
   }, [wsUrl]);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -2153,8 +2160,6 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
           queueStatus={queueStatus}
           onSetMode={setMode}
           onSetEffort={setEffort}
-          wsUrl={wsUrl}
-          token={token}
         />
       )}
 

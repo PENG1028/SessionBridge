@@ -1,6 +1,7 @@
 'use client';
 
 import type { CoreConnectionStatus } from '../core/core-types';
+import { sanitizeWsUrlForDisplay } from '../core/core-url';
 
 // ─── OfflineBanner Props ───────────────────────────────────────
 interface OfflineBannerProps {
@@ -41,7 +42,7 @@ export function OfflineBanner({ status, wsUrl, errorDetail, onDismiss }: Offline
         )}
       </div>
       {status === 'error' && wsUrl && (
-        <div className="text-white/70 font-mono text-[11px]">Target: {wsUrl}</div>
+        <div className="text-white/70 font-mono text-[11px]">Target: {sanitizeWsUrlForDisplay(wsUrl)}</div>
       )}
       {status === 'error' && errorDetail && (
         <div className="text-white/60 max-w-lg text-[11px]">{errorDetail}</div>

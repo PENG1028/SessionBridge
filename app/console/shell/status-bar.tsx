@@ -6,24 +6,17 @@ import { RuntimeControlCenter } from './runtime-control-center';
 import { useFocus } from '../workbench/focus-context';
 import { getStatusBarChromeItems } from '../chrome/chrome-registry';
 import { runWorkbenchCommand } from '../actions/workbench-command-dispatch';
-import { DirectoryPicker } from '../dialogs/directory-picker';
 import { useCore } from '../core/core-client-provider';
+import { DirectoryPicker } from '../dialogs/directory-picker';
 
 export interface StatusBarProps {
   queueStatus: { processing: boolean; source: string | null; queueDepth: number };
   onSetMode?: (mode: string) => void;
   onSetEffort?: (level: string) => void;
-  /** For terminal cd command */
-  wsUrl?: string;
-  token?: string;
-}
-
-function env(type: string, body: Record<string, unknown> = {}) {
-  return JSON.stringify({ v: 1, ts: Date.now(), type, body });
 }
 
 export function StatusBar({
-  queueStatus, onSetMode, onSetEffort, wsUrl, token,
+  queueStatus, onSetMode, onSetEffort,
 }: StatusBarProps) {
   let statusBarLeft: any[] = [];
   let statusBarRight: any[] = [];
@@ -47,31 +40,15 @@ export function StatusBar({
 
   const sendCd = useCallback((path: string) => {
     const instId = focus?.instanceId;
-    if (!instId || !wsUrl) return;
+    if (!instId) return;
     const qPath = path.replace(/\\/g, '/');
     const cdCmd = `cd "${qPath}"\n`;
 
-    const sendViaWs = () => {
-      const ws = new WebSocket(wsUrl);
-      ws.onopen = () => {
-        const helloBody: Record<string, unknown> = { role: 'browser', features: ['cd-helper'] };
-        if (token) helloBody.token = token;
-        ws.send(env('hello', helloBody));
-        ws.send(env('shell.input', { data: cdCmd, instanceId: instId }));
-        setTimeout(() => ws.close(), 200);
-      };
-      ws.onerror = () => {};
-    };
-
-    // Try CoreClient stream.write first; fall back to transient WS on failure.
     if (core?.isConnected) {
       core.call('stream.write', { sessionId: instId, data: cdCmd })
-        .catch(() => sendViaWs());
-      return;
+        .catch(() => {});
     }
-
-    sendViaWs();
-  }, [focus?.instanceId, wsUrl, token, core]);
+  }, [focus?.instanceId, core]);
 
   return (
     <div className="h-7 shrink-0 bg-[#0d0d0d] border-t border-gray-800 flex items-center px-3 gap-2 text-[10px] z-30">
