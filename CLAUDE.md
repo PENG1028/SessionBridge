@@ -1,107 +1,86 @@
-# SessionBridge CLAUDE.md
+# SessionBridge Agent Rules
 
-## Architecture Layers
+Read this first. These rules are active project constraints.
 
-```
-go-core/          — Go Core 运行时（主 Core）
-  → HTTP + WebSocket server, session/stream 管理, 权限校验, 日志/审计
-  → app/ 通过 CoreClient (WebSocket/HTTP) 调用，不可直接 import
+## Runtime Boundaries
 
-app/              — 客户端 UI (Next.js React)
-  → 不可 import go-core/ 的服务端代码
-  → 仅通过 CoreClient (WebSocket/HTTP) 与 Go Core 通信
-  → 可通过 lib/ 引入共享工具
-
-plugins/          — 插件声明（plugin.yaml）
-  → 每个子目录一个 plugin.yaml，声明能力、权限、UI/CLI 贡献
-
-lib/              — 客户端共享工具
-docs/             — 设计文档和决策记录
+```text
+go-core/   Go Core runtime and mesh/control plane
+app/       Next.js App UI
+lib/       browser/client helpers
+plugins/   plugin declarations; one plugin.yaml per plugin
+docs/      design and decision records
 ```
 
-Legacy directories (all deleted — Go Core is the sole runtime):
-- `src/` — 旧 Node.js relay server（已删除）
-- `agent-core/` — 旧 extension 运行时（已删除）
-- `extensions/` — 旧 extension 目录 + sb-extension.json（已删除）
+Deleted legacy runtimes:
 
-## 核心原则
+- `src/` old Node relay server
+- `agent-core/` old extension runtime
+- `extensions/` old extension directory and `sb-extension.json`
+- `flutter_app/` old Flutter app
 
-### 1. 插件功能走 plugin.yaml
+Do not reintroduce these paths.
 
-新增插件能力时，通过 `plugins/<name>/plugin.yaml` 声明。插件功能的全部代码应落在：
+## Canonical Concepts
 
-- `plugins/` — 插件声明（plugin.yaml）
-- `app/` — UI 表现（通过 manifest 贡献到注册表，不硬编码）
-- `docs/` — 文档
+Use `docs/access-model.md` as the source of truth for Relay, Leaf, and View.
 
-### 2. Manifest 契约优先
+- Relay: publicly reachable or entry/middle Core node.
+- Leaf: Core node that usually connects outbound to a Relay.
+- View: browser/client without Core identity.
 
-插件的功能声明优先放在 `plugin.yaml` 而非硬编码在 `app/` 中：
+Core does not manage View sessions. App UI manages View sessions.
 
-- Panel/View → `contributes.views`
-- Command → `contributes.commands`
-- Menu → `contributes.menus`
-- Chrome 贡献 → `contributes.chrome`
-- 配置项 → `contributes.configuration`（key 必须 namespace 化）
-- 通知 → `contributes.notifications`
+## Current Architecture
 
-### 3. 不修改 Go Core 行为
+- Go Core is the only Core runtime.
+- App UI is the first-party UI.
+- App UI talks to Go Core through CoreClient / WebSocket / HTTP only.
+- App UI must not import Go server code.
+- Core-to-Core mesh uses identity, trust store, invite pairing, and `/peer/ws`.
+- Browser/View access is a separate App UI auth layer.
 
-UI/部署/打包链变更不得修改 `go-core/` 下的 Go 代码，除非是启动链验证发现的必须修正。
+## Plugin Rules
 
-## 开发流程
+`plugins/*/plugin.yaml` is the only plugin declaration source.
 
-1. 判断修改范围：是插件功能还是基础设施？
-2. 如果是插件功能 → 只改 `plugins/` + `app/`（UI）+ `docs/`
-3. 如果是 Core 功能 → 改 `go-core/`
-4. 重要变更写 `docs/` 记录决策理由
+Plugin contributions must be declared in `plugin.yaml`:
 
-## 本地开发启动方式
+- views/panels through manifest contributions
+- commands through manifest contributions
+- configuration through manifest contributions
+- Core capabilities through manifest permissions
 
-两个开发服务：
+Do not add a second plugin declaration system.
 
-| 服务 | 端口 | 命令 | 用途 |
-|------|------|------|------|
-| Go Core | 8080 | `npm run dev` | Go Core + Next.js dev 同时启动 |
-| Next.js Dev | 3000 | `npm run dev:web` | 前端 UI 开发服务器，仅开发时使用 |
+## Naming Rules
 
-**开发时**：浏览器访问 `http://localhost:3000`，API 请求通过 rewrites 代理到 Go Core。
-**生产构建**：`npm run build` 生成 `dist/go-core/sessionnode` + `.next/`（Next.js 生产构建，通过 `next start` 启动）。
+- Use App UI, not System UI, for the current first-party UI.
+- `adapters.system-ui` may still exist as a manifest key if code requires it,
+  but prose should explain it as a legacy key name, not a separate runtime.
+- Use `session.destroy`; do not introduce new `session.stop` call sites.
+- Use Core node for mesh participants; View is not a node.
 
-### `next.config.ts` 的 `output: 'export'` 规则
+## Security Rules
 
-`output: 'export'` 只在 `BRIDGE_EXPORT=1` 时启用（`npm run build:web` 自动设置）。
-`npm run dev` / `npm run dev:web` 不设置此变量，正常使用 dev server。
+- `/ws` is for App UI/control clients and uses `SESSIONNODE_TOKEN` when exposed.
+- `/peer/ws` is for Core-to-Core mesh and uses ed25519 trust.
+- `/peer/invite/accept` is for one-time pairing codes.
+- Do not log or render raw Core tokens.
+- A Relay must not bypass permission checks on the target Core.
+
+## Development Commands
 
 ```bash
-# 从生产模式切回开发模式
-rm -rf .next out
-npm run dev       # 终端 1 — Go Core + Next.js
-npm run dev:web   # 终端 2 — 仅前端
+npm run dev       # Go Core + Next.js dev
+npm run dev:core  # Go Core only
+npm run dev:web   # Next.js only
+npm run build     # build web + Go Core
+npm start         # start Go Core
 ```
 
-## 访问模型
+If Go build cache fails on Windows, use:
 
-两种模式：**本地管理面板**（`localhost` 绕过 auth）、**远程访问**（需登录认证）。
-浏览器不是网络 peer，peer 列表只描述 agent 间的拓扑关系。详见 [`docs/access-model.md`](docs/access-model.md)。
-
-## 已知踩坑
-
-### 源码修改后浏览器看到旧代码
-
-**症状**：改了 `app/` 下的 `.tsx`，源码确认已修改，换浏览器/清缓存/强制刷新都看到旧内容。
-
-**根因**：
-1. `out/` 或 `.next` 目录残留（上次 `npm run build` 产物）→ dev server 可能 serve 旧静态文件
-2. 或者 `.next` 缓存损坏
-
-**修复**：
-```bash
-rm -rf .next out
-# 重启 dev:web
-npm run dev:web
+```powershell
+$env:GOCACHE='F:\Work Document\project\sessionBridge\go-core\.gocache'
 ```
-
-### Go Core 修改后不生效
-
-Go Core 用 `go run` 启动（dev 模式）。修改 `go-core/` 后需重启 `npm run dev` 或 `npm run dev:core`。

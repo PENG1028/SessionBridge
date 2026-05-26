@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useRef, type ReactNode } from 'react';
 import type { CoreClient, CoreConnectionStatus } from './core-types';
 import { createCoreClient, createMockCoreClient, type CoreClientImpl } from './core-client';
 import { ProxyCoreClient } from './proxy-core-client';
@@ -68,29 +68,39 @@ export function CoreClientProvider({
       setCore(proxyClient);
       setIsOffline(false);
 
-      // In proxy mode, check connectivity by calling a lightweight status endpoint
-      fetch('/api/auth/status', { credentials: 'same-origin' })
-        .then(r => r.json())
-        .then(data => {
-          if (data.configured && data.authenticated) {
-            proxyClient.setConnected(true);
-            setStatus('connected');
-          } else if (data.configured && !data.authenticated) {
-            proxyClient.setConnected(false);
-            setStatus('disconnected');
-          } else {
-            // Auth not configured yet — the middleware will redirect to /setup
-            // Still mark as "connected" in proxy sense (server is running)
-            proxyClient.setConnected(true);
-            setStatus('connected');
-          }
-        })
-        .catch(() => {
-          proxyClient.setConnected(false);
-          setStatus('error');
-        });
+      // Proxy mode: ProxyCoreClient auto-connects via SSE to /api/core/events
+      // when on() is called. Status updates flow through onStatusChange.
+      const unsub = proxyClient.onStatusChange(setStatus);
 
-      return;
+      // Seed a connectivity probe — if no SSE event has triggered within 2s,
+      // try an HTTP call to give immediate feedback.
+      const probeTimer = setTimeout(() => {
+        if (proxyClient.connectionStatus === 'disconnected') {
+          fetch('/api/auth/status', { credentials: 'same-origin' })
+            .then(r => r.json())
+            .then(data => {
+              const ok = data.configured !== false;
+              if (ok && proxyClient.connectionStatus === 'disconnected') {
+                proxyClient.call('node.health', {}).then(() => {
+                  setStatus('connected');
+                }).catch(() => {
+                  setStatus('disconnected');
+                });
+              } else if (!ok) {
+                setStatus('disconnected');
+              }
+            })
+            .catch(() => {
+              setStatus('disconnected');
+            });
+        }
+      }, 2000);
+
+      return () => {
+        unsub();
+        clearTimeout(probeTimer);
+        proxyClient.disconnect();
+      };
     }
 
     // Direct mode: create WebSocket-based CoreClient

@@ -1,84 +1,153 @@
-# 访问模型与 UI 拓扑
+# Access Model: Relay, Leaf, View
 
-## 核心规则
+This document is canonical. If another active document conflicts with these
+definitions, this document wins.
 
-SessionBridge 里有三个概念，必须分开判断，不能互相硬推导。
+## Core Rule
 
-| 概念 | 含义 | 判断来源 |
+Do not mix product/UI roles with Core internals.
+
+Core manages:
+
+- node identity
+- trusted peers
+- peer WebSocket connections
+- capability routing and forwarding
+
+App UI manages:
+
+- browser/view sessions
+- login state
+- human-facing role labels
+- pairing dialogs and connection controls
+
+Core does not manage View sessions. A View is not a Core node.
+
+## Canonical Definitions
+
+| Term | Meaning | Layer |
 |---|---|---|
-| 节点进程 | 本机 SessionBridge runtime 已启动，可以控制本机 adapter/agent。 | 进程启动状态，以及本机 `/api` / WebSocket 是否可用 |
-| Relay 模式 | 当前节点是否作为中继节点接受其他节点接入。 | runtime 角色检测或显式配置 |
-| View 访问 | 某个浏览器通过一个节点页面进入网络。 | 浏览器连接来源与入口节点 |
+| Core Node | A running Go Core instance with identity, trust store, and capability handlers. | Core |
+| Relay | A Core node that is publicly reachable or configured as an entry/middle node for the mesh. | Product/UI label |
+| Leaf | A Core node that usually cannot be reached from the public internet and connects outbound to a relay. | Product/UI label |
+| View | A browser/client without Core identity. It accesses App UI and operates Core nodes through UI. | App UI |
 
-节点一旦启动，就必须启动本机 UI/API。Relay 模式只决定这个节点是否开启中继能力，不决定本机页面是否存在。
+## Relay
 
-## 启动语义
+A Relay is a Core node that can act as a public entry or middle node.
 
-| 状态 | 预期行为 |
-|---|---|
-| 节点已启动，环境支持 relay | 本机页面可访问，本机 agent 可控，角色为 `relay`，其他节点可以接入。 |
-| 节点已启动，环境不支持 relay | 本机页面可访问，本机 agent 可控，角色为 `leaf`，可按配置连接上游。 |
-| 节点未启动或不可达 | 不应该显示伪造的 LOCAL 卡片，应显示断开或加载状态。 |
+Properties:
 
-默认角色检测顺序：
+- has Core identity
+- has `trusted_peers.json`
+- may accept inbound `/peer/ws` connections
+- may initiate outbound peer connections
+- may forward capability requests to connected trusted peers
 
-1. 显式配置 `role=relay` 时强制 relay。
-2. 显式配置 `role=leaf` 时强制 leaf。
-3. 配置了 upstream 时作为 leaf。
-4. auto 模式执行环境检测：当前阶段只把公网 IPv4 视为默认可 relay；只有 LAN IPv4 或仅公网 IPv6 时默认 leaf，避免家庭 PC 被误判成 relay。
+A Relay is not automatically a network proxy, SOCKS proxy, VPN, or TCP tunnel.
+It is a control-mesh node unless a separate proxy/tunnel plugin is added.
 
-## 实体类型
+## Leaf
 
-| 实体 | 含义 | 卡片行为 |
-|---|---|---|
-| LOCAL | 当前页面所属的真实节点进程。 | 可点击，可进入并控制该节点；必须来自后端上报的 `__local__`，不能由前端硬编码。 |
-| RELAY | 开启中继能力的节点。 | 可点击，通常作为网络中心节点显示。 |
-| LEAF | 未开启中继能力的节点，通常通过上游 relay 接入。 | 可点击。 |
-| VIEW | 浏览器访问入口，不是可控节点。 | 灰色信息卡，不可点击。 |
+A Leaf is a Core node that usually cannot be reached from the public internet.
 
-## 拓扑规则
+Properties:
 
-UI 应该根据后端上报的真实节点关系渲染：
+- has Core identity
+- has `trusted_peers.json`
+- usually connects outbound to a Relay
+- can execute the same capabilities as any other Core node
+- can run terminal, plugins, tasks, and long-running runs
 
-1. 只启动本机节点时，只显示一张 LOCAL 卡片。
-2. 本机节点连接到另一个节点时，显示两张节点卡片，并显示它们之间的连接关系。
-3. 浏览器通过局域网节点进入时，显示 VIEW 卡片，并关联到该局域网入口节点。
-4. 浏览器通过 VPS/relay 节点进入时，显示 VIEW 卡片，并关联到该 VPS/relay 入口节点。
-5. 不允许根据 `wsUrl`、`upstreamUrl`、保存连接列表伪造 relay/leaf 节点卡片。
+Leaf is not a lower-permission role. It describes reachability, not capability.
 
-## 典型场景
+## View
 
-| 场景 | 应显示的卡片 |
-|---|---|
-| 本机 PC 启动 SessionBridge，但没有公网可达能力 | LOCAL PC（`LEAF`） |
-| 本机 PC 启动并连接到 VPS | LOCAL PC（`LEAF`）连接 VPS（`RELAY`） |
-| 浏览器直接打开 VPS 页面 | VPS（`RELAY`）加一个该浏览器的 VIEW 卡片 |
-| 浏览器直接打开局域网 PC 页面 | LAN PC（按实际角色显示 `LEAF` 或 `RELAY`）加一个 VIEW 卡片 |
-| 程序没有真实连接 | 不显示伪造 LOCAL/RELAY 卡片，显示断开状态 |
+A View is a browser or client session without Core identity.
 
-## 设置界面预期
+Properties:
 
-Relay 模式应该可配置，但这个开关只控制中继能力，不控制本机页面是否可用。
+- no Core process
+- no node identity
+- not stored in `trusted_peers.json`
+- cannot be targeted by Core-to-Core operations
+- authenticates to App UI, not directly to the mesh
 
-| 设置 | 含义 |
-|---|---|
-| 开启 Relay 模式 | 环境支持时尝试成为 relay。 |
-| 关闭 Relay 模式 | 即使环境可能支持，也保持 leaf。 |
-| 环境检测 | 解释为什么当前能或不能开启 relay，例如没有公网 IPv4、端口不可达、防火墙阻止等。 |
+Views operate nodes through:
 
-## 当前实现状态
+```text
+View/browser -> App UI auth -> local Core /ws -> target Core via mesh
+```
 
-已实现：
+## Connection Lifecycle
 
-1. `NodeRuntime` 不再只在 relay 角色下启动本机 HTTP/UI server。
-2. 自动角色检测不再把“能绑定端口”当成 relay 条件。
-3. 当前阶段仅公网 IPv4 会默认判定 relay，避免仅有公网 IPv6 的本地 PC 被误判。
-4. 后端会上报真实 `__local__` 节点。
-5. 前端不再只靠 `wsUrl` 硬编码 LOCAL 卡片。
+Core-to-Core connections are persistent trust relationships plus temporary
+WebSocket sessions.
 
-仍未完成：
+Persistent state:
 
-1. 拓扑 UI 目前还是卡片/树状列表，不是真正的节点连线图。
-2. VIEW 卡片已能显示，但它和入口节点之间的视觉连线还不完整。
-3. 设置界面的 relay 模式开关和环境诊断还没有完全打通。
-4. LAN 暴露 leaf 的策略还需要明确，避免“仅本机可访问 leaf”和“局域网可访问 leaf”混淆。
+- `identity.json`: local node private/public identity
+- `trusted_peers.json`: trusted remote node public keys, addresses, trust policy,
+  `autoReconnect`, `lastSeen`, and expiry
+
+Runtime state:
+
+- current `/peer/ws` connection
+- reconnect loop
+- stream subscriptions
+
+Rules:
+
+- Invite accept or reconnect sets `autoReconnect=true`.
+- Disconnect keeps the trust record but sets `autoReconnect=false`.
+- Revoke removes the trust record and disconnects the peer.
+- Network failure does not remove trust.
+- Core restart should restore peers from `trusted_peers.json` when
+  `autoReconnect=true`.
+
+## UI Rules
+
+App UI may display Relay/Leaf/View labels, but it must derive them from actual
+Core state and reachability data.
+
+Do not:
+
+- create fake Relay/Leaf cards from `wsUrl`
+- treat a browser View as a Core node
+- store View sessions in Core
+- let a Relay bypass target-node permission checks
+
+Do:
+
+- show a View as a UI session/entry context
+- show Core nodes from `node.list` / `node.peer.list`
+- use `node.invite.*` and `node.peer.*` for pairing and peer lifecycle
+- keep pairing UI as a UI projection over Core capabilities
+
+## Typical Scenario
+
+```text
+Phone browser (View)
+  -> App UI on VPS A
+  -> Core A (Relay)
+  -> Core mesh
+  -> PC Core (Leaf)
+  -> terminal/plugin/task execution
+```
+
+In this scenario:
+
+- the phone is a View
+- VPS A is a Relay
+- the PC is a Leaf
+- only Relay and Leaf are Core nodes
+- the phone cannot be targeted as a Core node
+
+## Current Implementation Notes
+
+- Go Core is the only Core runtime.
+- App UI is the first-party UI.
+- `plugins/*/plugin.yaml` is the only plugin declaration source.
+- Old Node relay runtime, `agent-core`, and `extensions/` have been removed.
+- Mobile access currently means browser/View access unless a future mobile Core
+  runtime is explicitly introduced.

@@ -1,7 +1,8 @@
 # SessionNode v2 — App UI Wireframes
 
 > 页面级别的 ASCII 线框图，描述每个页面的布局、组件、交互、状态
-> 基于 SYSTEM_UI_PLUGIN.md 和 SYSTEM_UI_FEATURES.md 的设计规范（文件名为历史遗留，概念上指 App UI Plugin / App UI Features）
+> Based on APP_UI_PLUGIN.md and APP_UI_FEATURES.md. Older "System UI" wording
+> in wireframes is historical and means App UI.
 
 ---
 

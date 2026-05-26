@@ -1,7 +1,8 @@
 # SessionNode v2 — Plugin Host 设计
 
-> System UI 中的 Plugin Host 负责加载 Feature Plugin 的 Web 贡献
-> 配套文档：SYSTEM_UI_PLUGIN.md、UX_SURFACES.md、SURFACE_MODEL.md
+> App UI's Plugin Host loads feature plugin web contributions.
+> Current companion docs: APP_UI_PLUGIN.md, UX_SURFACES.md, SURFACE_MODEL.md.
+> Older "System UI" wording is historical; use "App UI" in new work.
 
 ---
 

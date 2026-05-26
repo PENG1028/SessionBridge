@@ -649,3 +649,17 @@ sessionnode/
 ├── web/                     — 前端 SPA
 ├── go.mod / go.sum
 ```
+# Historical Design Note
+
+This file is not the active implementation contract. It describes an older
+relay/leaf design direction and may mention concepts that have since moved to
+Go Core mesh, App UI, and `plugins/*/plugin.yaml`.
+
+For current definitions, use:
+
+- `docs/access-model.md`
+- `docs/core-v2/core-kernel/PUBLIC_MESH_SECURITY.md`
+- `docs/core-v2/app-ui/APP_UI_API_MAP.md`
+- `CLAUDE.md`
+
+---

@@ -1,7 +1,8 @@
 # SessionNode v2 — UX Surface / Slot 系统设计
 
 > Surface = 插件贡献点 + 上下文 + 权限后的 Core 数据入口
-> 配套文档：ARCHITECTURE.md、SYSTEM_UI_PLUGIN.md、SESSION_AND_STREAM.md
+> Companion docs: APP_UI_PLUGIN.md, APP_UI_FEATURES.md, SESSION_AND_STREAM.md.
+> Older "System UI" terms in this file are historical and mean App UI.
 
 ---
 

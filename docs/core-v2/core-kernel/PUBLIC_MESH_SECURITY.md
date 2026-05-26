@@ -11,7 +11,7 @@
 ## 2. Endpoint Architecture
 
 ### Control WS (`/ws`)
-- Purpose: UI clients, local tools, browser panels — App UI / browser / control clients
+- Purpose: UI clients, local tools, browser panels, App UI, browser, and control clients
 - Actor type: always "web" (set server-side, not from client)
 - **Client-supplied `actorType=node` is BLOCKED** -- returns ACTOR_TYPE_NODE_BLOCKED
 - Authentication: SESSIONNODE_TOKEN (or dev mode -- no token)
@@ -76,6 +76,25 @@
 6. Nodes establish persistent peer WS connection with handshake
 
 **Invite code is a bootstrap mechanism, NOT a long-term credential.** After pairing, nodes authenticate via ed25519 identity.
+
+## 5.1 App UI Pairing Boundary
+
+App UI may provide a dialog/card workflow for pairing, but it must not create a
+separate pairing protocol. The UI flow is only a wrapper around Core
+capabilities:
+
+1. Call `node.identity.get` to show the local node identity.
+2. Call `node.reachability.check` to explain whether the local node can act as
+   a Relay.
+3. On the accepting side, call `node.invite.accept` with the remote peer URL
+   and one-time code.
+4. After success, call `node.peer.list` / `node.peer.info` to show the trusted
+   peer.
+5. For ongoing management, call `node.peer.reconnect`, `node.peer.disconnect`,
+   or `node.peer.revoke`.
+
+Browser Views are not mesh peers. A View controls the mesh through App UI and
+the local Core's `/ws` endpoint; Core-to-Core traffic uses `/peer/ws`.
 
 ## 6. Automatic Reconnection
 

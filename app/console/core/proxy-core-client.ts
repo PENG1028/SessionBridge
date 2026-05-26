@@ -1,16 +1,17 @@
 'use client';
 
-// ─── Proxy-backed CoreClient ─────────────────────────────────
-// Implements the CoreClient interface using POST /api/core/call
-// instead of a direct WebSocket connection.
+// ─── Proxy-backed CoreClient with SSE events ────────────────
+// Implements the CoreClient interface using:
+//   - POST /api/core/call  for core.call(method, params)
+//   - SSE /api/core/events  for on/once/off event subscriptions
 //
-// The browser never holds a Core token. All capability calls
-// are proxied through the Next.js server.
+// The browser never holds a Core token. All capability calls are
+// proxied through the Next.js server. Real-time events (stream.chunk,
+// notify.approval.request, session.event, etc.) arrive via SSE.
 //
-// Event subscriptions (on/once/off) are not supported in proxy
-// mode for real-time streaming. They return no-op cleanup functions.
-// Components that need real-time events (terminal output, etc.)
-// should use direct CoreClient mode.
+// Components that use core.on('stream.chunk', handler) work in
+// proxy mode. Components that need raw WebSocket access (e.g.
+// direct terminal pty) must use ?coreMode=direct.
 
 import type { CoreClient, CoreEvent, CoreConnectionStatus } from './core-types';
 
@@ -19,15 +20,25 @@ export class ProxyCoreClient implements CoreClient {
   readonly wsUrl: string = '/api/core/call';
   readonly hasToken: boolean = false;
   readonly authMode: 'token' | 'none' = 'none';
-  readonly _statusListeners = new Set<(status: CoreConnectionStatus) => void>();
-  readonly _eventListeners = new Map<string, Set<(data: CoreEvent) => void>>();
 
+  // ── SSE event source ──────────────────────────────────────
+  private _eventSource: EventSource | null = null;
+
+  // ── Event listeners (same pattern as CoreClientImpl) ──────
+  private _eventListeners = new Map<string, Set<(data: CoreEvent) => void>>();
+  private _statusListeners = new Set<(status: CoreConnectionStatus) => void>();
+
+  // ── Connection state ──────────────────────────────────────
+  private _connectionStatus: CoreConnectionStatus = 'disconnected';
   private _isConnected = false;
   private _lastError: string | null = null;
+  private _disconnected = false;
 
   constructor(pluginId = 'sessionnode-core') {
     this.pluginId = pluginId;
   }
+
+  // ── Public accessors ──────────────────────────────────────
 
   get isConnected(): boolean {
     return this._isConnected;
@@ -37,19 +48,17 @@ export class ProxyCoreClient implements CoreClient {
     return this._lastError;
   }
 
-  setConnected(value: boolean): void {
-    if (this._isConnected !== value) {
-      this._isConnected = value;
-      const status: CoreConnectionStatus = value ? 'connected' : 'disconnected';
-      this._statusListeners.forEach(fn => fn(status));
-    }
+  get connectionStatus(): CoreConnectionStatus {
+    return this._connectionStatus;
   }
 
-  setError(err: string | null): void {
-    this._lastError = err;
+  // ── Status change subscription (for provider integration) ─
+  onStatusChange(handler: (status: CoreConnectionStatus) => void): () => void {
+    this._statusListeners.add(handler);
+    return () => this._statusListeners.delete(handler);
   }
 
-  // ─── Core call via server proxy ─────────────────────────────
+  // ── Core call via HTTP proxy ──────────────────────────────
 
   async call<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T> {
     const res = await fetch('/api/core/call', {
@@ -60,7 +69,7 @@ export class ProxyCoreClient implements CoreClient {
     });
 
     if (res.status === 401) {
-      this.setConnected(false);
+      this._setStatus('disconnected');
       throw new Error('Authentication required — session expired?');
     }
 
@@ -68,39 +77,165 @@ export class ProxyCoreClient implements CoreClient {
 
     if (!res.ok) {
       const msg = data?.error || `Core call failed (${res.status})`;
-      this.setError(msg);
+      this._lastError = msg;
       throw new Error(msg);
     }
 
-    // Success: mark proxy as reachable
-    this.setConnected(true);
-    this.setError(null);
     return data as T;
   }
 
-  // ─── Event subscription (no-op in proxy mode) ───────────────
+  // ── Event subscription via SSE ────────────────────────────
 
-  on(_event: string, _handler: (data: CoreEvent) => void): () => void {
-    // No-op: real-time events require direct WebSocket to Core.
-    // Returns a no-op cleanup function for interface compatibility.
-    return () => {};
+  on(event: string, handler: (data: CoreEvent) => void): () => void {
+    if (!this._eventListeners.has(event)) {
+      this._eventListeners.set(event, new Set());
+    }
+    this._eventListeners.get(event)!.add(handler);
+
+    // Auto-connect SSE on first listener if not already connected
+    if (!this._eventSource || this._eventSource.readyState === EventSource.CLOSED) {
+      if (!this._disconnected) {
+        this._connectSSE();
+      }
+    }
+
+    return () => this.off(event, handler);
   }
 
-  once(_event: string, _handler: (data: CoreEvent) => void): void {
-    // No-op
+  once(event: string, handler: (data: CoreEvent) => void): void {
+    const wrapper = (data: CoreEvent) => {
+      handler(data);
+      this.off(event, wrapper);
+    };
+    this.on(event, wrapper);
   }
 
-  off(_event: string, _handler: (data: CoreEvent) => void): void {
-    // No-op
+  off(event: string, handler: (data: CoreEvent) => void): void {
+    const handlers = this._eventListeners.get(event);
+    if (handlers) {
+      handlers.delete(handler);
+      if (handlers.size === 0) {
+        this._eventListeners.delete(event);
+      }
+    }
+    // Don't close SSE — other handlers may still be subscribed
   }
 
-  // ─── Connection management ──────────────────────────────────
+  // ── Connection management ─────────────────────────────────
 
   disconnect(): void {
-    this.setConnected(false);
+    this._disconnected = true;
+    this._closeSSE();
+    this._isConnected = false;
+    this._connectionStatus = 'disconnected';
     this._eventListeners.clear();
     this._statusListeners.clear();
+    this._lastError = null;
   }
+
+  // ── SSE lifecycle ─────────────────────────────────────────
+
+  private _connectSSE(): void {
+    if (this._eventSource && this._eventSource.readyState !== EventSource.CLOSED) {
+      return; // already connected or connecting
+    }
+
+    this._setStatus('connecting');
+
+    try {
+      const es = new EventSource('/api/core/events', { withCredentials: true });
+
+      es.addEventListener('core', (event: MessageEvent) => {
+        try {
+          const msg = JSON.parse(event.data);
+
+          // The 'connected' event means the server-side Core WS is open
+          if (msg.type === 'connected') {
+            this._isConnected = true;
+            this._lastError = null;
+            this._setStatus('connected');
+            this._emit('connected', msg);
+            return;
+          }
+
+          // Forward all other Core messages to subscribers
+          if (msg.type) {
+            this._emit(msg.type, msg);
+          }
+        } catch {
+          // Ignore parse errors on individual SSE events
+        }
+      });
+
+      es.addEventListener('error', (event: MessageEvent) => {
+        try {
+          const msg = JSON.parse(event.data);
+          this._lastError = msg.message || 'SSE error';
+          this._isConnected = false;
+          this._setStatus('error');
+        } catch {
+          // Parse failure in error event — just mark disconnected
+          this._lastError = 'SSE connection error';
+          this._isConnected = false;
+          this._setStatus('disconnected');
+        }
+      });
+
+      es.onerror = () => {
+        // EventSource auto-reconnects on network loss.
+        // Mark disconnected so UI can show the transient state.
+        this._isConnected = false;
+        this._lastError = 'SSE connection lost — auto-reconnecting';
+        this._setStatus('disconnected');
+      };
+
+      // EventSource 'open' fires when the HTTP connection establishes,
+      // but the Core WS bridge may not be open yet.
+      // The 'connected' event from SSE tells us the bridge is ready.
+
+      this._eventSource = es;
+    } catch (err) {
+      this._lastError = err instanceof Error ? err.message : 'Failed to create EventSource';
+      this._setStatus('error');
+    }
+  }
+
+  private _closeSSE(): void {
+    if (this._eventSource) {
+      this._eventSource.close();
+      this._eventSource = null;
+    }
+  }
+
+  // ── Status notification ───────────────────────────────────
+
+  private _setStatus(status: CoreConnectionStatus): void {
+    this._connectionStatus = status;
+    this._statusListeners.forEach(fn => {
+      try { fn(status); } catch { /* listener error */ }
+    });
+    this._emit('connectionStatus', { type: 'connectionStatus', status, pluginId: this.pluginId });
+  }
+
+  // ── Event emission ────────────────────────────────────────
+
+  private _emit(event: string, data: CoreEvent): void {
+    const handlers = this._eventListeners.get(event);
+    if (handlers) {
+      handlers.forEach(fn => {
+        try { fn(data); } catch { /* handler error */ }
+      });
+    }
+    // Wildcard listeners
+    const allHandlers = this._eventListeners.get('*');
+    if (allHandlers) {
+      allHandlers.forEach(fn => {
+        try { fn(data); } catch { /* handler error */ }
+      });
+    }
+  }
+
+  // ── Scoped client ─────────────────────────────────────────
 
   createScopedClient(pluginId: string): CoreClient {
     const host = this;
