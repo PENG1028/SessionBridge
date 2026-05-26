@@ -7,6 +7,7 @@ import '@xterm/xterm/css/xterm.css';
 import { ContextMenu, type ContextMenuItem } from './console/shell/context-menu';
 import { MobileExtraKeys } from './console/chrome/mobile-extra-keys';
 import type { CoreClient } from './console/core/core-types';
+import { TerminalInputBuffer, createDebouncedResize } from './console/core/terminal-input-buffer';
 
 interface ShellTerminalProps {
   core: CoreClient;
@@ -25,14 +26,40 @@ export default function ShellTerminal({ core, coreSessionId, onOpenDirectoryPick
   const fitRef = useRef<FitAddon | null>(null);
   const mountedRef = useRef(true);
   const coreHandlerRef = useRef<((event: any) => void) | null>(null);
+  const inputBufRef = useRef<TerminalInputBuffer | null>(null);
+  const debouncedResizeRef = useRef<ReturnType<typeof createDebouncedResize> | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
   const [terminalFocused, setTerminalFocused] = useState(false);
 
+  // Create input buffer and debounced resize for the current session
+  useEffect(() => {
+    if (!coreSessionId || !core.isConnected) return;
+
+    const buf = new TerminalInputBuffer({
+      write: (data) => core.call('stream.write', { sessionId: coreSessionId, data }).catch(() => {}),
+    });
+    inputBufRef.current = buf;
+
+    const dr = createDebouncedResize({
+      delayMs: 80,
+      onResize: (cols, rows) => {
+        core.call('process.resize', { sessionId: coreSessionId, cols, rows }).catch(() => {});
+      },
+    });
+    debouncedResizeRef.current = dr;
+
+    return () => {
+      buf.dispose();
+      dr.cancel();
+      inputBufRef.current = null;
+      debouncedResizeRef.current = null;
+    };
+  }, [coreSessionId, core]);
+
+  // sendTerminalData pushes to the input buffer for batching
   const sendTerminalData = useCallback((data: string) => {
-    if (core.isConnected && coreSessionId) {
-      core.call('stream.write', { sessionId: coreSessionId, data }).catch(() => {});
-    }
-  }, [core, coreSessionId]);
+    inputBufRef.current?.push(data);
+  }, []);
 
   /** Connect via CoreClient stream — subscribe to stream.chunk events for this session. */
   function connectCore(term: Terminal, _fitAddon: FitAddon) {
@@ -163,15 +190,12 @@ export default function ShellTerminal({ core, coreSessionId, onOpenDirectoryPick
     // ── Initial connection ──
     connectCore(term, fitAddon);
 
-    // ── Resize observer ──
+    // ── Resize observer (debounced) ──
     const ro = new ResizeObserver(() => {
       fitAddon.fit();
       const dims = fitAddon.proposeDimensions();
       if (!dims) return;
-
-      if (core.isConnected) {
-        core.call('process.resize', { sessionId: coreSessionId, cols: dims.cols, rows: dims.rows }).catch(() => {});
-      }
+      debouncedResizeRef.current?.resize(dims.cols, dims.rows);
     });
     ro.observe(containerRef.current);
 

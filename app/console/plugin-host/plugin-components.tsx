@@ -7,6 +7,7 @@ import '@xterm/xterm/css/xterm.css';
 import type { HostComponentProps } from './host-component-registry';
 import type { NodeInfo, RunInfo } from '../core/core-types';
 import { hostComponentRegistry } from './host-component-registry';
+import { TerminalInputBuffer, createDebouncedResize } from '../core/terminal-input-buffer';
 
 // ─── TerminalView ────────────────────────────────────────────────
 
@@ -45,6 +46,8 @@ export function TerminalView({ core, config }: HostComponentProps) {
   const unsubChunkRef = useRef<(() => void) | null>(null);
   const unsubStopRef = useRef<(() => void) | null>(null);
   const unsubConnectedRef = useRef<(() => void) | null>(null);
+  const inputBufRef = useRef<TerminalInputBuffer | null>(null);
+  const debouncedResizeRef = useRef<ReturnType<typeof createDebouncedResize> | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const runIdRef = useRef<string | null>(null);
   // Track last seen seq per stream type for replay-after-reconnect
@@ -97,9 +100,7 @@ export function TerminalView({ core, config }: HostComponentProps) {
       }
       if (ctrlKey && key === 'l') {
         e.preventDefault();
-        const sid = sessionIdRef.current;
-        if (sid) core.call('stream.write', { sessionId: sid, streamType: 'stdin', data: '\x0c' }).catch(() => {});
-        else term.clear();
+        if (inputBufRef.current) { inputBufRef.current.push('\x0c'); } else { term.clear(); }
         return false;
       }
       if (ctrlKey && shiftKey && key === 'C') {
@@ -110,8 +111,7 @@ export function TerminalView({ core, config }: HostComponentProps) {
       if ((ctrlKey && key === 'v') || (ctrlKey && shiftKey && key === 'V') || (shiftKey && key === 'Insert')) {
         e.preventDefault();
         navigator.clipboard.readText().then(text => {
-          const sid = sessionIdRef.current;
-          if (sid) core.call('stream.write', { sessionId: sid, streamType: 'stdin', data: text }).catch(() => {});
+          inputBufRef.current?.push(text);
         }).catch(() => {});
         return false;
       }
@@ -123,22 +123,16 @@ export function TerminalView({ core, config }: HostComponentProps) {
     term.open(containerRef.current);
     fitAddon.fit();
 
-    // User input → stream.write with streamType
+    // User input → input buffer (batched stream.write)
     term.onData(data => {
-      const sid = sessionIdRef.current;
-      if (sid) {
-        core.call('stream.write', { sessionId: sid, streamType: 'stdin', data }).catch(() => {});
-      }
+      inputBufRef.current?.push(data);
     });
 
-    // Container resize → fit + process.resize
+    // Container resize → fit + debounced process.resize
     const ro = new ResizeObserver(() => {
       try { fitAddon.fit(); } catch {}
       const dims = fitAddon.proposeDimensions();
-      const sid = sessionIdRef.current;
-      if (sid && dims) {
-        core.call('process.resize', { sessionId: sid, cols: dims.cols, rows: dims.rows }).catch(() => {});
-      }
+      if (dims) debouncedResizeRef.current?.resize(dims.cols, dims.rows);
     });
     ro.observe(containerRef.current);
 
@@ -238,12 +232,34 @@ export function TerminalView({ core, config }: HostComponentProps) {
     unsubConnectedRef.current = unsubConnected;
   }, [core]);
 
+  // Create input buffer + debounced resize when session is active
+  useEffect(() => {
+    if (!sessionId) return;
+    const buf = new TerminalInputBuffer({
+      write: (data) => core.call('stream.write', { sessionId, streamType: 'stdin', data }).catch(() => {}),
+    });
+    inputBufRef.current = buf;
+    const dr = createDebouncedResize({
+      delayMs: 80,
+      onResize: (cols, rows) => { core.call('process.resize', { sessionId, cols, rows }).catch(() => {}); },
+    });
+    debouncedResizeRef.current = dr;
+    return () => {
+      buf.dispose();
+      dr.cancel();
+      inputBufRef.current = null;
+      debouncedResizeRef.current = null;
+    };
+  }, [sessionId, core]);
+
   // Cleanup subscriptions on unmount
   useEffect(() => {
     return () => {
       unsubChunkRef.current?.();
       unsubStopRef.current?.();
       unsubConnectedRef.current?.();
+      inputBufRef.current?.dispose();
+      debouncedResizeRef.current?.cancel();
     };
   }, []);
 
