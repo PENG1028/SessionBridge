@@ -122,7 +122,25 @@
 - Invite approval workflow (join.request/approve)
 - Product role model (Relay/Leaf/View)
 
-## 11. UI Integration
+## 11. E2E Verification
+
+The full invite pairing lifecycle is verified by
+`TestTwoCore_InviteAccept_ConnectsPeerWS` in
+`go-core/internal/topology/mesh_pairing_e2e_test.go`, which exercises:
+
+1. Two in-process Go Core instances with cryptographic identities
+2. Invite creation → HTTP POST to `/peer/invite/accept` → trust store updates on both sides
+3. One-time code consumption (replay prevention)
+4. B→A WebSocket `/peer/ws` connection with full ed25519 handshake
+5. Topology status reporting (StatusConnected)
+6. B→A cross-node capability forwarding (system.info)
+
+A→B bidirectional forwarding is NOT set up by the invite accept flow — the
+invite acceptor learns the creator's address, but not vice versa. Full
+bidirectional topology requires either pre-configuration or an additional
+pairing exchange.
+
+## 12. UI Integration
 
 UI pages call these Core capabilities:
 - `node.identity.get` -- display local node identity
