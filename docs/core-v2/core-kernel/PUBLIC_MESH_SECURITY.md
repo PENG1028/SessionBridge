@@ -15,6 +15,9 @@
 - Actor type: always "web" (set server-side, not from client)
 - **Client-supplied `actorType=node` is BLOCKED** -- returns ACTOR_TYPE_NODE_BLOCKED
 - Authentication: SESSIONNODE_TOKEN (or dev mode -- no token)
+- Token validated at WebSocket **upgrade time** (HTTP 401 before WS upgrade if missing/wrong)
+- After authenticated upgrade, dispatch-level auth auto-populates actor token
+- Public address + empty token triggers startup warning (override with SESSIONNODE_ALLOW_INSECURE=1)
 
 ### Peer WS (`/peer/ws`)
 - Purpose: Core-to-Core mesh connections
@@ -89,9 +92,9 @@
 - Invite approval workflow (join.request/approve)
 - Product role model (Relay/Leaf/View)
 
-## 9. UI Integration (Future)
+## 9. UI Integration
 
-UI pages will call these Core capabilities:
+UI pages call these Core capabilities:
 - `node.identity.get` -- display local node identity
 - `node.invite.create` -- generate invite code for pairing
 - `node.invite.accept` -- accept invite from another node

@@ -201,6 +201,180 @@ describe('Nodes page', () => {
   });
 });
 
+	describe('NodeManager: Mesh tabs', () => {
+		it('Identity tab shows local node identity', async () => {
+			const client = createMockClient({
+				'node.identity.get': {
+					nodeId: 'node-local',
+					publicKey: 'abc123',
+					fingerprint: 'deadbeef',
+					createdAt: 1717000000000,
+				},
+				'node.peer.list': { peers: [] },
+				'node.invite.list': { invites: [], total: 0 },
+				'node.reachability.check': {
+					publicReachable: 'unknown',
+					inboundPeerAllowed: false,
+					outboundOnly: true,
+					reason: 'loopback address',
+				},
+			});
+			render(<NodeManager core={client} />);
+			await vi.waitFor(() => {
+				expect(client.call).toHaveBeenCalledWith('node.identity.get');
+			});
+			fireEvent.click(screen.getByText('Identity'));
+			await vi.waitFor(() => {
+				expect(screen.getByText('node-local')).toBeDefined();
+			});
+		});
+		it('Peers tab shows peers from node.peer.list', async () => {
+			const client = createMockClient({
+				'node.identity.get': { nodeId: 'local', publicKey: 'key', fingerprint: 'fp', createdAt: 0 },
+				'node.peer.list': {
+					peers: [
+						{ nodeId: 'peer-vps', name: 'VPS Node', fingerprint: 'fp1', addresses: ['ws://vps:8080/peer/ws'], trustExpiresAt: 0, autoReconnect: true, lastSeen: Date.now(), policy: { mode: 'full' }, status: 'connected' },
+						{ nodeId: 'peer-dev', name: 'Dev Box', fingerprint: 'fp2', addresses: ['ws://dev:8080/peer/ws'], trustExpiresAt: 0, autoReconnect: false, lastSeen: 0, policy: { mode: 'full' }, status: 'offline' },
+					],
+				},
+				'node.invite.list': { invites: [], total: 0 },
+				'node.reachability.check': {
+					publicReachable: 'unknown', inboundPeerAllowed: false, outboundOnly: true, reason: 'loopback',
+				},
+			});
+			render(<NodeManager core={client} />);
+			fireEvent.click(screen.getByText('Peers'));
+			await vi.waitFor(() => {
+				expect(screen.getByText('VPS Node')).toBeDefined();
+				expect(screen.getByText('connected')).toBeDefined();
+				expect(screen.getByText('Dev Box')).toBeDefined();
+				expect(screen.getByText('offline')).toBeDefined();
+			});
+		});
+		it('Invites tab shows create invite form and invite list', async () => {
+			const client = createMockClient({
+				'node.identity.get': { nodeId: 'local', publicKey: 'key', fingerprint: 'fp', createdAt: 0 },
+				'node.peer.list': { peers: [] },
+				'node.invite.list': {
+					invites: [
+						{ inviteId: 'inv_abc', createdAt: Date.now() / 1000, expiresAt: (Date.now() + 60000) / 1000, ttlSeconds: 60, trustDurationSeconds: 0, localNodeId: 'local', localFingerprint: 'fp' },
+					],
+					total: 1,
+				},
+				'node.reachability.check': {
+					publicReachable: 'unknown', inboundPeerAllowed: false, outboundOnly: true, reason: 'loopback',
+				},
+			});
+			render(<NodeManager core={client} />);
+			fireEvent.click(screen.getByText('Invites'));
+			await vi.waitFor(() => {
+				expect(screen.getByText('inv_abc')).toBeDefined();
+				expect(screen.getByText('Create Invite')).toBeDefined();
+			});
+			fireEvent.click(screen.getByText('Create Invite'));
+			await vi.waitFor(() => {
+				expect(screen.getByText('New Invite')).toBeDefined();
+			});
+		});
+		it('Reachability tab shows reachability status', async () => {
+			const client = createMockClient({
+				'node.identity.get': { nodeId: 'local', publicKey: 'key', fingerprint: 'fp', createdAt: 0 },
+				'node.peer.list': { peers: [] },
+				'node.invite.list': { invites: [], total: 0 },
+				'node.reachability.check': {
+					publicReachable: 'unknown',
+					inboundPeerAllowed: true,
+					outboundOnly: false,
+					reason: 'non-loopback address',
+				},
+			});
+			render(<NodeManager core={client} />);
+			fireEvent.click(screen.getByText('Reachability'));
+			await vi.waitFor(() => {
+				expect(screen.getByText('Allowed')).toBeDefined();
+				expect(screen.getByText('non-loopback address')).toBeDefined();
+			});
+		});
+	});
+	describe('NodeManager: empty and offline states', () => {
+		it('shows empty state when peers list is empty', async () => {
+			const client = createMockClient({
+				'node.identity.get': { nodeId: 'local', publicKey: 'key', fingerprint: 'fp', createdAt: 0 },
+				'node.peer.list': { peers: [] },
+				'node.invite.list': { invites: [], total: 0 },
+				'node.reachability.check': {
+					publicReachable: 'unknown', inboundPeerAllowed: false, outboundOnly: true, reason: 'loopback',
+				},
+			});
+			render(<NodeManager core={client} />);
+			fireEvent.click(screen.getByText('Peers'));
+			await vi.waitFor(() => {
+				expect(screen.getByText('No trusted peers')).toBeDefined();
+				expect(screen.getByText(/Use the Invites tab/)).toBeDefined();
+			});
+		});
+		it('shows offline state when core disconnects', async () => {
+			const client = createMockClient({
+				'node.identity.get': { nodeId: 'local', publicKey: 'key', fingerprint: 'fp', createdAt: 0 },
+				'node.peer.list': { peers: [] },
+				'node.invite.list': { invites: [], total: 0 },
+				'node.reachability.check': {
+					publicReachable: 'unknown', inboundPeerAllowed: false, outboundOnly: true, reason: 'loopback',
+				},
+			});
+			Object.defineProperty(client, 'isConnected', { get: () => false });
+			render(<NodeManager core={client} />);
+			fireEvent.click(screen.getByText('Peers'));
+			await vi.waitFor(() => {
+				expect(screen.getByText('Offline')).toBeDefined();
+			});
+		});
+	});
+	describe('Settings: Connection tab', () => {
+		async function waitForSettingsLoaded() {
+			// Wait for Settings to finish loading — category nav renders
+			await vi.waitFor(() => {
+				expect(screen.getByText('General')).toBeDefined();
+			});
+		}
+		it('shows connection status and wsUrl', async () => {
+			const client = createMockClient({ 'config.list': [] });
+			(client as any).wsUrl = 'ws://localhost:8080/ws';
+			(client as any).lastError = null;
+			render(<Settings core={client} />);
+			await waitForSettingsLoaded();
+			fireEvent.click(screen.getByText('Connection'));
+			await vi.waitFor(() => {
+				expect(screen.getByText('ws://localhost:8080/ws')).toBeDefined();
+				expect(screen.getByText('Connected')).toBeDefined();
+			});
+		});
+		it('shows token warning when no token in URL', async () => {
+			const client = createMockClient({ 'config.list': [] });
+			(client as any).wsUrl = 'ws://remote:8080/ws';
+			(client as any).lastError = null;
+			render(<Settings core={client} />);
+			await waitForSettingsLoaded();
+			fireEvent.click(screen.getByText('Connection'));
+			await vi.waitFor(() => {
+				expect(screen.getByText('Not present')).toBeDefined();
+				expect(screen.getByText(/No auth token detected/)).toBeDefined();
+			});
+		});
+		it('shows token present when token in URL', async () => {
+			const client = createMockClient({ 'config.list': [] });
+			(client as any).wsUrl = 'ws://remote:8080/ws?token=secret';
+			(client as any).lastError = null;
+			render(<Settings core={client} />);
+			await waitForSettingsLoaded();
+			fireEvent.click(screen.getByText('Connection'));
+			await vi.waitFor(() => {
+				expect(screen.getByText('Present')).toBeDefined();
+				expect(screen.getByText(/Auth token is being sent/)).toBeDefined();
+			});
+		});
+	});
+
 	describe('Logs page', () => {
 		it('calls logs.tail on Core Logs tab', async () => {
 			const client = createMockClient({

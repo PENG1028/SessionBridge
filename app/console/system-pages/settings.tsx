@@ -1,12 +1,12 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, ShieldCheck, ShieldAlert, Globe, Lock, Unlock } from 'lucide-react';
 import type { CoreClient, ConfigEntry, UpdateSource, UpdatePolicy, UpdateStatus } from '../core/core-types';
 import { PageLoading, PageError, PageOffline, type PageState } from './page-utils';
 import { listFromResponse } from './core-response-utils';
 
-type SettingsCategory = 'general' | 'core' | 'node' | 'plugins' | 'access-control' | 'update';
+type SettingsCategory = 'general' | 'core' | 'node' | 'plugins' | 'access-control' | 'connection' | 'update';
 
 const CATEGORIES: { id: SettingsCategory; label: string }[] = [
   { id: 'general', label: 'General' },
@@ -14,6 +14,7 @@ const CATEGORIES: { id: SettingsCategory; label: string }[] = [
   { id: 'node', label: 'Node' },
   { id: 'plugins', label: 'Plugins' },
   { id: 'access-control', label: 'Access Control' },
+  { id: 'connection', label: 'Connection' },
   { id: 'update', label: 'Update' },
 ];
 
@@ -452,6 +453,76 @@ export function Settings({ core }: SettingsProps) {
               )}
             </div>
           </div>
+        ) : activeCategory === 'connection' ? (
+          <div className="flex-1 p-4 overflow-y-auto">
+            <h2 className="text-[10px] font-mono text-gray-300 mb-3">Connection</h2>
+            <div className="space-y-3 max-w-2xl">
+              <section className="p-3 bg-[#111] rounded border border-gray-800">
+                <h3 className="text-[10px] font-mono text-gray-200 mb-2">Connection Status</h3>
+                <div className="space-y-2 text-[10px]">
+                  <div className="flex items-center gap-2">
+                    {core.isConnected ? (
+                      <ShieldCheck size={14} className="text-emerald-400" />
+                    ) : (
+                      <ShieldAlert size={14} className="text-red-400" />
+                    )}
+                    <span className="text-gray-400">Status:</span>
+                    <span className={core.isConnected ? 'text-emerald-400' : 'text-red-400'}>
+                      {core.isConnected ? 'Connected' : 'Disconnected'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 block mb-0.5">WebSocket URL:</span>
+                    <code className="font-mono text-[9px] text-gray-300 break-all bg-black px-2 py-1 rounded block">{core.wsUrl}</code>
+                  </div>
+                  <DetailRow label="Plugin ID" value={core.pluginId} />
+                  {core.lastError && <DetailRow label="Last Error" value={core.lastError} />}
+                </div>
+              </section>
+
+              <section className="p-3 bg-[#111] rounded border border-gray-800">
+                <h3 className="text-[10px] font-mono text-gray-200 mb-2">Authentication</h3>
+                <div className="space-y-2 text-[10px]">
+                  <div className="flex items-center gap-2">
+                    {core.wsUrl.includes('token=') ? (
+                      <Lock size={14} className="text-emerald-400" />
+                    ) : (
+                      <Unlock size={14} className="text-yellow-400" />
+                    )}
+                    <span className="text-gray-400">Token in URL:</span>
+                    <span className={core.wsUrl.includes('token=') ? 'text-emerald-400' : 'text-yellow-400'}>
+                      {core.wsUrl.includes('token=') ? 'Present' : 'Not present'}
+                    </span>
+                  </div>
+                  <div className="bg-[#1a1a1a] rounded p-2 text-gray-500">
+                    {core.wsUrl.includes('token=') ? (
+                      <span className="text-emerald-400">Auth token is being sent via WebSocket URL.</span>
+                    ) : (
+                      <span className="text-yellow-400">No auth token detected in WebSocket URL. Connections to remote nodes without a token will be rejected if the remote requires authentication.</span>
+                    )}
+                  </div>
+                </div>
+              </section>
+
+              <section className="p-3 bg-[#111] rounded border border-gray-800">
+                <h3 className="text-[10px] font-mono text-gray-200 mb-2">Security Notes</h3>
+                <ul className="space-y-1.5 text-[10px] text-gray-500">
+                  <li className="flex items-start gap-2">
+                    <Globe size={12} className="mt-0.5 flex-shrink-0 text-purple-400" />
+                    <span>Use <code className="text-purple-400 text-[9px]">SESSIONNODE_TOKEN</code> environment variable to set an auth token on the Go Core side.</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <Globe size={12} className="mt-0.5 flex-shrink-0 text-purple-400" />
+                    <span>The token is validated at WebSocket upgrade time. Without a token, the server runs in development mode (no auth).</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <Globe size={12} className="mt-0.5 flex-shrink-0 text-purple-400" />
+                    <span>Peer-to-peer connections use ed25519 challenge-response authentication, not the shared token.</span>
+                  </li>
+                </ul>
+              </section>
+            </div>
+          </div>
         ) : (
           <div className="flex-1 p-4 overflow-y-auto">
             <h2 className="text-[10px] font-mono text-gray-300 mb-3">
@@ -509,6 +580,15 @@ export function Settings({ core }: SettingsProps) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex gap-2">
+      <span className="text-gray-500 w-20 flex-shrink-0 text-[10px]">{label}:</span>
+      <span className="text-gray-300 text-[10px]">{value}</span>
     </div>
   );
 }

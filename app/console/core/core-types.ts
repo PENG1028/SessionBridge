@@ -225,6 +225,86 @@ export type ConfigGetParams = { key: string };
 export type ConfigSetParams = { key: string; value: unknown; expectedRevision?: number };
 export type ConfigResetParams = { key: string };
 
+// ─── node.identity ──────────────────────────────────────────────
+export interface NodeIdentity {
+  nodeId: string;
+  publicKey: string;
+  fingerprint: string;
+  createdAt: number;
+}
+
+// ─── node.invite ────────────────────────────────────────────────
+export interface NodeInvite {
+  inviteId: string;
+  createdAt: number;
+  expiresAt: number;
+  ttlSeconds: number;
+  trustDurationSeconds: number;
+  localNodeId: string;
+  localFingerprint: string;
+}
+
+export interface NodeInviteCreateResult extends NodeInvite {
+  code: string;
+  localNode: {
+    nodeId: string;
+    fingerprint: string;
+    publicKey: string;
+  };
+}
+
+export interface NodeInviteListResult {
+  invites: NodeInvite[];
+  total: number;
+}
+
+export type NodeInviteCreateParams = {
+  ttlSeconds?: number;
+  trustDurationSeconds?: number;
+  roleHint?: string;
+  nameHint?: string;
+};
+
+export type NodeInviteRevokeParams = {
+  inviteId: string;
+};
+
+export type NodeInviteAcceptParams = {
+  peerUrl: string;
+  code: string;
+  nameHint?: string;
+};
+
+// ─── node.peer ──────────────────────────────────────────────────
+export interface PeerEntry {
+  nodeId: string;
+  name: string;
+  fingerprint: string;
+  addresses: string[];
+  trustExpiresAt: number;
+  autoReconnect: boolean;
+  lastSeen: number;
+  policy: { mode: string };
+  status: string;
+}
+
+export interface NodePeerListResult {
+  peers: PeerEntry[];
+}
+
+export type NodePeerInfoParams = { nodeId: string };
+export type NodePeerRevokeParams = { nodeId: string };
+export type NodePeerDisconnectParams = { nodeId: string };
+export type NodePeerReconnectParams = { nodeId: string };
+
+// ─── node.reachability ──────────────────────────────────────────
+export interface ReachabilityResult {
+  publicReachable: string;
+  inboundPeerAllowed: boolean;
+  outboundOnly: boolean;
+  reason: string;
+}
+
 // ─── node ───────────────────────────────────────────────────────
 export interface NodeInfo {
   nodeId: string;
