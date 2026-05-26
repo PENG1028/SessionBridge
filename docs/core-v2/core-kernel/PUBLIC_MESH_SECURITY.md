@@ -149,3 +149,28 @@ UI pages call these Core capabilities:
 - `node.peer.list` -- show mesh topology
 - `node.peer.revoke` -- remove untrusted peer
 - `node.peer.reconnect` -- force reconnection attempt
+
+## 13. Persistent Peer Lifecycle
+
+Peer relationships established via invite pairing are stored in `trusted_peers.json` and survive Core restarts.
+
+### AutoReconnect semantics
+
+- `node.invite.accept` → `AutoReconnect=true`, peer is added to topology immediately
+- `node.peer.reconnect` → `AutoReconnect=true`, topology connection initiated
+- `node.peer.disconnect` → `AutoReconnect=false`, trust record kept, topology disconnected
+- `node.peer.revoke` → peer removed from trust store and topology, not restored on restart
+
+### Core restart behavior
+
+On startup, the trust store is loaded and each peer with `AutoReconnect=true`, status != revoked/expired, and a non-empty address is automatically restored to the topology layer with `AddOrUpdatePeer`.
+
+### LastSeen
+
+Updated on successful `/peer/ws` handshake. Stored as Unix milliseconds (`time.Now().UnixMilli()`).
+
+### Trust store file
+
+Location: `<dataDir>/trusted_peers.json`
+Permissions: `0600`
+Format: JSON with `peers[]` array, each entry containing nodeId, publicKey, fingerprint, addresses, trustExpiresAt, autoReconnect, status, lastSeen, policy.

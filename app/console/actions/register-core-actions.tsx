@@ -53,7 +53,7 @@ function def(
 // These are core workbench actions, not owned by any adapter/plugin.
 // ══════════════════════════════════════════════════════════════
   registerAction(def('host.settings.open', 'Settings',
-    ['commandPalette'],
+    ['commandPalette', 'header.right'],
     (ctx) => ctx.openSettings(),
     { icon: 'settings', shortcut: '⌘,', order: 40, category: 'Host' },
   ));

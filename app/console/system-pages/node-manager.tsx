@@ -43,6 +43,7 @@ export function NodeManager({ core }: NodeManagerProps) {
   const [acceptCode, setAcceptCode] = useState('');
   const [acceptInviting, setAcceptInviting] = useState(false);
   const [acceptError, setAcceptError] = useState<string | null>(null);
+  const [acceptNameHint, setAcceptNameHint] = useState('');
 
   // Invite create loading state
   const [createInviting, setCreateInviting] = useState(false);
@@ -167,10 +168,12 @@ export function NodeManager({ core }: NodeManagerProps) {
       await core.call<unknown>('node.invite.accept', {
         peerUrl: acceptPeerUrl,
         code: acceptCode,
+        nameHint: acceptNameHint || undefined,
       });
       setShowAcceptInvite(false);
       setAcceptPeerUrl('');
       setAcceptCode('');
+      setAcceptNameHint('');
       await fetchPeers();
     } catch (err) {
       setAcceptError(err instanceof Error ? err.message : 'Failed to accept invite');
@@ -214,6 +217,7 @@ export function NodeManager({ core }: NodeManagerProps) {
     }
   }
 
+  // Invite code is only written to clipboard -- never console.log'd to avoid leaking secrets.
   function copyCode() {
     if (createdCode) {
       navigator.clipboard.writeText(createdCode);
@@ -350,6 +354,16 @@ export function NodeManager({ core }: NodeManagerProps) {
 
     return (
       <>
+        <div className="flex gap-2 mb-2">
+          <button onClick={() => setActiveTab('invites')}
+            className="text-[9px] px-2 py-1 rounded border border-gray-700 hover:border-purple-500 text-gray-400 hover:text-gray-200 transition-colors">
+            Connect with Invite
+          </button>
+          <button onClick={fetchPeers}
+            className="text-[9px] px-2 py-1 rounded border border-gray-700 hover:border-gray-500 text-gray-400 hover:text-gray-200 transition-colors">
+            <RefreshCw size={10} className="inline mr-1" /> Refresh Peers
+          </button>
+        </div>
         {peers.length === 0 ? (
           <PageEmpty title="No trusted peers" description="Use the Invites tab to create an invite or accept one from another node." />
         ) : (
@@ -366,8 +380,30 @@ export function NodeManager({ core }: NodeManagerProps) {
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-gray-200">{peer.name || peer.nodeId}</span>
                       <span className="text-[9px] text-gray-500 bg-[#1a1a1a] px-1.5 py-0.5 rounded">{peer.status}</span>
+                      {peer.autoReconnect === true && (
+                        <span className="text-[9px] text-gray-600">[auto]</span>
+                      )}
                     </div>
                     <div className="text-[9px] text-gray-500 mt-0.5 font-mono">{peer.nodeId}</div>
+                    {(peer.lastSeen != null || peer.trustExpiresAt != null) ? (
+                      <div className="text-[9px] text-gray-500 mt-0.5">
+                        {peer.lastSeen != null && (
+                          <span>{peer.lastSeen === 0 ? 'Never' : (() => {
+                            const diff = Date.now() - peer.lastSeen;
+                            if (diff < 60000) return 'just now';
+                            if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+                            if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+                            return new Date(peer.lastSeen).toLocaleDateString();
+                          })()}</span>
+                        )}
+                        {peer.lastSeen != null && peer.trustExpiresAt != null && (
+                          <span> &middot; </span>
+                        )}
+                        {peer.trustExpiresAt != null && (
+                          <span>{peer.trustExpiresAt > 0 ? `expires ${new Date(peer.trustExpiresAt).toLocaleDateString()}` : 'permanent'}</span>
+                        )}
+                      </div>
+                    ) : null}
                   </div>
                   <div className="flex items-center gap-1">
                     <button onClick={() => handleReconnectPeer(peer.nodeId)} disabled={peerActions[peer.nodeId]?.loading}
@@ -378,7 +414,7 @@ export function NodeManager({ core }: NodeManagerProps) {
                       className="text-[9px] px-2 py-1 rounded bg-yellow-900/20 text-yellow-400 hover:bg-yellow-900/40 transition-colors disabled:opacity-50">
                       Disconnect
                     </button>
-                    <button onClick={() => handleRevokePeer(peer.nodeId)} disabled={peerActions[peer.nodeId]?.loading}
+                    <button onClick={() => { if (window.confirm('Are you sure you want to revoke peer ' + peer.name + '?')) { handleRevokePeer(peer.nodeId); } }} disabled={peerActions[peer.nodeId]?.loading}
                       className="text-[9px] px-2 py-1 rounded bg-red-900/20 text-red-400 hover:bg-red-900/40 transition-colors disabled:opacity-50">
                       Revoke
                     </button>
@@ -484,13 +520,18 @@ export function NodeManager({ core }: NodeManagerProps) {
                 <input type="text" value={acceptCode} onChange={e => setAcceptCode(e.target.value)}
                   className="w-48 px-2 py-1 bg-[#1a1a1a] border border-gray-700 rounded text-[10px] text-gray-200 font-mono focus:border-purple-500 outline-none" />
               </div>
+              <div>
+                <label className="text-[9px] text-gray-500 block mb-0.5">Name Hint</label>
+                <input type="text" value={acceptNameHint} onChange={e => setAcceptNameHint(e.target.value)} placeholder="optional"
+                  className="w-28 px-2 py-1 bg-[#1a1a1a] border border-gray-700 rounded text-[10px] text-gray-200 focus:border-purple-500 outline-none placeholder:text-gray-600" />
+              </div>
             </div>
             <div className="flex gap-2">
               <button onClick={handleAcceptInvite} disabled={acceptInviting || !acceptPeerUrl || !acceptCode}
                 className="px-3 py-1 rounded bg-emerald-900/20 text-emerald-400 hover:bg-emerald-900/40 text-[10px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                 {acceptInviting ? 'Accepting...' : 'Accept'}
               </button>
-              <button onClick={() => setShowAcceptInvite(false)}
+              <button onClick={() => { setShowAcceptInvite(false); setAcceptNameHint(''); }}
                 className="px-3 py-1 rounded text-gray-500 hover:text-gray-300 text-[10px] transition-colors">
                 Cancel
               </button>
@@ -507,7 +548,7 @@ export function NodeManager({ core }: NodeManagerProps) {
         ) : (
           <div className="space-y-1.5">
             {invites.map(inv => {
-              const expired = inv.expiresAt * 1000 < Date.now();
+              const expired = inv.expiresAt < Date.now();
               return (
                 <div key={inv.inviteId} className={`flex items-center gap-3 px-3 py-2 rounded border text-[10px] ${
                   expired ? 'border-gray-800/50 bg-[#0d0d0d] opacity-60' : 'border-gray-800 bg-[#111]'
@@ -516,7 +557,7 @@ export function NodeManager({ core }: NodeManagerProps) {
                   <div className="flex-1 min-w-0">
                     <div className="font-mono text-gray-200">{inv.inviteId}</div>
                     <div className="text-[9px] text-gray-500">
-                      expires {new Date(inv.expiresAt * 1000).toLocaleString()}
+                      expires {new Date(inv.expiresAt).toLocaleString()}
                       {inv.trustDurationSeconds > 0 ? ` · trust: ${inv.trustDurationSeconds}s` : ' · permanent trust'}
                     </div>
                   </div>
@@ -576,7 +617,7 @@ export function NodeManager({ core }: NodeManagerProps) {
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full flex-shrink-0 bg-emerald-500" />
               <span className="text-gray-400">WebSocket:</span>
-              <span className="font-mono text-gray-300">{core.wsUrl}</span>
+              <span className="font-mono text-gray-300">{core.wsUrl ? core.wsUrl.split('?')[0] : '-'}</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full flex-shrink-0 bg-emerald-500" />

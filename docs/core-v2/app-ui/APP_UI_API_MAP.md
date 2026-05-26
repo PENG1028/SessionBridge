@@ -172,6 +172,27 @@ action.*      操作审计
 | `node.peer.revoke` | `{ nodeId }` | 撤销信任并断开连接 |
 | `node.reachability.check` | — | 可公网访问性检查 |
 
+### 2.13 node — Peer Lifecycle Semantics
+
+Detailed semantics for peer lifecycle management capabilities:
+
+#### node.invite.accept
+- **Input**: `{ peerUrl: string, code: string, nameHint?: string }`
+- **Output**: `{ status: "accepted", peer: { nodeId, publicKey, fingerprint, addresses, trustExpiresAt, policy } }`
+- **Semantics**: HTTP POST to remote peer's `/peer/invite/accept` with local identity. Remote stores local peer in trust store. Local stores remote peer with AutoReconnect=true. Topology is signaled to connect.
+
+#### node.peer.disconnect
+- **Input**: `{ nodeId: string }`
+- **Semantics**: Disconnects topology, sets AutoReconnect=false, persists to trust store.
+
+#### node.peer.reconnect
+- **Input**: `{ nodeId: string }`
+- **Semantics**: Sets AutoReconnect=true, persists to trust store, initiates topology connection. Returns error if peer is revoked or expired.
+
+#### node.peer.revoke
+- **Input**: `{ nodeId: string }`
+- **Semantics**: Removes from topology and trust store. Not restored on restart.
+
 ### 2.x update — 自更新状态与计划
 
 | 规范命名 | 参数 | 用途 |

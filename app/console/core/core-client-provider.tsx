@@ -25,6 +25,8 @@ interface CoreClientProviderProps {
   forceOffline?: boolean;
   /** Mock data maps method name -> result for offline mode. */
   mockData?: Record<string, unknown>;
+  /** Increment to trigger reconnection with current wsUrl/token. */
+  reconnectKey?: number;
 }
 
 export function CoreClientProvider({
@@ -33,6 +35,7 @@ export function CoreClientProvider({
   token,
   forceOffline = false,
   mockData,
+  reconnectKey = 0,
 }: CoreClientProviderProps) {
   const [status, setStatus] = useState<CoreConnectionStatus>('connecting');
   const [core, setCore] = useState<CoreClient>(() =>
@@ -63,7 +66,7 @@ export function CoreClientProvider({
       unsubStatus();
       instance.disconnect();
     };
-  }, [wsUrl, token, forceOffline]);
+  }, [wsUrl, token, forceOffline, reconnectKey]);
 
   // eslint-disable-next-line react-perf/jsx-no-new-object-as-prop
   const value = { core, status, isOffline };

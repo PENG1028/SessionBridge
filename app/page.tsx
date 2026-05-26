@@ -253,17 +253,20 @@ export default function Page() {
  */
 function PageContent() {
   const defaultUrl = typeof window !== 'undefined'
-    ? `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}`
-    : 'ws://localhost:8080';
+    ? location.port === '3000'
+      ? 'ws://localhost:8080/ws'
+      : `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}`
+    : 'ws://localhost:8080/ws';
   const params = typeof window !== 'undefined' ? new URL(window.location.href).searchParams : new URLSearchParams();
   const urlParam = params.get('url');
   const tokenParam = params.get('token');
   const [wsUrl, setWsUrl] = useState(() => urlParam || defaultUrl);
   const [token, setToken] = useState<string | undefined>(tokenParam || undefined);
+  const [reconnectKey, setReconnectKey] = useState(0);
 
   return (
-    <CoreClientProvider wsUrl={wsUrl} token={token} forceOffline={false}>
-      <AppCore wsUrl={wsUrl} setWsUrl={setWsUrl} token={token} setToken={setToken} />
+    <CoreClientProvider wsUrl={wsUrl} token={token} forceOffline={false} reconnectKey={reconnectKey}>
+      <AppCore wsUrl={wsUrl} setWsUrl={setWsUrl} token={token} setToken={setToken} onReconnect={() => setReconnectKey(k => k + 1)} />
     </CoreClientProvider>
   );
 }
@@ -273,9 +276,10 @@ interface AppCoreProps {
   setWsUrl: (url: string) => void;
   token: string | undefined;
   setToken: (token: string | undefined) => void;
+  onReconnect: () => void;
 }
 
-function AppCore({ wsUrl, setWsUrl, token, setToken }: AppCoreProps) {
+function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps) {
   // ── Page access mode: LOCAL (localhost) vs VIEW (remote) ──
   // Use state + effect to avoid SSR/CSR hydration mismatch
   const [isLocalPage, setIsLocalPage] = useState(false);
@@ -2200,6 +2204,11 @@ function AppCore({ wsUrl, setWsUrl, token, setToken }: AppCoreProps) {
         onCloseContextMenu={closeContextMenu}
         settingsOpen={settingsOpen}
         onCloseSettings={() => setSettingsOpen(false)}
+        wsUrl={wsUrl}
+        token={token}
+        onWsUrlChange={setWsUrl}
+        onTokenChange={setToken}
+        onReconnect={onReconnect}
       />
 
       <KeyHintOverlay whenContext={focusWhenContext} onCommand={handlePaletteSelect} />
