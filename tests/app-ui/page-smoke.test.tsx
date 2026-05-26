@@ -361,16 +361,140 @@ describe('Nodes page', () => {
 				expect(screen.getByText(/No auth token detected/)).toBeDefined();
 			});
 		});
-		it('shows token present when token in URL', async () => {
-			const client = createMockClient({ 'config.list': [] });
-			(client as any).wsUrl = 'ws://remote:8080/ws?token=secret';
-			(client as any).lastError = null;
-			render(<Settings core={client} />);
+
+	});
+
+	describe('Settings: token safety', () => {
+		async function waitForSettingsLoaded() {
+			await vi.waitFor(() => {
+				expect(screen.getByText('General')).toBeDefined();
+			});
+		}
+
+		it('does not render raw token when token is present', async () => {
+			const core = createMockClient({ 'config.list': [] });
+			(core as any).hasToken = true;
+			(core as any).authMode = 'token';
+			const { container } = render(<Settings core={core} />);
 			await waitForSettingsLoaded();
 			fireEvent.click(screen.getByText('Connection'));
+			await vi.waitFor(() => expect(screen.getByText('Present')).toBeDefined());
+			const html = container.innerHTML;
+			expect(html).not.toContain('token=');
+			expect(html).not.toContain('Bearer ');
+		});
+
+		it('shows "Not present" when hasToken is false', async () => {
+			const core = createMockClient({ 'config.list': [] });
+			(core as any).hasToken = false;
+			(core as any).authMode = 'none';
+			render(<Settings core={core} />);
+			await waitForSettingsLoaded();
+			fireEvent.click(screen.getByText('Connection'));
+			await vi.waitFor(() => expect(screen.getByText('Not present')).toBeDefined());
+		});
+	});
+
+	describe('NodeManager: token safety', () => {
+		it('does not render raw token in DOM', async () => {
+			const core = createMockClient({ 'config.list': [] });
+			(core as any).hasToken = true;
+			(core as any).authMode = 'token';
+			const { container } = render(<NodeManager core={core} />);
+			await vi.waitFor(() => expect(screen.getByText('Reachability')).toBeDefined());
+			fireEvent.click(screen.getByText('Reachability'));
+			const html = container.innerHTML;
+			expect(html).not.toContain('token=');
+		});
+	});
+
+	describe('NodeManager: Accept Invite', () => {
+		it('accept button is disabled when inputs are empty', async () => {
+			const core = createMockClient({
+				'node.identity.get': { nodeId: 'local', publicKey: 'key', fingerprint: 'fp', createdAt: 0 },
+				'node.peer.list': { peers: [] },
+				'node.invite.list': { invites: [], total: 0 },
+				'node.reachability.check': {
+					publicReachable: 'unknown', inboundPeerAllowed: false, outboundOnly: true, reason: 'loopback',
+				},
+			});
+			(core as any).hasToken = true;
+			(core as any).authMode = 'token';
+			render(<NodeManager core={core} />);
+			await vi.waitFor(() => expect(screen.getByText('Invites')).toBeDefined());
+			fireEvent.click(screen.getByText('Invites'));
+			fireEvent.click(screen.getByText('Accept Invite'));
 			await vi.waitFor(() => {
-				expect(screen.getByText('Present')).toBeDefined();
-				expect(screen.getByText(/Auth token is being sent/)).toBeDefined();
+				const acceptSubmitBtns = screen.getAllByText('Accept').filter(
+					btn => btn.tagName === 'BUTTON'
+				);
+				expect(acceptSubmitBtns.length).toBeGreaterThanOrEqual(1);
+				const acceptBtn = acceptSubmitBtns[0] as HTMLButtonElement;
+				if (acceptBtn) {
+					expect(acceptBtn.disabled).toBe(true);
+				}
+			});
+		});
+	});
+
+	describe('NodeManager: Reachability display', () => {
+		it('renders inboundPeerAllowed dot correctly', async () => {
+			const core = createMockClient({
+				'node.identity.get': { nodeId: 'local', publicKey: 'key', fingerprint: 'fp', createdAt: 0 },
+				'node.peer.list': { peers: [] },
+				'node.invite.list': { invites: [], total: 0 },
+				'node.reachability.check': {
+					publicReachable: 'unknown',
+					inboundPeerAllowed: false,
+					outboundOnly: true,
+					reason: 'loopback address',
+				},
+			});
+			(core as any).hasToken = false;
+			(core as any).authMode = 'none';
+			const { container } = render(<NodeManager core={core} />);
+			await vi.waitFor(() => expect(screen.getByText('Reachability')).toBeDefined());
+			fireEvent.click(screen.getByText('Reachability'));
+			await vi.waitFor(() => {
+				expect(container.innerHTML).toContain('bg-gray-600');
+			});
+		});
+	});
+
+	describe('NodeManager: Peer row actions', () => {
+		it('renders reconnect/disconnect/revoke buttons for peers', async () => {
+			const mockPeers = {
+				peers: [
+					{
+						nodeId: 'peer-1',
+						name: 'Peer One',
+						fingerprint: 'abc123',
+						addresses: ['ws://host:8080/peer/ws'],
+						status: 'connected',
+						lastSeen: Date.now(),
+						trustExpiresAt: 0,
+						autoReconnect: true,
+						policy: { mode: 'full' },
+					},
+				],
+			};
+			const core = createMockClient({
+				'node.identity.get': { nodeId: 'local', publicKey: 'key', fingerprint: 'fp', createdAt: 0 },
+				'node.peer.list': mockPeers,
+				'node.invite.list': { invites: [], total: 0 },
+				'node.reachability.check': {
+					publicReachable: 'unknown', inboundPeerAllowed: false, outboundOnly: true, reason: 'loopback',
+				},
+			});
+			(core as any).hasToken = false;
+			(core as any).authMode = 'none';
+			render(<NodeManager core={core} />);
+			await vi.waitFor(() => expect(screen.getByText('Peers')).toBeDefined());
+			fireEvent.click(screen.getByText('Peers'));
+			await vi.waitFor(() => {
+				expect(screen.getByText('Reconnect')).toBeDefined();
+				expect(screen.getByText('Disconnect')).toBeDefined();
+				expect(screen.getByText('Revoke')).toBeDefined();
 			});
 		});
 	});
@@ -497,6 +621,10 @@ function createApprovalCenterMock(mockData?: Record<string, unknown>) {
 
   const client: CoreClient & { emit: (event: string, data: CoreEvent) => void; setConnected: (v: boolean) => void } = {
     pluginId: 'test-core',
+    wsUrl: 'ws://localhost:8080/ws',
+    lastError: null,
+    hasToken: false,
+    authMode: 'none' as const,
     get isConnected() { return connected; },
     call,
     on: vi.fn((event: string, handler: (data: CoreEvent) => void) => {

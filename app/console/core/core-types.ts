@@ -405,6 +405,8 @@ export interface CoreClient {
   readonly isConnected: boolean;
   readonly wsUrl: string;
   readonly lastError: string | null;
+  readonly hasToken: boolean;
+  readonly authMode: 'token' | 'none';
 }
 
 // ─── CoreClient status ──────────────────────────────────────────

@@ -484,18 +484,18 @@ export function Settings({ core }: SettingsProps) {
                 <h3 className="text-[10px] font-mono text-gray-200 mb-2">Authentication</h3>
                 <div className="space-y-2 text-[10px]">
                   <div className="flex items-center gap-2">
-                    {core.wsUrl.includes('token=') ? (
+                    {core.hasToken ? (
                       <Lock size={14} className="text-emerald-400" />
                     ) : (
                       <Unlock size={14} className="text-yellow-400" />
                     )}
                     <span className="text-gray-400">Token in URL:</span>
-                    <span className={core.wsUrl.includes('token=') ? 'text-emerald-400' : 'text-yellow-400'}>
-                      {core.wsUrl.includes('token=') ? 'Present' : 'Not present'}
+                    <span className={core.hasToken ? 'text-emerald-400' : 'text-yellow-400'}>
+                      {core.hasToken ? 'Present' : 'Not present'}
                     </span>
                   </div>
                   <div className="bg-[#1a1a1a] rounded p-2 text-gray-500">
-                    {core.wsUrl.includes('token=') ? (
+                    {core.hasToken ? (
                       <span className="text-emerald-400">Auth token is being sent via WebSocket URL.</span>
                     ) : (
                       <span className="text-yellow-400">No auth token detected in WebSocket URL. Connections to remote nodes without a token will be rejected if the remote requires authentication.</span>

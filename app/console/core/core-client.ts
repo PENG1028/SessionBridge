@@ -20,6 +20,9 @@ export interface CoreClientConfig {
 export class CoreClientImpl implements CoreClient {
   readonly pluginId: string;
   readonly wsUrl: string;
+  readonly hasToken: boolean;
+  readonly authMode: 'token' | 'none';
+  private _connectUrl: string;
   private _callTimeout: number;
   private _reconnectInterval: number;
   private _maxReconnectAttempts: number;
@@ -37,14 +40,38 @@ export class CoreClientImpl implements CoreClient {
 
   constructor(config: CoreClientConfig) {
     this.pluginId = config.pluginId;
+    this.hasToken = !!config.token;
+    this.authMode = config.token ? 'token' : 'none';
+
     let baseUrl = config.wsUrl || (typeof window !== 'undefined' ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws` : 'ws://localhost:8080/ws');
+
+    // Build real connect URL with token
+    this._connectUrl = baseUrl;
     if (config.token) {
-      baseUrl += (baseUrl.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(config.token);
+      this._connectUrl += (baseUrl.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(config.token);
     }
-    this.wsUrl = baseUrl;
+
+    // Sanitize wsUrl for display — strip any token
+    this.wsUrl = this._sanitizeUrl(baseUrl);
+
     this._callTimeout = config.callTimeout ?? 10_000;
     this._reconnectInterval = config.reconnectInterval ?? 5_000;
     this._maxReconnectAttempts = config.maxReconnectAttempts ?? -1;
+  }
+
+  /**
+   * Strip token query parameter from a URL string for safe display.
+   * The token is NEVER rendered in the DOM — only _connectUrl contains it.
+   */
+  private _sanitizeUrl(url: string): string {
+    const tokenIdx = url.indexOf('token=');
+    if (tokenIdx === -1) return url;
+    const prefix = url.substring(0, tokenIdx);
+    const suffix = url.substring(tokenIdx);
+    const ampIdx = suffix.indexOf('&');
+    const cleanSuffix = ampIdx >= 0 ? suffix.substring(ampIdx) : '';
+    const result = prefix + (cleanSuffix.startsWith('&') ? cleanSuffix : '');
+    return result.endsWith('?') ? result.slice(0, -1) : result;
   }
 
   get isConnected(): boolean {
@@ -113,6 +140,8 @@ export class CoreClientImpl implements CoreClient {
       get isConnected() { return host.isConnected; },
       get wsUrl() { return host.wsUrl; },
       get lastError() { return host.lastError; },
+      get hasToken() { return host.hasToken; },
+      get authMode() { return host.authMode; },
       call: <T>(method: string, params?: Record<string, unknown>) => host._callAs(pluginId, method, params),
       on: (event: string, handler: (data: CoreEvent) => void) => host.on(event, handler),
       once: (event: string, handler: (data: CoreEvent) => void) => host.once(event, handler),
@@ -170,7 +199,7 @@ export class CoreClientImpl implements CoreClient {
     this._setStatus('connecting');
 
     try {
-      const ws = new WebSocket(this.wsUrl);
+      const ws = new WebSocket(this._connectUrl);
       ws.onopen = () => {
         this._reconnectAttempts = 0;
         this._lastError = null;
@@ -296,6 +325,8 @@ class MockCoreClient implements CoreClient {
   readonly isConnected: boolean;
   readonly wsUrl: string = 'ws://localhost:8080/ws';
   readonly lastError: string | null = null;
+  readonly hasToken: boolean = false;
+  readonly authMode: 'token' | 'none' = 'none';
   private _listeners = new Map<string, Set<(data: CoreEvent) => void>>();
 
   constructor(mockData?: Record<string, unknown>, pluginId = 'sessionnode-core', connected = false) {

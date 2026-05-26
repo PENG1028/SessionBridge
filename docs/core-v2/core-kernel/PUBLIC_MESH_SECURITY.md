@@ -11,19 +11,34 @@
 ## 2. Endpoint Architecture
 
 ### Control WS (`/ws`)
-- Purpose: UI clients, local tools, browser panels
+- Purpose: UI clients, local tools, browser panels — App UI / browser / control clients
 - Actor type: always "web" (set server-side, not from client)
 - **Client-supplied `actorType=node` is BLOCKED** -- returns ACTOR_TYPE_NODE_BLOCKED
 - Authentication: SESSIONNODE_TOKEN (or dev mode -- no token)
 - Token validated at WebSocket **upgrade time** (HTTP 401 before WS upgrade if missing/wrong)
+- Token can be provided via `?token=` query parameter or `Authorization: Bearer` header
+- If `SESSIONNODE_TOKEN` is empty, the server runs in development mode (no auth)
 - After authenticated upgrade, dispatch-level auth auto-populates actor token
-- Public address + empty token triggers startup warning (override with SESSIONNODE_ALLOW_INSECURE=1)
+- Public bind (0.0.0.0, `::`, non-loopback IP) with empty token is **FATAL** unless `SESSIONNODE_ALLOW_INSECURE=1`
+- Public address + empty token triggers startup error (process exits), overridable with SESSIONNODE_ALLOW_INSECURE=1
+- Localhost/loopback with empty token allowed (development mode)
 
 ### Peer WS (`/peer/ws`)
 - Purpose: Core-to-Core mesh connections
 - Actor type: always "node" (set server-side after handshake)
 - Requires full peer handshake (see Section 3)
-- Uses ed25519 identity + trust store for authentication
+- Uses **ed25519 challenge-response** authentication (not shared token)
+- Validates against local TrustStore
+- **Server-side actor type enforcement**: clients cannot claim actorType=node
+
+### Invite Accept (`/peer/invite/accept`)
+- HTTP POST endpoint for cross-node pairing
+- One-time invite code as credential (short-lived, validated via InviteStore.Consume)
+- Consumes the invite on successful validation to prevent replay/reuse
+- Stores the requester in the local TrustStore with ed25519 public key
+- Returns the local node's public identity (nodeId, publicKey, fingerprint)
+- Does NOT use shared SESSIONNODE_TOKEN
+- Invite codes must not appear in logs
 
 ## 3. Peer Handshake Protocol
 
@@ -81,7 +96,22 @@
 | Invite code replay | Single-use code, expired after TTL |
 | Trust expiration | Expired peers rejected during handshake |
 
-## 8. What Is NOT Implemented
+## 8. UI Token Safety
+
+- UI never displays raw token value
+- `CoreClient.wsUrl` is sanitized (token stripped for display/logging)
+- `CoreClient.hasToken` / `authMode` boolean used for UI state (not token value)
+- Settings page shows "Present" / "Not present" instead of the token value
+- `lastError` must never contain the token in error messages
+
+## 9. Public Bind Safety
+
+- Public address (0.0.0.0, `::`, non-loopback IP) combined with empty SESSIONNODE_TOKEN causes process to exit with error
+- `SESSIONNODE_ALLOW_INSECURE=1` overrides the safety check but prints a strong warning at startup
+- Localhost/loopback addresses with empty token are allowed (development mode)
+- This protects against accidental exposure of an unauthenticated node to the public internet
+
+## 10. What Is NOT Implemented
 
 - Per-node capability matrix
 - User/team/view permissions
@@ -92,7 +122,7 @@
 - Invite approval workflow (join.request/approve)
 - Product role model (Relay/Leaf/View)
 
-## 9. UI Integration
+## 11. UI Integration
 
 UI pages call these Core capabilities:
 - `node.identity.get` -- display local node identity

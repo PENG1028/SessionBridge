@@ -98,7 +98,7 @@ action.*      操作审计
 
 | 规范命名 | 别名（已废弃） | 参数 | 用途 | 页面 |
 |---------|-------------|------|------|------|
-| `plugin.list` | — | `{ nodeId?, status? }` | 插件列表 | Dashboard, Plugins |
+| `plugin.list` | — | `{ nodeId?, status? }` | 插件列表，响应包含 `capabilities` 字段（string[]） | Dashboard, Plugins |
 | `plugin.get` | — | `{ pluginId }` | 插件详情 | Plugin Detail |
 | `plugin.status` | — | `{ pluginId }` | 插件状态 | Plugin Detail |
 | `plugin.enable` | — | `{ pluginId }` | 启用插件 | Plugins |
@@ -287,11 +287,36 @@ The following API names appear in documentation or type definitions but have **n
 - `notify.list`, `notify.markRead`, `notify.markAllRead` — no handlers; use `approval.list` + WS events
 - `logs.export` — not registered
 - `audit.get`, `audit.export` — not registered
-- `session.events`, `session.stop` — not registered; use `session.destroy` for stop
+- `session.events` — not registered
+- `session.stop` — not registered (use `session.destroy`; manifests use `session.destroy`; `session.stop` capability remains in KnownCapabilities for backward compat but has no registered handler)
 - `node.get`, `node.update` — not registered; use `node.info` for get
 - `config.get` (global non-plugin) — not registered; use `config.list`
 - `approval.approve`, `approval.deny` — intentionally not implemented; use `notify.respond`
 
-### 6.8 `plugin.config.set` — Single Key-Value Contract
+### 6.8 Token Safety
+
+- All pages use sanitized `wsUrl` (no token in DOM)
+- Authentication status via `core.hasToken` boolean
+- Settings Connection tab: token presence indicator ("Present" / "Not present"), never token value
+- `CoreClient` uses `authMode` for UI state-based rendering
+
+### 6.9 Mesh Pairing Flow
+
+The user-facing pairing flow for establishing a trusted mesh connection between two nodes:
+
+1. Node A creates invite via `node.invite.create` — gets one-time code
+2. Node B inputs A's `peerUrl` + code in Accept Invite form
+3. Node B's `node.invite.accept` sends HTTP POST to A's `/peer/invite/accept`
+4. Node A validates code, stores B in trust store, returns own identity (nodeId, publicKey, fingerprint)
+5. Node B stores A in trust store, calls `topology.AddOrUpdatePeer` + `topology.ConnectPeer`
+6. Both nodes can now connect via `/peer/ws` using ed25519 handshake
+
+Key properties:
+- Invite code is single-use, short-lived (60s default, max 10m)
+- No shared token involved — bootstrap via invite, then ed25519 identity
+- Trust is mutual — both nodes store each other
+- Invite codes never appear in logs
+
+### 6.10 `plugin.config.set` — Single Key-Value Contract
 
 Core's `plugin.config.set` operates on individual key-value pairs (`{ pluginId, key, value }`), not on entire config objects. The UI's ConfigTab in Plugin Detail iterates over all config entries and saves them individually. Any batch save is best-effort (individual errors are collected).

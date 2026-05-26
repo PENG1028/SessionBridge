@@ -14,7 +14,7 @@ The core plugin (`sessionnode-core`) declares 40 capabilities in `AllPluginsCaps
 | Capability | Status | Handler | Notes |
 |---|---|---|---|
 | `system.info` | ✅ implemented | `systemInfo` | Returns OS, arch, Go version, CPU count, hostname, goroutine count |
-| `plugin.list` | ✅ implemented | `pluginList` | Returns all discovered plugins (built-in + manifest) with status |
+| `plugin.list` | ✅ implemented | `pluginList` | Returns all discovered plugins (built-in + manifest) with status; response now includes `capabilities` field (string[]) |
 | `plugin.get` | ✅ implemented | `pluginGet` | Returns full manifest detail including core and adapters sections |
 | `plugin.info` | ✅ implemented | `pluginInfo` | Returns plugin summary enriched with manifest data |
 | `plugin.status` | ✅ implemented | `pluginStatus` | Returns enabled/disabled/error with manifest error detail |
@@ -201,6 +201,7 @@ These capabilities are registered in `AllPluginsCaps` under non-core plugin IDs.
 | `node.invite.*` | ✅ Declared (R14) | `node.invite.create/list/revoke/accept` all implemented |
 | `node.peer.*` | ✅ Declared (R14) | `node.peer.list/info/reconnect/disconnect/revoke` all implemented |
 | `node.reachability.*` | ✅ Declared (R14) | `node.reachability.check` implemented |
+| `session.stop` | ⏳ Deprecated | `session.stop` remains in KnownCapabilities for backward compat but has no registered handler. The executor registers `session.destroy` instead. All manifests use `session.destroy`. |
 
 ---
 
@@ -232,7 +233,7 @@ Each capability status maps to a specific UI presentation in the Plugin Manager 
 | Version | Manifest | Shown; "0.1.0" for built-in |
 | Status | `plugin.status` | Color-coded: green=enabled, red=error, gray=disabled |
 | Trust Level | Manifest `trusted` field | Shown as trust badge |
-| Capabilities Count | `AllPluginsCaps` | Clickable to expand detail |
+| Capabilities Count | `plugin.list` response `capabilities` field (string[]) | Clickable to expand detail; count reflects `capabilities` field length from `PluginSummary.Capabilities` |
 | Enable/Disable Toggle | `plugin.enable` / `plugin.disable` | Shows only if capability is implemented |
 
 ---
@@ -326,7 +327,7 @@ Each capability status maps to a specific UI presentation in the Plugin Manager 
 |---|---|---|---|
 | Executor unit tests | `executor/executor_test.go` | ~130+ tests | Covers session, stream, process, env, fs, system, node, plugin management (all 40 sessionnode-core caps), 17 `plugin.check` real dependency tests, install lifecycle (plan/execute/uninstall), files register, task management, approval workflow, run index (18 tests) |
 | Server E2E tests | `server/server_test.go` | ~18 tests | Full WebSocket round-trip, access control, history |
-| Registry tests | `permission/registry_test.go` | 4 tests | Capability registry, completeness |
+| Registry tests | `permission/registry_test.go` | 5 tests | Capability registry, completeness, terminal plugin capability in KnownCapabilities |
 | Process manager tests | `process/manager_test.go` | Additional | Process lifecycle, signals, stdin, cleanup |
 | History store tests | `internal/history/store_test.go` | ~55+ tests | Init, record, replay, tail, truncation, clear, disk mode, concurrent access, stdin redaction (6 tests), edge cases |
 | **Total** | | **~170+ tests** | |
@@ -335,7 +336,7 @@ Each capability status maps to a specific UI presentation in the Plugin Manager 
 
 | Capability | Missing Tests | Risk |
 |---|---|---|
-| `plugin.list` | No unit test (tested implicitly via WS) | Low |
+| `plugin.list` | `TestPluginListIncludesCapabilities` — verifies capabilities field in response | Low |
 | `plugin.info` / `plugin.get` | No unit test | Low |
 | `plugin.permissions.list` | No unit test | Low |
 | `plugin.config.schema` | No focused unit test | Low |
@@ -351,7 +352,7 @@ Each capability status maps to a specific UI presentation in the Plugin Manager 
 All handlers are registered in `executor/registry.go` via `registerDefaults()`:
 
 ```
-plugin.list              → pluginList
+plugin.list              → pluginList (response includes `capabilities: string[]`)
 plugin.info              → pluginInfo
 plugin.get               → pluginGet
 plugin.status            → pluginStatus

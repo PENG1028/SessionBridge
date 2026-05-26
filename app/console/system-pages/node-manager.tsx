@@ -41,6 +41,22 @@ export function NodeManager({ core }: NodeManagerProps) {
   const [showAcceptInvite, setShowAcceptInvite] = useState(false);
   const [acceptPeerUrl, setAcceptPeerUrl] = useState('');
   const [acceptCode, setAcceptCode] = useState('');
+  const [acceptInviting, setAcceptInviting] = useState(false);
+  const [acceptError, setAcceptError] = useState<string | null>(null);
+
+  // Invite create loading state
+  const [createInviting, setCreateInviting] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+
+  // Per-peer action states
+  const [peerActions, setPeerActions] = useState<Record<string, { loading?: boolean; error?: string }>>({});
+
+  function setPeerAction(nodeId: string, update: { loading?: boolean; error?: string }) {
+    setPeerActions(prev => ({
+      ...prev,
+      [nodeId]: { ...prev[nodeId], ...update },
+    }));
+  }
 
   async function fetchNodes() {
     if (!core.isConnected) {
@@ -118,6 +134,8 @@ export function NodeManager({ core }: NodeManagerProps) {
   }, [core, fetchIdentity, fetchPeers, fetchInvites, fetchReachability]);
 
   async function handleCreateInvite() {
+    setCreateInviting(true);
+    setCreateError(null);
     try {
       const result = await core.call<{ code: string; inviteId: string }>('node.invite.create', {
         ttlSeconds: parseInt(inviteTtl, 10) || 60,
@@ -127,7 +145,9 @@ export function NodeManager({ core }: NodeManagerProps) {
       setCreatedCode(result.code);
       await fetchInvites();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create invite');
+      setCreateError(err instanceof Error ? err.message : 'Failed to create invite');
+    } finally {
+      setCreateInviting(false);
     }
   }
 
@@ -141,8 +161,10 @@ export function NodeManager({ core }: NodeManagerProps) {
   }
 
   async function handleAcceptInvite() {
+    setAcceptInviting(true);
+    setAcceptError(null);
     try {
-      await core.call('node.invite.accept', {
+      await core.call<unknown>('node.invite.accept', {
         peerUrl: acceptPeerUrl,
         code: acceptCode,
       });
@@ -151,16 +173,44 @@ export function NodeManager({ core }: NodeManagerProps) {
       setAcceptCode('');
       await fetchPeers();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to accept invite');
+      setAcceptError(err instanceof Error ? err.message : 'Failed to accept invite');
+    } finally {
+      setAcceptInviting(false);
+    }
+  }
+
+  async function handleReconnectPeer(nodeId: string) {
+    setPeerAction(nodeId, { loading: true, error: undefined });
+    try {
+      await core.call('node.peer.reconnect', { nodeId });
+    } catch (err) {
+      setPeerAction(nodeId, { error: err instanceof Error ? err.message : 'Failed' });
+    } finally {
+      setPeerAction(nodeId, { loading: false });
+    }
+  }
+
+  async function handleDisconnectPeer(nodeId: string) {
+    setPeerAction(nodeId, { loading: true, error: undefined });
+    try {
+      await core.call<unknown>('node.peer.disconnect', { nodeId });
+      await fetchPeers();
+    } catch (err) {
+      setPeerAction(nodeId, { error: err instanceof Error ? err.message : 'Failed' });
+    } finally {
+      setPeerAction(nodeId, { loading: false });
     }
   }
 
   async function handleRevokePeer(nodeId: string) {
+    setPeerAction(nodeId, { loading: true, error: undefined });
     try {
-      await core.call('node.peer.revoke', { nodeId });
+      await core.call<unknown>('node.peer.revoke', { nodeId });
       await fetchPeers();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to revoke peer');
+      setPeerAction(nodeId, { error: err instanceof Error ? err.message : 'Failed to revoke peer' });
+    } finally {
+      setPeerAction(nodeId, { loading: false });
     }
   }
 
@@ -305,24 +355,39 @@ export function NodeManager({ core }: NodeManagerProps) {
         ) : (
           <div className="space-y-1.5">
             {peers.map(peer => (
-              <div key={peer.nodeId} className="flex items-center gap-3 px-3 py-2 rounded border border-gray-800 bg-[#111] text-[10px]">
-                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                  peer.status === 'connected' ? 'bg-emerald-500' :
-                  peer.status === 'connecting' || peer.status === 'reconnecting' ? 'bg-yellow-500' :
-                  peer.status === 'revoked' || peer.status === 'expired' ? 'bg-red-500' : 'bg-gray-600'
-                }`} />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-gray-200">{peer.name || peer.nodeId}</span>
-                    <span className="text-[9px] text-gray-500 bg-[#1a1a1a] px-1.5 py-0.5 rounded">{peer.status}</span>
+              <React.Fragment key={peer.nodeId}>
+                <div className="flex items-center gap-3 px-3 py-2 rounded border border-gray-800 bg-[#111] text-[10px]">
+                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                    peer.status === 'connected' ? 'bg-emerald-500' :
+                    peer.status === 'connecting' || peer.status === 'reconnecting' ? 'bg-yellow-500' :
+                    peer.status === 'revoked' || peer.status === 'expired' ? 'bg-red-500' : 'bg-gray-600'
+                  }`} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-gray-200">{peer.name || peer.nodeId}</span>
+                      <span className="text-[9px] text-gray-500 bg-[#1a1a1a] px-1.5 py-0.5 rounded">{peer.status}</span>
+                    </div>
+                    <div className="text-[9px] text-gray-500 mt-0.5 font-mono">{peer.nodeId}</div>
                   </div>
-                  <div className="text-[9px] text-gray-500 mt-0.5 font-mono">{peer.nodeId}</div>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => handleReconnectPeer(peer.nodeId)} disabled={peerActions[peer.nodeId]?.loading}
+                      className="text-[9px] px-2 py-1 rounded bg-emerald-900/20 text-emerald-400 hover:bg-emerald-900/40 transition-colors disabled:opacity-50">
+                      Reconnect
+                    </button>
+                    <button onClick={() => handleDisconnectPeer(peer.nodeId)} disabled={peerActions[peer.nodeId]?.loading || peer.status !== 'connected'}
+                      className="text-[9px] px-2 py-1 rounded bg-yellow-900/20 text-yellow-400 hover:bg-yellow-900/40 transition-colors disabled:opacity-50">
+                      Disconnect
+                    </button>
+                    <button onClick={() => handleRevokePeer(peer.nodeId)} disabled={peerActions[peer.nodeId]?.loading}
+                      className="text-[9px] px-2 py-1 rounded bg-red-900/20 text-red-400 hover:bg-red-900/40 transition-colors disabled:opacity-50">
+                      Revoke
+                    </button>
+                  </div>
                 </div>
-                <button onClick={() => handleRevokePeer(peer.nodeId)}
-                  className="text-[9px] px-2 py-1 rounded bg-red-900/20 text-red-400 hover:bg-red-900/40 transition-colors">
-                  Revoke
-                </button>
-              </div>
+                {peerActions[peer.nodeId]?.error && (
+                  <div className="text-[9px] text-red-400 mt-1 ml-3">{peerActions[peer.nodeId].error}</div>
+                )}
+              </React.Fragment>
             ))}
           </div>
         )}
@@ -374,15 +439,18 @@ export function NodeManager({ core }: NodeManagerProps) {
               </div>
             </div>
             <div className="flex gap-2 mt-1">
-              <button onClick={handleCreateInvite}
-                className="px-3 py-1 rounded bg-emerald-900/20 text-emerald-400 hover:bg-emerald-900/40 text-[10px] transition-colors">
-                Generate
+              <button onClick={handleCreateInvite} disabled={createInviting}
+                className="px-3 py-1 rounded bg-emerald-900/20 text-emerald-400 hover:bg-emerald-900/40 text-[10px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                {createInviting ? 'Generating...' : 'Generate'}
               </button>
               <button onClick={() => setShowCreateInvite(false)}
                 className="px-3 py-1 rounded text-gray-500 hover:text-gray-300 text-[10px] transition-colors">
                 Cancel
               </button>
             </div>
+            {createError && (
+              <div className="text-[9px] text-red-400 mt-1">{createError}</div>
+            )}
 
             {/* Created code display */}
             {createdCode && (
@@ -418,15 +486,18 @@ export function NodeManager({ core }: NodeManagerProps) {
               </div>
             </div>
             <div className="flex gap-2">
-              <button onClick={handleAcceptInvite}
-                className="px-3 py-1 rounded bg-emerald-900/20 text-emerald-400 hover:bg-emerald-900/40 text-[10px] transition-colors">
-                Accept
+              <button onClick={handleAcceptInvite} disabled={acceptInviting || !acceptPeerUrl || !acceptCode}
+                className="px-3 py-1 rounded bg-emerald-900/20 text-emerald-400 hover:bg-emerald-900/40 text-[10px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                {acceptInviting ? 'Accepting...' : 'Accept'}
               </button>
               <button onClick={() => setShowAcceptInvite(false)}
                 className="px-3 py-1 rounded text-gray-500 hover:text-gray-300 text-[10px] transition-colors">
                 Cancel
               </button>
             </div>
+            {acceptError && (
+              <div className="text-[9px] text-red-400 mt-1">{acceptError}</div>
+            )}
           </div>
         )}
 
@@ -477,18 +548,18 @@ export function NodeManager({ core }: NodeManagerProps) {
           <h3 className="text-[11px] font-mono text-gray-200 mb-3">Reachability Status</h3>
           <div className="space-y-2 text-[10px]">
             <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full flex-shrink-0 ${
+              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
                 reachability.inboundPeerAllowed ? 'bg-emerald-500' : 'bg-gray-600'
-              }" />
+              }`} />
               <span className="text-gray-400">Inbound peer connections:</span>
               <span className={reachability.inboundPeerAllowed ? 'text-emerald-400' : 'text-gray-500'}>
                 {reachability.inboundPeerAllowed ? 'Allowed' : 'Not allowed'}
               </span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full flex-shrink-0 ${
+              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
                 reachability.outboundOnly ? 'bg-yellow-500' : 'bg-emerald-500'
-              }" />
+              }`} />
               <span className="text-gray-400">Outbound only:</span>
               <span className={reachability.outboundOnly ? 'text-yellow-400' : 'text-gray-500'}>
                 {reachability.outboundOnly ? 'Yes' : 'No'}
