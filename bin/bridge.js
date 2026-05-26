@@ -66,12 +66,18 @@ switch (subcommand) {
     }
     const nextBin = path.join(projectRoot, 'node_modules', '.bin', 'next');
     const nextBinPlatform = process.platform === 'win32' ? nextBin + '.cmd' : nextBin;
-    const child = spawn(nextBinPlatform, ['start', ...process.argv.slice(3)], {
-      cwd: projectRoot,
-      stdio: 'inherit',
-      env: process.env,
-      windowsHide: true,
-    });
+    const child = spawn(
+      process.platform === 'win32' ? 'cmd.exe' : nextBinPlatform,
+      process.platform === 'win32'
+        ? ['/c', nextBinPlatform, 'start', ...process.argv.slice(3)]
+        : ['start', ...process.argv.slice(3)],
+      {
+        cwd: projectRoot,
+        stdio: 'inherit',
+        env: process.env,
+        windowsHide: true,
+      }
+    );
     child.on('exit', (code) => process.exit(code ?? 1));
     break;
   }

@@ -44,6 +44,17 @@ core:
         - process.resize
       default: deny
 
+    - id: terminal.run
+      description: Create and manage run sessions
+      capabilities:
+        - run.create
+        - run.list
+        - run.info
+        - run.stop
+        - run.attach
+        - run.updatePolicy
+      default: ask
+
   environment:
     checks:
       - id: bash
