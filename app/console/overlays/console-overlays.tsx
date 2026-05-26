@@ -54,6 +54,8 @@ interface ConsoleOverlaysProps {
   onWsUrlChange: (url: string) => void;
   onTokenChange: (token: string | undefined) => void;
   onReconnect: () => void;
+  coreMode: 'proxy' | 'direct';
+  onCoreModeChange: (mode: 'proxy' | 'direct') => void;
 }
 
 export function ConsoleOverlays(props: ConsoleOverlaysProps) {
@@ -152,6 +154,8 @@ export function ConsoleOverlays(props: ConsoleOverlaysProps) {
         onWsUrlChange={props.onWsUrlChange}
         onTokenChange={props.onTokenChange}
         onReconnect={props.onReconnect}
+        coreMode={props.coreMode}
+        onCoreModeChange={props.onCoreModeChange}
       />
 
       {/* ═══ CONTEXT MENU ════ */}

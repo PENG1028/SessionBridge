@@ -26,6 +26,10 @@ interface SettingsPanelProps {
   onTokenChange: (token: string | undefined) => void;
   /** Called when user wants to reconnect (same URL). */
   onReconnect: () => void;
+  /** Core connection mode. */
+  coreMode?: 'proxy' | 'direct';
+  /** Called when user changes the core mode. */
+  onCoreModeChange?: (mode: 'proxy' | 'direct') => void;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────
@@ -178,7 +182,7 @@ function CollapsibleSection({
 
 // ── Main Panel ─────────────────────────────────────────────────
 
-export function SettingsPanel({ open, onClose, wsUrl, token, onWsUrlChange, onTokenChange, onReconnect }: SettingsPanelProps) {
+export function SettingsPanel({ open, onClose, wsUrl, token, onWsUrlChange, onTokenChange, onReconnect, coreMode = 'proxy', onCoreModeChange }: SettingsPanelProps) {
   const coreStatus = useCoreStatus();
   const { isOffline } = useCoreClient();
   const core = useCore();
@@ -472,6 +476,28 @@ export function SettingsPanel({ open, onClose, wsUrl, token, onWsUrlChange, onTo
                 </button>
               </div>
             )}
+
+            {/* Core mode */}
+            <div className="flex items-center justify-between py-2 border-t border-gray-800/30 mt-1">
+              <div>
+                <div className="text-[10px] text-gray-300">Connection Mode</div>
+                <div className="text-[8px] text-gray-600 mt-0.5">
+                  {coreMode === 'proxy'
+                    ? 'Server proxies all Core calls (secure)'
+                    : 'Direct WebSocket to Core (debug only)'}
+                </div>
+              </div>
+              <button
+                onClick={() => onCoreModeChange?.(coreMode === 'proxy' ? 'direct' : 'proxy')}
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors shrink-0 ${
+                  coreMode === 'proxy' ? 'bg-emerald-700' : 'bg-amber-700'
+                }`}
+              >
+                <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                  coreMode === 'proxy' ? 'translate-x-1' : 'translate-x-[18px]'
+                }`} />
+              </button>
+            </div>
           </CollapsibleSection>
 
           {/* ── About ──────────────────────────────────────────── */}
@@ -500,6 +526,12 @@ export function SettingsPanel({ open, onClose, wsUrl, token, onWsUrlChange, onTo
               <div className="flex items-center justify-between">
                 <span className="text-[10px] text-gray-500">Auth Token</span>
                 <span className="text-[10px] text-gray-500">{token ? 'Configured' : 'Not set'}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-gray-500">Connection Mode</span>
+                <span className={`text-[10px] font-mono ${coreMode === 'direct' ? 'text-amber-400' : 'text-emerald-400'}`}>
+                  {coreMode === 'direct' ? 'Direct (debug)' : 'Proxy (secure)'}
+                </span>
               </div>
             </div>
           </CollapsibleSection>

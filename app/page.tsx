@@ -251,6 +251,10 @@ export default function Page() {
  * Computes wsUrl / token from search params and localStorage, then
  * wraps the app in CoreClientProvider so useCore() receives the same
  * wsUrl / token that useSession() uses.
+ *
+ * Default connection mode: "proxy" (server-side Core call via /api/core/call).
+ * Direct mode only activated via explicit ?coreMode=direct query param.
+ * In direct mode, ?url and ?token query params are used for WebSocket URL.
  */
 function PageContent() {
   const defaultUrl = typeof window !== 'undefined'
@@ -261,15 +265,18 @@ function PageContent() {
   const params = typeof window !== 'undefined' ? new URL(window.location.href).searchParams : new URLSearchParams();
   const urlParam = params.get('url');
   const tokenParam = params.get('token');
+  const coreModeParam = params.get('coreMode');
   // Normalize: extract any token from urlParam, explicit tokenParam wins
   const initNormalized = normalizeWsUrlAndToken(urlParam || defaultUrl, tokenParam || undefined);
   const [wsUrl, setWsUrl] = useState(() => initNormalized.wsUrl);
   const [token, setToken] = useState<string | undefined>(initNormalized.token);
   const [reconnectKey, setReconnectKey] = useState(0);
+  // Default to proxy mode; direct mode only with explicit query param
+  const [coreMode, setCoreMode] = useState<'proxy' | 'direct'>(coreModeParam === 'direct' ? 'direct' : 'proxy');
 
   return (
-    <CoreClientProvider wsUrl={wsUrl} token={token} forceOffline={false} reconnectKey={reconnectKey}>
-      <AppCore wsUrl={wsUrl} setWsUrl={setWsUrl} token={token} setToken={setToken} onReconnect={() => setReconnectKey(k => k + 1)} />
+    <CoreClientProvider wsUrl={wsUrl} token={token} mode={coreMode} forceOffline={false} reconnectKey={reconnectKey}>
+      <AppCore wsUrl={wsUrl} setWsUrl={setWsUrl} token={token} setToken={setToken} onReconnect={() => setReconnectKey(k => k + 1)} coreMode={coreMode} setCoreMode={setCoreMode} />
     </CoreClientProvider>
   );
 }
@@ -280,9 +287,11 @@ interface AppCoreProps {
   token: string | undefined;
   setToken: React.Dispatch<React.SetStateAction<string | undefined>>;
   onReconnect: () => void;
+  coreMode: 'proxy' | 'direct';
+  setCoreMode: (mode: 'proxy' | 'direct') => void;
 }
 
-function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps) {
+function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setCoreMode }: AppCoreProps) {
   // ── Page access mode: LOCAL (localhost) vs VIEW (remote) ──
   // Use state + effect to avoid SSR/CSR hydration mismatch
   const [isLocalPage, setIsLocalPage] = useState(false);
@@ -2057,6 +2066,8 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
         onWsUrlChange={setWsUrl}
         onTokenChange={setToken}
         onReconnect={onReconnect}
+        coreMode={coreMode}
+        onCoreModeChange={setCoreMode}
       />
 
       <KeyHintOverlay whenContext={focusWhenContext} onCommand={handlePaletteSelect} />
