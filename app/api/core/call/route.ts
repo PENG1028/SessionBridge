@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
   }
 
   // 2. Parse request body
-  let body: { method?: string; params?: Record<string, unknown> };
+  let body: { method?: string; params?: Record<string, unknown>; pluginId?: string };
   try {
     body = await request.json();
   } catch {
@@ -60,10 +60,11 @@ export async function POST(request: NextRequest) {
     : wsUrl;
 
   try {
-    const result = await coreCall(connectUrl, method, params);
+    const result = await coreCall(connectUrl, method, params, body.pluginId || 'sessionnode-core', token);
     return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Core call failed';
+    console.error(`[core-call] wsUrl=${wsUrl} token=${token ? 'set' : 'NOT SET'} method=${method} error=${message}`);
     return NextResponse.json({ error: message }, { status: 502 });
   }
 }
@@ -80,13 +81,13 @@ async function coreCall(
   connectUrl: string,
   method: string,
   params: Record<string, unknown>,
+  actorPluginId: string,
+  coreToken?: string,
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const ws = new WsWebSocket(connectUrl);
 
     const requestId = `proxy_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const pluginId = params.pluginId as string || 'sessionnode-core';
-
     // Extract targetNodeId from params (routing field)
     const { targetNodeId, ...payload } = params;
 
@@ -95,9 +96,10 @@ async function coreCall(
       requestId,
       capability: method,
       payload,
-      pluginId,
+      pluginId: actorPluginId,
       actorType: 'user',
       actorId: 'current-user',
+      actorToken: coreToken || '',
       ...(targetNodeId ? { targetNodeId } : {}),
     });
 

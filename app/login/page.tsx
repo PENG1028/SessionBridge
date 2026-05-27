@@ -1,9 +1,25 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { Suspense, useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 export default function LoginPage() {
+  return (
+    <Suspense fallback={<LoginChecking />}>
+      <LoginForm />
+    </Suspense>
+  );
+}
+
+function LoginChecking() {
+  return (
+    <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
+      <div className="text-[11px] text-gray-600 font-mono">Checking...</div>
+    </div>
+  );
+}
+
+function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [password, setPassword] = useState('');
@@ -54,11 +70,7 @@ export default function LoginPage() {
   }
 
   if (checking) {
-    return (
-      <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
-        <div className="text-[11px] text-gray-600 font-mono">Checking...</div>
-      </div>
-    );
+    return <LoginChecking />;
   }
 
   return (

@@ -65,7 +65,7 @@ export class ProxyCoreClient implements CoreClient {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
-      body: JSON.stringify({ method, params }),
+      body: JSON.stringify({ method, params, pluginId: this.pluginId }),
     });
 
     if (res.status === 401) {
@@ -246,7 +246,10 @@ export class ProxyCoreClient implements CoreClient {
       get lastError() { return host.lastError; },
       get hasToken() { return host.hasToken; },
       get authMode() { return host.authMode; },
-      call: <T>(method: string, params?: Record<string, unknown>) => host.call(method, params),
+      call: <T>(method: string, params?: Record<string, unknown>) => {
+        const scoped = new ProxyCoreClient(pluginId);
+        return scoped.call<T>(method, params);
+      },
       on: (event: string, handler: (data: CoreEvent) => void) => host.on(event, handler),
       once: (event: string, handler: (data: CoreEvent) => void) => host.once(event, handler),
       off: (event: string, handler: (data: CoreEvent) => void) => host.off(event, handler),

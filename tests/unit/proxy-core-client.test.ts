@@ -274,6 +274,35 @@ describe('ProxyCoreClient realtime events', () => {
     await expect(client.call('node.health', {})).rejects.toThrow();
   });
 
+  it('call() sends actor pluginId separately from payload pluginId', async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body || '{}'));
+      expect(body.pluginId).toBe('test-plugin');
+      expect(body.params.pluginId).toBe('terminal');
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(client.call('plugin.get', { pluginId: 'terminal' })).resolves.toEqual({ ok: true });
+
+    vi.unstubAllGlobals();
+  });
+
+  it('scoped call sends scoped actor pluginId without overwriting payload pluginId', async () => {
+    const scoped = client.createScopedClient('terminal');
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body || '{}'));
+      expect(body.pluginId).toBe('terminal');
+      expect(body.params.pluginId).toBe('target-plugin');
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(scoped.call('plugin.get', { pluginId: 'target-plugin' })).resolves.toEqual({ ok: true });
+
+    vi.unstubAllGlobals();
+  });
+
   // ── Disconnect cleanup ──────────────────────────────────
 
   it('disconnect() closes EventSource and clears listeners', () => {
