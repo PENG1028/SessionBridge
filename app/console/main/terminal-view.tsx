@@ -18,10 +18,8 @@ interface TerminalViewProps {
 }
 
 export function TerminalView({ instanceId }: TerminalViewProps) {
-  const { wsUrl, token, bindCurrentTabInstance, projectCwd, homeDir, activeNodeWsUrl } = useWorkbench();
+  const { token, bindCurrentTabInstance, projectCwd, homeDir } = useWorkbench();
   const core = useCore();
-  // Compute API base URL: remote node gets proxied, local uses empty (same-origin)
-  const apiBaseUrl = activeNodeWsUrl !== wsUrl ? activeNodeWsUrl.replace(/^ws/, 'http') : '';
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [coreSessionId, setCoreSessionId] = useState<string | null>(null);
@@ -149,7 +147,6 @@ export function TerminalView({ instanceId }: TerminalViewProps) {
           onSelect={handleSelectDir}
           initialPath="."
           title="Directory Browser"
-          baseUrl={apiBaseUrl}
         />
       </div>
     );
@@ -179,7 +176,6 @@ export function TerminalView({ instanceId }: TerminalViewProps) {
         onSelect={handleSelectDir}
         initialPath="."
         title="Terminal Directory"
-        baseUrl={apiBaseUrl}
       />
     </div>
   );

@@ -9,7 +9,6 @@ interface MobileRightPanelProps {
   open: boolean;
   onClose: () => void;
   activeTasks: Map<string, any>;
-  queueInfo: { isProcessing: boolean; queueDepth: number; queue: any[] };
   onNewSession: () => void;
   onQuickCompact: () => void;
   onSaveSnapshot: () => void;

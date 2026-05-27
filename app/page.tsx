@@ -173,9 +173,6 @@ function isLocalUrl(url: string): boolean {
   }
 }
 
-function wsToHttpUrl(url: string): string {
-  return url.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:');
-}
 /** Convert API block descriptors into UI Block[] for historical session loading */
 function parseSessionBlocks(apiBlocks: any[]): Block[] {
   const result: Block[] = [];
@@ -363,7 +360,6 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
   const [toolActivities, setToolActivities] = useState<Map<string, ToolActivity>>(new Map());
   const [expandedToolOutputs, setExpandedToolOutputs] = useState<Set<string>>(new Set());
   const [taskTimer, setTaskTimer] = useState(0);
-  const [queueInfo, setQueueInfo] = useState<{isProcessing: boolean; queueDepth: number; queue: any[]}>({isProcessing: false, queueDepth: 0, queue: []});
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mobileRightOpen, setMobileRightOpen] = useState(false);
   // Timer to refresh task durations and queue every 5s
@@ -372,38 +368,36 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
     const timer = setInterval(() => setTaskTimer(t => t + 1), 5000);
     return () => clearInterval(timer);
   }, [activeTasks.size, phase]);
-  // Poll queue status
-  useEffect(() => {
-    const poll = async () => {
-      try { const r = await fetch('/api/queue'); setQueueInfo(await r.json()); } catch {}
-    };
-    poll();
-    const timer = setInterval(poll, 3000);
-    return () => clearInterval(timer);
-  }, []);
   // ── Project / Session state ──────────────
   const [projectInfo, setProjectInfo] = useState<{cwd: string; projectName: string; homeDir?: string} | null>(null);
   const [savedSessions, setSavedSessions] = useState<{id: string; label: string; dir: string; ts: string}[]>([]);
   const [showDirSwitcher, setShowDirSwitcher] = useState(false);
   const [switchDirLocal, setSwitchDirLocal] = useState('');
   const [switching, setSwitching] = useState(false);
+  const core = useCore();
   useEffect(() => {
-    fetch('/api/info').then(r => r.json()).then(info => {
-      setProjectInfo(info);
-      // Migrate messages from the initial 'default' bucket to the project-specific key
-      const realKey = info.cwd.replace(/[/\\:]/g, '_');
-      if (realKey !== 'default') {
-        setMessagesBySession(prev => {
-          if (!prev['default']?.length) return prev;
-          const next: Record<string, Message[]> = {};
-          for (const [k, v] of Object.entries(prev)) {
-            next[k === 'default' ? realKey : k] = v as Message[];
-          }
-          return next;
+    if (!core?.isConnected) return;
+    core.call<{cwd?: string; projectName?: string; homeDir?: string}>('node.info', {})
+      .then(info => {
+        setProjectInfo({
+          cwd: info.cwd || '.',
+          projectName: info.projectName || '',
+          homeDir: info.homeDir || '',
         });
-      }
-    }).catch(() => {});
-  }, []);
+        const realKey = (info.cwd || '.').replace(/[/\\:]/g, '_');
+        if (realKey !== 'default') {
+          setMessagesBySession(prev => {
+            if (!prev['default']?.length) return prev;
+            const next: Record<string, Message[]> = {};
+            for (const [k, v] of Object.entries(prev)) {
+              next[k === 'default' ? realKey : k] = v as Message[];
+            }
+            return next;
+          });
+        }
+      })
+      .catch(() => {});
+  }, [core]);
 
   // ── File tree state (per-node, keyed by wsUrl) ──
   const [nodeFileTree, setNodeFileTree] = useState<Record<string, Record<string, {items: any[]; loaded: boolean; error?: string}>>>({});
@@ -723,7 +717,6 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
   }, []);
 
   const { connStatus, msgLog, sendInput, sendCommand, serverBlocks, sessions, activeSessionId, activateSession, spawnSession, isWorkspace, queueStatus, instances, activeInstanceId, activateInstance, createInstance, killInstance, sendMessage } = useSession(wsUrl, token ?? undefined, undefined, undefined, undefined, onSystemNotify, dismiss, handleSystemMessage);
-  const core = useCore();
 
   // ── Core plugin manifest → extension points sync ──
   const handleCorePluginCommand = useCallback((commandId: string) => {
@@ -821,33 +814,17 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
     return nodeId?.startsWith('upstream:') ? nodeId.slice('upstream:'.length) : wsUrl;
   }, [appState.activeInstanceId, wsUrl]);
 
-  // ── File open: CoreClient fs.read → relay HTTP fallback ──
+  // ── File open: CoreClient fs.read ──
   const handleOpenFile = useCallback((filePath: string) => {
-    const fetchRelay = () => {
-      const prefix = activeNodeWsUrl === wsUrl ? '' : wsToHttpUrl(activeNodeWsUrl);
-      fetch(`${prefix}/api/read-file?path=${encodeURIComponent(filePath)}`)
-        .then(r => r.json())
-        .then(data => {
-          if (data.content !== undefined) {
-            setViewingFile({ path: data.path || filePath, content: data.content });
-          }
-        })
-        .catch(() => {});
-    };
-
-    if (core?.isConnected) {
-      core.call<{ path: string; content: string }>('fs.read', { path: filePath })
-        .then(data => {
-          if (data.content !== undefined) {
-            setViewingFile({ path: data.path || filePath, content: data.content });
-          }
-        })
-        .catch(() => fetchRelay());
-      return;
-    }
-
-    fetchRelay();
-  }, [core, activeNodeWsUrl, wsUrl]);
+    if (!core?.isConnected) return;
+    core.call<{ path: string; content: string }>('fs.read', { path: filePath })
+      .then(data => {
+        if (data.content !== undefined) {
+          setViewingFile({ path: data.path || filePath, content: data.content });
+        }
+      })
+      .catch(() => {});
+  }, [core]);
 
   // Derived active-node file tree values
   const fileTree = nodeFileTree[activeNodeWsUrl] || {};
@@ -864,49 +841,22 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
   }, [activeNodeWsUrl, wsUrl]);
 
   const fetchDir = useCallback(async (dir: string) => {
-    // Prefer CoreClient fs.list when connected
-    if (core?.isConnected) {
-      try {
-        const res = await core.call<{ path: string; entries: Array<{ name: string; isDir: boolean; size: number; mode: string }> }>('fs.list', { path: dir });
-        const entries = res?.entries ?? [];
-        const items = entries.map((e: { name: string; isDir: boolean }) => ({ name: e.name, type: e.isDir ? 'dir' : 'file' }));
-        setNodeFileTree(prev => ({
-          ...prev,
-          [activeNodeWsUrl]: { ...(prev[activeNodeWsUrl] || {}), [dir]: {items, loaded: true} }
-        }));
-      } catch (err) {
-        setNodeFileTree(prev => ({
-          ...prev,
-          [activeNodeWsUrl]: { ...(prev[activeNodeWsUrl] || {}), [dir]: {items: [], loaded: true, error: String(err)} }
-        }));
-      }
-      return;
-    }
-    // Fallback: relay HTTP API
-    const prefix = activeNodeWsUrl !== wsUrl ? wsToHttpUrl(activeNodeWsUrl) : '';
-    const apiUrl = `${prefix}/api/list?dir=${encodeURIComponent(dir)}`;
+    if (!core?.isConnected) return;
     try {
-      const res = await fetch(apiUrl);
-      const data = await res.json();
-      if (data.items) {
-        setNodeFileTreeRoot(prev => ({...prev, [activeNodeWsUrl]: data.cwd || ''}));
-        setNodeFileTree(prev => ({
-          ...prev,
-          [activeNodeWsUrl]: { ...(prev[activeNodeWsUrl] || {}), [dir]: {items: data.items, loaded: true} }
-        }));
-      } else {
-        setNodeFileTree(prev => ({
-          ...prev,
-          [activeNodeWsUrl]: { ...(prev[activeNodeWsUrl] || {}), [dir]: {items: [], loaded: true, error: data.error || 'Directory not found'} }
-        }));
-      }
+      const res = await core.call<{ path: string; entries: Array<{ name: string; isDir: boolean; size: number; mode: string }> }>('fs.list', { path: dir });
+      const entries = res?.entries ?? [];
+      const items = entries.map((e: { name: string; isDir: boolean }) => ({ name: e.name, type: e.isDir ? 'dir' : 'file' }));
+      setNodeFileTree(prev => ({
+        ...prev,
+        [activeNodeWsUrl]: { ...(prev[activeNodeWsUrl] || {}), [dir]: {items, loaded: true} }
+      }));
     } catch (err) {
       setNodeFileTree(prev => ({
         ...prev,
         [activeNodeWsUrl]: { ...(prev[activeNodeWsUrl] || {}), [dir]: {items: [], loaded: true, error: String(err)} }
       }));
     }
-  }, [activeNodeWsUrl, wsUrl, core]);
+  }, [activeNodeWsUrl, core]);
   // Fetch root when active node changes
   useEffect(() => { fetchDir('.'); }, [fetchDir]);
 
@@ -1225,20 +1175,14 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
     }
     setSwitching(true);
     try {
-      await fetch('/api/session/switch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ directory: dir }),
-      });
-	      // Clear in-memory messages — sessionKey is always 'default' in non-workspace mode
-	      setMessagesBySession({});
-	      // Skip old server blocks they belong to the old project
+      // Clear in-memory messages — sessionKey is always 'default' in non-workspace mode
+      setMessagesBySession({});
+      // Skip old server blocks they belong to the old project
       processedRef.current = serverBlocks.length;
       historyLoadedRef.current = false; // reload history for new directory
       setPhase('idle'); setCurrentActivity(null);
-      const info = await fetch('/api/info').then(r => r.json());
-      setProjectInfo(info);
-      addLog(`[System] Switched to ${info.projectName || info.cwd}`);
+      setProjectInfo({ cwd: dir, projectName: dir.split(/[/\\]/).pop() || '', homeDir: dir });
+      addLog(`[System] Switched to ${dir.split(/[/\\]/).pop() || dir}`);
       setNodeFileTree(prev => ({...prev, [wsUrl]: {}}));
       setNodeExpandedDirs(prev => ({...prev, [wsUrl]: ['.']}));
       setNodeFileTreeRoot(prev => ({...prev, [wsUrl]: ''}));
@@ -1986,7 +1930,6 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
         <SidebarSlot open={effectiveRightOpen}>
           <RightSidebar
           activeTasks={activeTasks}
-          queueInfo={queueInfo}
           onNewSession={handleNewSessionWrapper}
           onQuickCompact={handleQuickCompact}
           onSaveSnapshot={() => saveSnapshot()}
@@ -2104,7 +2047,6 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
         open={mobileRightOpen}
         onClose={() => setMobileRightOpen(false)}
         activeTasks={activeTasks}
-        queueInfo={queueInfo}
         onNewSession={handleNewSessionWrapper}
         onQuickCompact={handleQuickCompact}
         onSaveSnapshot={() => saveSnapshot()}

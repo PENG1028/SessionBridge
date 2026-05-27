@@ -88,12 +88,10 @@ function TaskCard({ task }: { task: TaskInfo }) {
 
 // ─── TaskPanel ─────────────────────────────────────────────
 
-export function TaskPanel({ activeTasks: tasks, queueInfo }: {
+export function TaskPanel({ activeTasks: tasks }: {
   activeTasks: Map<string, TaskInfo>;
-  queueInfo?: { isProcessing: boolean; queueDepth: number; queue: { text: string }[] };
 }) {
   const taskList = Array.from(tasks.values());
-  const hasQueue = queueInfo && (queueInfo.queueDepth > 0 || queueInfo.isProcessing);
 
   return (
     <div className="border-b border-gray-800 bg-[#111]">
@@ -101,20 +99,13 @@ export function TaskPanel({ activeTasks: tasks, queueInfo }: {
         <Terminal className="w-3.5 h-3.5 text-purple-400" />
         TASKS
         {taskList.length > 0 && <span className="ml-auto text-purple-400">{taskList.length} active</span>}
-        {hasQueue && <span className="text-yellow-500 text-[9px] ml-1">+{queueInfo!.queueDepth} queued</span>}
       </div>
-      {taskList.length === 0 && !hasQueue ? (
+      {taskList.length === 0 ? (
         <div className="px-3 pb-3 text-gray-600 text-[10px] italic">No active tasks</div>
       ) : (
         <div className="max-h-48 overflow-y-auto px-2 pb-2 space-y-1">
           {taskList.map(task => (
             <TaskCard key={task.id} task={task} />
-          ))}
-          {queueInfo?.queue.map((item, i) => (
-            <div key={`q-${i}`} className="flex items-center gap-2 px-2.5 py-1.5 bg-[#1a1a1a] border border-dashed border-gray-700/40 rounded-lg">
-              <span className="text-[8px] text-yellow-600 font-bold w-4 shrink-0">Q{i + 1}</span>
-              <span className="text-[9px] text-gray-500 truncate">{item.text}</span>
-            </div>
           ))}
         </div>
       )}

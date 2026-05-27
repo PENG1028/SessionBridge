@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { useWorkbench } from '../workbench/workbench-context';
 import { useCore } from '../core/core-client-provider';
 
 // ── Logs Panel ──────────────────────────────────────────────
@@ -105,40 +104,23 @@ export function TerminalPanel(props: { msgLog?: any[] }) {
 
 // ── System Panel ────────────────────────────────────────────
 
-function wsToHttpUrl(url: string): string {
-  return url.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:');
-}
-
 export function SystemPanel(props: { projectCwd?: string }) {
-  const { wsUrl } = useWorkbench();
   const core = useCore();
   const [info, setInfo] = useState<{ cwd?: string; platform?: string; hostname?: string; uptime?: number } | null>(null);
 
   useEffect(() => {
-    // Prefer CoreClient node.info when core is connected
-    if (core?.isConnected) {
-      core.call<{ cwd?: string; platform?: string; hostname?: string; uptime?: number }>('node.info', {})
-        .then(data => {
-          setInfo({
-            cwd: data.cwd,
-            platform: data.platform || (typeof navigator !== 'undefined' ? navigator.platform : ''),
-            hostname: data.hostname || '',
-            uptime: data.uptime,
-          });
-        })
-        .catch(() => {});
-      return;
-    }
-    // Fallback: relay HTTP API
-    fetch(`${wsToHttpUrl(wsUrl).replace(/\/$/, '')}/api/info`).then(r => r.json()).then(data => {
-      setInfo({
-        cwd: data.cwd,
-        platform: data.platform || (typeof navigator !== 'undefined' ? navigator.platform : ''),
-        hostname: data.hostname || '',
-        uptime: data.uptime,
-      });
-    }).catch(() => {});
-  }, [wsUrl, core]);
+    if (!core?.isConnected) return;
+    core.call<{ cwd?: string; platform?: string; hostname?: string; uptime?: number }>('node.info', {})
+      .then(data => {
+        setInfo({
+          cwd: data.cwd,
+          platform: data.platform || (typeof navigator !== 'undefined' ? navigator.platform : ''),
+          hostname: data.hostname || '',
+          uptime: data.uptime,
+        });
+      })
+      .catch(() => {});
+  }, [core]);
 
   return (
     <div className="border-t border-gray-800 bg-[#111]">

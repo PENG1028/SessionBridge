@@ -17,7 +17,6 @@ interface DirectoryPickerProps {
   onSelect: (path: string) => void;
   initialPath?: string;
   title?: string;
-  baseUrl?: string;
 }
 
 /** Reactive hook: true when viewport is at most 767px wide. */
@@ -94,7 +93,6 @@ export function DirectoryPicker({
   open, onClose, onSelect,
   initialPath = '.',
   title = 'Select Directory',
-  baseUrl = '',
 }: DirectoryPickerProps) {
   const core = useCore();
   const [tree, setTree] = useState<Record<string, { items: DirEntry[]; loaded: boolean }>>({});
@@ -106,24 +104,14 @@ export function DirectoryPicker({
   const mobile = useIsMobile();
 
   const fetchDir = useCallback(async (dir: string) => {
+    if (!core?.isConnected) return;
     try {
-      // Prefer CoreClient fs.list when connected
-      if (core?.isConnected) {
-        const res = await core.call<{ path: string; entries: Array<{ name: string; isDir: boolean; size: number; mode: string }> }>('fs.list', { path: dir });
-        const entries = res?.entries ?? [];
-        const items: DirEntry[] = entries.map(e => ({ name: e.name, type: e.isDir ? 'dir' : 'file' }));
-        setTree(prev => ({ ...prev, [dir]: { items, loaded: true } }));
-        return;
-      }
-      // Fallback: relay HTTP API
-      const r = await fetch(`${baseUrl}/api/list?dir=${encodeURIComponent(dir)}`);
-      const d = await r.json();
-      if (d.items) {
-        setRootCwd(d.cwd || '');
-        setTree(prev => ({ ...prev, [dir]: { items: d.items, loaded: true } }));
-      }
+      const res = await core.call<{ path: string; entries: Array<{ name: string; isDir: boolean; size: number; mode: string }> }>('fs.list', { path: dir });
+      const entries = res?.entries ?? [];
+      const items: DirEntry[] = entries.map(e => ({ name: e.name, type: e.isDir ? 'dir' : 'file' }));
+      setTree(prev => ({ ...prev, [dir]: { items, loaded: true } }));
     } catch {}
-  }, [baseUrl, core]);
+  }, [core]);
 
   useEffect(() => {
     if (open) {
@@ -151,27 +139,15 @@ export function DirectoryPicker({
     setExpanded(new Set(['.']));
     const q = path.replace(/^([A-Za-z]):$/, '$1:/'); // fix bare drive letter
 
-    if (core?.isConnected) {
-      core.call<{ path: string; entries: Array<{ name: string; isDir: boolean; size: number; mode: string }> }>('fs.list', { path: q })
-        .then(res => {
-          const entries = res?.entries ?? [];
-          const items: DirEntry[] = entries.map(e => ({ name: e.name, type: e.isDir ? 'dir' : 'file' }));
-          setTree(prev => ({ ...prev, '.': { items, loaded: true } }));
-        })
-        .catch(() => {});
-      return;
-    }
-
-    fetch(`${baseUrl}/api/list?dir=${encodeURIComponent(q)}`)
-      .then(r => r.json())
-      .then(d => {
-        if (d.items) {
-          setRootCwd(d.cwd || '');
-          setTree(prev => ({ ...prev, '.': { items: d.items, loaded: true } }));
-        }
+    if (!core?.isConnected) return;
+    core.call<{ path: string; entries: Array<{ name: string; isDir: boolean; size: number; mode: string }> }>('fs.list', { path: q })
+      .then(res => {
+        const entries = res?.entries ?? [];
+        const items: DirEntry[] = entries.map(e => ({ name: e.name, type: e.isDir ? 'dir' : 'file' }));
+        setTree(prev => ({ ...prev, '.': { items, loaded: true } }));
       })
       .catch(() => {});
-  }, [baseUrl, core]);
+  }, [core]);
 
   const rootLabelStr = useMemo(() => rootLabel(rootCwd), [rootCwd]);
   const breadcrumb = useMemo(() => pathSegments(selected, rootLabelStr), [selected, rootLabelStr]);

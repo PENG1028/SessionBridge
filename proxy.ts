@@ -1,4 +1,4 @@
-// ─── App UI Route Protection Middleware ───────────────────────
+// ─── App UI Route Protection Proxy (Next 16 convention) ───────
 // Protects all App UI pages and /api/core/* endpoints.
 // Whitelisted paths: auth routes, setup, login, static assets.
 //
@@ -6,9 +6,9 @@
 // IMPORTANT: Never use NODE_ENV=development as a bypass — that
 // would defeat public-facing security.
 //
-// Middleware runs on Edge Runtime — no fs/crypto access.
+// Proxy runs on Edge Runtime — no fs/crypto access.
 // Auth verification (HMAC) is deferred to route handlers.
-// This middleware only checks cookie presence as a fast gate.
+// This proxy only checks cookie presence as a fast gate.
 
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
@@ -34,7 +34,7 @@ function isApiCoreCall(pathname: string): boolean {
   return pathname.startsWith('/api/core/');
 }
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Dev bypass: SESSIONBRIDGE_AUTH_BYPASS=1

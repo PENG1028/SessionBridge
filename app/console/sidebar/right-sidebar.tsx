@@ -12,7 +12,6 @@ const DEFAULT_W = 288;
 
 interface RightSidebarProps {
   activeTasks: Map<string, any>;
-  queueInfo: { isProcessing: boolean; queueDepth: number; queue: any[] };
   onNewSession: () => void;
   onQuickCompact: () => void;
   onSaveSnapshot: () => void;
