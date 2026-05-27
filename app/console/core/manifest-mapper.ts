@@ -101,10 +101,10 @@ export function mapViewsToAdapterViews(
  */
 export function mapPanelsToSidebarViews(
   panels: GoCoreUIPanel[] | undefined,
-): Record<string, Array<{ id: string; title: string; icon: string; defaultVisible: boolean; order?: number }>> {
+): Record<string, Array<{ id: string; title: string; icon: string; defaultVisible: boolean; componentId?: string; order?: number }>> {
   if (!panels || panels.length === 0) return {};
-  const left: Array<{ id: string; title: string; icon: string; defaultVisible: boolean; order?: number }> = [];
-  const right: Array<{ id: string; title: string; icon: string; defaultVisible: boolean; order?: number }> = [];
+  const left: Array<{ id: string; title: string; icon: string; defaultVisible: boolean; componentId?: string; order?: number }> = [];
+  const right: Array<{ id: string; title: string; icon: string; defaultVisible: boolean; componentId?: string; order?: number }> = [];
 
   for (const p of panels) {
     const entry = {
@@ -112,6 +112,7 @@ export function mapPanelsToSidebarViews(
       title: p.title || p.id,
       icon: 'PanelRight', // default icon name
       defaultVisible: true,
+      componentId: p.componentId,
     };
     // surface "left" → sidebar-left, everything else → sidebar-right
     if (p.surface === 'left') {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useState } from 'react';
 import { Upload } from 'lucide-react';
 import { FileExplorer } from '../sidebar/file-explorer';
 import { useCore } from '../core/core-client-provider';
@@ -18,26 +18,24 @@ export function FilesPanel(props: FilesPanelProps) {
   const { fileTree, expandedDirs, onToggleDir, onOpenFile, onSendFile, onBookmarkDir } = props;
   const core = useCore();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   const handleUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setUploadError(null);
     const reader = new FileReader();
     reader.onload = async () => {
       const content = reader.result as string;
-      // Prefer CoreClient fs.write when connected
-      if (core?.isConnected) {
-        const data = content.startsWith('data:') ? atob(content.split(',')[1] || '') : content;
-        core.call('fs.write', { path: file.name, data }).catch(() => {});
-      } else {
-        const b64 = content.split(',')[1] || '';
-        try {
-          await fetch('/api/upload', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: file.name, data: b64, encoding: 'base64' }),
-          });
-        } catch {}
+      if (!core?.isConnected) {
+        setUploadError('Core is not connected; upload unavailable.');
+        return;
+      }
+      const data = content.startsWith('data:') ? atob(content.split(',')[1] || '') : content;
+      try {
+        await core.call('fs.write', { path: file.name, data });
+      } catch (err: any) {
+        setUploadError(`Upload failed: ${err?.message || err}`);
       }
     };
     reader.readAsDataURL(file);
@@ -48,7 +46,8 @@ export function FilesPanel(props: FilesPanelProps) {
     <>
       <input ref={fileInputRef} type="file" className="hidden" onChange={handleUpload} />
       <div className="flex-1 flex flex-col min-h-0">
-        <div className="shrink-0 flex items-center justify-end px-1 pt-1">
+        <div className="shrink-0 flex items-center justify-end gap-2 px-1 pt-1">
+          {uploadError && <span className="text-[9px] text-red-400 truncate max-w-[160px]" title={uploadError}>{uploadError}</span>}
           <button onClick={() => fileInputRef.current?.click()} title="Upload file to workspace" className="text-gray-600 hover:text-gray-300">
             <Upload className="w-3 h-3" />
           </button>

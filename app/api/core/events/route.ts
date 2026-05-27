@@ -59,6 +59,19 @@ export async function GET(request: NextRequest) {
 
   const stream = new ReadableStream({
     start(controller) {
+      // Handle client disconnect — Next.js aborts the request signal
+      // before the ReadableStream cancel() callback fires.
+      request.signal.addEventListener('abort', () => {
+        if (!cleanup) {
+          cleanup = true;
+          if (connectTimer) { clearTimeout(connectTimer); connectTimer = null; }
+          if (coreWs) {
+            coreWs.close();
+            coreWs = null;
+          }
+        }
+      });
+
       coreWs = new WsWebSocket(connectUrl);
 
       // Connection timeout: if Core WS doesn't open, close the SSE stream

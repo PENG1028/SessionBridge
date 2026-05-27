@@ -16,9 +16,39 @@ export function useSessionSearch() {
   const doSearch = useCallback(async (q: string) => {
     setSearchLoading(true);
     try {
-      const res = await fetch(`/api/sessions/search?q=${encodeURIComponent(q.trim())}`);
-      const data = await res.json();
-      setSearchResults(data.results || []);
+      const query = q.trim().toLowerCase();
+      if (!query) {
+        setSearchResults([]);
+        setSearchLoading(false);
+        return;
+      }
+      // Local search across localStorage — no remote API call
+      const results: any[] = [];
+      const keys = ['sessionbridge-messages', 'bridge-messages'];
+      for (const key of keys) {
+        try {
+          const raw = localStorage.getItem(key);
+          if (!raw) continue;
+          const parsed = JSON.parse(raw);
+          for (const messages of Object.values(parsed)) {
+            if (!Array.isArray(messages)) continue;
+            for (const msg of messages as any[]) {
+              if (msg.content && typeof msg.content === 'string' && msg.content.toLowerCase().includes(query)) {
+                results.push({
+                  id: msg.id || `${key}:${results.length}`,
+                  snippet: (msg.content as string).slice(0, 200),
+                  timestamp: msg.timestamp || '',
+                  role: msg.role || '',
+                });
+                if (results.length >= 50) break;
+              }
+            }
+            if (results.length >= 50) break;
+          }
+        } catch {}
+        if (results.length >= 50) break;
+      }
+      setSearchResults(results);
     } catch {
       setSearchResults([]);
     }

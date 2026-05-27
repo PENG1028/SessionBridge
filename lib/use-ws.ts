@@ -63,10 +63,8 @@ function nowTime() {
 }
 
 function shellCommandForClient() {
-  if (typeof navigator !== 'undefined' && /win/i.test(navigator.platform)) {
-    return 'powershell.exe';
-  }
-  return 'bash';
+  // Let Go Core decide the default shell based on its OS.
+  return '';
 }
 
 function mapRunToInstance(run: RunLike): InstanceInfo {

@@ -54,7 +54,6 @@ export function TerminalView({ instanceId }: TerminalViewProps) {
     setCreating(true);
     setError(null);
     core.call<{ runId: string; sessionId: string }>('run.create', {
-      command: 'bash',
       pty: true,
       cols: 80,
       rows: 24,

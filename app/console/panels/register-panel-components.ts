@@ -22,6 +22,7 @@ import { TerminalLogPanel } from './terminal-log-panel';
 
 import { FilesPanel } from './files-panel';
 import { PathBookmarksPanel } from './path-bookmarks-panel';
+import { SessionListPanel, SystemInfoPanel } from '../plugin-host/plugin-components';
 
 // Extension-manifest-declared panels (registered as component overrides)
 registerPanelComponent('logs', LogsPanel);
@@ -29,6 +30,11 @@ registerPanelComponent('terminal', TerminalPanel);
 registerPanelComponent('system', SystemPanel);
 registerPanelComponent('processes', ProcessesPanel);
 registerPanelComponent('tasks', TaskPanel);
+
+// Host-rendered plugin panels (registered by componentId via hostComponentRegistry,
+// also as panel component overrides here as belt-and-suspenders)
+registerPanelComponent('system-info.panel', SystemInfoPanel);
+registerPanelComponent('terminal.sessions', SessionListPanel);
 
 // Core panels — components provided by the platform, registration via plugin manifests
 registerPanelComponent('quick-actions', QuickActionsPanel);

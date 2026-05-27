@@ -5,6 +5,7 @@ import {
   Activity, Bookmark, Camera, Cpu, FileText, Folder, ListChecks, Play, ScrollText, Terminal, Upload, Zap,
 } from 'lucide-react';
 import { evaluateWhen, type WhenContext } from '../../../lib/evaluate-when';
+import { hostComponentRegistry } from '../plugin-host/host-component-registry';
 
 // ── Icon Name Resolution ──────────────────────────────────────────
 // Maps string icon names from plugin manifests to lucide components.
@@ -135,8 +136,8 @@ export function getPanels(side: 'left' | 'right', ctx?: WhenContext): PanelRegis
  * panel types. Panels without a registered component are skipped.
  */
 export function syncPluginPanels(
-  leftViews?: { id: string; title: string; icon: string; defaultVisible: boolean; when?: string; order?: number }[],
-  rightViews?: { id: string; title: string; icon: string; defaultVisible: boolean; when?: string; order?: number }[],
+  leftViews?: { id: string; title: string; icon: string; defaultVisible: boolean; componentId?: string; when?: string; order?: number }[],
+  rightViews?: { id: string; title: string; icon: string; defaultVisible: boolean; componentId?: string; when?: string; order?: number }[],
 ): void {
   // Remove all panels from the previous sync — stale entries must not linger.
   for (const id of pluginPanelIds) {
@@ -153,7 +154,12 @@ export function syncPluginPanels(
         }
         continue; // core panel — never overwrite
       }
-      const comp = getPanelComponentOverride(v.id);
+      // Try explicit component override first (registered via registerPanelComponent),
+      // then fall back to hostComponentRegistry by componentId.
+      let comp = getPanelComponentOverride(v.id);
+      if (!comp && v.componentId) {
+        comp = hostComponentRegistry.get(v.componentId);
+      }
       if (!comp) {
         const warnKey = `${side}:${v.id}`;
         if (!warnedMissingComponents.has(warnKey)) {
