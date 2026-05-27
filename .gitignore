@@ -9,8 +9,8 @@ out_server/
 relay.log
 *.log
 memory/
-components/
-/core/
+/components/
+.core/
 .env
 .env.local
 .sessionbridge/

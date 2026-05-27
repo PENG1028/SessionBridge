@@ -1,0 +1,4 @@
+/** Minimal className merge — filters falsy values and joins. */
+export function cn(...classes: (string | undefined | false | null)[]): string {
+  return classes.filter(Boolean).join(' ');
+}
