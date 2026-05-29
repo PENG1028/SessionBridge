@@ -439,10 +439,12 @@ export function NodeNetworkView({
     addedIds.add(id);
   }
 
-  // 1. Local node
-  addNode('__local__', { name: localName, address: localAddress, networkType: localNetworkType, nodeId: localNodeId || undefined }, 'LOCAL',
-    undefined, false,
-    () => onEnterNode?.(localNodeId || '__local__'));
+  // 1. Local node — only shown when Core is connected
+  if (core.isConnected) {
+    addNode('__local__', { name: localName, address: localAddress, networkType: localNetworkType, nodeId: localNodeId || undefined }, 'LOCAL',
+      undefined, false,
+      () => onEnterNode?.(localNodeId || '__local__'));
+  }
 
   // 2. Leaf nodes connected to local
   for (const leaf of leafNodes) {

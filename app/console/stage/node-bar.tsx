@@ -27,7 +27,6 @@ function nodeIcon(peer: NodeBarPeer) {
 }
 
 function statusColor(peer: NodeBarPeer): string {
-  if (peer.networkType === 'loopback') return 'bg-emerald-500';
   if (peer.connectedAt) return 'bg-emerald-500';
   return 'bg-gray-600';
 }
@@ -92,7 +91,7 @@ export function NodeBar({ activeNodeId, onEnterNode, onOpenConnection }: NodeBar
   const localPeerId = localNodeId || '__local__';
   const localPeer: NodeBarPeer = {
     id: localPeerId,
-    name: '本机',
+    name: core?.isConnected ? '本机' : '本机 (offline)',
     ip: '127.0.0.1',
     type: 'agent',
     role: 'leaf',
