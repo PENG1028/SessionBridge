@@ -57,14 +57,33 @@ export class ProxyCoreClient implements CoreClient {
     return () => this._statusListeners.delete(handler);
   }
 
+  // ── Target node (for mesh routing) ────────────────────────
+  private _targetNodeId: string | null = null;
+
+  /** Set the target node ID for mesh routing. Subsequent core.call()
+   *  requests will include targetNodeId so the local Core forwards
+   *  the capability call to the remote peer via the mesh. */
+  setTargetNodeId(nodeId: string | null): void {
+    this._targetNodeId = nodeId;
+  }
+
+  get targetNodeId(): string | null {
+    return this._targetNodeId;
+  }
+
   // ── Core call via HTTP proxy ──────────────────────────────
 
   async call<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T> {
+    const body: Record<string, unknown> = { method, params, pluginId: this.pluginId };
+    if (this._targetNodeId) {
+      (params as Record<string, unknown> || (params = {} as Record<string, unknown>));
+      body.params = { ...params, targetNodeId: this._targetNodeId };
+    }
     const res = await fetch('/api/core/call/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
-      body: JSON.stringify({ method, params, pluginId: this.pluginId }),
+      body: JSON.stringify(body),
     });
 
     if (res.status === 401) {

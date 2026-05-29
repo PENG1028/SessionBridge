@@ -17,7 +17,7 @@ import { StatusBar } from './console/shell/status-bar';
 import { ConsoleHeader } from './console/shell/console-header';
 import { getAdapterViewId, getAdapterCapabilities, getViewEntry, getAllAdapterTypes, resolveChromePolicy, type ChromePolicy } from './console/main/view-registry';
 import { ensureBootstrapped } from './console/bootstrap';
-import { CoreClientProvider, useCore } from './console/core/core-client-provider';
+import { CoreClientProvider, useCore, useSetActiveNode } from './console/core/core-client-provider';
 import { useCorePluginRegistrySync } from './console/core/use-core-plugin-sync';
 import { normalizeWsUrlAndToken, stripTokenFromWsUrl } from './console/core/core-url';
 
@@ -358,6 +358,8 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
   const [switchDirLocal, setSwitchDirLocal] = useState('');
   const [switching, setSwitching] = useState(false);
   const core = useCore();
+  const setActiveNode = useSetActiveNode();
+
   useEffect(() => {
     if (!core?.isConnected) return;
     core.call<{cwd?: string; projectName?: string; homeDir?: string}>('node.info', {})
@@ -466,6 +468,13 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
   const activeWorkbenchState = useMemo(() => getActiveWorkbenchState(appState), [appState]);
   const appStateRef = useRef(appState);
   appStateRef.current = appState;
+
+  // Sync activeInstanceId -> CoreClient targetNodeId.
+  // Go dispatcher's localNodeID check handles local vs remote routing.
+  useEffect(() => {
+    setActiveNode(appState.activeInstanceId || null);
+  }, [appState.activeInstanceId, setActiveNode]);
+
   const activeNodeWsUrl = useMemo(() => {
     const nodeId = appState.activeInstanceId;
     return nodeId?.startsWith('upstream:') ? nodeId.slice('upstream:'.length) : wsUrl;

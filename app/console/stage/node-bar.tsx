@@ -100,7 +100,15 @@ export function NodeBar({ activeNodeId, onEnterNode, onOpenConnection }: NodeBar
   };
 
   const allEntries: NodeBarPeer[] = [localPeer, ...remotePeers];
-  const visible = allEntries.filter(p => !dismissed.has(p.id));
+  // Deduplicate by id — the local peer may briefly appear in remotePeers
+  // if node.list returns before node.identity.get resolves.
+  const seenIds = new Set<string>();
+  const deduped = allEntries.filter(p => {
+    if (seenIds.has(p.id)) return false;
+    seenIds.add(p.id);
+    return true;
+  });
+  const visible = deduped.filter(p => !dismissed.has(p.id));
 
   return (
     <div className="flex items-center h-8 px-2 bg-[#0d0d0d] border-b border-gray-800 gap-1 shrink-0 overflow-x-auto">

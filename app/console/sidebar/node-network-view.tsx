@@ -396,8 +396,8 @@ export function NodeNetworkView({
   const localHost = extractHost(localAddress);
   const localNetworkType = localAddress ? categorizeNetwork(localHost) : 'loopback';
 
-  const relayNodes = topoNodes.filter(n => n.nodeId !== localNodeId && n.role === 'relay');
-  const leafNodes = topoNodes.filter(n => n.nodeId !== localNodeId && n.role !== 'relay');
+  const relayNodes = topoNodes.filter(n => n.nodeId !== localNodeId && categorizeNetwork(extractHost(n.address)) === 'wan');
+  const leafNodes = topoNodes.filter(n => n.nodeId !== localNodeId && categorizeNetwork(extractHost(n.address)) !== 'wan');
 
   // ── Build alias map from meshPeers (trust store names) ──
   const peerAliasMap = new Map<string, string>();

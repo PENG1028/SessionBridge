@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
 import type { CoreClient, CoreConnectionStatus } from './core-types';
 import { createMockCoreClient } from './core-client';
 import { ProxyCoreClient } from './proxy-core-client';
@@ -11,6 +11,11 @@ interface CoreClientContextValue {
   status: CoreConnectionStatus;
   /** Set to true when mock/offline mode is active. */
   isOffline: boolean;
+  /** The node ID that capability calls are routed to via mesh.
+   *  null = local node (no mesh routing). */
+  activeNodeId: string | null;
+  /** Set the active target node for mesh routing. Pass null to reset to local. */
+  setActiveNode: (nodeId: string | null) => void;
 }
 
 const CoreClientContext = createContext<CoreClientContextValue | null>(null);
@@ -38,6 +43,19 @@ export function CoreClientProvider({
     return new ProxyCoreClient();
   });
   const [isOffline, setIsOffline] = useState(forceOffline);
+  const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
+  const coreRef = useRef<CoreClient>(core);
+  coreRef.current = core;
+
+  // When activeNodeId changes, sync it to the ProxyCoreClient so
+  // subsequent core.call() requests auto-inject targetNodeId.
+  const setActiveNode = useCallback((nodeId: string | null) => {
+    setActiveNodeId(nodeId);
+    const c = coreRef.current;
+    if (c instanceof ProxyCoreClient) {
+      c.setTargetNodeId(nodeId);
+    }
+  }, []);
 
   useEffect(() => {
     if (forceOffline) {
@@ -48,6 +66,10 @@ export function CoreClientProvider({
     }
 
     const proxyClient = new ProxyCoreClient();
+    // Restore any previously-set target node ID
+    if (activeNodeId) {
+      proxyClient.setTargetNodeId(activeNodeId);
+    }
     setCore(proxyClient);
     setIsOffline(false);
 
@@ -76,7 +98,7 @@ export function CoreClientProvider({
   }, [forceOffline, reconnectKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // eslint-disable-next-line react-perf/jsx-no-new-object-as-prop
-  const value = { core, status, isOffline };
+  const value = { core, status, isOffline, activeNodeId, setActiveNode };
 
   return (
     <CoreClientContext.Provider value={value}>
@@ -104,4 +126,14 @@ export function useCoreStatus(): CoreConnectionStatus {
 
 export function useIsOnline(): boolean {
   return useCoreClient().status === 'connected';
+}
+
+/** Returns the currently active target node ID for mesh routing. */
+export function useActiveNodeId(): string | null {
+  return useCoreClient().activeNodeId;
+}
+
+/** Returns a setter to switch the active target node for mesh routing. */
+export function useSetActiveNode(): (nodeId: string | null) => void {
+  return useCoreClient().setActiveNode;
 }
