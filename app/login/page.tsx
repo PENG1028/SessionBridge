@@ -62,7 +62,7 @@ function LoginForm() {
       }
 
       const redirect = searchParams.get('redirect') || '/';
-      router.replace(redirect);
+      window.location.href = redirect;
     } catch {
       setError('Network error');
       setLoading(false);

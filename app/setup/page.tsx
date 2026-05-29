@@ -52,7 +52,7 @@ export default function SetupPage() {
         return;
       }
 
-      router.replace('/');
+      window.location.href = '/';
     } catch {
       setError('Network error');
       setLoading(false);
