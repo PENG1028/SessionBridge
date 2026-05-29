@@ -1,9 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, Cpu, Server, X, RefreshCw } from 'lucide-react';
+import { Plus, Cpu, Server, X } from 'lucide-react';
+import { useCore } from '../core/core-client-provider';
 
-interface PeerInfo {
+interface NodeBarPeer {
   id: string;
   name: string;
   ip?: string;
@@ -12,30 +13,29 @@ interface PeerInfo {
   networkType?: 'loopback' | 'lan' | 'wan' | 'unknown';
   hasPublicAccess?: boolean;
   connectedAt?: number;
-  isLocal?: boolean;
 }
 
 interface NodeBarProps {
-  peers: PeerInfo[];
-  wsUrl: string;
   activeNodeId: string | null;
   onEnterNode: (nodeId: string) => void;
   onOpenConnection: () => void;
-  onRefreshNode?: () => void;
 }
 
-function nodeIcon(peer: PeerInfo) {
+function nodeIcon(peer: NodeBarPeer) {
   if (peer.role === 'relay' || peer.hasPublicAccess) return Server;
   return Cpu;
 }
 
-function statusColor(peer: PeerInfo): string {
+function statusColor(peer: NodeBarPeer): string {
   if (peer.networkType === 'loopback') return 'bg-emerald-500';
   if (peer.connectedAt) return 'bg-emerald-500';
   return 'bg-gray-600';
 }
 
-export function NodeBar({ peers, wsUrl, activeNodeId, onEnterNode, onOpenConnection, onRefreshNode }: NodeBarProps) {
+export function NodeBar({ activeNodeId, onEnterNode, onOpenConnection }: NodeBarProps) {
+  const core = useCore();
+  const [remotePeers, setRemotePeers] = useState<NodeBarPeer[]>([]);
+  const [localNodeId, setLocalNodeId] = useState<string | null>(null);
   const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
 
   // Auto-undismiss when a dismissed node becomes active (user entered via NodeNetworkView)
@@ -50,27 +50,57 @@ export function NodeBar({ peers, wsUrl, activeNodeId, onEnterNode, onOpenConnect
     }
   }, [activeNodeId]);
 
-  let localIp = '127.0.0.1';
-  try { localIp = new URL(wsUrl).hostname; } catch {}
+  // Fetch mesh peers from CoreClient
+  useEffect(() => {
+    if (!core?.isConnected) { setRemotePeers([]); return; }
+    let cancelled = false;
 
-  const localPeer: PeerInfo = {
-    id: '__local__',
+    const fetchPeers = async () => {
+      try {
+        const identity = await core.call<{ nodeId: string }>('node.identity.get').catch(() => null);
+        if (cancelled) return;
+        const lid = identity?.nodeId || '__local__';
+        if (!cancelled) setLocalNodeId(lid);
+
+        const nodeList = await core.call<{ nodes: any[] }>('node.list');
+        if (cancelled || !nodeList?.nodes) return;
+
+        setRemotePeers(
+          nodeList.nodes
+            .filter((n: any) => n.nodeId && n.nodeId !== lid)
+            .map((n: any) => ({
+              id: n.nodeId,
+              name: n.name || n.displayName || n.hostname || n.nodeId.slice(0, 12),
+              ip: n.addresses?.[0] || n.address,
+              type: 'agent' as const,
+              role: n.role || 'leaf',
+              networkType: n.networkType || 'unknown',
+              hasPublicAccess: n.hasPublicAccess,
+              connectedAt: Date.now(),
+            }))
+        );
+      } catch {
+        // node.list unavailable — no remote peers to show
+      }
+    };
+
+    fetchPeers();
+    const interval = setInterval(fetchPeers, 30000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [core?.isConnected]);
+
+  const localPeerId = localNodeId || '__local__';
+  const localPeer: NodeBarPeer = {
+    id: localPeerId,
     name: '本机',
-    ip: localIp,
+    ip: '127.0.0.1',
     type: 'agent',
     role: 'leaf',
     networkType: 'loopback',
-    connectedAt: Date.now(),
+    connectedAt: core?.isConnected ? Date.now() : undefined,
   };
 
-  // Show only agent nodes (not browser connections — they appear in VIEW section).
-  // Invariant: runtime sub-instances (terminal, plugin, etc.) are excluded by
-  // collectPeers() via instanceRole='runtime' — they never reach this filter.
-  const reportedLocalPeer = peers.find(p => p.id === '__local__' || p.isLocal);
-  const remotePeers = peers.filter(p => p.id !== '__local__' && !p.isLocal && p.type === 'agent' && p.networkType !== 'loopback');
-  const allEntries: PeerInfo[] = reportedLocalPeer ? [reportedLocalPeer, ...remotePeers] : remotePeers;
-
-  // Filter dismissed + if active node was dismissed, auto exit
+  const allEntries: NodeBarPeer[] = [localPeer, ...remotePeers];
   const visible = allEntries.filter(p => !dismissed.has(p.id));
 
   return (
@@ -113,15 +143,6 @@ export function NodeBar({ peers, wsUrl, activeNodeId, onEnterNode, onOpenConnect
         );
       })}
 
-      {onRefreshNode && activeNodeId && (
-        <button
-          onClick={onRefreshNode}
-          className="flex items-center gap-1 px-1.5 py-0.5 text-gray-500 hover:text-gray-200 hover:bg-gray-800/60 rounded transition-colors shrink-0"
-          title="Refresh tabs"
-        >
-          <RefreshCw className="w-3 h-3" />
-        </button>
-      )}
       <button
         onClick={onOpenConnection}
         className="flex items-center gap-1 px-1.5 py-0.5 text-gray-500 hover:text-gray-200 hover:bg-gray-800/60 rounded transition-colors shrink-0"

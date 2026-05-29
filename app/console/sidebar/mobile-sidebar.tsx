@@ -19,12 +19,13 @@ interface MobileSidebarProps {
   activeView?: string;
   activeInstanceId?: string | null;
   onKill?: (id: string) => void;
+  absoluteCwd?: string;
 }
 
 export function MobileSidebar({
   open, onClose,
   fileTree, expandedDirs, onToggleDir, onOpenFile, onSendFile, onBookmarkDir,
-  onCommand, activeView, activeInstanceId, onKill,
+  onCommand, activeView, activeInstanceId, onKill, absoluteCwd,
 }: MobileSidebarProps) {
   const { whenContext } = useFocus();
   const panels = useMemo(() => getPanels('left', whenContext), [whenContext]);
@@ -73,14 +74,15 @@ export function MobileSidebar({
                     <span className="text-[9px] font-bold text-gray-500 tracking-wider uppercase">FILES</span>
                   </div>
                   <div className="flex-1 overflow-y-auto px-1.5 py-1 text-xs">
-                    {fileTree['.']?.loaded ? (
+                    {fileTree[absoluteCwd || '.']?.loaded ? (
                       <FileExplorer
-                        entries={fileTree['.']?.items || []} path="." depth={0}
+                        entries={fileTree[absoluteCwd || '.']?.items || []} path="." depth={0}
                         fileTree={fileTree} expandedDirs={expandedDirs}
                         onToggleDir={onToggleDir}
                         onOpenFile={onOpenFile}
                         onSendFile={onSendFile}
                         onBookmarkDir={onBookmarkDir}
+                        absoluteCwd={absoluteCwd}
                       />
                     ) : (
                       <div className="text-gray-600 text-[10px] p-3 italic">Loading...</div>

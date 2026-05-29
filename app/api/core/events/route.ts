@@ -19,18 +19,9 @@
 import { NextRequest } from 'next/server';
 import { WebSocket as WsWebSocket } from 'ws';
 import { verifySessionFromCookie } from '../../../../lib/auth/app-ui-auth';
+import { getCoreWsUrl, getCoreToken } from '../../../../lib/core-target';
 
 export const runtime = 'nodejs';
-
-// ─── Config from env ─────────────────────────────────────────
-
-function getCoreWsUrl(): string {
-  return process.env.SESSIONBRIDGE_CORE_WS_URL || 'ws://127.0.0.1:8080/ws';
-}
-
-function getCoreToken(): string | undefined {
-  return process.env.SESSIONNODE_TOKEN || undefined;
-}
 
 /** 15-second timeout for the initial WebSocket connection to Core. */
 const CONNECT_TIMEOUT = 15_000;
@@ -38,11 +29,13 @@ const CONNECT_TIMEOUT = 15_000;
 // ─── GET ─────────────────────────────────────────────────────
 
 export async function GET(request: NextRequest) {
-  // 1. Verify App UI session
-  const cookie = request.cookies.get('sessionbridge_view')?.value;
-  const session = await verifySessionFromCookie(cookie);
-  if (!session.ok) {
-    return new Response('Authentication required', { status: 401 });
+  // Dev bypass: skip session verification when SESSIONBRIDGE_AUTH_BYPASS=1
+  if (process.env.SESSIONBRIDGE_AUTH_BYPASS !== '1') {
+    const cookie = request.cookies.get('sessionbridge_view')?.value;
+    const session = await verifySessionFromCookie(cookie);
+    if (!session.ok) {
+      return new Response('Authentication required', { status: 401 });
+    }
   }
 
   // 2. Build Core WS URL — token is server-side only, never reaches the browser

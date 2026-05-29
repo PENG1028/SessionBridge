@@ -49,13 +49,7 @@ interface ConsoleOverlaysProps {
   // Settings
   settingsOpen: boolean;
   onCloseSettings: () => void;
-  wsUrl: string;
-  token?: string;
-  onWsUrlChange: (url: string) => void;
-  onTokenChange: (token: string | undefined) => void;
   onReconnect: () => void;
-  coreMode: 'proxy' | 'direct';
-  onCoreModeChange: (mode: 'proxy' | 'direct') => void;
 }
 
 export function ConsoleOverlays(props: ConsoleOverlaysProps) {
@@ -149,13 +143,7 @@ export function ConsoleOverlays(props: ConsoleOverlaysProps) {
       <SettingsPanel
         open={props.settingsOpen}
         onClose={props.onCloseSettings}
-        wsUrl={props.wsUrl}
-        token={props.token}
-        onWsUrlChange={props.onWsUrlChange}
-        onTokenChange={props.onTokenChange}
         onReconnect={props.onReconnect}
-        coreMode={props.coreMode}
-        onCoreModeChange={props.onCoreModeChange}
       />
 
       {/* ═══ CONTEXT MENU ════ */}

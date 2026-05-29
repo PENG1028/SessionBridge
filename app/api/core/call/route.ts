@@ -13,29 +13,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { WebSocket as WsWebSocket } from 'ws';
 import { verifySessionFromCookie } from '../../../../lib/auth/app-ui-auth';
+import { getCoreWsUrl, getCoreToken } from '../../../../lib/core-target';
 
 export const runtime = 'nodejs';
-
-// ─── Config from env ─────────────────────────────────────────
-
-function getCoreWsUrl(): string {
-  return process.env.SESSIONBRIDGE_CORE_WS_URL || 'ws://127.0.0.1:8080/ws';
-}
-
-function getCoreToken(): string | undefined {
-  return process.env.SESSIONNODE_TOKEN || undefined;
-}
 
 const CALL_TIMEOUT = 10_000; // 10 seconds
 
 // ─── POST ────────────────────────────────────────────────────
 
 export async function POST(request: NextRequest) {
-  // 1. Verify session
-  const cookie = request.cookies.get('sessionbridge_view')?.value;
-  const session = await verifySessionFromCookie(cookie);
-  if (!session.ok) {
-    return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+  // Dev bypass: skip session verification when SESSIONBRIDGE_AUTH_BYPASS=1
+  if (process.env.SESSIONBRIDGE_AUTH_BYPASS !== '1') {
+    const cookie = request.cookies.get('sessionbridge_view')?.value;
+    const session = await verifySessionFromCookie(cookie);
+    if (!session.ok) {
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    }
   }
 
   // 2. Parse request body

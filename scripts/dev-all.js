@@ -1,5 +1,5 @@
 // ─── Dev All ────────────────────────────────────────────
-// Starts Go Core (127.0.0.1:8080) + Next.js dev (3000) in parallel.
+// Starts Go Core (127.0.0.1:9090) + Next.js dev (3000) in parallel.
 // Usage: node scripts/dev-all.js
 
 const { spawn } = require('child_process');
@@ -19,7 +19,7 @@ Usage:
   npm run dev:all
 
 What it does:
-  Go Core    → ws://127.0.0.1:8080
+  Go Core    → ws://127.0.0.1:9090
   Next.js    → http://localhost:3000
 
 Requirements:
@@ -27,7 +27,7 @@ Requirements:
   Node.js    (Next.js dev server, from node_modules/.bin/next)
 
 Environment variables (Go Core):
-  LISTEN_ADDR              default: 127.0.0.1:8080
+  LISTEN_ADDR              default: 127.0.0.1:9090
   SESSIONNODE_DATA_DIR     default: ~/.sessionnode
   SESSIONNODE_PLUGIN_DIRS  default: ./plugins/
 `);
@@ -63,12 +63,12 @@ const pluginDirs = path.join(projectRoot, 'plugins');
 
 const coreEnv = {
   ...process.env,
-  LISTEN_ADDR: process.env.LISTEN_ADDR || '127.0.0.1:8080',
+  LISTEN_ADDR: process.env.LISTEN_ADDR || '127.0.0.1:9090',
   SESSIONNODE_DATA_DIR: process.env.SESSIONNODE_DATA_DIR || path.join(process.env.USERPROFILE || process.env.HOME || process.cwd(), '.sessionnode'),
   SESSIONNODE_PLUGIN_DIRS: pluginDirs,
 };
 
-console.log('[dev-all] Starting Go Core on 127.0.0.1:8080...');
+console.log('[dev-all] Starting Go Core on 127.0.0.1:9090...');
 const core = spawn(coreCmd, coreArgs, {
   cwd: coreCwd,
   env: coreEnv,
@@ -89,7 +89,11 @@ if (!existsSync(nextBinPlatform)) {
 console.log('[dev-all] Starting Next.js dev on 3000...');
 const next = spawn(nextBinPlatform, ['dev'], {
   cwd: projectRoot,
-  env: { ...process.env },
+  env: {
+    ...process.env,
+    SESSIONBRIDGE_AUTH_BYPASS: process.env.SESSIONBRIDGE_AUTH_BYPASS || '1',
+    SESSIONBRIDGE_CORE_WS_URL: process.env.SESSIONBRIDGE_CORE_WS_URL || 'ws://127.0.0.1:9090/ws',
+  },
   stdio: 'inherit',
   windowsHide: true,
 });

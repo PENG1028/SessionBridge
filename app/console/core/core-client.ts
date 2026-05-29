@@ -46,7 +46,7 @@ export class CoreClientImpl implements CoreClient {
     // is not set, extract the token. explicit token always wins.
     const defaultUrl = typeof window !== 'undefined'
       ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws`
-      : 'ws://localhost:8080/ws';
+      : 'ws://localhost:9090/ws';
     const rawUrl = config.wsUrl || defaultUrl;
     const normalized = normalizeWsUrlAndToken(rawUrl, config.token);
 
@@ -312,7 +312,7 @@ export function createMockCoreClient(mockData?: Record<string, unknown>, pluginI
 class MockCoreClient implements CoreClient {
   readonly pluginId: string;
   readonly isConnected: boolean;
-  readonly wsUrl: string = 'ws://localhost:8080/ws';
+  readonly wsUrl: string = 'ws://localhost:9090/ws';
   readonly lastError: string | null = null;
   readonly hasToken: boolean = false;
   readonly authMode: 'token' | 'none' = 'none';

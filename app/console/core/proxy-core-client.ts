@@ -10,8 +10,7 @@
 // notify.approval.request, session.event, etc.) arrive via SSE.
 //
 // Components that use core.on('stream.chunk', handler) work in
-// proxy mode. Components that need raw WebSocket access (e.g.
-// direct terminal pty) must use ?coreMode=direct.
+// proxy mode.
 
 import type { CoreClient, CoreEvent, CoreConnectionStatus } from './core-types';
 
@@ -61,7 +60,7 @@ export class ProxyCoreClient implements CoreClient {
   // ── Core call via HTTP proxy ──────────────────────────────
 
   async call<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T> {
-    const res = await fetch('/api/core/call', {
+    const res = await fetch('/api/core/call/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
@@ -143,7 +142,7 @@ export class ProxyCoreClient implements CoreClient {
     this._setStatus('connecting');
 
     try {
-      const es = new EventSource('/api/core/events', { withCredentials: true });
+      const es = new EventSource('/api/core/events/', { withCredentials: true });
 
       es.addEventListener('core', (event: MessageEvent) => {
         try {
@@ -205,6 +204,15 @@ export class ProxyCoreClient implements CoreClient {
       this._eventSource.close();
       this._eventSource = null;
     }
+  }
+
+  // ── Force-connected (called by CoreClientProvider when probe confirms) ──
+  /** Called by CoreClientProvider when the HTTP probe confirms the Core is
+   *  reachable, even if SSE hasn't yet delivered the 'connected' event. */
+  setConnected(): void {
+    this._isConnected = true;
+    this._lastError = null;
+    this._setStatus('connected');
   }
 
   // ── Status notification ───────────────────────────────────

@@ -45,10 +45,8 @@ import { NodeNetworkView } from './console/sidebar/node-network-view';
 import { KeyHintOverlay } from './console/chrome/key-hint-overlay';
 import { LayoutProvider, useLayout, SidebarSlot, MainSlot, FocusProvider, RuntimePolicyProvider, useFocus, useRuntimePolicy, WorkbenchProvider } from './console/workbench';
 import { WorkbenchLayout } from './console/stage/workbench-layout';
-import { appReducer, createAppInitialState, getActiveWorkbenchState, createInitialState, findPane as findPaneInTree, ensureInstanceTab, saveLayoutsToStorage, loadLayoutsFromStorage, restoreInstanceStatesFromStorage, genTabId, collectAllTabs, buildStateFromTabs, workbenchReducer, type ViewType, type PaneTab, type LayoutNode, type WorkbenchState, type WorkbenchAction, type AppWorkbenchState, type AppWorkbenchAction } from './console/stage/workbench-state';
+import { appReducer, createAppInitialState, getActiveWorkbenchState, createInitialState, findPane as findPaneInTree, ensureInstanceTab, saveLayoutsToStorage, loadLayoutsFromStorage, restoreInstanceStatesFromStorage, genTabId, collectAllTabs, type ViewType, type PaneTab, type LayoutNode, type WorkbenchState, type WorkbenchAction, type AppWorkbenchState, type AppWorkbenchAction } from './console/stage/workbench-state';
 
-const DEBUG_SURFACE = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debugSurface');
-function debugLog(...args: any[]) { if (DEBUG_SURFACE) console.log('[debugSurface]', ...args); }
 
 // ==========================================
 // Types
@@ -164,15 +162,6 @@ function shortenPath(p: string): string {
   return '...' + parts.slice(-2).join('/');
 }
 
-function isLocalUrl(url: string): boolean {
-  try {
-    const u = new URL(url);
-    return u.hostname === '127.0.0.1' || u.hostname === 'localhost' || u.hostname === '0.0.0.0';
-  } catch {
-    return true;
-  }
-}
-
 /** Convert API block descriptors into UI Block[] for historical session loading */
 function parseSessionBlocks(apiBlocks: any[]): Block[] {
   const result: Block[] = [];
@@ -245,35 +234,31 @@ export default function Page() {
 }
 
 /**
- * Computes wsUrl / token from search params and localStorage, then
- * wraps the app in CoreClientProvider so useCore() receives the same
- * wsUrl / token that useSession() uses.
+ * Computes wsUrl / token from search params, then wraps the app in
+ * CoreClientProvider so useCore() works via the server-side proxy.
  *
- * Default connection mode: "proxy" (server-side Core call via /api/core/call).
- * Direct mode only activated via explicit ?coreMode=direct query param.
- * In direct mode, ?url and ?token query params are used for WebSocket URL.
+ * Core connection target is configurable from the Settings panel
+ * via POST /api/core/target. useSession() still uses wsUrl/token
+ * for legacy terminal/chat sessions.
  */
 function PageContent() {
   const defaultUrl = typeof window !== 'undefined'
     ? location.port === '3000'
-      ? 'ws://localhost:8080/ws'
+      ? 'ws://localhost:9090/ws'
       : `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}`
-    : 'ws://localhost:8080/ws';
+    : 'ws://localhost:9090/ws';
   const params = typeof window !== 'undefined' ? new URL(window.location.href).searchParams : new URLSearchParams();
   const urlParam = params.get('url');
   const tokenParam = params.get('token');
-  const coreModeParam = params.get('coreMode');
   // Normalize: extract any token from urlParam, explicit tokenParam wins
   const initNormalized = normalizeWsUrlAndToken(urlParam || defaultUrl, tokenParam || undefined);
   const [wsUrl, setWsUrl] = useState(() => initNormalized.wsUrl);
   const [token, setToken] = useState<string | undefined>(initNormalized.token);
   const [reconnectKey, setReconnectKey] = useState(0);
-  // Default to proxy mode; direct mode only with explicit query param
-  const [coreMode, setCoreMode] = useState<'proxy' | 'direct'>(coreModeParam === 'direct' ? 'direct' : 'proxy');
 
   return (
-    <CoreClientProvider wsUrl={wsUrl} token={token} mode={coreMode} forceOffline={false} reconnectKey={reconnectKey}>
-      <AppCore wsUrl={wsUrl} setWsUrl={setWsUrl} token={token} setToken={setToken} onReconnect={() => setReconnectKey(k => k + 1)} coreMode={coreMode} setCoreMode={setCoreMode} />
+    <CoreClientProvider forceOffline={false} reconnectKey={reconnectKey}>
+      <AppCore wsUrl={wsUrl} setWsUrl={setWsUrl} token={token} setToken={setToken} onReconnect={() => setReconnectKey(k => k + 1)} />
     </CoreClientProvider>
   );
 }
@@ -284,11 +269,9 @@ interface AppCoreProps {
   token: string | undefined;
   setToken: React.Dispatch<React.SetStateAction<string | undefined>>;
   onReconnect: () => void;
-  coreMode: 'proxy' | 'direct';
-  setCoreMode: (mode: 'proxy' | 'direct') => void;
 }
 
-function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setCoreMode }: AppCoreProps) {
+function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps) {
   // ── Page access mode: LOCAL (localhost) vs VIEW (remote) ──
   // Use state + effect to avoid SSR/CSR hydration mismatch
   const [isLocalPage, setIsLocalPage] = useState(false);
@@ -397,12 +380,28 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
         }
       })
       .catch(() => {});
-  }, [core]);
+  }, [core, core.isConnected]);
+
+  // ── Fetch real absolute working directory from Core (not from node.info) ──
+  useEffect(() => {
+    if (!core?.isConnected) return;
+    core.call<{cwd?: string}>('env.cwd', {})
+      .then(res => {
+        const cwd = (res?.cwd || '').replace(/\\/g, '/');
+        if (cwd) {
+          setAbsoluteCwd(cwd);
+          setCurrentDir(cwd);
+          setProjectInfo(prev => prev ? { ...prev, cwd } : { cwd, projectName: '', homeDir: '' });
+        }
+      })
+      .catch(() => {});
+  }, [core, core.isConnected]);
 
   // ── File tree state (per-node, keyed by wsUrl) ──
+  const [absoluteCwd, setAbsoluteCwd] = useState('');
+  const [currentDir, setCurrentDir] = useState('');
   const [nodeFileTree, setNodeFileTree] = useState<Record<string, Record<string, {items: any[]; loaded: boolean; error?: string}>>>({});
   const [nodeExpandedDirs, setNodeExpandedDirs] = useState<Record<string, string[]>>({});
-  const [nodeFileTreeRoot, setNodeFileTreeRoot] = useState<Record<string, string>>({});
 
   const actionEndRef = useRef<HTMLDivElement>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
@@ -417,306 +416,8 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
     notify({ id: n.id, type: severity, title: n.title, message: n.message, duration: n.duration, action: n.action });
   }, [notify]);
 
-  // ── Peer discovery (other devices connected to this relay) ──
-  const [peers, setPeers] = useState<any[]>([]);
-  const [peerLinks, setPeerLinks] = useState<any[]>([]);
-  const handleSystemMessage = useCallback((msg: any) => {
-    if (msg.type === 'peer.list' && Array.isArray(msg.peers)) {
-      setPeers(msg.peers);
-      if (Array.isArray(msg.links)) setPeerLinks(msg.links);
-      // Re-read browserId
-      try {
-        const id = sessionStorage.getItem('bridge-browser-id');
-        if (id) setBrowserId(id);
-      } catch {}
-    } else if (msg.type === 'workbench.tabs') {
-      // Server sent updated workbench tabs for a node
-      const nodeId: string = msg.nodeId;
-      let tabs: any[] = Array.isArray(msg.tabs) ? msg.tabs : [];
-      if (!nodeId) return;
-      // Detect stale terminal tabs: instanceId === nodeId but no _surfaceId
-      for (const t of tabs) {
-        if (t.viewType === 'terminal' && t.instanceId === nodeId && !t._surfaceId) {
-          t._stale = true;
-          debugLog('stale tab detected (workbench.tabs)', { tabId: t.id, instanceId: t.instanceId, nodeId });
-        }
-      }
-      setAppState(prev => {
-        const currentWs = prev.instanceStates[nodeId];
-        if (!currentWs) {
-          // First time seeing this node's tabs — create workbench state
-          return { ...prev, instanceStates: { ...prev.instanceStates, [nodeId]: buildStateFromTabs(tabs as PaneTab[]) } };
-        }
-        const currentTabs = collectAllTabs(currentWs);
-        // Don't let empty server tabs overwrite locally-initialized tabs
-        // (e.g. after createInitialState set instanceId from peer.id)
-        if (tabs.length === 0 && currentTabs.length > 0) {
-          return prev;
-        }
-        // Only update if tabs actually differ — compare full fields:
-        // id, title, viewType, instanceId, _stale.  A tab can change from 'empty'
-        // to 'terminal' without its id changing, and we must pick that up.
-        const tabEq = (a: any, b: any) =>
-          a.id === b.id && a.title === b.title && a.viewType === b.viewType && a.instanceId === b.instanceId;
-        if (tabs.length === currentTabs.length && tabs.every((t, i) => tabEq(t, currentTabs[i]))) {
-          return prev;
-        }
-        // Preserve active tab selection if the tab still exists
-        const currentActiveId = currentWs.root.kind === 'pane' ? currentWs.root.activeTabId : '';
-        const newWs = buildStateFromTabs(tabs as PaneTab[], currentActiveId);
-        return {
-          ...prev,
-          instanceStates: { ...prev.instanceStates, [nodeId]: newWs },
-        };
-      });
-    } else if (msg.type === 'surface.published') {
-      const surface = msg.surface;
-      debugLog('RECEIVED surface.published', { surfaceId: surface?.surfaceId, nodeId: surface?.nodeId, viewType: surface?.viewType, instanceId: surface?.runtimeRef?.instanceId });
-      if (surface?.surfaceId && surface.nodeId) {
-        const instIdForAck = surface.runtimeRef?.instanceId;
-        if (instIdForAck) {
-          for (const key of Array.from(surfacePublishInFlightRef.current)) {
-            if (key.startsWith(`${surface.nodeId}:${instIdForAck}:`)) {
-              surfacePublishInFlightRef.current.delete(key);
-            }
-          }
-        }
-        setAppState(prev => {
-          let currentWs = prev.instanceStates[surface.nodeId];
-          if (!currentWs) {
-            currentWs = createInitialState(surface.nodeId);
-          }
-          // Already tracked by surfaceId
-          if (collectAllTabs(currentWs).some(t => t._surfaceId === surface.surfaceId || t.id === surface.surfaceId)) { debugLog('surface.published SKIP: tab already tracked', { surfaceId: surface.surfaceId }); return prev; }
-          const instId = surface.runtimeRef?.instanceId;
-          const activePane = findPaneInTree(currentWs.root, currentWs.activePaneId);
-          if (!activePane) return prev;
-          // Merge: if the current tab shares the same instanceId, upgrade it with surface metadata in-place
-          if (instId) {
-            const existingTab = activePane.tabs.find(t => t.instanceId === instId && !t._surfaceId);
-            if (existingTab) {
-              debugLog('surface.published MERGE: upgrading existing tab with surface metadata', { tabId: existingTab.id, instanceId: instId, surfaceId: surface.surfaceId });
-              currentWs = workbenchReducer(currentWs, {
-                type: 'SET_TAB_VIEW',
-                paneId: activePane.id,
-                tabId: existingTab.id,
-                viewType: existingTab.viewType,
-                title: surface.title || existingTab.title,
-                instanceId: instId,
-                _surfaceId: surface.surfaceId,
-              });
-              return { ...prev, instanceStates: { ...prev.instanceStates, [surface.nodeId]: currentWs } };
-            }
-          }
-          // No existing tab to upgrade — create new one
-          debugLog('surface.published CREATE: adding new tab', { surfaceId: surface.surfaceId, viewType: surface.viewType, instanceId: instId });
-          const tab: PaneTab = {
-            id: surface.surfaceId,
-            title: surface.title || 'Shared',
-            viewType: surface.viewType,
-            instanceId: instId,
-            pluginId: surface.pluginId,
-            _surfaceId: surface.surfaceId,
-          };
-          currentWs = workbenchReducer(currentWs, { type: 'ADD_TAB', paneId: activePane.id, tab, activate: false });
-          // Clean up empty placeholder tab when real surface tab was added
-          const paneAfterAdd = findPaneInTree(currentWs.root, currentWs.activePaneId);
-          if (paneAfterAdd) {
-            const emptyTabs = paneAfterAdd.tabs.filter(t => t.viewType === 'empty');
-            const realTabs = paneAfterAdd.tabs.filter(t => t.viewType !== 'empty');
-            if (realTabs.length > 0 && emptyTabs.length > 0) {
-              for (const empty of emptyTabs) {
-                currentWs = workbenchReducer(currentWs, { type: 'CLOSE_TAB', paneId: paneAfterAdd.id, tabId: empty.id });
-              }
-            }
-            // Detect stale terminal tabs: instanceId === nodeId but no _surfaceId
-            for (const t of paneAfterAdd.tabs) {
-              if (t.viewType === 'terminal' && t.instanceId === surface.nodeId && !t._surfaceId && !t._stale) {
-                debugLog('stale tab detected (surface.published)', { tabId: t.id, instanceId: t.instanceId, nodeId: surface.nodeId });
-              }
-            }
-          }
-          return { ...prev, instanceStates: { ...prev.instanceStates, [surface.nodeId]: currentWs } };
-        });
-      }
-    } else if (msg.type === 'surface.list') {
-      const nodeId: string = msg.nodeId;
-      const surfaces: any[] = Array.isArray(msg.surfaces) ? msg.surfaces : [];
-      debugLog('RECEIVED surface.list', { nodeId, surfaceCount: surfaces.length });
-      if (nodeId && surfaces.length > 0) {
-        setAppState(prev => {
-          let currentWs = prev.instanceStates[nodeId];
-          if (!currentWs) {
-            // surface.list arrived before setAppState committed this nodeId.
-            // Create a minimal state instead of dropping the list — otherwise
-            // the surfaces are lost until the user re-enters the node.
-            currentWs = createInitialState(nodeId);
-          }
-          const surfaceIds = new Set(surfaces.map(s => s.surfaceId));
-          for (const s of surfaces) {
-            // Skip if surface tab already exists
-            if (collectAllTabs(currentWs).some(t => t._surfaceId === s.surfaceId || t.id === s.surfaceId)) { debugLog('surface.list SKIP: tab already exists', { surfaceId: s.surfaceId }); continue; }
-            // Merge: if a localStorage-restored tab shares the same instanceId, upgrade it with surface metadata
-            const instId = s.runtimeRef?.instanceId;
-            const existingPane = findPaneInTree(currentWs.root, currentWs.activePaneId);
-            if (instId && existingPane) {
-              const existingTab = existingPane.tabs.find(t => t.instanceId === instId && !t._surfaceId);
-              if (existingTab) {
-                debugLog('surface.list MERGE: upgrading existing tab with surface metadata', { tabId: existingTab.id, instanceId: instId, surfaceId: s.surfaceId });
-                currentWs = workbenchReducer(currentWs, {
-                  type: 'SET_TAB_VIEW',
-                  paneId: existingPane.id,
-                  tabId: existingTab.id,
-                  viewType: existingTab.viewType,
-                  title: s.title || existingTab.title,
-                  instanceId: instId,
-                  _surfaceId: s.surfaceId,
-                });
-                continue;
-              }
-            }
-            if (!existingPane) continue;
-            debugLog('surface.list CREATE: adding new tab', { surfaceId: s.surfaceId, viewType: s.viewType, instanceId: instId });
-            const tab: PaneTab = {
-              id: s.surfaceId,
-              title: s.title,
-              viewType: s.viewType,
-              instanceId: instId,
-              pluginId: s.pluginId,
-              _surfaceId: s.surfaceId,
-            };
-            const shouldActivate = existingPane.tabs.every(t => t.viewType === 'empty');
-            currentWs = workbenchReducer(currentWs, { type: 'ADD_TAB', paneId: existingPane.id, tab, activate: shouldActivate });
-          }
-          // Detect stale surface references: tabs with _surfaceId pointing to
-          // a surface that no longer exists in the relay's surface list.
-          const activePane2 = findPaneInTree(currentWs.root, currentWs.activePaneId);
-          if (activePane2) {
-            for (const t of activePane2.tabs) {
-              if (t._surfaceId && !surfaceIds.has(t._surfaceId)) {
-                debugLog('stale surface removed (surface.list)', { tabId: t.id, _surfaceId: t._surfaceId, nodeId });
-                currentWs = workbenchReducer(currentWs, {
-                  type: 'SET_TAB_VIEW',
-                  paneId: activePane2.id,
-                  tabId: t.id,
-                  viewType: t.viewType,
-                  title: t.title,
-                  instanceId: t.instanceId,
-                  _surfaceId: undefined,
-                  _stale: true,
-                } as any);
-              }
-            }
-          }
-          // Detect stale terminal tabs: instanceId === nodeId but no _surfaceId
-          const allTabs = collectAllTabs(currentWs);
-          for (const t of allTabs) {
-            if (t.viewType === 'terminal' && t.instanceId === nodeId && !t._surfaceId && !t._stale) {
-              debugLog('stale tab detected (surface.list)', { tabId: t.id, instanceId: t.instanceId, nodeId });
-            }
-          }
-          // Clean up empty placeholder tab (from createInitialState) when
-          // real tabs exist. Without this the empty "New" tab persists
-          // alongside real surface tabs, causing visual duplication.
-          const activePane = findPaneInTree(currentWs.root, currentWs.activePaneId);
-          if (activePane) {
-            const emptyTabs = activePane.tabs.filter(t => t.viewType === 'empty');
-            const realTabs = activePane.tabs.filter(t => t.viewType !== 'empty');
-            if (realTabs.length > 0 && emptyTabs.length > 0) {
-              for (const empty of emptyTabs) {
-                currentWs = workbenchReducer(currentWs, { type: 'CLOSE_TAB', paneId: activePane.id, tabId: empty.id });
-              }
-            }
-          }
-          return { ...prev, instanceStates: { ...prev.instanceStates, [nodeId]: currentWs } };
-        });
-      }
-    } else if (msg.type === 'surface.closed') {
-      const closedId: string = msg.surfaceId;
-      if (closedId) {
-        debugLog('RECEIVED surface.closed', { surfaceId: closedId });
-        setAppState(prev => {
-          const next = { ...prev, instanceStates: { ...prev.instanceStates } };
-          for (const [nid, ws] of Object.entries(next.instanceStates)) {
-            // Walk all panes (root + bottom), not just the active one
-            const panes: any[] = [];
-            function collectPanes(node: any) {
-              if (!node) return;
-              if (node.kind === 'pane') panes.push(node);
-              if (node.children) for (const c of node.children) collectPanes(c);
-            }
-            collectPanes(ws.root);
-            if (ws.bottom) collectPanes(ws.bottom);
-            for (const pane of panes) {
-              const tab = pane.tabs.find((t: PaneTab) => t._surfaceId === closedId || t.id === closedId);
-              if (tab) {
-                // If this is the only real tab, strip surface metadata instead of
-                // closing — keeps at least one tab visible and avoids ShellTerminal
-                // trying to connect to a dead operation.
-                const realTabs = pane.tabs.filter((t: PaneTab) => t.viewType !== 'empty');
-                if (realTabs.length <= 1 && tab.viewType !== 'empty') {
-                  debugLog('surface.closed STRIP: last real tab, removing surface metadata', { tabId: tab.id, surfaceId: closedId });
-                  next.instanceStates[nid] = workbenchReducer(ws, {
-                    type: 'SET_TAB_VIEW',
-                    paneId: pane.id,
-                    tabId: tab.id,
-                    viewType: tab.viewType,
-                    title: tab.title,
-                    instanceId: tab.instanceId,
-                    _surfaceId: undefined,
-                    _stale: true,
-                  } as any);
-                } else {
-                  debugLog('surface.closed CLOSE_TAB', { tabId: tab.id, surfaceId: closedId });
-                  next.instanceStates[nid] = workbenchReducer(ws, { type: 'CLOSE_TAB', paneId: pane.id, tabId: tab.id });
-                }
-              }
-            }
-          }
-          return next;
-        });
-      }
-    } else if (msg.type === 'runtime.replay') {
-      // Relay sends replay to main WS when surface.subscribeNode triggers
-      // subscribe for each surface. Shell terminal handles replay on its own
-      // WebSocket; here we cache the latest output for tab previews.
-      const surfaceId: string = msg.surfaceId;
-      const outputs: any[] = Array.isArray(msg.outputs) ? msg.outputs : [];
-      if (surfaceId && outputs.length > 0) {
-        setAppState(prev => {
-          const next = { ...prev, tabOutputs: { ...prev.tabOutputs, [surfaceId]: outputs } };
-          return next;
-        });
-      }
-    } else if (msg.type === 'runtime.output') {
-      const surfaceId: string = msg.surfaceId;
-      if (surfaceId && msg.data != null) {
-        setAppState(prev => {
-          const existing = prev.tabOutputs?.[surfaceId] || [];
-          const chunk = { stream: msg.stream || 'stdout', data: msg.data, seq: msg.seq };
-          return { ...prev, tabOutputs: { ...prev.tabOutputs, [surfaceId]: [...existing, chunk].slice(-200) } };
-        });
-      }
-    } else if (msg.type === 'runtime.status') {
-      const surfaceId: string = msg.surfaceId;
-      if (surfaceId) {
-        setAppState(prev => ({
-          ...prev,
-          runtimeStatuses: { ...prev.runtimeStatuses, [surfaceId]: msg.status },
-        }));
-      }
-    } else if (msg.type === 'runtime.result') {
-      const surfaceId: string = msg.surfaceId;
-      if (surfaceId) {
-        setAppState(prev => ({
-          ...prev,
-          runtimeResults: { ...prev.runtimeResults, [surfaceId]: msg },
-        }));
-      }
-    }
-  }, []);
 
-  const { connStatus, msgLog, sendInput, sendCommand, serverBlocks, sessions, activeSessionId, activateSession, spawnSession, isWorkspace, queueStatus, instances, activeInstanceId, activateInstance, createInstance, killInstance, sendMessage } = useSession(wsUrl, token ?? undefined, undefined, undefined, undefined, onSystemNotify, dismiss, handleSystemMessage);
+  const { connStatus, msgLog, sendInput, sendCommand, serverBlocks, sessions, activeSessionId, activateSession, spawnSession, isWorkspace, queueStatus, instances, activeInstanceId, activateInstance, createInstance, killInstance } = useSession(wsUrl, token ?? undefined, undefined, undefined, undefined, onSystemNotify, dismiss);
 
   // ── Core plugin manifest → extension points sync ──
   const handleCorePluginCommand = useCallback((commandId: string) => {
@@ -753,59 +454,15 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
     setAppState(prev => appReducer(prev, action));
   }, []);
 
-  // Workbench actions that change the tab structure (need cross-device sync)
-  const structuralActions = new Set([
-    'ADD_TAB', 'CLOSE_TAB', 'SET_TAB_VIEW', 'SPLIT_PANE', 'UNSPLIT_PANE',
-    'REORDER_TABS', 'ADD_EMPTY_PANE', 'ADD_BOTTOM_PANE', 'REMOVE_PANE',
-    'SPLIT_PANE_VERTICAL', 'SPLIT_PANE_HORIZONTAL', 'CLEAR_INSTANCE_TABS',
-  ]);
-
-  // Set inside setState updater (runs during render), flushed via useEffect
-  // after React commits. This avoids reading the ref before the updater executes
-  // in concurrent / batched update scenarios.
-  const pendingSyncRef = useRef<{ nodeId: string; tabs: any[] } | null>(null);
-  const surfacePublishInFlightRef = useRef<Set<string>>(new Set());
-
-  useEffect(() => {
-    if (pendingSyncRef.current) {
-      const q = pendingSyncRef.current;
-      pendingSyncRef.current = null;
-      sendMessage('workbench.tabs', q);
-    }
-  }, [appState.instanceStates, sendMessage]);
-
   const activeWorkbenchDispatch = useCallback((action: WorkbenchAction) => {
-    // When closing a tab backed by a surface, tell the server to clean up
-    // the surface so it doesn't persist and reappear on next page load.
-    if (action.type === 'CLOSE_TAB') {
-      const curState = appStateRef.current;
-      const activeId = curState.activeInstanceId;
-      if (activeId && curState.instanceStates[activeId]) {
-        const ws = curState.instanceStates[activeId];
-        const pane = findPaneInTree(ws.root, action.paneId) || ws.bottom;
-        if (pane && pane.kind === 'pane') {
-          const tab = pane.tabs.find(t => t.id === action.tabId);
-          if (tab?._surfaceId) {
-            sendMessage?.('surface.close', { surfaceId: tab._surfaceId });
-          }
-        }
-      }
-    }
     setAppState(prev => {
       const activeId = prev.activeInstanceId;
       if (activeId && prev.instanceStates[activeId]) {
-        const next = appReducer(prev, { type: 'INSTANCE_ACTION', instanceId: activeId, action });
-        if (structuralActions.has(action.type)) {
-          const ws = next.instanceStates[activeId];
-          if (ws) {
-            pendingSyncRef.current = { nodeId: activeId, tabs: collectAllTabs(ws) };
-          }
-        }
-        return next;
+        return appReducer(prev, { type: 'INSTANCE_ACTION', instanceId: activeId, action });
       }
       return appReducer(prev, { type: 'GLOBAL_ACTION', action });
     });
-  }, [sendMessage]);
+  }, []);
   const activeWorkbenchState = useMemo(() => getActiveWorkbenchState(appState), [appState]);
   const appStateRef = useRef(appState);
   appStateRef.current = appState;
@@ -828,8 +485,7 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
 
   // Derived active-node file tree values
   const fileTree = nodeFileTree[activeNodeWsUrl] || {};
-  const expandedDirs = new Set(nodeExpandedDirs[activeNodeWsUrl] || ['.']);
-  const fileTreeRoot = nodeFileTreeRoot[activeNodeWsUrl] || '';
+  const expandedDirs = new Set(nodeExpandedDirs[activeNodeWsUrl] || [absoluteCwd || '.']);
 
   // Sync bookmark scope with active node
   useEffect(() => {
@@ -845,7 +501,8 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
     try {
       const res = await core.call<{ path: string; entries: Array<{ name: string; isDir: boolean; size: number; mode: string }> }>('fs.list', { path: dir });
       const entries = res?.entries ?? [];
-      const items = entries.map((e: { name: string; isDir: boolean }) => ({ name: e.name, type: e.isDir ? 'dir' : 'file' }));
+      const prefix = dir.endsWith('/') ? dir : dir + '/';
+      const items = entries.map((e: { name: string; isDir: boolean }) => ({ name: e.name, type: e.isDir ? 'dir' : 'file', path: prefix + e.name }));
       setNodeFileTree(prev => ({
         ...prev,
         [activeNodeWsUrl]: { ...(prev[activeNodeWsUrl] || {}), [dir]: {items, loaded: true} }
@@ -857,27 +514,20 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
       }));
     }
   }, [activeNodeWsUrl, core]);
-  // Fetch root when active node changes
-  useEffect(() => { fetchDir('.'); }, [fetchDir]);
+  // Fetch root when active node changes, core connects, or absoluteCwd is resolved
+  useEffect(() => { if (absoluteCwd) fetchDir(absoluteCwd); }, [fetchDir, core.isConnected, absoluteCwd]);
 
   const onNavigatePath = useCallback((path: string) => {
     setLastActiveDir(path);
-    setNodeFileTreeRoot(prev => ({...prev, [activeNodeWsUrl]: path}));
-    setNodeFileTree(prev => {
-      const nodeTree = prev[activeNodeWsUrl];
-      if (nodeTree?.[path]?.loaded) return prev;
-      return prev;
-    });
+    setCurrentDir(path);
     fetchDir(path);
-    setNodeExpandedDirs(prev => ({...prev, [activeNodeWsUrl]: ['.', path]}));
-  }, [fetchDir, activeNodeWsUrl]);
+    setNodeExpandedDirs(prev => ({...prev, [activeNodeWsUrl]: [absoluteCwd, path]}));
+  }, [fetchDir, activeNodeWsUrl, absoluteCwd]);
 
   // Phase 4I: Instance changes (sidebar click) no longer auto-create tabs.
   // Tab is the subject — instance is a tab's binding. Only shell tabs are
   // restored on reconnect via the instances[] effect below.
 
-  // Track instance IDs for lifecycle management — workbench tab sync is now
-  // server-driven (workbench.subscribe/workbench.tabs messages).
   const prevInstanceIds = useRef<string[]>([]);
   useEffect(() => {
     if (connStatus.status !== 'connected') return;
@@ -902,12 +552,14 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
 
   // Effective sidebar open state: sidebarRequirements drive defaults per view;
   // manual toggle (sidebarOverride) takes precedence.
-  const effectiveLeftOpen = state.sidebarOverride
+  // Sidebars are hidden when no node is active (NodeNetworkView visible).
+  const noActiveNode = !appState.activeInstanceId;
+  const effectiveLeftOpen = noActiveNode ? false : state.sidebarOverride
     ? state.leftSidebarOpen
     : activeSidebarReqs?.left === 'hidden' ? false
     : activeSidebarReqs?.left === 'shown' ? true
     : state.leftSidebarOpen;
-  const effectiveRightOpen = state.sidebarOverride
+  const effectiveRightOpen = noActiveNode ? false : state.sidebarOverride
     ? state.rightSidebarOpen
     : activeSidebarReqs?.right === 'hidden' ? false
     : activeSidebarReqs?.right === 'shown' ? true
@@ -1010,21 +662,19 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
     }
   }, [connStatus.status]);
   useEffect(() => {
-    if (instances.length === 0 || instancesRestoredRef.current) return;
+    if (connStatus.status !== 'connected' || instancesRestoredRef.current) return;
     instancesRestoredRef.current = true;
 
     const saved = loadLayoutsFromStorage();
     if (saved) {
-      const serverIds = instances.map((i: any) => i.id);
+      // CoreClient mode: no relay instances to validate against — restore all saved layouts.
       const { states, persistentTabs } = restoreInstanceStatesFromStorage(
-        saved.instanceStates, saved.persistentTabs as PaneTab[], serverIds
+        saved.instanceStates, saved.persistentTabs as PaneTab[], []
       );
-      // Workbench instance IDs = saved ones + any instance that has a layout
       const mergedIds = new Set([
         ...(saved.workbenchInstanceIds || []),
         ...Object.keys(states),
       ]);
-      const validIds = [...mergedIds].filter(id => serverIds.includes(id));
       setAppState(prev => {
         let next = prev;
         if (persistentTabs.length > 0) {
@@ -1035,15 +685,42 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
             next = appReducer(next, { type: 'RESTORE_INSTANCE_STATE', instanceId: id, state });
           }
         }
-        if (validIds.length > 0) {
-          next = appReducer(next, { type: 'SET_WORKBENCH_INSTANCES', instanceIds: validIds });
+        if (mergedIds.size > 0) {
+          next = appReducer(next, { type: 'SET_WORKBENCH_INSTANCES', instanceIds: [...mergedIds] });
+        }
+        // Restore last active node so terminal/workbench reappears on refresh
+        if (saved.activeInstanceId && next.instanceStates[saved.activeInstanceId]) {
+          next = appReducer(next, { type: 'SET_ACTIVE_INSTANCE', instanceId: saved.activeInstanceId });
         }
         return next;
       });
     }
-    // else: fresh start — no saved layouts. Server-driven sync will provide
-    // tabs when the user enters a node via workbench.subscribe/workbench.tabs.
-  }, [instances]);
+  }, [connStatus.status]);
+
+  // Auto-enter local node on first visit (no saved layout, but CoreClient is connected)
+  const autoEnterAttemptedRef = useRef(false);
+  useEffect(() => {
+    if (!core?.isConnected || autoEnterAttemptedRef.current) return;
+    if (appState.activeInstanceId) return; // already in a node
+    const saved = loadLayoutsFromStorage();
+    if (saved?.activeInstanceId) return; // layout restore will handle it
+    autoEnterAttemptedRef.current = true;
+    core.call<{ nodeId: string }>('node.identity.get').then(identity => {
+      const localId = identity?.nodeId || 'local';
+      if (!appStateRef.current.activeInstanceId) {
+        setAppState(prev => {
+          if (prev.instanceStates[localId]) {
+            return appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: localId });
+          }
+          const newLayout = createInitialState();
+          return appReducer(
+            { ...prev, instanceStates: { ...prev.instanceStates, [localId]: newLayout } },
+            { type: 'SET_ACTIVE_INSTANCE', instanceId: localId }
+          );
+        });
+      }
+    }).catch(() => {}); // node.identity.get unavailable — stay on NodeNetworkView
+  }, [core?.isConnected, appState.activeInstanceId]);
 
   // ── Auto-save layouts to localStorage with debounce (Phase 4N) ──
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -1052,17 +729,17 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
     autoSaveTimerRef.current = setTimeout(() => {
       // Don't overwrite localStorage with empty state during reconnect blips
       if (Object.keys(appState.instanceStates).length === 0 && appState.workbenchInstanceIds.length === 0) return;
-      saveLayoutsToStorage(appState.instanceStates, appState.persistentTabs, appState.workbenchInstanceIds);
+      saveLayoutsToStorage(appState.instanceStates, appState.persistentTabs, appState.workbenchInstanceIds, appState.activeInstanceId);
     }, 500);
     return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
-  }, [appState.instanceStates, appState.persistentTabs, appState.workbenchInstanceIds]);
+  }, [appState.instanceStates, appState.persistentTabs, appState.workbenchInstanceIds, appState.activeInstanceId]);
 
   // Save on beforeunload
   useEffect(() => {
     const handleBeforeUnload = () => {
       const state = appStateRef.current;
       if (Object.keys(state.instanceStates).length > 0 || state.workbenchInstanceIds.length > 0) {
-        saveLayoutsToStorage(state.instanceStates, state.persistentTabs, state.workbenchInstanceIds);
+        saveLayoutsToStorage(state.instanceStates, state.persistentTabs, state.workbenchInstanceIds, state.activeInstanceId);
       }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
@@ -1184,9 +861,8 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
       setProjectInfo({ cwd: dir, projectName: dir.split(/[/\\]/).pop() || '', homeDir: dir });
       addLog(`[System] Switched to ${dir.split(/[/\\]/).pop() || dir}`);
       setNodeFileTree(prev => ({...prev, [wsUrl]: {}}));
-      setNodeExpandedDirs(prev => ({...prev, [wsUrl]: ['.']}));
-      setNodeFileTreeRoot(prev => ({...prev, [wsUrl]: ''}));
-      fetchDir('.');
+      setNodeExpandedDirs(prev => ({...prev, [wsUrl]: [absoluteCwd || '.']}));
+      fetchDir(absoluteCwd || '.');
     } catch {}
     setSwitching(false);
     setShowDirSwitcher(false);
@@ -1412,23 +1088,26 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
 
   // ── Enter a node (from NodeBar or NodeNetworkView) ──
   const handleEnterNode = useCallback((nodeId: string) => {
+    // Special nodeId: open NodeManager system view
+    if (nodeId === '__mesh__') {
+      const state = workbenchStateRef.current;
+      if (state) {
+        const tabId = genTabId();
+        activeWorkbenchDispatch({ type: 'ADD_TAB', paneId: state.root.id, tab: { id: tabId, title: 'Nodes', viewType: 'system.nodes', _surfaceId: undefined }, activate: true });
+      }
+      return;
+    }
+
     const currentState = appStateRef.current;
     if (currentState.activeInstanceId === nodeId) {
-      // Toggle off — back to node view
-      sendMessage('workbench.unsubscribe', { nodeId });
-      sendMessage('surface.unsubscribeNode', { nodeId });
+      // Toggle off — back to node network view
       setAppState(prev => appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: null }));
     } else {
-      // Subscribe to this node's workbench tabs (server will send workbench.tabs)
-      sendMessage('workbench.subscribe', { nodeId });
-      // Subscribe to shared surfaces for live output + replay
-      sendMessage('surface.subscribeNode', { nodeId });
       // Enter this node — create workbench layout if needed
       setAppState(prev => {
         if (prev.instanceStates[nodeId]) {
           return appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: nodeId });
         }
-        // Start with empty initial state; server tabs arrive async via workbench.tabs
         const newLayout = createInitialState();
         return appReducer(
           { ...prev, instanceStates: { ...prev.instanceStates, [nodeId]: newLayout } },
@@ -1436,27 +1115,7 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
         );
       });
     }
-  }, [sendMessage]);
-
-  const handleRefreshNode = useCallback(() => {
-    const nodeId = appStateRef.current.activeInstanceId;
-    if (!nodeId) return;
-    sendMessage('surface.subscribeNode', { nodeId });
-    sendMessage('workbench.subscribe', { nodeId });
-  }, [sendMessage]);
-
-  // Periodic surface sync — safety net for cross-relay push notification gaps.
-  // Re-subscribes to the active node's surfaces every 30s so new tabs from
-  // other devices are discovered even if surface.published push was missed.
-  useEffect(() => {
-    const nodeId = appState.activeInstanceId;
-    if (!nodeId) return;
-    const id = setInterval(() => {
-      sendMessage('surface.subscribeNode', { nodeId });
-      sendMessage('workbench.subscribe', { nodeId });
-    }, 30_000);
-    return () => clearInterval(id);
-  }, [appState.activeInstanceId, sendMessage]);
+  }, []);
 
   // ── Closed kept tabs for ≡ menu (Phase 4N) ──
   const closedKeptTabs = useMemo(() => {
@@ -1484,73 +1143,7 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
     }
   }, [activeWorkbenchDispatch]);
 
-  // ── Upstream relay connection (removed — use Core mesh node.invite/node.peer instead) ──
-  const [upstreamUrl, setUpstreamUrl] = useState<string | undefined>(undefined);
-  const [upstreamConnectingUrl, setUpstreamConnectingUrl] = useState<string | undefined>(undefined);
-  const [upstreamError, setUpstreamError] = useState<string | undefined>(undefined);
-  const [upstreamErrorUrl, setUpstreamErrorUrl] = useState<string | undefined>(undefined);
-
-  // ── Handle connect local node as leaf to a remote relay (removed) ──
-  const handleConnectUpstream = useCallback(async (url: string) => {
-    addLog(`[System] Relay upstream connections removed — use Core mesh (node.invite.* / node.peer.*). Ignored connect to ${url}`);
-    setUpstreamConnectingUrl(undefined);
-    setUpstreamError('Use Core mesh instead of legacy relay connections');
-    setUpstreamErrorUrl(url);
-  }, [addLog]);
-
-  // ── Handle disconnect upstream (removed) ──
-  const handleDisconnectUpstream = useCallback(async () => {
-    addLog('[System] Relay upstream disconnect removed — use Core mesh (node.peer.*)');
-    setUpstreamUrl(undefined);
-    setUpstreamError(undefined);
-    setUpstreamErrorUrl(undefined);
-  }, [addLog]);
-
-  // ── Saved connections (removed — saved relay connections no longer supported) ──
-  const [connections, setConnections] = useState<any[]>([]);
-  const [newConnUrl, setNewConnUrl] = useState('');
-  const autoUpstreamAttemptedRef = useRef(false);
-  const handleDeleteConnection = useCallback(async (_id: string) => {
-    // no-op: relay connections removed
-  }, []);
-  const handleAddConnection = useCallback(async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newConnUrl.trim()) return;
-    addLog('[System] Saved connections removed — use Core mesh for peer connections. Ignored add.');
-    setNewConnUrl('');
-  }, [newConnUrl, addLog]);
-
-  const nodeBarPeers = useMemo(() => {
-    if (!upstreamUrl || isLocalUrl(upstreamUrl)) return peers;
-
-    try {
-      const upstream = new URL(upstreamUrl);
-      const upstreamId = `upstream:${upstreamUrl}`;
-      const alreadyListed = peers.some((peer: any) =>
-        peer.id === upstreamId ||
-        (!peer.isLocal && peer.ip === upstream.hostname)
-      );
-      if (alreadyListed) return peers;
-
-      const saved = connections.find((conn: any) => conn.url === upstreamUrl);
-      const networkType = saved?.networkType === 'lan' ? 'lan' : 'wan';
-      return [
-        ...peers,
-        {
-          id: upstreamId,
-          name: saved?.name || upstream.hostname,
-          ip: upstream.hostname,
-          type: 'agent',
-          role: 'relay',
-          networkType,
-          hasPublicAccess: networkType === 'wan',
-          connectedAt: Date.now(),
-        },
-      ];
-    } catch {
-      return peers;
-    }
-  }, [peers, upstreamUrl, connections]);
+  // ── Mesh/peer connections are managed through CoreClient in NodeNetworkView ──
 
   // ── Handle view request from pane (user picks view in EmptyPane) ──
   // Phase 4F: Opening a view NEVER auto-creates an instance. The tab is a UI
@@ -1569,39 +1162,13 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
     activeWorkbenchDispatch({ type: 'SET_TAB_VIEW', paneId, tabId, viewType, title: defaultTitle, instanceId: existingTab?.instanceId });
   }, [activeWorkbenchDispatch]);
 
-  const publishSurfaceForTab = useCallback((tab: PaneTab, instanceId: string) => {
-    const nodeId = appStateRef.current.activeInstanceId;
-    if (!nodeId) { debugLog('publishSurfaceForTab SKIP: no activeInstanceId', { tabId: tab.id, instanceId }); return false; }
-    if (tab.viewType !== 'terminal') { debugLog('publishSurfaceForTab SKIP: not terminal', { tabId: tab.id, viewType: tab.viewType }); return false; }
-    if (tab._surfaceId) { debugLog('publishSurfaceForTab SKIP: already has _surfaceId', { tabId: tab.id, _surfaceId: tab._surfaceId }); return false; }
-    const publishKey = `${nodeId}:${instanceId}:${tab.id}`;
-    if (surfacePublishInFlightRef.current.has(publishKey)) { debugLog('publishSurfaceForTab SKIP: already in flight', { publishKey }); return true; }
-    debugLog('publishSurfaceForTab SENDING surface.publish', { nodeId, instanceId, tabId: tab.id });
-    const sent = sendMessage('surface.publish', {
-      nodeId,
-      title: tab.title || 'Terminal',
-      viewType: 'terminal',
-      scope: 'node',
-      shared: true,
-      runtimeRef: { kind: 'terminal', instanceId },
-      replayPolicy: { mode: 'tail', lines: 5000, bytes: 500000 },
-    });
-    if (!sent) { debugLog('publishSurfaceForTab FAIL: sendMessage returned false', { nodeId, instanceId, tabId: tab.id }); return false; }
-    surfacePublishInFlightRef.current.add(publishKey);
-    window.setTimeout(() => {
-      surfacePublishInFlightRef.current.delete(publishKey);
-    }, 5000);
-    return true;
-  }, [sendMessage]);
-
   // Phase 4F: Bind the active pane's current tab to an instanceId (called by views after explicit create).
   const handleBindCurrentTabInstance = useCallback((instanceId: string, surface?: any) => {
     const state = workbenchStateRef.current;
     const activePane = findPaneInTree(state.root, state.activePaneId);
-    if (!activePane) { debugLog('bindCurrentTabInstance SKIP: no activePane'); return; }
+    if (!activePane) return;
     const activeTab = activePane.tabs.find(t => t.id === activePane.activeTabId);
-    if (!activeTab) { debugLog('bindCurrentTabInstance SKIP: no activeTab'); return; }
-    debugLog('bindCurrentTabInstance', { instanceId, tabId: activeTab.id, viewType: activeTab.viewType, title: activeTab.title, surfaceId: surface?.surfaceId });
+    if (!activeTab) return;
     activeWorkbenchDispatch({
       type: 'SET_TAB_VIEW',
       paneId: activePane.id,
@@ -1611,59 +1178,21 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
       instanceId,
       _surfaceId: surface?.surfaceId,
     });
-    if (surface?.surfaceId) {
-      debugLog('bindCurrentTabInstance SKIP publish: API returned surface', { instanceId, surfaceId: surface.surfaceId });
-      return;
-    }
-    // Publish shared surface for cross-device visibility.
-    const published = publishSurfaceForTab(activeTab, instanceId);
-    debugLog('bindCurrentTabInstance publishSurfaceForTab result', { instanceId, published });
-  }, [activeWorkbenchDispatch, publishSurfaceForTab]);
+  }, [activeWorkbenchDispatch]);
 
-  // Ensure a surface is published for an existing terminal tab that already
-  // has an instanceId but no _surfaceId (e.g. restored from localStorage or
-  // synced via workbench.tabs). Without this, other devices cannot discover
-  // the terminal via surface.subscribeNode.
-  const handleEnsureSurfacePublished = useCallback((instanceId: string) => {
-    const state = workbenchStateRef.current;
-    const nodeId = appStateRef.current.activeInstanceId;
-    if (!nodeId) { debugLog('ensureSurfacePublished SKIP: no activeInstanceId', { instanceId }); return false; }
-    // Walk the pane tree to find a tab with this instanceId and no _surfaceId
-    function findTabInPane(pane: any): PaneTab | undefined {
-      if (!pane) return undefined;
-      const tab = pane.tabs?.find((t: PaneTab) => t.instanceId === instanceId && !t._surfaceId);
-      if (tab) return tab;
-      for (const child of pane.children || []) {
-        const found = findTabInPane(child);
-        if (found) return found;
-      }
-      return undefined;
-    }
-    const tab = findTabInPane(state.root) || (state.bottom ? findTabInPane(state.bottom) : undefined);
-    if (tab) {
-      debugLog('ensureSurfacePublished FOUND tab, calling publishSurfaceForTab', { instanceId, tabId: tab.id, tabTitle: tab.title, nodeId });
-      return publishSurfaceForTab(tab, instanceId);
-    }
-    debugLog('ensureSurfacePublished SKIP: no matching tab found', { instanceId, nodeId });
-    return false;
-  }, [publishSurfaceForTab]);
-
-  // ── Close tab: kill if not kept ──
+  // ── Close tab: detach from UI, leave run alive for later re-attach ──
   const handleCloseTab = useCallback((_paneId: string, _tabId: string, tab: PaneTab) => {
     const instId = tab.instanceId;
-    if (instId) {
-      // Kept tabs survive tab close (≡ menu revival). Non-kept → kill process.
-      const isKept = appStateRef.current.persistentTabs.some(t => t.id === tab.id);
-      if (!isKept) {
-        // CoreClient mode: stop the run first, then fallback to relay killInstance
-        if (core?.isConnected) {
-          core.call('run.stop', { runId: instId }).catch(() => {});
-        }
-        killInstance(instId);
-        setAppState(prev => appReducer(prev, { type: 'REMOVE_INSTANCE_LAYOUT', instanceId: instId }));
-      }
-    }
-  }, [killInstance, core]);
+    if (!instId) return;
+
+    const isKept = appStateRef.current.persistentTabs.some(t => t.id === tab.id);
+    if (isKept) return; // kept tabs survive close via ≡ menu
+
+    // Detach: remove UI layout binding but leave the run running.
+    // The run persists in RunStore and can be re-attached later via
+    // ViewSelector → Terminal or run.attach.
+    setAppState(prev => appReducer(prev, { type: 'REMOVE_INSTANCE_LAYOUT', instanceId: instId }));
+  }, []);
 
   // ── Workbench context value (provides session/chat state to all view components) ──
   const workbenchContextValue = useMemo(() => ({
@@ -1703,7 +1232,6 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
     createInstance: createNodeInstance,
     instances,
     bindCurrentTabInstance: handleBindCurrentTabInstance,
-    ensureSurfacePublished: handleEnsureSurfacePublished,
     activeInstanceId,
     projectCwd: activeNodeProjectInfo?.cwd || '.',
     homeDir: activeNodeProjectInfo?.homeDir || '.',
@@ -1716,6 +1244,7 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
       historyLoadedRef.current = false;
       window.location.reload();
     },
+    onNavigatePath,
     scrollContainerRef: scrollContainerRef as React.RefObject<HTMLDivElement | null>,
     actionEndRef: actionEndRef as React.RefObject<HTMLDivElement | null>,
   }), [
@@ -1734,6 +1263,7 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
     createNodeInstance, handleBindCurrentTabInstance, activateInstance, activeInstanceId,
     activeNodeProjectInfo?.cwd,
     activeExternalSession,
+    onNavigatePath,
     cmdPanelRef, scrollContainerRef, actionEndRef,
   ]);
 
@@ -1795,13 +1325,10 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
         </div>
       )}
 
-      {/* ── Node bar — shows peers (+ local node) for entering workbenches ── */}
+      {/* ── Node bar — shows connected mesh nodes for entering workbenches ── */}
       <NodeBar
-        peers={nodeBarPeers}
-        wsUrl={wsUrl}
         activeNodeId={appState.activeInstanceId}
         onEnterNode={handleEnterNode}
-        onRefreshNode={handleRefreshNode}
         onOpenConnection={() => setAppState(prev => appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: null }))}
       />
 
@@ -1812,7 +1339,7 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
           expandedDirs={expandedDirs}
           onToggleDir={(dirPath) => {
             setNodeExpandedDirs(prev => {
-              const current = prev[activeNodeWsUrl] || ['.'];
+              const current = prev[activeNodeWsUrl] || [absoluteCwd || '.'];
               const isExpanded = current.includes(dirPath);
               const next = isExpanded
                 ? current.filter(d => d !== dirPath)
@@ -1830,6 +1357,7 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
           }}
           onCommand={(cmdId) => runWorkbenchCommand({ command: cmdId }, actionRunContext)}
           projectCwd={activeNodeProjectInfo?.cwd || '.'}
+          absoluteCwd={absoluteCwd || activeNodeProjectInfo?.cwd || '.'}
           instances={instances.filter((i: any) => appState.workbenchInstanceIds.includes(i.id) && (i.status === 'running' || i.status === 'starting'))}
           activeInstanceId={activeInstanceId}
           onActivateInstance={activateInstance}
@@ -1838,11 +1366,11 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
         />
         </SidebarSlot>
 
-        {/* ═══ CENTER: WorkbenchLayout ════════ */}
+        {/* ═══ CENTER: WorkbenchLayout (always mounted; hidden via CSS when no node active,
+             so tab/terminal state survives node toggle) ════════ */}
         <main className="flex-1 flex flex-col relative bg-black min-w-0 min-h-0">
           <WorkbenchProvider value={workbenchContextValue}>
-          {appState.activeInstanceId ? (
-            <div className="flex flex-col flex-1 min-h-0 min-w-0">
+          <div className="flex flex-col flex-1 min-h-0 min-w-0" style={{ display: appState.activeInstanceId ? 'flex' : 'none' }}>
           <div className="flex items-center justify-between h-7 px-2 border-b border-gray-800 bg-[#0a0a0a] shrink-0">
             <span className="flex items-center gap-2 text-[10px] font-bold text-gray-500 tracking-wider">
               WORKBENCH
@@ -1898,32 +1426,15 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
               return <MainSlot viewId={resolvedViewId} instanceId={instanceId} _surfaceId={tab?._surfaceId} />;
             }}
           />
-          </div>) : (
-            <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
+          </div>
+          <div className="flex-1 flex flex-col min-h-0 overflow-y-auto" style={{ display: appState.activeInstanceId ? 'none' : 'flex' }}>
               <div className="p-6 space-y-6 max-w-3xl mx-auto w-full">
                 <NodeNetworkView
-                  peers={peers}
-                  links={peerLinks}
-                  wsUrl={wsUrl}
-                  connections={connections}
-                  onDeleteConnection={handleDeleteConnection}
-                  newConnUrl={newConnUrl}
-                  onNewConnUrlChange={setNewConnUrl}
-                  onAddConnection={handleAddConnection}
                   onEnterNode={handleEnterNode}
-                  upstreamUrl={upstreamUrl}
-                  onConnectUpstream={handleConnectUpstream}
-                  onDisconnectUpstream={handleDisconnectUpstream}
-                  upstreamConnectingUrl={upstreamConnectingUrl}
-                  upstreamError={upstreamError}
-                  upstreamErrorUrl={upstreamErrorUrl}
-                  upstreamStatus={upstreamUrl ? 'connected' : undefined}
                   isLocalPage={isLocalPage}
-                  browserId={browserId}
                 />
               </div>
-            </div>
-          )}
+          </div>
           </WorkbenchProvider>
         </main>
 
@@ -1945,7 +1456,7 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
           onTerminalTabChange={setTerminalTab}
           logsEndRef={logsEndRef}
           onNavigatePath={onNavigatePath}
-          currentActiveDir={fileTreeRoot || '.'}
+          currentActiveDir={currentDir || absoluteCwd || '.'}
         />
         </SidebarSlot>
       </div>
@@ -1955,6 +1466,7 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
           queueStatus={queueStatus}
           onSetMode={setMode}
           onSetEffort={setEffort}
+          absoluteCwd={absoluteCwd || '.'}
         />
       )}
 
@@ -2004,13 +1516,7 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
         onCloseContextMenu={closeContextMenu}
         settingsOpen={settingsOpen}
         onCloseSettings={() => setSettingsOpen(false)}
-        wsUrl={wsUrl}
-        token={token}
-        onWsUrlChange={setWsUrl}
-        onTokenChange={setToken}
         onReconnect={onReconnect}
-        coreMode={coreMode}
-        onCoreModeChange={setCoreMode}
       />
 
       <KeyHintOverlay whenContext={focusWhenContext} onCommand={handlePaletteSelect} />
@@ -2022,7 +1528,7 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
         expandedDirs={expandedDirs}
         onToggleDir={(dirPath) => {
           setNodeExpandedDirs(prev => {
-            const current = prev[activeNodeWsUrl] || ['.'];
+            const current = prev[activeNodeWsUrl] || [absoluteCwd || '.'];
             const isExpanded = current.includes(dirPath);
             const next = isExpanded
               ? current.filter(d => d !== dirPath)
@@ -2042,6 +1548,7 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, coreMode, setC
         onKill={killInstance}
         onCommand={handlePaletteSelect}
         activeView={focusViewId}
+        absoluteCwd={absoluteCwd || undefined}
       />
       <MobileRightPanel
         open={mobileRightOpen}

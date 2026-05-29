@@ -24,12 +24,13 @@ import { FilesPanel } from './files-panel';
 import { PathBookmarksPanel } from './path-bookmarks-panel';
 import { SessionListPanel, SystemInfoPanel } from '../plugin-host/plugin-components';
 
-// Extension-manifest-declared panels (registered as component overrides)
-registerPanelComponent('logs', LogsPanel);
-registerPanelComponent('terminal', TerminalPanel);
-registerPanelComponent('system', SystemPanel);
-registerPanelComponent('processes', ProcessesPanel);
-registerPanelComponent('tasks', TaskPanel);
+// Plugin-manifest-declared sidebar panels (registered by manifest panel id)
+registerPanelComponent('terminal.files', FilesPanel);
+registerPanelComponent('terminal.raw', TerminalPanel);
+registerPanelComponent('terminal.logs', LogsPanel);
+registerPanelComponent('terminal.processes', ProcessesPanel);
+registerPanelComponent('terminal.tasks', TaskPanel);
+registerPanelComponent('terminal.system', SystemPanel);
 
 // Host-rendered plugin panels (registered by componentId via hostComponentRegistry,
 // also as panel component overrides here as belt-and-suspenders)

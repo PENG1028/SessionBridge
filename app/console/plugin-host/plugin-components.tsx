@@ -29,6 +29,15 @@ import { TerminalInputBuffer, createDebouncedResize } from '../core/terminal-inp
  * and places it at the action.request message level for topology routing.
  */
 export function TerminalView({ core, config }: HostComponentProps) {
+  // Guard: if rendered outside PluginHost (e.g. sidebar panel with wrong props),
+  // show a fallback instead of crashing the entire UI.
+  if (!config) {
+    return (
+      <div className="flex-1 flex items-center justify-center bg-gray-950 text-gray-500 text-xs">
+        Terminal — not available in this context
+      </div>
+    );
+  }
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
   const [command, setCommand] = useState('bash');
@@ -519,6 +528,14 @@ export function TerminalView({ core, config }: HostComponentProps) {
  * SessionListPanel — lists active sessions with stop capability.
  */
 export function SessionListPanel({ core, config }: HostComponentProps) {
+  if (!config) {
+    return (
+      <div className="flex-1 flex items-center justify-center bg-gray-950 text-gray-500 text-xs">
+        Sessions — not available in this context
+      </div>
+    );
+  }
+
   const [sessions, setSessions] = useState<Array<{ sessionId: string; state: string; command: string }>>([]);
   const [loading, setLoading] = useState(true);
 
@@ -564,6 +581,13 @@ export function SessionListPanel({ core, config }: HostComponentProps) {
  * Calls: system.info, node.list, node.health
  */
 export function SystemInfoPanel({ core, config }: HostComponentProps) {
+  if (!config) {
+    return (
+      <div className="flex-1 flex items-center justify-center bg-gray-950 text-gray-500 text-xs" data-testid="system-info-panel">
+        System Info — not available in this context
+      </div>
+    );
+  }
   const [sysInfo, setSysInfo] = useState<Record<string, unknown> | null>(null);
   const [nodes, setNodes] = useState<Array<{ nodeId: string; status: string; name?: string }>>([]);
   const [loading, setLoading] = useState(true);

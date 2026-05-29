@@ -15,6 +15,8 @@ interface DirectoryPickerProps {
   open: boolean;
   onClose: () => void;
   onSelect: (path: string) => void;
+  /** Absolute path of the working directory on the Core server. */
+  absoluteCwd?: string;
   initialPath?: string;
   title?: string;
 }
@@ -35,93 +37,118 @@ function useIsMobile(): boolean {
 
 interface BreadcrumbSeg {
   label: string;
+  /** The absolute path this segment represents. */
   path: string;
   key: string;
 }
 
-/** Full workspace path for the root breadcrumb segment. */
-function rootLabel(rootCwd: string): string {
-  return rootCwd.replace(/\\/g, '/').replace(/\/$/, '') || '~';
+/**
+ * Build breadcrumb segments from an absolute path.
+ * e.g. "F:/Work Document/project" → [
+ *   { label: "F:", path: "F:/" },
+ *   { label: "Work Document", path: "F:/Work Document" },
+ *   { label: "project", path: "F:/Work Document/project" },
+ * ]
+ * For Unix "/usr/local" → [
+ *   { label: "/", path: "/" },
+ *   { label: "usr", path: "/usr" },
+ *   { label: "local", path: "/usr/local" },
+ * ]
+ */
+function pathSegments(absPath: string): BreadcrumbSeg[] {
+  const norm = absPath.replace(/\\/g, '/');
+
+  if (!norm) return [];
+
+  // Unix root
+  if (norm === '/') return [{ label: '/', path: '/', key: 'seg-root' }];
+
+  // Windows drive root, e.g. "F:" or "F:/"
+  const driveMatch = norm.match(/^([A-Za-z]:)(\/|$)/);
+  if (driveMatch) {
+    const drive = driveMatch[1]; // "F:"
+    const rest = norm.slice(driveMatch[0].length); // everything after "F:/"
+    if (!rest) return [{ label: drive, path: drive + '/', key: 'seg-drive' }];
+
+    const parts = rest.split('/').filter(Boolean);
+    const segs: BreadcrumbSeg[] = [{ label: drive, path: drive + '/', key: 'seg-drive' }];
+    let accumulated = drive + '/';
+    for (let i = 0; i < parts.length; i++) {
+      accumulated += parts[i];
+      segs.push({ label: parts[i], path: accumulated, key: `seg-${i}` });
+      if (i < parts.length - 1) accumulated += '/';
+    }
+    return segs;
+  }
+
+  // Unix absolute path
+  if (norm.startsWith('/')) {
+    const parts = norm.split('/').filter(Boolean);
+    const segs: BreadcrumbSeg[] = [{ label: '/', path: '/', key: 'seg-root' }];
+    let accumulated = '';
+    for (let i = 0; i < parts.length; i++) {
+      accumulated += '/' + parts[i];
+      segs.push({ label: parts[i], path: accumulated, key: `seg-${i}` });
+    }
+    return segs;
+  }
+
+  // Fallback: treat as single token (shouldn't happen with absolute paths)
+  return [{ label: norm, path: norm, key: 'seg-0' }];
 }
 
 /**
- * Build breadcrumb segments from the selected path.
- * Root shows the project folder name (click → workspace root).
- * Child segments show relative path components (click → that level).
+ * Resolve a potentially-relative path to absolute using absoluteCwd.
  */
-function pathSegments(path: string, rootLabelStr: string): BreadcrumbSeg[] {
-  const norm = path.replace(/\\/g, '/').replace(/^\.\/?/, '');
-
-  /** Split segments from an absolute Unix/Win path. */
-  function fromAbs(abs: string): BreadcrumbSeg[] {
-    const parts = abs.split('/').filter(Boolean);
-    return parts.map((label, i) => {
-      const full = parts.slice(0, i + 1).join('/');
-      return { label, path: full === rootLabelStr ? '.' : full, key: `seg-${i}` };
-    });
-  }
-
-  // At project root → show rootCwd as segments
-  if (!norm || norm === '.' || norm === rootLabelStr) {
-    return fromAbs(rootLabelStr);
-  }
-
-  // Above ROOT_DIR (absolute path) → just those segments, no root context
-  if (norm.startsWith('/') || /^[A-Za-z]:/.test(norm)) {
-    return fromAbs(norm);
-  }
-
-  // Relative sub-path → rootCwd + relative segments
-  const rootParts = rootLabelStr.split('/').filter(Boolean);
-  const rootSegs = rootParts.map((label, i) => ({
-    label,
-    path: rootParts.slice(0, i + 1).join('/') === rootLabelStr ? '.' : rootParts.slice(0, i + 1).join('/'),
-    key: `rs-${i}`,
-  }));
-
-  const parts = norm.split('/').filter(Boolean);
-  const relSegs = parts.map((label, i) => ({
-    label,
-    path: '.' + '/' + parts.slice(0, i + 1).join('/'),
-    key: `seg-${i}`,
-  }));
-
-  return [...rootSegs, ...relSegs];
+function resolvePath(p: string, absoluteCwd: string): string {
+  if (!p) return absoluteCwd;
+  const norm = p.replace(/\\/g, '/');
+  if (norm.startsWith('/') || /^[A-Za-z]:/.test(norm)) return norm;
+  if (norm === '.') return absoluteCwd;
+  // Relative path: join with absoluteCwd
+  const base = absoluteCwd.endsWith('/') ? absoluteCwd : absoluteCwd + '/';
+  return base + norm.replace(/^\.\//, '');
 }
 
 export function DirectoryPicker({
   open, onClose, onSelect,
-  initialPath = '.',
+  absoluteCwd = '',
+  initialPath,
   title = 'Select Directory',
 }: DirectoryPickerProps) {
   const core = useCore();
   const [tree, setTree] = useState<Record<string, { items: DirEntry[]; loaded: boolean }>>({});
-  const [expanded, setExpanded] = useState<Set<string>>(new Set(['.']));
-  const [selected, setSelected] = useState(initialPath);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useState('');
   const [search, setSearch] = useState('');
-  const [rootCwd, setRootCwd] = useState('');
 
   const mobile = useIsMobile();
+
+  // Normalize absoluteCwd
+  const cwd = useMemo(() => absoluteCwd.replace(/\\/g, '/'), [absoluteCwd]);
 
   const fetchDir = useCallback(async (dir: string) => {
     if (!core?.isConnected) return;
     try {
       const res = await core.call<{ path: string; entries: Array<{ name: string; isDir: boolean; size: number; mode: string }> }>('fs.list', { path: dir });
       const entries = res?.entries ?? [];
-      const items: DirEntry[] = entries.map(e => ({ name: e.name, type: e.isDir ? 'dir' : 'file' }));
+      // Build entries with absolute paths
+      const prefix = dir.endsWith('/') ? dir : dir + '/';
+      const items: DirEntry[] = entries.map(e => ({ name: e.name, type: e.isDir ? 'dir' : 'file', path: prefix + e.name }));
       setTree(prev => ({ ...prev, [dir]: { items, loaded: true } }));
     } catch {}
   }, [core]);
 
   useEffect(() => {
-    if (open) {
-      setSelected(initialPath);
+    if (open && cwd) {
+      const resolved = initialPath ? resolvePath(initialPath, cwd) : cwd;
+      setSelected(resolved);
       setTree({});
-      setExpanded(new Set(['.']));
+      setExpanded(new Set([resolved]));
       setSearch('');
-      fetchDir('.');
+      fetchDir(resolved);
     }
-  }, [open, fetchDir, initialPath]);
+  }, [open, fetchDir, cwd, initialPath]);
 
   const toggleDir = useCallback((path: string) => {
     setExpanded(prev => {
@@ -133,24 +160,23 @@ export function DirectoryPicker({
     if (!tree[path]?.loaded) fetchDir(path);
   }, [tree, fetchDir]);
 
-  /** Navigate to a directory: fetches contents and rebases the tree to show them. */
+  /** Navigate to a directory: set as root and fetch contents. */
   const navigateTo = useCallback((path: string) => {
     setSelected(path);
-    setExpanded(new Set(['.']));
-    const q = path.replace(/^([A-Za-z]):$/, '$1:/'); // fix bare drive letter
-
+    setExpanded(new Set([path]));
+    setTree({});
     if (!core?.isConnected) return;
-    core.call<{ path: string; entries: Array<{ name: string; isDir: boolean; size: number; mode: string }> }>('fs.list', { path: q })
+    core.call<{ path: string; entries: Array<{ name: string; isDir: boolean; size: number; mode: string }> }>('fs.list', { path })
       .then(res => {
         const entries = res?.entries ?? [];
-        const items: DirEntry[] = entries.map(e => ({ name: e.name, type: e.isDir ? 'dir' : 'file' }));
-        setTree(prev => ({ ...prev, '.': { items, loaded: true } }));
+        const prefix = path.endsWith('/') ? path : path + '/';
+        const items: DirEntry[] = entries.map(e => ({ name: e.name, type: e.isDir ? 'dir' : 'file', path: prefix + e.name }));
+        setTree(prev => ({ ...prev, [path]: { items, loaded: true } }));
       })
       .catch(() => {});
   }, [core]);
 
-  const rootLabelStr = useMemo(() => rootLabel(rootCwd), [rootCwd]);
-  const breadcrumb = useMemo(() => pathSegments(selected, rootLabelStr), [selected, rootLabelStr]);
+  const breadcrumb = useMemo(() => pathSegments(selected), [selected]);
 
   // Collect all paths matching search across loaded tree
   const searchResults = useMemo(() => {
@@ -172,9 +198,9 @@ export function DirectoryPicker({
       return res;
     }
 
-    const root = tree['.']?.items || [];
+    const root = tree[selected]?.items || [];
     return collect(root, 0);
-  }, [search, tree, expanded]);
+  }, [search, tree, expanded, selected]);
 
   const renderEntry = (entry: DirEntry, depth: number): React.ReactNode => {
     const fp = entry.path || entry.name;
@@ -182,7 +208,6 @@ export function DirectoryPicker({
     const isExp = expanded.has(fp);
     const isSel = selected === fp;
     const children = isDir ? tree[fp] : null;
-    // Larger tap targets on mobile
     const py = mobile ? 'py-2.5' : 'py-0.5';
     const textSize = mobile ? 'text-[13px]' : 'text-[11px]';
     const iconSize = mobile ? 'w-3.5 h-3.5' : 'w-3 h-3';
@@ -199,16 +224,16 @@ export function DirectoryPicker({
           onClick={() => { if (isDir) setSelected(fp); }}
           onDoubleClick={() => { if (isDir) toggleDir(fp); }}
         >
-          {isDir ? (
-            <button
-              onClick={e => { e.stopPropagation(); toggleDir(fp); }}
-              className={`rounded shrink-0 hover:bg-gray-800 ${mobile ? 'p-1.5' : 'p-0.5'}`}
-            >
-              <ChevronRight className={`${chevronSize} transition-transform ${isExp ? 'rotate-90' : ''}`} />
-            </button>
-          ) : (
-            <span className={mobile ? 'w-[26px] shrink-0' : 'w-[18px] shrink-0'} />
-          )}
+          <span className={`${mobile ? 'w-[26px]' : 'w-[18px]'} shrink-0 flex items-center justify-center`}>
+            {isDir ? (
+              <button
+                onClick={e => { e.stopPropagation(); toggleDir(fp); }}
+                className={`rounded shrink-0 hover:bg-gray-800 ${mobile ? 'p-1.5' : 'p-0.5'}`}
+              >
+                <ChevronRight className={`${chevronSize} transition-transform ${isExp ? 'rotate-90' : ''}`} />
+              </button>
+            ) : null}
+          </span>
           {isDir
             ? <Folder className={`${iconSize} text-yellow-600 shrink-0`} />
             : <File className={`${iconSize} text-blue-500 shrink-0`} />
@@ -255,14 +280,14 @@ export function DirectoryPicker({
         </div>
       </div>
 
-      {/* Breadcrumb navigation */}
+      {/* Breadcrumb navigation — full absolute path */}
       <div className="shrink-0 flex items-center gap-0.5 px-2 pb-1.5 overflow-x-auto scrollbar-none select-text">
         {breadcrumb.map((seg, i) => (
           <span key={seg.key} className="flex items-center gap-0.5 shrink-0">
             {i > 0 && <ChevronRight className="w-2.5 h-2.5 text-gray-700 shrink-0" />}
             <span
               onClick={() => navigateTo(seg.path)}
-              title={seg.path === '.' ? rootCwd : seg.path}
+              title={seg.path}
               className={`whitespace-nowrap rounded transition-colors cursor-pointer ${
                 mobile
                   ? 'text-[11px] px-2 py-1'
@@ -281,12 +306,12 @@ export function DirectoryPicker({
 
       {/* Tree / search results */}
       <div className="flex-1 overflow-y-auto px-1 pb-1 min-h-0">
-        {!tree['.']?.loaded ? (
+        {!tree[selected]?.loaded ? (
           <div className={`text-gray-600 p-3 italic ${mobile ? 'text-[12px]' : 'text-[10px]'}`}>Loading files...</div>
         ) : searchResults !== null && searchResults.length === 0 ? (
           <div className={`text-gray-700 p-3 italic ${mobile ? 'text-[12px]' : 'text-[10px]'}`}>No matches</div>
         ) : searchResults !== null ? (
-          /* Flat search results — search always searches from project root */
+          /* Flat search results */
           <div className="space-y-px">
             {searchResults.map(r => (
               <div
@@ -316,7 +341,7 @@ export function DirectoryPicker({
           </div>
         ) : (
           /* Normal tree view */
-          tree['.'].items.map(e => renderEntry(e, 0))
+          tree[selected].items.map(e => renderEntry(e, 0))
         )}
       </div>
 
@@ -342,7 +367,6 @@ export function DirectoryPicker({
     if (!open) return null;
     return (
       <div className="fixed inset-0 z-50 flex flex-col bg-[#0d0d0d]">
-        {/* Mobile header */}
         <div className="flex items-center justify-between h-10 px-3 border-b border-gray-800 bg-gray-900 shrink-0">
           <button onClick={onClose} className="flex items-center gap-1 text-gray-400 hover:text-gray-200">
             <ArrowLeft className="w-4 h-4" />
@@ -351,8 +375,6 @@ export function DirectoryPicker({
           <span className="text-[10px] font-bold text-gray-500 tracking-wider">{title}</span>
           <div className="w-12" />
         </div>
-
-        {/* Content */}
         <div className="flex-1 flex flex-col min-h-0">
           {content}
         </div>

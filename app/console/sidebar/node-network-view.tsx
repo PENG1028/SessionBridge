@@ -1,50 +1,16 @@
 'use client';
 
-import { Cpu, Monitor, Server, X } from 'lucide-react';
+import { Cpu, Monitor, Server, X, Plus, Copy, Check, RefreshCw } from 'lucide-react';
+import { useCore } from '../core/core-client-provider';
+import { useState, useEffect, useCallback } from 'react';
+import type { PeerEntry, NodeInvite, NodeInfo } from '../core/core-types';
+import { normalizeNodeInfo } from '../system-pages/core-response-utils';
 
 // ─── Types ───
 
-interface PeerInfo {
-  id: string;
-  name: string;
-  ip?: string;
-  type: 'agent' | 'browser';
-  role?: 'relay' | 'leaf';
-  networkType?: 'loopback' | 'lan' | 'wan' | 'unknown';
-  hasPublicAccess?: boolean;
-  connectedAt?: number;
-  port?: number;
-  isLocal?: boolean;
-  latency?: number;
-  tabCount?: number;
-}
-
-interface ConnectionItem {
-  id: string;
-  name: string;
-  url: string;
-  networkType: string;
-}
-
 interface NodeNetworkViewProps {
-  peers: PeerInfo[];
-  links?: any[];
-  wsUrl: string;
-  connections: ConnectionItem[];
-  onDeleteConnection: (id: string) => void;
-  newConnUrl: string;
-  onNewConnUrlChange: (url: string) => void;
-  onAddConnection: (e: React.FormEvent) => void;
   onEnterNode?: (nodeId: string) => void;
-  upstreamUrl?: string;
-  onConnectUpstream?: (url: string) => Promise<void>;
-  onDisconnectUpstream?: () => void;
-  upstreamConnectingUrl?: string;
-  upstreamError?: string;
-  upstreamErrorUrl?: string;
-  upstreamStatus?: string;
   isLocalPage?: boolean;
-  browserId?: string;
 }
 
 // ─── Theme helpers ───
@@ -90,16 +56,6 @@ function StatusBadge({ status }: { status: 'connected' | 'connecting' | 'failed'
   return <span className={`text-[8px] px-1.5 py-0.5 rounded font-mono border ${colors[status] || colors.saved}`}>{status}</span>;
 }
 
-function DirectionBadge({ direction }: { direction: string }) {
-  const colors: Record<string, string> = {
-    '被访问': 'text-gray-400 border-gray-700/50 bg-gray-800/50',
-    '被连接': 'text-blue-400 border-blue-700/30 bg-blue-900/20',
-    '主动连接': 'text-purple-400 border-purple-700/30 bg-purple-900/20',
-    '保存': 'text-gray-500 border-gray-700 bg-gray-800',
-  };
-  return <span className={`text-[8px] px-1.5 py-0.5 rounded font-mono border ${colors[direction] || colors['保存']}`}>{direction}</span>;
-}
-
 function TypeBadge({ connType }: { connType: string }) {
   const colors: Record<string, string> = {
     'view': 'text-gray-500 border-gray-700 bg-gray-800',
@@ -110,17 +66,28 @@ function TypeBadge({ connType }: { connType: string }) {
   return <span className={`text-[8px] px-1.5 py-0.5 rounded font-mono border ${colors[connType] || 'text-gray-500 border-gray-700 bg-gray-800'}`}>{connType}</span>;
 }
 
-function LatencyBadge({ latency }: { latency: string }) {
-  return <span className="text-[8px] px-1.5 py-0.5 rounded font-mono border border-gray-700/40 bg-gray-800/40 text-gray-400">{latency}</span>;
-}
-
 // ─── Helpers ───
 
-function isLocalUrl(url: string): boolean {
+function extractHost(address?: string): string {
+  if (!address) return '127.0.0.1';
   try {
-    const u = new URL(url);
-    return u.hostname === '127.0.0.1' || u.hostname === 'localhost' || u.hostname === '0.0.0.0';
-  } catch { return true; }
+    // Handle "host:port" format
+    const colonIdx = address.lastIndexOf(':');
+    if (colonIdx > 0) return address.slice(0, colonIdx);
+    return address;
+  } catch { return '127.0.0.1'; }
+}
+
+function extractPort(address?: string, defaultPort = 9090): number {
+  if (!address) return defaultPort;
+  try {
+    const colonIdx = address.lastIndexOf(':');
+    if (colonIdx > 0) {
+      const port = parseInt(address.slice(colonIdx + 1), 10);
+      if (!isNaN(port) && port > 0 && port < 65536) return port;
+    }
+    return defaultPort;
+  } catch { return defaultPort; }
 }
 
 function categorizeNetwork(ip: string): 'loopback' | 'lan' | 'wan' {
@@ -149,38 +116,33 @@ function latencyLabel(ms?: number): string {
 
 // ─── Node Card ───
 
-function NodeCard({ peer, kind, onEnter, wsHost }: {
-  peer: { name: string; ip?: string; port?: number; networkType?: string; tabCount?: number };
+function NodeCard({ peer, kind, nodeId, onEnter }: {
+  peer: { name: string; address?: string; networkType?: string };
   kind: NodeKind;
+  nodeId?: string;
   onEnter?: () => void;
-  wsHost?: string;
 }) {
   const Icon = kind === 'VIEW' ? Monitor : kind === 'RELAY' ? Server : Cpu;
   const clickable = kind !== 'VIEW' && !!onEnter;
-
-  const hasSplit = kind === 'RELAY' && wsHost && peer.ip && wsHost !== peer.ip && wsHost !== '127.0.0.1' && wsHost !== 'localhost';
-  const addressLine = peer.ip ? `${peer.ip}:${peer.port || 8080}` : undefined;
-  const publicLine = hasSplit ? `${wsHost}:${peer.port || 8080}` : undefined;
+  const host = extractHost(peer.address);
+  const port = extractPort(peer.address);
+  const addressLine = peer.address || `${host}:${port}`;
 
   return (
     <div
       className={`border rounded-lg overflow-hidden transition-colors ${clickable ? 'cursor-pointer hover:border-purple-600/50' : 'cursor-default'} ${nodeTheme(kind)}`}
       onClick={clickable ? onEnter : undefined}
     >
-      <div className="px-3.5 py-2.5 flex items-center gap-2.5 bg-gray-800/30">
-        <Icon className={`w-4 h-4 shrink-0 ${iconColor(kind)}`} />
+      <div className="px-3.5 py-2.5 flex items-start gap-2.5 bg-gray-800/30">
+        <Icon className={`w-4 h-4 mt-0.5 shrink-0 ${iconColor(kind)}`} />
         <div className="min-w-0 flex-1">
           <div className="text-sm font-semibold text-gray-100 truncate">{peer.name}</div>
-          {hasSplit && publicLine && (
-            <div className="text-[10px] text-amber-500/80 font-mono truncate">public {publicLine}</div>
-          )}
-          {addressLine && (
-            <div className="text-[10px] text-gray-500 font-mono truncate">
-              {hasSplit ? `internal ${addressLine}` : addressLine}
-            </div>
+          <div className="text-[11px] text-gray-300 font-mono truncate">{addressLine}</div>
+          {nodeId && (
+            <div className="text-[9px] text-gray-600 font-mono truncate">{nodeId}</div>
           )}
         </div>
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex items-center gap-1.5 shrink-0 mt-0.5">
           {peer.networkType && (
             <span className={`text-[8px] px-1.5 py-0.5 rounded font-mono border shrink-0 ${networkClass(peer.networkType)}`}>
               {peer.networkType.toUpperCase()}
@@ -191,89 +153,169 @@ function NodeCard({ peer, kind, onEnter, wsHost }: {
               {kind}
             </span>
           )}
-          {kind === 'VIEW' ? (
-            <span className="text-[9px] px-2 py-0.5 rounded bg-gray-700/30 text-gray-400 border border-gray-700/40 shrink-0">
-              {peer.tabCount && peer.tabCount > 1 ? `${peer.tabCount}t` : 'View'}
-            </span>
-          ) : clickable ? (
+          {clickable && (
             <span className="text-[9px] px-2 py-0.5 rounded bg-purple-700/30 text-purple-300 border border-purple-700/40 shrink-0">Enter</span>
-          ) : null}
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-// ─── Link Line with optional latency badge ───
+// ─── Link Line ───
 
-function LinkLine({ label, latency, muted }: { label: string; latency?: string; muted?: boolean }) {
+function LinkLine({ label, muted }: { label: string; muted?: boolean }) {
   return (
     <div className={`ml-5 -my-1 border-l-2 pl-4 py-2 flex items-center gap-2 ${muted ? 'border-gray-700/50' : 'border-amber-700/30'}`}>
       <div className={`text-[9px] font-mono ${muted ? 'text-gray-500' : 'text-amber-600/70'}`}>{label}</div>
-      {latency && latency !== '--' && (
-        <span className="text-[8px] px-1.5 py-0.5 rounded font-mono bg-gray-800 border border-gray-700 text-gray-400">{latency}</span>
-      )}
     </div>
   );
 }
 
-// ─── Connection Card (redesigned) ───
+// ─── [+ Add Peer] Dialog ───
 
-function ConnectionCard({
-  name, url, direction, connType, status, active, latency, isPeer,
-  onConnect, onDisconnect, onDelete,
-}: {
-  name: string;
-  url?: string;
-  direction: string;
-  connType: string;
-  status: 'connected' | 'connecting' | 'failed' | 'saved';
-  active: boolean;
-  latency: string;
-  isPeer: boolean;
-  onConnect?: () => void;
-  onDisconnect?: () => void;
-  onDelete?: () => void;
-}) {
-  const displayName = name || url?.replace(/^wss?:\/\//, '') || '';
+function AddPeerDialog({ onClose, core }: { onClose: () => void; core: { call: Function } }) {
+  const [tab, setTab] = useState<'invite' | 'direct'>('invite');
+
+  // Accept invite state
+  const [peerUrl, setPeerUrl] = useState('');
+  const [code, setCode] = useState('');
+  const [nameHint, setNameHint] = useState('');
+  const [accepting, setAccepting] = useState(false);
+  const [acceptErr, setAcceptErr] = useState<string | null>(null);
+
+  // Create invite state
+  const [creating, setCreating] = useState(false);
+  const [createErr, setCreateErr] = useState<string | null>(null);
+  const [createdCode, setCreatedCode] = useState<string | null>(null);
+  const [codeCopied, setCodeCopied] = useState(false);
+
+  const handleAccept = async () => {
+    if (!peerUrl.trim() || !code.trim()) return;
+    setAccepting(true);
+    setAcceptErr(null);
+    try {
+      await core.call('node.invite.accept', { peerUrl: peerUrl.trim(), code: code.trim(), nameHint: nameHint.trim() || undefined });
+      onClose();
+    } catch (err) {
+      setAcceptErr(err instanceof Error ? err.message : 'Failed to accept invite');
+    } finally {
+      setAccepting(false);
+    }
+  };
+
+  const handleCreate = async () => {
+    setCreating(true);
+    setCreateErr(null);
+    setCreatedCode(null);
+    try {
+      const result = await core.call('node.invite.create', { ttlSeconds: 300, nameHint: nameHint.trim() || undefined });
+      setCreatedCode(result.code);
+    } catch (err) {
+      setCreateErr(err instanceof Error ? err.message : 'Failed to create invite');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  function copyCode() {
+    if (createdCode) {
+      navigator.clipboard.writeText(createdCode);
+      setCodeCopied(true);
+      setTimeout(() => setCodeCopied(false), 2000);
+    }
+  }
+
   return (
-    <div className={`border rounded-md bg-gray-900/20 overflow-hidden ${active ? 'border-emerald-700/40' : 'border-gray-700/60'}`}>
-      <div className="px-2.5 py-1.5 text-xs">
-        <div className="flex items-center justify-between gap-2">
-          <div className="min-w-0 flex-1 font-mono text-gray-300 truncate" title={url || name}>
-            {displayName}
-          </div>
-          {active && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" title="active" />}
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+      <div className="bg-[#111] border border-gray-700 rounded-lg w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-2 border-b border-gray-800">
+          <span className="text-[11px] font-mono text-gray-200">Add Peer</span>
+          <button onClick={onClose} className="text-gray-600 hover:text-gray-400 text-lg leading-none">&times;</button>
         </div>
-        <div className="mt-1 flex flex-wrap items-center gap-1">
-          <DirectionBadge direction={direction} />
-          <TypeBadge connType={connType} />
-          <LatencyBadge latency={latency} />
-          <StatusBadge status={status} />
+
+        {/* Tabs */}
+        <div className="flex border-b border-gray-800">
+          <button onClick={() => setTab('invite')}
+            className={`flex-1 px-3 py-1.5 text-[10px] font-mono border-b-2 transition-colors ${
+              tab === 'invite' ? 'border-purple-500 text-purple-400' : 'border-transparent text-gray-500 hover:text-gray-300'
+            }`}>Invite Code</button>
+          <button onClick={() => setTab('direct')}
+            className={`flex-1 px-3 py-1.5 text-[10px] font-mono border-b-2 transition-colors ${
+              tab === 'direct' ? 'border-purple-500 text-purple-400' : 'border-transparent text-gray-500 hover:text-gray-300'
+            }`}>Direct Add</button>
+        </div>
+
+        <div className="p-4 space-y-3">
+          {tab === 'invite' ? (
+            <>
+              {/* Create invite */}
+              <div>
+                <h4 className="text-[9px] text-gray-500 mb-2">Generate invite code for another node to connect to this Core:</h4>
+                <div className="flex gap-2">
+                  <input type="text" value={nameHint} onChange={e => setNameHint(e.target.value)}
+                    placeholder="name hint (optional)"
+                    className="flex-1 px-2 py-1 bg-[#1a1a1a] border border-gray-700 rounded text-[10px] text-gray-200 focus:border-purple-500 outline-none placeholder:text-gray-600" />
+                  <button onClick={handleCreate} disabled={creating}
+                    className="px-3 py-1 rounded bg-purple-600 hover:bg-purple-500 text-white text-[10px] transition-colors disabled:opacity-50">
+                    {creating ? 'Creating...' : 'Generate'}
+                  </button>
+                </div>
+                {createErr && <div className="text-[9px] text-red-400 mt-1">{createErr}</div>}
+                {createdCode && (
+                  <div className="mt-2 p-2 bg-black rounded border border-emerald-800/50">
+                    <div className="text-[9px] text-emerald-400 mb-1">One-time code (copy now):</div>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 font-mono text-[10px] text-gray-200 break-all">{createdCode}</code>
+                      <button onClick={copyCode} className="p-1 rounded hover:bg-[#1a1a1a] text-gray-400 hover:text-gray-200">
+                        {codeCopied ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Divider */}
+              <div className="border-t border-gray-800 pt-3">
+                <h4 className="text-[9px] text-gray-500 mb-2">Or accept an invite from another Core:</h4>
+                <div className="space-y-2">
+                  <input type="text" value={peerUrl} onChange={e => setPeerUrl(e.target.value)}
+                    placeholder="ws://host:port/peer/ws"
+                    className="w-full px-2 py-1 bg-[#1a1a1a] border border-gray-700 rounded text-[10px] text-gray-200 focus:border-purple-500 outline-none placeholder:text-gray-600" />
+                  <div className="flex gap-2">
+                    <input type="text" value={code} onChange={e => setCode(e.target.value)}
+                      placeholder="invite code"
+                      className="flex-1 px-2 py-1 bg-[#1a1a1a] border border-gray-700 rounded text-[10px] text-gray-200 font-mono focus:border-purple-500 outline-none placeholder:text-gray-600" />
+                    <input type="text" value={nameHint} onChange={e => setNameHint(e.target.value)}
+                      placeholder="name (optional)"
+                      className="w-28 px-2 py-1 bg-[#1a1a1a] border border-gray-700 rounded text-[10px] text-gray-200 focus:border-purple-500 outline-none placeholder:text-gray-600" />
+                  </div>
+                  <button onClick={handleAccept} disabled={accepting || !peerUrl.trim() || !code.trim()}
+                    className="px-3 py-1 rounded bg-emerald-900/20 text-emerald-400 hover:bg-emerald-900/40 text-[10px] transition-colors disabled:opacity-50">
+                    {accepting ? 'Accepting...' : 'Accept Invite'}
+                  </button>
+                  {acceptErr && <div className="text-[9px] text-red-400 mt-1">{acceptErr}</div>}
+                </div>
+              </div>
+            </>
+          ) : (
+            /* Direct add tab */
+            <div className="text-[10px] text-gray-500 space-y-3">
+              <p className="font-mono">Connect directly to a peer Core by address.</p>
+              <input type="text" disabled
+                placeholder="remote address (ws://host:port/peer/ws)"
+                className="w-full px-2 py-1 bg-[#1a1a1a] border border-gray-700 rounded text-[10px] text-gray-600 outline-none cursor-not-allowed" />
+              <input type="text" disabled
+                placeholder="node ID (optional)"
+                className="w-full px-2 py-1 bg-[#1a1a1a] border border-gray-700 rounded text-[10px] text-gray-600 outline-none cursor-not-allowed" />
+              <div className="text-[9px] text-yellow-600 bg-yellow-900/10 border border-yellow-800/30 rounded px-2 py-1">
+                Direct peer add requires a <code className="text-yellow-400">node.peer.connect</code> Core API. Use invite code pairing instead.
+              </div>
+            </div>
+          )}
         </div>
       </div>
-      {!isPeer && (
-        <div className="flex justify-end gap-1 px-2.5 pb-1.5">
-          {status === 'connecting' ? (
-            <span className="text-[8px] px-1.5 py-0.5 text-amber-500 animate-pulse">连接中...</span>
-          ) : active ? (
-            <button onClick={onDisconnect}
-              className="text-[8px] px-1.5 py-0.5 bg-red-800/40 hover:bg-red-700/50 text-red-400 rounded border border-red-800/40"
-            >断开</button>
-          ) : (
-            onConnect && (
-              <button onClick={onConnect}
-                className="text-[8px] px-1.5 py-0.5 bg-purple-700/30 hover:bg-purple-700/50 text-purple-300 rounded border border-purple-700/40"
-              >启用</button>
-            )
-          )}
-          {!active && onDelete && (
-            <button onClick={onDelete} className="text-gray-600 hover:text-red-400 px-0.5">
-              <X className="w-2.5 h-2.5" />
-            </button>
-          )}
-        </div>
-      )}
     </div>
   );
 }
@@ -281,51 +323,98 @@ function ConnectionCard({
 // ─── Main Export ───
 
 export function NodeNetworkView({
-  peers, wsUrl, connections, onDeleteConnection,
-  newConnUrl, onNewConnUrlChange, onAddConnection,
-  onEnterNode, upstreamUrl, onConnectUpstream, onDisconnectUpstream,
-  upstreamConnectingUrl, upstreamError, upstreamErrorUrl,
-  isLocalPage,
+  onEnterNode, isLocalPage,
 }: NodeNetworkViewProps) {
-  // ── Derived data ──
-  const wsHost = (() => { try { return new URL(wsUrl).hostname; } catch { return '127.0.0.1'; } })();
-  const isLocalAccess = wsHost === '127.0.0.1' || wsHost === 'localhost' || wsHost === '0.0.0.0';
+  const core = useCore();
 
-  const localPeer = peers.find(p => p.id === '__local__' || p.isLocal);
-  const localName = localPeer?.name || (isLocalPage ? '本机' : wsHost);
-  const localIp = localPeer?.ip || wsHost;
-  const localPort = localPeer?.port || 8080;
+  // ── Topology state (from CoreClient) ──
+  const [localNodeId, setLocalNodeId] = useState<string | null>(null);
+  const [topoNodes, setTopoNodes] = useState<NodeInfo[]>([]);
+  const [topoLoading, setTopoLoading] = useState(true);
+  const [topoError, setTopoError] = useState<string | null>(null);
 
-  const remotePeers = peers.filter(p => p.id !== '__local__' && !p.isLocal && !(p.type === 'agent' && p.networkType === 'loopback'));
-  const relayPeers = remotePeers.filter(p => p.type === 'agent' && p.role === 'relay');
-  const leafPeers = remotePeers.filter(p => p.type === 'agent' && p.role !== 'relay');
-  const viewers = peers.filter(p => p.type === 'browser' && p.networkType !== 'loopback');
+  // ── Mesh peer state ──
+  const [meshPeers, setMeshPeers] = useState<PeerEntry[]>([]);
+  const [meshPeersLoading, setMeshPeersLoading] = useState(false);
+  const [meshInvites, setMeshInvites] = useState<NodeInvite[]>([]);
+  const [showAddPeer, setShowAddPeer] = useState(false);
 
-  const isUpstreamConnected = upstreamUrl && !isLocalUrl(upstreamUrl) && connections.some(c => c.url === upstreamUrl);
-  const upstreamPeer = (() => {
-    if (!isUpstreamConnected || !upstreamUrl) return null;
+  // ── Fetch topology from CoreClient ──
+  const fetchTopology = useCallback(async () => {
+    if (!core.isConnected) { setTopoLoading(false); return; }
+    setTopoLoading(true);
+    setTopoError(null);
     try {
-      const u = new URL(upstreamUrl);
-      const saved = connections.find(c => c.url === upstreamUrl);
-      return {
-        id: `upstream:${upstreamUrl}`,
-        name: saved?.name || u.hostname,
-        ip: u.hostname,
-        port: parseInt(u.port || '8080', 10),
-        networkType: categorizeNetwork(u.hostname),
-      };
-    } catch { return null; }
-  })();
+      const [identityResult, nodeListResult] = await Promise.all([
+        core.call<{ nodeId: string }>('node.identity.get'),
+        core.call<{ nodes: unknown[] }>('node.list'),
+      ]);
+      setLocalNodeId(identityResult.nodeId);
+      const nodes = (nodeListResult.nodes || []).map(n => normalizeNodeInfo(n as Record<string, unknown>));
+      setTopoNodes(nodes);
+    } catch (err) {
+      setTopoError(err instanceof Error ? err.message : 'Failed to load topology');
+    } finally {
+      setTopoLoading(false);
+    }
+  }, [core]);
 
-  // ── Build topology ──
+  const fetchMeshPeers = useCallback(async () => {
+    if (!core.isConnected) { setMeshPeers([]); return; }
+    setMeshPeersLoading(true);
+    try {
+      const result = await core.call<{ peers: PeerEntry[] }>('node.peer.list');
+      setMeshPeers(result.peers || []);
+    } catch {
+      setMeshPeers([]);
+    } finally {
+      setMeshPeersLoading(false);
+    }
+  }, [core]);
+
+  const fetchInvites = useCallback(async () => {
+    if (!core.isConnected) { setMeshInvites([]); return; }
+    try {
+      const result = await core.call<{ invites: NodeInvite[]; total: number }>('node.invite.list');
+      setMeshInvites(result.invites || []);
+    } catch {
+      setMeshInvites([]);
+    }
+  }, [core]);
+
+  useEffect(() => {
+    fetchTopology();
+    fetchMeshPeers();
+    fetchInvites();
+  }, [core.isConnected, fetchTopology, fetchMeshPeers, fetchInvites]);
+
+  // ── Derive topology entries ──
+
+  const localNode = topoNodes.find(n => n.nodeId === localNodeId);
+  const localName = localNode?.name || (isLocalPage ? '本机' : 'Local Core');
+  const localAddress = localNode?.address;
+  const localHost = extractHost(localAddress);
+  const localNetworkType = localAddress ? categorizeNetwork(localHost) : 'loopback';
+
+  const relayNodes = topoNodes.filter(n => n.nodeId !== localNodeId && n.role === 'relay');
+  const leafNodes = topoNodes.filter(n => n.nodeId !== localNodeId && n.role !== 'relay');
+
+  // ── Build alias map from meshPeers (trust store names) ──
+  const peerAliasMap = new Map<string, string>();
+  for (const mp of meshPeers) {
+    if (mp.name && mp.name !== mp.nodeId) {
+      peerAliasMap.set(mp.nodeId, mp.name);
+    }
+  }
+
+  // ── Build topology tree ──
 
   type TopoEntry = {
     kind: 'node';
-    data: { peer: { name: string; ip?: string; port?: number; networkType?: string; tabCount?: number }; kind: NodeKind; onEnter?: () => void; wsHost?: string };
+    data: { peer: { name: string; address?: string; networkType?: string }; kind: NodeKind; nodeId?: string; onEnter?: () => void };
   } | {
     kind: 'link';
     label: string;
-    latency?: string;
     muted?: boolean;
   };
 
@@ -334,63 +423,43 @@ export function NodeNetworkView({
 
   function addNode(
     id: string,
-    peer: { name: string; ip?: string; port?: number; networkType?: string; tabCount?: number },
+    info: { name: string; address?: string; networkType?: string; nodeId?: string },
     kind: NodeKind,
-    linkLabel?: string, linkLatency?: string, linkMuted?: boolean,
+    linkLabel?: string, linkMuted?: boolean,
     onEnter?: () => void,
   ) {
     if (addedIds.has(id)) return;
-    const passWsHost = kind === 'RELAY' ? wsHost : undefined;
+    // Use alias from peer trust store if available
+    const alias = info.nodeId ? peerAliasMap.get(info.nodeId) : undefined;
+    const displayName = alias || info.name;
     if (linkLabel && topo.length > 0) {
-      topo.push({ kind: 'link', label: linkLabel, latency: linkLatency, muted: linkMuted });
+      topo.push({ kind: 'link', label: linkLabel, muted: linkMuted });
     }
-    topo.push({ kind: 'node', data: { peer, kind, onEnter, wsHost: passWsHost } });
+    topo.push({ kind: 'node', data: { peer: { name: displayName, address: info.address, networkType: info.networkType }, kind, nodeId: info.nodeId, onEnter } });
     addedIds.add(id);
   }
 
-  // 1. VIEW entry
-  if (!isLocalAccess) {
-    addNode('__view__', { name: 'Current Browser', ip: wsHost, networkType: 'wan' }, 'VIEW');
+  // 1. Local node
+  addNode('__local__', { name: localName, address: localAddress, networkType: localNetworkType, nodeId: localNodeId || undefined }, 'LOCAL',
+    undefined, false,
+    () => onEnterNode?.(localNodeId || '__local__'));
+
+  // 2. Leaf nodes connected to local
+  for (const leaf of leafNodes) {
+    const leafHost = extractHost(leaf.address);
+    const leafNet = leaf.address ? categorizeNetwork(leafHost) : 'wan';
+    addNode(leaf.nodeId, { name: leaf.name, address: leaf.address, networkType: leafNet, nodeId: leaf.nodeId }, 'LEAF',
+      'leaf connected', false,
+      () => onEnterNode?.(leaf.nodeId));
   }
 
-  // 2. Entry relay
-  const entryRelay = upstreamPeer || (localPeer?.role === 'relay' ? {
-    id: '__local__',
-    name: localName,
-    ip: localIp,
-    port: localPort,
-    networkType: localPeer.networkType || categorizeNetwork(localIp),
-  } : relayPeers.length > 0 ? {
-    id: relayPeers[0].id,
-    name: relayPeers[0].name,
-    ip: relayPeers[0].ip,
-    port: relayPeers[0].port,
-    networkType: relayPeers[0].networkType || categorizeNetwork(relayPeers[0].ip || '127.0.0.1'),
-  } : null);
-
-  if (entryRelay) {
-    const linkLabel = upstreamPeer ? 'connected upstream' : !isLocalAccess ? 'view entry' : undefined;
-    addNode(entryRelay.id, entryRelay, 'RELAY', linkLabel, undefined, !isLocalAccess && !upstreamPeer, () => onEnterNode?.(entryRelay!.id));
-  }
-
-  // 3. Local node (if not already relay)
-  if (localPeer && localPeer.role !== 'relay') {
-    addNode('__local__', { name: localName, ip: localIp, port: localPort, networkType: localPeer.networkType || categorizeNetwork(localIp) }, 'LOCAL',
-      upstreamUrl ? 'connected upstream' : !isLocalAccess ? 'view entry' : undefined, undefined, !isLocalAccess && !upstreamUrl,
-      () => onEnterNode?.('__local__'));
-  }
-
-  // 4. Leaf nodes
-  for (const leaf of leafPeers) {
-    const ll = leaf.latency !== undefined ? latencyLabel(leaf.latency) : undefined;
-    addNode(leaf.id, { name: leaf.name, ip: leaf.ip, port: leaf.port, networkType: leaf.networkType || categorizeNetwork(leaf.ip || '127.0.0.1') }, 'LEAF',
-      'leaf connected', ll, false, () => onEnterNode?.(leaf.id));
-  }
-
-  // 5. Additional relays (beyond the entry)
-  for (const relay of relayPeers) {
-    if (entryRelay && relay.id === entryRelay.id) continue;
-    addNode(relay.id, { name: relay.name, ip: relay.ip, port: relay.port, networkType: relay.networkType || categorizeNetwork(relay.ip || '127.0.0.1') }, 'RELAY', 'relay / upstream', undefined, false, () => onEnterNode?.(relay.id));
+  // 3. Relay nodes
+  for (const relay of relayNodes) {
+    const relayHost = extractHost(relay.address);
+    const relayNet = relay.address ? categorizeNetwork(relayHost) : 'wan';
+    addNode(relay.nodeId, { name: relay.name, address: relay.address, networkType: relayNet, nodeId: relay.nodeId }, 'RELAY',
+      'relay / upstream', false,
+      () => onEnterNode?.(relay.nodeId));
   }
 
   // ── Build connection panel entries ──
@@ -398,115 +467,55 @@ export function NodeNetworkView({
   type PanelConnection = {
     id: string;
     name: string;
-    url?: string;
     direction: string;
     connType: string;
     status: 'connected' | 'connecting' | 'failed' | 'saved';
     active: boolean;
-    latency: string;
     isPeer: boolean;
-    onConnect?: () => void;
-    onDisconnect?: () => void;
-    onDelete?: () => void;
   };
 
   const panelConns: PanelConnection[] = [];
 
-  // 1. Browser viewers → 被访问 / view
-  for (const v of viewers) {
-    const tabLabel = v.tabCount && v.tabCount > 1 ? ` (${v.tabCount}t)` : '';
+  // Incoming leaf agents
+  for (const leaf of leafNodes) {
     panelConns.push({
-      id: `viewer:${v.id}`,
-      name: `Browser ${v.ip || v.name}${tabLabel}`,
-      direction: '被访问',
-      connType: 'view',
-      status: 'connected',
-      active: true,
-      latency: latencyLabel(v.latency),
-      isPeer: true,
-    });
-  }
-
-  // 2. Incoming leaf agents → 被连接 / incoming leaf
-  for (const leaf of leafPeers) {
-    const leafAddr = leaf.ip ? `ws://${leaf.ip}:${leaf.port || 8080}` : leaf.name;
-    panelConns.push({
-      id: `incoming:${leaf.id}`,
-      name: leaf.name || leafAddr,
-      url: leafAddr,
+      id: `incoming:${leaf.nodeId}`,
+      name: leaf.name,
       direction: '被连接',
       connType: 'incoming leaf',
-      status: 'connected',
-      active: true,
-      latency: latencyLabel(leaf.latency),
+      status: leaf.status === 'online' || leaf.status === 'connecting' ? leaf.status === 'connecting' ? 'connecting' : 'connected' : 'failed',
+      active: leaf.status === 'online',
       isPeer: true,
     });
   }
 
-  // 3. Active upstream → 主动连接 / upstream
-  if (upstreamUrl && !isLocalUrl(upstreamUrl)) {
-    const saved = connections.find(c => c.url === upstreamUrl);
-    let upstreamLatency: number | undefined;
-    try {
-      const uHost = new URL(upstreamUrl).hostname;
-      const peerWithLatency = peers.find(p => p.ip === uHost);
-      if (peerWithLatency) upstreamLatency = peerWithLatency.latency;
-    } catch { /* ignore */ }
-    const isConnecting = upstreamUrl === upstreamConnectingUrl;
-    const isFailed = upstreamUrl === upstreamErrorUrl && !!upstreamError;
-    const connStatus: 'connected' | 'connecting' | 'failed' | 'saved' = isConnecting ? 'connecting' : isFailed ? 'failed' : 'connected';
-    panelConns.push({
-      id: 'upstream:active',
-      name: saved?.name || (() => { try { return new URL(upstreamUrl).hostname; } catch { return upstreamUrl; } })(),
-      url: upstreamUrl,
-      direction: '主动连接',
-      connType: 'upstream',
-      status: connStatus,
-      active: !isConnecting && !isFailed,
-      latency: upstreamLatency ? latencyLabel(upstreamLatency) : '--',
-      isPeer: false,
-      onDisconnect: onDisconnectUpstream,
-    });
-  }
-
-  // 4. Saved connections → 保存
-  for (const conn of connections) {
-    if (isLocalUrl(conn.url)) continue;
-    // Skip if this is the active upstream (already shown above)
-    if (conn.url === upstreamUrl && !upstreamErrorUrl && upstreamUrl) continue;
-    const ct = conn.networkType === 'lan' ? 'lan leaf' : 'upstream';
-    panelConns.push({
-      id: `saved:${conn.id}`,
-      name: conn.name,
-      url: conn.url,
-      direction: '保存',
-      connType: ct,
-      status: 'saved',
-      active: false,
-      latency: '--',
-      isPeer: false,
-      onConnect: () => onConnectUpstream?.(conn.url),
-      onDelete: () => onDeleteConnection(conn.id),
-    });
-  }
-
-  // Sort: active first, then by direction priority
-  const dirOrder = ['被访问', '被连接', '主动连接', '保存'];
+  // Sort: active first
   panelConns.sort((a, b) => {
     if (a.active !== b.active) return a.active ? -1 : 1;
-    return dirOrder.indexOf(a.direction) - dirOrder.indexOf(b.direction);
+    return 0;
   });
 
   // ── Render ──
   return (
     <div className="space-y-5 px-1 pb-4">
       {/* ── Topology ── */}
-      {topo.length > 0 ? (
+      {topoLoading ? (
+        <div className="border rounded-lg border-gray-700/60 bg-gray-800/20 px-3.5 py-4 text-sm text-gray-500">
+          loading topology...
+        </div>
+      ) : topoError ? (
+        <div className="border rounded-lg border-red-800/40 bg-red-900/10 px-3.5 py-3 text-[10px] text-red-400">
+          {topoError}
+          <button onClick={fetchTopology} className="ml-2 text-purple-400 hover:text-purple-300">
+            <RefreshCw size={10} className="inline" /> retry
+          </button>
+        </div>
+      ) : topo.length > 0 ? (
         <div className="space-y-0">
           {topo.map((entry, i) =>
             entry.kind === 'node'
               ? <NodeCard key={`n-${i}`} {...entry.data} />
-              : <LinkLine key={`l-${i}`} label={entry.label} latency={entry.latency} muted={entry.muted} />
+              : <LinkLine key={`l-${i}`} label={entry.label} muted={entry.muted} />
           )}
         </div>
       ) : (
@@ -515,59 +524,142 @@ export function NodeNetworkView({
         </div>
       )}
 
-      {/* ── Error banner ── */}
-      {upstreamError && (
-        <div className="flex items-start gap-2 border border-red-800/40 bg-red-900/10 rounded px-3 py-2 text-[10px] text-red-400 leading-relaxed">
-          <span className="shrink-0 mt-px">⚠</span>
-          <span>{upstreamError}</span>
-        </div>
-      )}
-
-      {/* ── Connection management ── */}
-      <div className="border-t border-gray-800 pt-3">
-        <h3 className="text-[9px] font-bold text-gray-600 tracking-wider uppercase mb-2 px-1">
-          连接管理
-          {panelConns.some(c => c.active) && (
-            <span className="ml-2 text-emerald-500 font-normal text-[9px]">
-              ● {panelConns.filter(c => c.active).length} active
-            </span>
-          )}
-        </h3>
-
-        {panelConns.length === 0 ? (
-          <div className="px-2.5 py-2 text-[10px] text-gray-600">
-            暂无连接。
+      {/* ── Active connections ── */}
+      {panelConns.length > 0 && (
+        <div className="border-t border-gray-800 pt-3">
+          <div className="flex items-center justify-between mb-2 px-1">
+            <h3 className="text-[9px] font-bold text-gray-600 tracking-wider uppercase">
+              Connections
+              <span className="ml-2 text-emerald-500 font-normal text-[9px]">
+                ● {panelConns.filter(c => c.active).length} active
+              </span>
+            </h3>
           </div>
-        ) : (
           <div className="space-y-1.5">
             {panelConns.map((pc) => (
               <ConnectionCard key={pc.id} {...pc} />
             ))}
           </div>
+        </div>
+      )}
+
+      {/* ── Mesh peers section ── */}
+      <div className="border-t border-gray-800 pt-3">
+        <div className="flex items-center justify-between mb-2 px-1">
+          <h3 className="text-[9px] font-bold text-gray-600 tracking-wider uppercase">
+            Peers
+            {meshPeers.length > 0 && (
+              <span className="ml-2 text-emerald-500 font-normal text-[9px]">
+                ● {meshPeers.filter(p => p.status === 'connected').length} connected
+              </span>
+            )}
+          </h3>
+          <button onClick={() => setShowAddPeer(true)}
+            className="flex items-center gap-1 text-[9px] text-purple-400 hover:text-purple-300 transition-colors">
+            <Plus size={10} /> Add Peer
+          </button>
+        </div>
+
+        {!core.isConnected ? (
+          <div className="px-2.5 py-2 text-[10px] text-gray-600">Core offline — peer list unavailable.</div>
+        ) : meshPeersLoading ? (
+          <div className="px-2.5 py-2 text-[10px] text-gray-600">Loading peers...</div>
+        ) : meshPeers.length === 0 && meshInvites.length === 0 ? (
+          <div className="px-2.5 py-2 text-[10px] text-gray-600">
+            No peers connected. Use <span className="text-purple-400">+ Add Peer</span> to pair with another Core.
+          </div>
+        ) : (
+          <div className="space-y-1">
+            {/* Mesh peers */}
+            {meshPeers.map(peer => (
+              <div key={peer.nodeId} className="flex items-center gap-2 px-2.5 py-1.5 rounded border border-gray-800 bg-[#111]">
+                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                  peer.status === 'connected' ? 'bg-emerald-500' :
+                  peer.status === 'connecting' || peer.status === 'reconnecting' ? 'bg-yellow-500' :
+                  'bg-gray-600'
+                }`} />
+                <div className="flex-1 min-w-0">
+                  <div className="text-[10px] text-gray-200 font-mono truncate">{peer.name || peer.nodeId}</div>
+                  <div className="text-[8px] text-gray-500 font-mono truncate">{peer.nodeId}</div>
+                </div>
+                <span className={`text-[8px] px-1.5 py-0.5 rounded font-mono border shrink-0 ${
+                  peer.status === 'connected' ? 'text-emerald-400 border-emerald-700/30 bg-emerald-900/10' :
+                  peer.status === 'connecting' ? 'text-amber-400 border-amber-700/30 bg-amber-900/10' :
+                  'text-gray-500 border-gray-700 bg-gray-800'
+                }`}>
+                  {peer.status}
+                </span>
+              </div>
+            ))}
+
+            {/* Active invites */}
+            {meshInvites.filter(inv => inv.expiresAt > Date.now()).length > 0 && (
+              <>
+                <div className="text-[8px] text-gray-600 font-bold tracking-wider uppercase pt-1 px-1">Active Invites</div>
+                {meshInvites.filter(inv => inv.expiresAt > Date.now()).map(inv => (
+                  <div key={inv.inviteId} className="flex items-center gap-2 px-2.5 py-1.5 rounded border border-yellow-800/30 bg-yellow-900/10">
+                    <span className="w-2 h-2 rounded-full bg-yellow-500 flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[9px] text-gray-300 font-mono truncate">{inv.inviteId}</div>
+                      <div className="text-[8px] text-gray-500">expires {new Date(inv.expiresAt).toLocaleTimeString()}</div>
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
         )}
 
-        {/* ── Add connection form ── */}
-        <form onSubmit={onAddConnection} className="flex gap-1 pt-2 mt-2 border-t border-gray-800/60">
-          <input
-            type="text"
-            value={newConnUrl}
-            onChange={e => onNewConnUrlChange(e.target.value)}
-            placeholder="ws://&lt;ip&gt;:8080"
-            className="flex-1 bg-[#0d0d0d] border border-gray-700 rounded px-2 py-1.5 text-[10px] text-gray-200 outline-none focus:border-purple-500"
-          />
-          <div className="flex gap-1 shrink-0">
-            {onConnectUpstream && newConnUrl.trim() && (
-              <button type="button"
-                onClick={() => onConnectUpstream(newConnUrl.trim())}
-                className="px-2 py-1 bg-purple-700 hover:bg-purple-600 text-white text-[9px] rounded border border-purple-600"
-              >连接</button>
-            )}
-            <button type="submit"
-              className="px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 text-[9px] rounded border border-gray-700"
-            >保存</button>
-          </div>
-        </form>
+        {/* Manage peers link */}
+        <div className="mt-2 px-1">
+          <button onClick={() => onEnterNode?.('__mesh__')}
+            className="text-[9px] text-gray-600 hover:text-gray-400 transition-colors">
+            Manage Peers →
+          </button>
+        </div>
+      </div>
+
+      {/* ── [+ Add Peer] dialog ── */}
+      {showAddPeer && (
+        <AddPeerDialog onClose={() => { setShowAddPeer(false); fetchMeshPeers(); fetchInvites(); }} core={core} />
+      )}
+    </div>
+  );
+}
+
+// ─── Connection Card (simplified) ───
+
+function ConnectionCard({
+  name, direction, connType, status, active,
+}: {
+  name: string;
+  direction: string;
+  connType: string;
+  status: 'connected' | 'connecting' | 'failed' | 'saved';
+  active: boolean;
+  isPeer: boolean;
+}) {
+  return (
+    <div className={`border rounded-md bg-gray-900/20 overflow-hidden ${active ? 'border-emerald-700/40' : 'border-gray-700/60'}`}>
+      <div className="px-2.5 py-1.5 text-xs">
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0 flex-1 font-mono text-gray-300 truncate">{name}</div>
+          {active && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" title="active" />}
+        </div>
+        <div className="mt-1 flex flex-wrap items-center gap-1">
+          <DirectionBadge direction={direction} />
+          <TypeBadge connType={connType} />
+          <StatusBadge status={status} />
+        </div>
       </div>
     </div>
   );
+}
+
+function DirectionBadge({ direction }: { direction: string }) {
+  const colors: Record<string, string> = {
+    '被访问': 'text-gray-400 border-gray-700/50 bg-gray-800/50',
+    '被连接': 'text-blue-400 border-blue-700/30 bg-blue-900/20',
+  };
+  return <span className={`text-[8px] px-1.5 py-0.5 rounded font-mono border ${colors[direction] || 'text-gray-500 border-gray-700 bg-gray-800'}`}>{direction}</span>;
 }

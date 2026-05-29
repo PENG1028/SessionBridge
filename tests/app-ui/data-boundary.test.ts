@@ -233,12 +233,13 @@ describe('data-boundary: DirectoryPicker CoreClient path', () => {
         open: true,
         onClose: vi.fn(),
         onSelect: vi.fn(),
+        absoluteCwd: '/test',
       }));
     });
 
-    // Should call fs.list with '.'
+    // Should call fs.list with the absolute path
     await waitFor(() => {
-      expect(mockListCall).toHaveBeenCalledWith('fs.list', { path: '.' });
+      expect(mockListCall).toHaveBeenCalledWith('fs.list', { path: '/test' });
     });
   });
 
@@ -253,6 +254,7 @@ describe('data-boundary: DirectoryPicker CoreClient path', () => {
         open: true,
         onClose: vi.fn(),
         onSelect: vi.fn(),
+        absoluteCwd: '/test',
       }));
     });
 
@@ -276,6 +278,7 @@ describe('data-boundary: DirectoryPicker CoreClient path', () => {
         open: true,
         onClose: vi.fn(),
         onSelect: vi.fn(),
+        absoluteCwd: '/test',
       }));
     });
 

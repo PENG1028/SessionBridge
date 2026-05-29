@@ -27,7 +27,7 @@ Options:
            Pre-built binary path: dist/go-core/sessionnode(.exe)
 
 Environment variables:
-  LISTEN_ADDR              HTTP + WebSocket listen address (default: 127.0.0.1:8080)
+  LISTEN_ADDR              HTTP + WebSocket listen address (default: 127.0.0.1:9090)
   SESSIONNODE_CONFIG       Path to config file (default: ~/.sessionnode/config.json)
   SESSIONNODE_DATA_DIR     Data directory for logs/sessions (default: ~/.sessionnode)
   SESSIONNODE_TOKEN        Auth token — empty = dev mode, no auth required
@@ -74,7 +74,7 @@ const env = { ...process.env };
 
 // Default listen address
 if (!env.LISTEN_ADDR) {
-  env.LISTEN_ADDR = '127.0.0.1:8080';
+  env.LISTEN_ADDR = '127.0.0.1:9090';
 }
 
 // Default data directory

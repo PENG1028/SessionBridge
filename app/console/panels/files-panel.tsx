@@ -12,10 +12,12 @@ interface FilesPanelProps {
   onOpenFile?: (filePath: string) => void;
   onSendFile?: (filePath: string) => void;
   onBookmarkDir?: (filePath: string) => void;
+  /** Absolute working directory path from Go Core. */
+  absoluteCwd?: string;
 }
 
 export function FilesPanel(props: FilesPanelProps) {
-  const { fileTree, expandedDirs, onToggleDir, onOpenFile, onSendFile, onBookmarkDir } = props;
+  const { fileTree, expandedDirs, onToggleDir, onOpenFile, onSendFile, onBookmarkDir, absoluteCwd } = props;
   const core = useCore();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -53,16 +55,16 @@ export function FilesPanel(props: FilesPanelProps) {
           </button>
         </div>
         <div className="flex-1 overflow-y-auto px-1.5 pb-1.5 text-xs min-h-0">
-        {!fileTree?.['.']?.loaded ? (
+        {!fileTree?.[absoluteCwd || '.']?.loaded ? (
           <div className="text-gray-600 text-[10px] p-3 italic">Loading files...</div>
-        ) : fileTree?.['.']?.error ? (
+        ) : fileTree?.[absoluteCwd || '.']?.error ? (
           <div className="text-gray-700 text-[9px] p-3 italic leading-relaxed">
             Could not load file tree.<br />
-            <span className="text-gray-600">{fileTree['.'].error}</span>
+            <span className="text-gray-600">{fileTree[absoluteCwd || '.'].error}</span>
           </div>
         ) : (
           <FileExplorer
-            entries={fileTree['.']?.items || []}
+            entries={fileTree[absoluteCwd || '.']?.items || []}
             path="."
             depth={0}
             fileTree={fileTree || {}}
@@ -71,6 +73,7 @@ export function FilesPanel(props: FilesPanelProps) {
             onOpenFile={onOpenFile || (() => {})}
             onSendFile={onSendFile || (() => {})}
             onBookmarkDir={onBookmarkDir}
+            absoluteCwd={absoluteCwd}
           />
         )}
         </div>

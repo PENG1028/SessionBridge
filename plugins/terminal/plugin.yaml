@@ -68,12 +68,6 @@ core:
 
 adapters:
   system-ui:
-    views:
-      - id: terminal.view
-        surface: main.editor
-        type: host-rendered
-        componentId: TerminalView
-        title: Terminal
     panels:
       - id: terminal.sessions
         surface: panel.bottom
@@ -81,3 +75,27 @@ adapters:
         componentId: SessionListPanel
         title: Sessions
         icon: terminal
+      - id: terminal.files
+        surface: left
+        type: host-rendered
+        componentId: FilesPanel
+        title: Files
+        icon: folder
+      - id: terminal.raw
+        surface: right
+        type: host-rendered
+        componentId: TerminalPanel
+        title: Raw
+        icon: terminal
+      - id: terminal.logs
+        surface: right
+        type: host-rendered
+        componentId: LogsPanel
+        title: Logs
+        icon: scroll-text
+      - id: terminal.processes
+        surface: right
+        type: host-rendered
+        componentId: ProcessesPanel
+        title: Processes
+        icon: cpu

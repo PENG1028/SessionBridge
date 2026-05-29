@@ -1,11 +1,12 @@
 'use client';
 
-import { Activity, List, Orbit, LayoutDashboard, Server, Monitor, Puzzle, Wrench, ScrollText, CheckCircle, Shield } from 'lucide-react';
+import { Activity, List, Orbit, LayoutDashboard, Server, Monitor, Puzzle, Wrench, ScrollText, CheckCircle, Shield, Terminal } from 'lucide-react';
 import { registerView } from './view-registry';
 import { DashboardView } from './dashboard-view';
 import { LogsView } from './logs-view';
 import { AgentMonitorView } from './agent-monitor-view';
 import { SystemViewWrapper } from './system-view-wrapper';
+import { TerminalView } from './terminal-view';
 
 /** Prevent tree-shaking of module-level side effects. */
 export const __coreViewsRegistered = true;
@@ -25,6 +26,11 @@ registerView('logs', {
 registerView('agent-monitor', {
   component: AgentMonitorView,
   meta: { title: 'Agent Monitor', icon: Orbit, showInSelector: true, launchable: true, launchMode: 'direct', category: 'workspace', viewType: 'main.editor', sidebarRequirements: { left: 'auto', right: 'shown' } },
+});
+
+registerView('terminal', {
+  component: TerminalView,
+  meta: { title: 'Terminal', icon: Terminal, showInSelector: true, launchable: true, launchMode: 'direct', category: 'workspace', viewType: 'main.editor' },
 });
 
 // ── System management views ─────────────────────────────

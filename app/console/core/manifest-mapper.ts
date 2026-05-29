@@ -98,6 +98,7 @@ export function mapViewsToAdapterViews(
 /**
  * Build panel lists from system-ui panel declarations.
  * Returns { 'sidebar-left': [...], 'sidebar-right': [...] } shape.
+ * Skips panels whose surface is not 'left' or 'right' (e.g. 'panel.bottom').
  */
 export function mapPanelsToSidebarViews(
   panels: GoCoreUIPanel[] | undefined,
@@ -114,12 +115,12 @@ export function mapPanelsToSidebarViews(
       defaultVisible: true,
       componentId: p.componentId,
     };
-    // surface "left" → sidebar-left, everything else → sidebar-right
     if (p.surface === 'left') {
       left.push(entry);
-    } else {
+    } else if (p.surface === 'right') {
       right.push(entry);
     }
+    // Other surfaces (e.g. 'panel.bottom') are not sidebar panels — skip
   }
   return { 'sidebar-left': left, 'sidebar-right': right };
 }

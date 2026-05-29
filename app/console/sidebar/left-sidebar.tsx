@@ -18,7 +18,8 @@ interface LeftSidebarProps {
   onSendFile: (filePath: string) => void;
   onBookmarkDir?: (filePath: string) => void;
   onCommand: (commandId: string) => void;
-  projectCwd: string;
+  projectCwd?: string;
+  absoluteCwd?: string;
   instances?: any[];
   activeInstanceId?: string | null;
   onActivateInstance?: (id: string) => void;

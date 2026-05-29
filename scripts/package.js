@@ -70,6 +70,7 @@ mkdirSync(join(OUT, 'scripts'), { recursive: true });
 cpSync(join(ROOT, 'scripts', 'start-core.js'), join(OUT, 'scripts', 'start-core.js'));
 cpSync(join(ROOT, 'scripts', 'check-update.js'), join(OUT, 'scripts', 'check-update.js'));
 cpSync(join(ROOT, 'scripts', 'update.js'), join(OUT, 'scripts', 'update.js'));
+cpSync(join(ROOT, 'scripts', 'node-pty-sidecar.js'), join(OUT, 'scripts', 'node-pty-sidecar.js'));
 
 mkdirSync(join(OUT, 'dist', 'go-core'), { recursive: true });
 cpSync(goBinarySrc, join(OUT, 'dist', 'go-core', goBinaryName));
@@ -126,7 +127,7 @@ function fallbackCopyDeps() {
   const nmDst = join(OUT, 'node_modules');
   if (!existsSync(nmDst)) mkdirSync(nmDst, { recursive: true });
   // Core runtime + Next.js production deps
-  const keep = ['ws', 'next', 'react', 'react-dom', 'lucide-react',
+  const keep = ['ws', 'node-pty', 'next', 'react', 'react-dom', 'lucide-react',
     'react-markdown', 'remark-gfm',
     '@xterm/xterm', '@xterm/addon-fit',
     'postcss', 'autoprefixer', 'tailwindcss',

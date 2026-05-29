@@ -13,6 +13,9 @@ interface ShellTerminalProps {
   core: CoreClient;
   coreSessionId: string;
   onOpenDirectoryPicker?: () => void;
+  /** When true (restoring an existing session), skip history replay to avoid
+   *  dumping stale buffered ANSI sequences into a fresh xterm.js instance. */
+  fresh?: boolean;
 }
 
 function isTouchDevice(): boolean {
@@ -20,7 +23,7 @@ function isTouchDevice(): boolean {
   return navigator.maxTouchPoints > 0 || 'ontouchstart' in window;
 }
 
-export default function ShellTerminal({ core, coreSessionId, onOpenDirectoryPicker }: ShellTerminalProps) {
+export default function ShellTerminal({ core, coreSessionId, onOpenDirectoryPicker, fresh = true }: ShellTerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -33,10 +36,10 @@ export default function ShellTerminal({ core, coreSessionId, onOpenDirectoryPick
 
   // Create input buffer and debounced resize for the current session
   useEffect(() => {
-    if (!coreSessionId || !core.isConnected) return;
+    if (!coreSessionId) return;
 
     const buf = new TerminalInputBuffer({
-      write: (data) => core.call('stream.write', { sessionId: coreSessionId, data }).catch(() => {}),
+      write: (data) => core.call('stream.write', { sessionId: coreSessionId, streamType: 'stdin', data }).catch(() => {}),
     });
     inputBufRef.current = buf;
 
@@ -56,27 +59,95 @@ export default function ShellTerminal({ core, coreSessionId, onOpenDirectoryPick
     };
   }, [coreSessionId, core]);
 
-  // sendTerminalData pushes to the input buffer for batching
+  // sendTerminalData: local echo for immediate feedback, then batch to server.
+  // On Windows, pipe-mode stdin has no character echo — keystrokes feel
+  // invisible until Enter. We echo printable characters and control codes
+  // locally so the user sees what they type.
+  //
+  // Enter (\r) is converted to \n so the cursor advances to a new line.
+  // If we stripped \r entirely, cmd.exe's line-mode echo would append
+  // the command text on the same line as the local echo, producing
+  // visible duplication like ">ksks" instead of readable:
+  //   >ks
+  //   ks
+  // (both are the same command appearing twice — one local, one from
+  //  the server echoing the line back after processing).
+  //
+  // Escape sequences (arrow keys) are not echoed, avoiding garbage.
   const sendTerminalData = useCallback((data: string) => {
+    const term = termRef.current;
+    if (term && !data.startsWith('\x1b')) {
+      let echo = data;
+      echo = echo.replace(/\r/g, '\n');       // Enter → new line (convertEol expands to \r\n)
+      echo = echo.replace(/\x7f/g, '\b \b');   // Backspace → erase last char
+      echo = echo.replace(/\x03/g, '^C\r\n');  // Ctrl+C
+      if (echo) term.write(echo);
+    }
     inputBufRef.current?.push(data);
   }, []);
 
-  /** Connect via CoreClient stream — subscribe to stream.chunk events for this session. */
-  function connectCore(term: Terminal, _fitAddon: FitAddon) {
+  /** Replay existing history for this session and write to terminal. */
+  const replayHistory = useCallback((term: Terminal) => {
+    if (!coreSessionId) return;
+    core.call<{ events?: Array<{ data: string }> }>('stream.replay', {
+      sessionId: coreSessionId, streamType: 'stdout', fromSeq: 0,
+    }).then(r => {
+      if (r?.events) for (const evt of r.events) {
+        if (evt.data) term.write(evt.data);
+      }
+    }).catch(() => {});
+    core.call<{ events?: Array<{ data: string }> }>('stream.replay', {
+      sessionId: coreSessionId, streamType: 'stderr', fromSeq: 0,
+    }).then(r => {
+      if (r?.events) for (const evt of r.events) {
+        if (evt.data) term.write('\x1b[91m' + evt.data + '\x1b[0m');
+      }
+    }).catch(() => {});
+  }, [core, coreSessionId]);
+
+  /** Connect via CoreClient stream — subscribe, replay history, then listen for live chunk events. */
+  function connectCore(term: Terminal, _fitAddon: FitAddon, isFresh: boolean) {
     if (!mountedRef.current) return;
     if (!core || !coreSessionId) return;
 
-    term.writeln('\x1b[36mConnected to core stream...\x1b[0m');
+    if (isFresh) {
+      term.writeln('\x1b[36mConnected to core stream...\x1b[0m');
+    } else {
+      term.writeln('\x1b[36mReconnected to existing session\x1b[0m');
+    }
     if (!isTouchDevice()) term.focus();
 
+    // Subscribe to streams (best-effort; Broadcast sends to all connections anyway)
+    core.call('stream.subscribe', { sessionId: coreSessionId, streamType: 'stdout' }).catch(() => {});
+    core.call('stream.subscribe', { sessionId: coreSessionId, streamType: 'stderr' }).catch(() => {});
+
+    // Register the live chunk handler FIRST so SSE connects before replay runs.
     const handler = (event: any) => {
-      if (event.type !== 'stream.chunk') return;
       if (event.sessionId !== coreSessionId) return;
-      if (event.data) term.write(event.data);
+      if (event.streamType === 'stderr') {
+        term.write('\x1b[91m' + event.data + '\x1b[0m');
+      } else {
+        term.write(event.data);
+      }
     };
 
     core.on('stream.chunk', handler);
     coreHandlerRef.current = handler;
+
+    // Replay existing session output only for fresh sessions.
+    // Restored sessions skip replay because the buffer contains terminal
+    // initialization handshake sequences (CSI DA requests/responses,
+    // cursor queries) that render as garbage in a fresh xterm.js instance.
+    // Instead we send a newline to trigger a fresh shell prompt.
+    if (isFresh) {
+      replayHistory(term);
+    } else {
+      // Small delay then send Enter — shell prints a fresh prompt so the
+      // user isn't staring at a blank screen.
+      setTimeout(() => {
+        inputBufRef.current?.push('\r');
+      }, 200);
+    }
   }
 
   useEffect(() => {
@@ -188,7 +259,7 @@ export default function ShellTerminal({ core, coreSessionId, onOpenDirectoryPick
     if (!isTouchDevice()) term.focus();
 
     // ── Initial connection ──
-    connectCore(term, fitAddon);
+    connectCore(term, fitAddon, fresh);
 
     // ── Resize observer (debounced) ──
     const ro = new ResizeObserver(() => {
@@ -225,12 +296,12 @@ export default function ShellTerminal({ core, coreSessionId, onOpenDirectoryPick
       term.dispose();
       termRef.current = null;
     };
-  }, [core, coreSessionId, sendTerminalData]);
+  }, [core, coreSessionId, sendTerminalData, fresh]);
 
-  // Re-focus terminal after React re-renders (prevents focus-steal from parent updates)
+  // Ensure xterm textarea is focused after mount and on every render
   useLayoutEffect(() => {
-    if (!isTouchDevice() && core.isConnected) {
-      requestAnimationFrame(() => { termRef.current?.focus(); });
+    if (!isTouchDevice()) {
+      termRef.current?.focus();
     }
   });
 

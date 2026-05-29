@@ -101,7 +101,6 @@ export interface WorkbenchContextValue {
   instances: any[];
   createInstance: (dir: string, label?: string, adapterId?: string) => Promise<any>;
   bindCurrentTabInstance: (instanceId: string, surface?: any) => void;
-  ensureSurfacePublished: (instanceId: string) => boolean;
   activeInstanceId: string | null;
   projectCwd: string;
   homeDir: string;
@@ -111,6 +110,9 @@ export interface WorkbenchContextValue {
   // External session
   activeExternalSession: string | null;
   clearExternalSession: () => void;
+
+  // Navigation
+  onNavigatePath?: (path: string) => void;
 
   // Refs
   scrollContainerRef: RefObject<HTMLDivElement | null>;
