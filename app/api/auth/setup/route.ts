@@ -28,13 +28,18 @@ export async function POST(request: NextRequest) {
     const config = await createAuthConfig(password, false);
     const sessionToken = createSession(config);
 
+    const isSecure =
+      process.env.SESSIONBRIDGE_COOKIE_SECURE === '0'
+        ? false
+        : request.url.startsWith('https://') || request.headers.get('x-forwarded-proto') === 'https';
+
     const response = NextResponse.json({ ok: true, sessionTtlSeconds: config.sessionTtlSeconds });
     response.cookies.set('sessionbridge_view', sessionToken, {
       httpOnly: true,
       sameSite: 'lax',
       path: '/',
       maxAge: config.sessionTtlSeconds,
-      secure: process.env.NODE_ENV === 'production' && process.env.SESSIONBRIDGE_COOKIE_SECURE !== '0',
+      secure: isSecure,
     });
 
     return response;

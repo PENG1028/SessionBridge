@@ -1088,16 +1088,6 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
 
   // ── Enter a node (from NodeBar or NodeNetworkView) ──
   const handleEnterNode = useCallback((nodeId: string) => {
-    // Special nodeId: open NodeManager system view
-    if (nodeId === '__mesh__') {
-      const state = workbenchStateRef.current;
-      if (state) {
-        const tabId = genTabId();
-        activeWorkbenchDispatch({ type: 'ADD_TAB', paneId: state.root.id, tab: { id: tabId, title: 'Nodes', viewType: 'system.nodes', _surfaceId: undefined }, activate: true });
-      }
-      return;
-    }
-
     const currentState = appStateRef.current;
     if (currentState.activeInstanceId === nodeId) {
       // Toggle off — back to node network view

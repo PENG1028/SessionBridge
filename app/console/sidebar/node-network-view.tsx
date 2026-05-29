@@ -4,7 +4,7 @@ import { Cpu, Monitor, Server, X, Plus, Copy, Check, RefreshCw } from 'lucide-re
 import { useCore } from '../core/core-client-provider';
 import { useState, useEffect, useCallback } from 'react';
 import type { PeerEntry, NodeInvite, NodeInfo } from '../core/core-types';
-import { normalizeNodeInfo } from '../system-pages/core-response-utils';
+import { normalizeNodeInfo } from '../core/core-response-utils';
 
 // ─── Types ───
 
