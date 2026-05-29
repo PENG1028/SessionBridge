@@ -5,6 +5,8 @@ const nextConfig: NextConfig = {
   images: { unoptimized: true },
   // Required for static export with dynamic routes
   trailingSlash: true,
+  // Keep ws as Node.js runtime module — webpack bundling breaks Buffer/mask
+  serverExternalPackages: ['ws'],
 };
 
 export default nextConfig;
