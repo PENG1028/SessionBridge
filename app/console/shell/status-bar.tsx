@@ -14,10 +14,12 @@ export interface StatusBarProps {
   onSetMode?: (mode: string) => void;
   onSetEffort?: (level: string) => void;
   absoluteCwd?: string;
+  terminalCwd?: string;
+  onNavigatePath?: (path: string) => void;
 }
 
 export function StatusBar({
-  queueStatus, onSetMode, onSetEffort, absoluteCwd,
+  queueStatus, onSetMode, onSetEffort, absoluteCwd, terminalCwd, onNavigatePath,
 }: StatusBarProps) {
   let statusBarLeft: any[] = [];
   let statusBarRight: any[] = [];
@@ -43,13 +45,14 @@ export function StatusBar({
     const instId = focus?.instanceId;
     if (!instId) return;
     const qPath = path.replace(/\\/g, '/');
-    const cdCmd = `cd "${qPath}"\n`;
+    const cdCmd = `cd "${qPath}"\r`;
 
     if (core?.isConnected) {
       core.call('stream.write', { sessionId: instId, streamType: 'stdin', data: cdCmd })
         .catch(() => {});
     }
-  }, [focus?.instanceId, core]);
+    onNavigatePath?.(path);
+  }, [focus?.instanceId, core, onNavigatePath]);
 
   return (
     <div className="h-7 shrink-0 bg-[#0d0d0d] border-t border-gray-800 flex items-center px-3 gap-2 text-[10px] z-30">
@@ -122,7 +125,7 @@ export function StatusBar({
         open={pickerOpen}
         onClose={() => setPickerOpen(false)}
         onSelect={sendCd}
-        absoluteCwd={absoluteCwd}
+        absoluteCwd={terminalCwd || absoluteCwd || '.'}
         initialPath="."
         title="Terminal Directory"
       />

@@ -201,7 +201,7 @@ export function TerminalView({ instanceId }: TerminalViewProps) {
           open={pickerOpen}
           onClose={() => setPickerOpen(false)}
           onSelect={handleSelectDir}
-          absoluteCwd={projectCwd}
+          absoluteCwd={cwd}
           initialPath="."
           title="Directory Browser"
         />
@@ -243,7 +243,7 @@ export function TerminalView({ instanceId }: TerminalViewProps) {
         open={pickerOpen}
         onClose={() => setPickerOpen(false)}
         onSelect={handleSelectDir}
-        absoluteCwd={projectCwd}
+        absoluteCwd={cwd}
         initialPath="."
         title="Terminal Directory"
       />

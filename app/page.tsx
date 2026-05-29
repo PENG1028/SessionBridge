@@ -1457,6 +1457,8 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
           onSetMode={setMode}
           onSetEffort={setEffort}
           absoluteCwd={absoluteCwd || '.'}
+          terminalCwd={currentDir || absoluteCwd || '.'}
+          onNavigatePath={onNavigatePath}
         />
       )}
 
