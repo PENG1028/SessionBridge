@@ -171,7 +171,7 @@ export function TerminalView({ instanceId }: TerminalViewProps) {
             title="Browse directories"
           >
             <Folder className="w-3.5 h-3.5" />
-            <span className="text-[11px] font-mono">{absoluteCwd}</span>
+            <span className="text-[11px] font-mono">{absoluteCwd || '.'}</span>
           </button>
         </TitleBar>
         <div className="flex-1 flex flex-col items-center justify-center bg-[#0a0a0a] min-h-0 gap-3">
@@ -217,7 +217,7 @@ export function TerminalView({ instanceId }: TerminalViewProps) {
           title="Change directory"
         >
           <Folder className="w-3.5 h-3.5" />
-          <span className="text-[11px] font-mono max-w-[160px] truncate">{absoluteCwd}</span>
+          <span className="text-[11px] font-mono max-w-[160px] truncate">{absoluteCwd || '.'}</span>
         </button>
       </TitleBar>
 
