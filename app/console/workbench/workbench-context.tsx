@@ -103,7 +103,6 @@ export interface WorkbenchContextValue {
   bindCurrentTabInstance: (instanceId: string, surface?: any) => void;
   activeInstanceId: string | null;
   projectCwd: string;
-  homeDir: string;
   activeNodeWsUrl: string;
   activateInstance: (id: string) => void;
 
