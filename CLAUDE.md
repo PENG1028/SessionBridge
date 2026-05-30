@@ -69,6 +69,62 @@ Do not add a second plugin declaration system.
 - Do not log or render raw Core tokens.
 - A Relay must not bypass permission checks on the target Core.
 
+## Deployment
+
+VPS has the project at `/home/ubuntu/sessionbridge/` with a `github` remote
+pointing to https://github.com/PENG1028/SessionBridge. Go Core runs via PM2
+as `sessionbridge-core`; Web UI runs as `sessionbridge-web`.
+
+### Update VPS
+
+1. Commit and push to GitHub (`origin` = `git@github.com:PENG1028/SessionBridge.git`)
+2. On VPS:
+
+```bash
+cd /home/ubuntu/sessionbridge
+git pull github main
+cd go-core && go build -o ../dist/go-core/sessionnode ./cmd/node/
+pm2 restart sessionbridge-core
+```
+
+**Never upload binaries via SCP/SSH pipe.** The gzip pipe corrupts the file
+when combined with other commands and pollutes the trust store (`python3` in
+the same pipe reads binary from stdin). Always use git push + VPS build.
+
+### Update PC Core
+
+```bash
+cd <project>/go-core && go build -o sessionnode.exe ./cmd/node/
+taskkill /f /im sessionnode.exe
+./sessionnode.exe
+```
+
+### Trust Store
+
+The VPS trust store is at `/home/ubuntu/.sessionnode/trusted_peers.json`.
+Write it via a standalone Python script file (NOT an inline heredoc —
+bash heredocs with Python's `True`/`False` vs JSON `true`/`false` cause
+corruption). Use:
+
+```python
+python3 /path/to/script.py  # script opens and writes the file
+```
+
+### Test Mesh Forwarding
+
+A test tool is in `go-core/cmd/ws-test/`. Run it on VPS directly:
+
+```bash
+cd /home/ubuntu/sessionbridge/go-core && go run ./cmd/ws-test/
+```
+
+This connects to the local Core at `ws://127.0.0.1:9090/ws`, sends a
+`node.list` request, then sends a `node.identity.get` with `targetNodeId`
+pointing to the PC peer to verify mesh forwarding.
+
+### Architecture Note: VPS has other apps (looam, nexorastack, sitesage, umami)
+managed by PM2. Do not touch those.
+
 ## Development Commands
 
 ```bash
