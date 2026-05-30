@@ -1287,7 +1287,7 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
     sendCommand, sendInput,
     setForkTarget, setForkPrompt,
     createNodeInstance, handleBindCurrentTabInstance, activateInstance, activeInstanceId,
-    activeNodeProjectInfo?.cwd,
+    activeNodeProjectInfo?.cwd, absoluteCwd,
     activeExternalSession,
     onNavigatePath,
     cmdPanelRef, scrollContainerRef, actionEndRef,
