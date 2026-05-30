@@ -76,8 +76,11 @@ export class ProxyCoreClient implements CoreClient {
   async call<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T> {
     const body: Record<string, unknown> = { method, params, pluginId: this.pluginId };
     if (this._targetNodeId) {
-      (params as Record<string, unknown> || (params = {} as Record<string, unknown>));
-      body.params = { ...params, targetNodeId: this._targetNodeId };
+      const merged = params || {};
+      if (!merged.targetNodeId) {
+        merged.targetNodeId = this._targetNodeId;
+      }
+      body.params = merged;
     }
     const res = await fetch('/api/core/call/', {
       method: 'POST',
