@@ -8,6 +8,8 @@ import { DirectoryPicker } from '../dialogs/directory-picker';
 import { TitleBar } from '../shared/title-bar';
 import { getLastActiveDir, getRestoreLastPath, setLastActiveDir } from '../../lib/path-bookmarks';
 import { useCore, useCoreStatus } from '../core/core-client-provider';
+import { useCoreErrors } from '../core/use-core-call';
+import { classifyCoreError } from '../core/core-error';
 import { TerminalView as PluginHostTerminalView } from '../plugin-host/plugin-components';
 
 const DEBUG_SURFACE = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debugSurface');
@@ -19,9 +21,10 @@ interface TerminalViewProps {
 }
 
 export function TerminalView({ instanceId }: TerminalViewProps) {
-  const { token, bindCurrentTabInstance, projectCwd, homeDir, onNavigatePath, absoluteCwd, onCwdChange } = useWorkbench();
+  const { token, bindCurrentTabInstance, projectCwd, onNavigatePath, absoluteCwd, onCwdChange } = useWorkbench();
   const core = useCore();
   const coreStatus = useCoreStatus();
+  const coreErrors = useCoreErrors();
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [coreSessionId, setCoreSessionId] = useState<string | null>(null);
@@ -77,8 +80,9 @@ export function TerminalView({ instanceId }: TerminalViewProps) {
       }
     }).catch(err => {
       debugLog('TerminalView create FAIL', { error: String(err) });
-      setError(String(err));
-      throw err;
+      const ce = classifyCoreError(err);
+      setError(ce.message);
+      coreErrors.reportError({ method: 'run.create', error: ce, timestamp: Date.now() });
     }).finally(() => {
       setCreating(false);
     });
@@ -121,8 +125,10 @@ export function TerminalView({ instanceId }: TerminalViewProps) {
   }, [instanceId, core, coreSessionId, bindCurrentTabInstance, coreStatus, restoreSession, createSession]);
 
   // Sync cwd when projectCwd changes (node switch) — push into the unified source.
+  // Guard: skip '.' as projectCwd since node.info may not return cwd,
+  // and '.' would overwrite the real absoluteCwd from env.cwd.
   useEffect(() => {
-    if (projectCwd && absoluteCwd !== projectCwd) {
+    if (projectCwd && absoluteCwd !== projectCwd && projectCwd !== '.') {
       onCwdChange(projectCwd);
     }
   }, [projectCwd, absoluteCwd, onCwdChange]);
@@ -149,7 +155,7 @@ export function TerminalView({ instanceId }: TerminalViewProps) {
     const cdCmd = `cd "${qPath}"\r`;
 
     if (core?.isConnected) {
-      core.call('stream.write', { sessionId: coreSessionId, streamType: 'stdin', data: cdCmd }).catch(() => {});
+      core.call('stream.write', { sessionId: coreSessionId, streamType: 'stdin', data: cdCmd }).catch(err => coreErrors.reportError({ method: 'stream.write', error: classifyCoreError(err), timestamp: Date.now() }));
     }
   }, [coreSessionId, core, resolveRel, onNavigatePath, onCwdChange]);
 

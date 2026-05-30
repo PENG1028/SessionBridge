@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Plus, Cpu, Server, X } from 'lucide-react';
-import { useCore } from '../core/core-client-provider';
+import { useCore, useReachableNodeIds } from '../core/core-client-provider';
 
 interface NodeBarPeer {
   id: string;
@@ -12,7 +12,6 @@ interface NodeBarPeer {
   role?: 'relay' | 'leaf';
   networkType?: 'loopback' | 'lan' | 'wan' | 'unknown';
   hasPublicAccess?: boolean;
-  connectedAt?: number;
 }
 
 interface NodeBarProps {
@@ -26,13 +25,13 @@ function nodeIcon(peer: NodeBarPeer) {
   return Cpu;
 }
 
-function statusColor(peer: NodeBarPeer): string {
-  if (peer.connectedAt) return 'bg-emerald-500';
-  return 'bg-gray-600';
+function statusColor(isConnected: boolean): string {
+  return isConnected ? 'bg-emerald-500' : 'bg-gray-600';
 }
 
 export function NodeBar({ activeNodeId, onEnterNode, onOpenConnection }: NodeBarProps) {
   const core = useCore();
+  const reachableNodeIds = useReachableNodeIds();
   const [remotePeers, setRemotePeers] = useState<NodeBarPeer[]>([]);
   const [localNodeId, setLocalNodeId] = useState<string | null>(null);
   const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
@@ -75,7 +74,6 @@ export function NodeBar({ activeNodeId, onEnterNode, onOpenConnection }: NodeBar
               role: n.role || 'leaf',
               networkType: n.networkType || 'unknown',
               hasPublicAccess: n.hasPublicAccess,
-              connectedAt: Date.now(),
             }))
         );
       } catch {
@@ -96,7 +94,6 @@ export function NodeBar({ activeNodeId, onEnterNode, onOpenConnection }: NodeBar
     type: 'agent',
     role: 'leaf',
     networkType: 'loopback',
-    connectedAt: Date.now(),
   };
 
   // Only show local node when Core is actually connected.
@@ -129,7 +126,7 @@ export function NodeBar({ activeNodeId, onEnterNode, onOpenConnection }: NodeBar
             }`}
           >
             <button onClick={() => onEnterNode(peer.id)} className="flex items-center gap-1.5 flex-1 min-w-0">
-              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusColor(peer)} ${isActive ? 'ring-1 ring-purple-400/40' : ''}`} />
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusColor(peer.id === localPeerId || reachableNodeIds.has(peer.id))} ${isActive ? 'ring-1 ring-purple-400/40' : ''}`} />
               <Icon className="w-3 h-3 shrink-0" />
               <span className="truncate max-w-[80px]">{peer.name || peer.id.slice(0, 12)}</span>
               {peer.networkType && peer.networkType !== 'loopback' && (

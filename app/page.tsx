@@ -17,7 +17,11 @@ import { StatusBar } from './console/shell/status-bar';
 import { ConsoleHeader } from './console/shell/console-header';
 import { getAdapterViewId, getAdapterCapabilities, getViewEntry, getAllAdapterTypes, resolveChromePolicy, type ChromePolicy } from './console/main/view-registry';
 import { ensureBootstrapped } from './console/bootstrap';
-import { CoreClientProvider, useCore, useSetActiveNode } from './console/core/core-client-provider';
+import { CoreClientProvider, useCore, useSetActiveNode, useActiveNodeId, useLocalNodeId, useTargetReachability } from './console/core/core-client-provider';
+import { CoreErrorProvider } from './console/core/core-error-provider';
+import { CoreErrorBanner } from './console/core/core-error-banner';
+import { classifyCoreError } from './console/core/core-error';
+import { useCoreErrors } from './console/core/use-core-call';
 import { useCorePluginRegistrySync } from './console/core/use-core-plugin-sync';
 import { normalizeWsUrlAndToken, stripTokenFromWsUrl } from './console/core/core-url';
 
@@ -258,7 +262,9 @@ function PageContent() {
 
   return (
     <CoreClientProvider forceOffline={false} reconnectKey={reconnectKey}>
-      <AppCore wsUrl={wsUrl} setWsUrl={setWsUrl} token={token} setToken={setToken} onReconnect={() => setReconnectKey(k => k + 1)} />
+      <CoreErrorProvider>
+        <AppCore wsUrl={wsUrl} setWsUrl={setWsUrl} token={token} setToken={setToken} onReconnect={() => setReconnectKey(k => k + 1)} />
+      </CoreErrorProvider>
     </CoreClientProvider>
   );
 }
@@ -381,7 +387,7 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
           });
         }
       })
-      .catch(() => {});
+      .catch(err => coreErrors.reportError({method: "node.info", error: classifyCoreError(err), timestamp: Date.now()}));
   }, [core, core.isConnected]);
 
   // Re-fetch project info when the active target node changes.
@@ -394,16 +400,14 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
         const cwd = (res?.cwd || '').replace(/\\/g, '/');
         if (cwd) {
           setAbsoluteCwd(cwd);
-          setCurrentDir(cwd);
           setProjectInfo(prev => prev ? { ...prev, cwd } : { cwd, projectName: '', homeDir: '' });
         }
       })
-      .catch(() => {});
+      .catch(err => coreErrors.reportError({method: "env.cwd", error: classifyCoreError(err), timestamp: Date.now()}));
   }, [core, core.isConnected]);
 
   // ── File tree state (per-node, keyed by wsUrl) ──
   const [absoluteCwd, setAbsoluteCwd] = useState('');
-  const [currentDir, setCurrentDir] = useState('');
   const [nodeFileTree, setNodeFileTree] = useState<Record<string, Record<string, {items: any[]; loaded: boolean; error?: string}>>>({});
   const [nodeExpandedDirs, setNodeExpandedDirs] = useState<Record<string, string[]>>({});
 
@@ -412,6 +416,9 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const cmdPanelRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<Message[]>([]);
+
+  // ── Core error reporting — unified channel ──
+  const coreErrors = useCoreErrors();
 
   const { notify, dismiss } = useNotification();
 
@@ -482,22 +489,13 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
     if (!core?.isConnected) return;
     core.call<{cwd?: string; projectName?: string; homeDir?: string}>("node.info", {})
       .then(info => {
-        setProjectInfo({
-          cwd: info.cwd || ".",
-          projectName: info.projectName || "",
-          homeDir: info.homeDir || "",
-        });
+        setProjectInfo(prev => ({
+          cwd: info.cwd || prev?.cwd || ".",
+          projectName: info.projectName || prev?.projectName || "",
+          homeDir: info.homeDir || prev?.homeDir || "",
+        }));
       })
-      .catch(() => {});
-    core.call<{cwd?: string}>("env.cwd", {})
-      .then(res => {
-        var cwd = (res?.cwd || "").split('\\').join('/');
-        if (cwd) {
-          setAbsoluteCwd(cwd);
-          setCurrentDir(cwd);
-        }
-      })
-      .catch(() => {});
+      .catch(err => coreErrors.reportError({method: "node.info", error: classifyCoreError(err), timestamp: Date.now()}));
   }, [appState.activeInstanceId, core, core.isConnected]);
 
   const activeNodeWsUrl = useMemo(() => {
@@ -514,7 +512,7 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
           setViewingFile({ path: data.path || filePath, content: data.content });
         }
       })
-      .catch(() => {});
+      .catch(err => coreErrors.reportError({method: "fs.read", error: classifyCoreError(err), timestamp: Date.now()}));
   }, [core]);
 
   // Derived active-node file tree values
@@ -553,7 +551,6 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
 
   const onNavigatePath = useCallback((path: string) => {
     setLastActiveDir(path);
-    setCurrentDir(path);
     fetchDir(path);
     setNodeExpandedDirs(prev => ({...prev, [activeNodeWsUrl]: [absoluteCwd, path]}));
   }, [fetchDir, activeNodeWsUrl, absoluteCwd]);
@@ -588,6 +585,16 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
   // manual toggle (sidebarOverride) takes precedence.
   // Sidebars are hidden when no node is active (NodeNetworkView visible).
   const noActiveNode = !appState.activeInstanceId;
+  // Reachability: if a remote node is selected but mesh is broken, overlay the content area.
+  const reachabilityNodeId = appState.activeInstanceId ?? null;
+  const localNodeId = useLocalNodeId();
+  const remoteReachable = useTargetReachability(reachabilityNodeId);
+  const showRemoteOverlay = !!(
+    reachabilityNodeId &&
+    localNodeId &&
+    reachabilityNodeId !== localNodeId &&
+    !remoteReachable
+  );
   const effectiveLeftOpen = noActiveNode ? false : state.sidebarOverride
     ? state.leftSidebarOpen
     : activeSidebarReqs?.left === 'hidden' ? false
@@ -753,7 +760,7 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
           );
         });
       }
-    }).catch(() => {}); // node.identity.get unavailable — stay on NodeNetworkView
+    }).catch(err => coreErrors.reportError({method: "node.identity.get", error: classifyCoreError(err), timestamp: Date.now()})); // node.identity.get unavailable
   }, [core?.isConnected, appState.activeInstanceId]);
 
   // ── Auto-save layouts to localStorage with debounce (Phase 4N) ──
@@ -1258,7 +1265,6 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
     bindCurrentTabInstance: handleBindCurrentTabInstance,
     activeInstanceId,
     projectCwd: activeNodeProjectInfo?.cwd || '.',
-    homeDir: activeNodeProjectInfo?.homeDir || '.',
     activeNodeWsUrl,
     activateInstance,
     activeExternalSession,
@@ -1270,7 +1276,7 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
     },
     onNavigatePath,
     absoluteCwd: absoluteCwd || activeNodeProjectInfo?.cwd || '.',
-    onCwdChange: (path: string) => { setCurrentDir(path); setAbsoluteCwd(path); },
+    onCwdChange: (path: string) => { setAbsoluteCwd(path); },
     scrollContainerRef: scrollContainerRef as React.RefObject<HTMLDivElement | null>,
     actionEndRef: actionEndRef as React.RefObject<HTMLDivElement | null>,
   }), [
@@ -1297,6 +1303,7 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
     <FocusProvider instances={instances} activeInstanceId={activeInstanceId} activeViewId={state.activeViewId} sessionKey={sessionKey} paneFocus={paneFocus}>
       <RuntimePolicyProvider>
     <div className="flex flex-col h-screen bg-[#0a0a0a] text-gray-300 font-mono text-sm overflow-hidden selection:bg-purple-900 selection:text-white relative" onContextMenu={handleWorkbenchContextMenu}>
+      <CoreErrorBanner />
       <ConsoleHeader
         chromePolicy={chromePolicy}
         onMobileOpen={() => setMobileOpen(true)}
@@ -1395,6 +1402,16 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
         {/* ═══ CENTER: WorkbenchLayout (always mounted; hidden via CSS when no node active,
              so tab/terminal state survives node toggle) ════════ */}
         <main className="flex-1 flex flex-col relative bg-black min-w-0 min-h-0">
+          {showRemoteOverlay && (
+            <div className="absolute inset-0 z-50 flex items-center justify-center bg-[#0a0a0a]/80 backdrop-blur-sm">
+              <div className="bg-[#111] border border-gray-800 rounded px-6 py-4 text-center max-w-sm">
+                <div className="text-[10px] font-mono tracking-wider uppercase text-gray-500 mb-2">远端节点离线</div>
+                <p className="text-[11px] text-gray-400 mb-3">目标节点 mesh 连接已断开，当前功能不可用。
+                  请在节点管理页面重新连接。</p>
+                <span className="text-[9px] text-gray-600 font-mono">{reachabilityNodeId}</span>
+              </div>
+            </div>
+          )}
           <WorkbenchProvider value={workbenchContextValue}>
           <div className="flex flex-col flex-1 min-h-0 min-w-0" style={{ display: appState.activeInstanceId ? 'flex' : 'none' }}>
           <div className="flex items-center justify-between h-7 px-2 border-b border-gray-800 bg-[#0a0a0a] shrink-0">
@@ -1482,7 +1499,7 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
           onTerminalTabChange={setTerminalTab}
           logsEndRef={logsEndRef}
           onNavigatePath={onNavigatePath}
-          currentActiveDir={currentDir || absoluteCwd || '.'}
+          currentActiveDir={absoluteCwd || '.'}
         />
         </SidebarSlot>
       </div>
@@ -1493,7 +1510,7 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
           onSetMode={setMode}
           onSetEffort={setEffort}
           absoluteCwd={absoluteCwd || '.'}
-          terminalCwd={currentDir || absoluteCwd || '.'}
+          terminalCwd={absoluteCwd || '.'}
           onNavigatePath={onNavigatePath}
         />
       )}

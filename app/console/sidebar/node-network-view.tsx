@@ -1,8 +1,8 @@
 'use client';
 
 import { Cpu, Monitor, Server, X, Plus, Copy, Check, RefreshCw } from 'lucide-react';
-import { useCore } from '../core/core-client-provider';
-import { useState, useEffect, useCallback } from 'react';
+import { useCore, useReachableNodeIds } from '../core/core-client-provider';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { PeerEntry, NodeInvite, NodeInfo } from '../core/core-types';
 import { normalizeNodeInfo } from '../core/core-response-utils';
 
@@ -116,22 +116,60 @@ function latencyLabel(ms?: number): string {
 
 // ─── Node Card ───
 
-function NodeCard({ peer, kind, nodeId, onEnter }: {
+function NodeCard({ peer, kind, nodeId, onEnter, reachable }: {
   peer: { name: string; address?: string; networkType?: string };
   kind: NodeKind;
   nodeId?: string;
   onEnter?: () => void;
+  reachable?: boolean;
 }) {
   const Icon = kind === 'VIEW' ? Monitor : kind === 'RELAY' ? Server : Cpu;
-  const clickable = kind !== 'VIEW' && !!onEnter;
+  const core = useCore();
+  const [reconnecting, setReconnecting] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const isRemote = kind !== 'LOCAL';
   const host = extractHost(peer.address);
   const port = extractPort(peer.address);
   const addressLine = peer.address || `${host}:${port}`;
 
+  // When reachability flips to true while reconnecting, the attempt succeeded.
+  // When it stays false after timeout, mark as failed.
+  useEffect(() => {
+    if (reachable && reconnecting) {
+      setReconnecting(false);
+      setFailed(false);
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+    }
+  }, [reachable, reconnecting]);
+
+  // Cleanup timer on unmount.
+  useEffect(() => () => { if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current); }, []);
+
+  const handleReconnect = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!nodeId) return;
+    setReconnecting(true);
+    setFailed(false);
+    try {
+      await core.call('node.peer.reconnect', { nodeId });
+    } catch { /* ignore — SSE event will confirm or timeout will fire */ }
+    // Don't reset reconnecting here — wait for SSE node.connected or timeout.
+    reconnectTimerRef.current = setTimeout(() => {
+      setReconnecting(false);
+      setFailed(true);
+    }, 10000); // 10s timeout: if no node.connected by then, consider failed
+  }, [core, nodeId]);
+
+  const showEnter = isRemote && reachable;
+  const showReconnect = isRemote && !reachable && onEnter && !reconnecting;
+  const showReconnecting = isRemote && !reachable && reconnecting;
+  const showRetry = isRemote && !reachable && failed;
+
   return (
     <div
-      className={`border rounded-lg overflow-hidden transition-colors ${clickable ? 'cursor-pointer hover:border-purple-600/50' : 'cursor-default'} ${nodeTheme(kind)}`}
-      onClick={clickable ? onEnter : undefined}
+      className={`border rounded-lg overflow-hidden transition-colors ${isRemote ? 'cursor-pointer hover:border-purple-600/50' : 'cursor-default'} ${nodeTheme(kind)}`}
+      onClick={showEnter ? onEnter : undefined}
     >
       <div className="px-3.5 py-2.5 flex items-start gap-2.5 bg-gray-800/30">
         <Icon className={`w-4 h-4 mt-0.5 shrink-0 ${iconColor(kind)}`} />
@@ -153,8 +191,25 @@ function NodeCard({ peer, kind, nodeId, onEnter }: {
               {kind}
             </span>
           )}
-          {clickable && (
+          {showEnter && (
             <span className="text-[9px] px-2 py-0.5 rounded bg-purple-700/30 text-purple-300 border border-purple-700/40 shrink-0">Enter</span>
+          )}
+          {showReconnecting && (
+            <span className="text-[9px] px-2 py-0.5 rounded bg-yellow-900/20 text-yellow-500 border border-yellow-700/30 shrink-0 animate-pulse">
+              Reconnecting...
+            </span>
+          )}
+          {showReconnect && (
+            <button onClick={handleReconnect}
+              className="text-[9px] px-2 py-0.5 rounded bg-gray-700/30 text-gray-400 border border-gray-700 shrink-0 hover:bg-gray-700/50 hover:text-gray-300 transition-colors">
+              Reconnect
+            </button>
+          )}
+          {showRetry && (
+            <button onClick={handleReconnect}
+              className="text-[9px] px-2 py-0.5 rounded bg-red-900/20 text-red-400 border border-red-800/30 shrink-0 hover:bg-red-900/30 transition-colors">
+              Retry
+            </button>
           )}
         </div>
       </div>
@@ -339,6 +394,9 @@ export function NodeNetworkView({
   const [meshInvites, setMeshInvites] = useState<NodeInvite[]>([]);
   const [showAddPeer, setShowAddPeer] = useState(false);
 
+  // ── Reachability (from SSE events — single source of truth) ──
+  const reachableNodeIds = useReachableNodeIds();
+
   // ── Fetch topology from CoreClient ──
   const fetchTopology = useCallback(async () => {
     if (!core.isConnected) { setTopoLoading(false); return; }
@@ -411,7 +469,7 @@ export function NodeNetworkView({
 
   type TopoEntry = {
     kind: 'node';
-    data: { peer: { name: string; address?: string; networkType?: string }; kind: NodeKind; nodeId?: string; onEnter?: () => void };
+    data: { peer: { name: string; address?: string; networkType?: string }; kind: NodeKind; nodeId?: string; onEnter?: () => void; reachable?: boolean };
   } | {
     kind: 'link';
     label: string;
@@ -427,6 +485,7 @@ export function NodeNetworkView({
     kind: NodeKind,
     linkLabel?: string, linkMuted?: boolean,
     onEnter?: () => void,
+    reachable?: boolean,
   ) {
     if (addedIds.has(id)) return;
     // Use alias from peer trust store if available
@@ -435,7 +494,7 @@ export function NodeNetworkView({
     if (linkLabel && topo.length > 0) {
       topo.push({ kind: 'link', label: linkLabel, muted: linkMuted });
     }
-    topo.push({ kind: 'node', data: { peer: { name: displayName, address: info.address, networkType: info.networkType }, kind, nodeId: info.nodeId, onEnter } });
+    topo.push({ kind: 'node', data: { peer: { name: displayName, address: info.address, networkType: info.networkType }, kind, nodeId: info.nodeId, onEnter, reachable } });
     addedIds.add(id);
   }
 
@@ -452,7 +511,8 @@ export function NodeNetworkView({
     const leafNet = leaf.address ? categorizeNetwork(leafHost) : 'wan';
     addNode(leaf.nodeId, { name: leaf.name, address: leaf.address, networkType: leafNet, nodeId: leaf.nodeId }, 'LEAF',
       'leaf connected', false,
-      () => onEnterNode?.(leaf.nodeId));
+      () => onEnterNode?.(leaf.nodeId),
+      reachableNodeIds.has(leaf.nodeId));
   }
 
   // 3. Relay nodes
@@ -461,7 +521,8 @@ export function NodeNetworkView({
     const relayNet = relay.address ? categorizeNetwork(relayHost) : 'wan';
     addNode(relay.nodeId, { name: relay.name, address: relay.address, networkType: relayNet, nodeId: relay.nodeId }, 'RELAY',
       'relay / upstream', false,
-      () => onEnterNode?.(relay.nodeId));
+      () => onEnterNode?.(relay.nodeId),
+      reachableNodeIds.has(relay.nodeId));
   }
 
 
@@ -501,7 +562,7 @@ export function NodeNetworkView({
             Peers
             {meshPeers.length > 0 && (
               <span className="ml-2 text-emerald-500 font-normal text-[9px]">
-                ● {meshPeers.filter(p => p.status === 'connected').length} connected
+                ● {meshPeers.filter(p => reachableNodeIds.has(p.nodeId)).length} connected
               </span>
             )}
           </h3>
@@ -525,8 +586,7 @@ export function NodeNetworkView({
             {meshPeers.map(peer => (
               <div key={peer.nodeId} className="flex items-center gap-2 px-2.5 py-1.5 rounded border border-gray-800 bg-[#111]">
                 <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                  peer.status === 'connected' ? 'bg-emerald-500' :
-                  peer.status === 'connecting' || peer.status === 'reconnecting' ? 'bg-yellow-500' :
+                  reachableNodeIds.has(peer.nodeId) ? 'bg-emerald-500' :
                   'bg-gray-600'
                 }`} />
                 <div className="flex-1 min-w-0">
@@ -534,11 +594,10 @@ export function NodeNetworkView({
                   <div className="text-[8px] text-gray-500 font-mono truncate">{peer.nodeId}</div>
                 </div>
                 <span className={`text-[8px] px-1.5 py-0.5 rounded font-mono border shrink-0 ${
-                  peer.status === 'connected' ? 'text-emerald-400 border-emerald-700/30 bg-emerald-900/10' :
-                  peer.status === 'connecting' ? 'text-amber-400 border-amber-700/30 bg-amber-900/10' :
+                  reachableNodeIds.has(peer.nodeId) ? 'text-emerald-400 border-emerald-700/30 bg-emerald-900/10' :
                   'text-gray-500 border-gray-700 bg-gray-800'
                 }`}>
-                  {peer.status}
+                  {reachableNodeIds.has(peer.nodeId) ? 'connected' : (peer.status === 'connecting' ? 'connecting' : 'offline')}
                 </span>
               </div>
             ))}
