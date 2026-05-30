@@ -28,6 +28,7 @@ export function TerminalView({ instanceId }: TerminalViewProps) {
   const [ptyMode, setPtyMode] = useState<string | null>(null);
   const [sessionFresh, setSessionFresh] = useState(true);
   const autoCreated = useRef(false);
+  const prevInstanceId = useRef<string | undefined>(instanceId);
   const [cwd, setCwd] = useState(() => {
     if (typeof window !== 'undefined' && getRestoreLastPath()) {
       return getLastActiveDir() || homeDir || projectCwd || '.';
@@ -41,16 +42,25 @@ export function TerminalView({ instanceId }: TerminalViewProps) {
     debugLog('TerminalView mount/update', { instanceId, coreSessionId, autoCreated: autoCreated.current });
   });
 
-  // Create or restore a Core session on mount.
-  // If instanceId (old runId from tab restoration) is provided, try
-  // run.info first to reconnect to the existing session. Fall back to
-  // run.create only when the old run is dead or missing.
+  // When instanceId changes (node switch), invalidate stale session state.
+  // The old coreSessionId belongs to a different node context — force fresh create.
+  useEffect(() => {
+    if (prevInstanceId.current !== instanceId) {
+      debugLog('TerminalView instanceId changed', { from: prevInstanceId.current, to: instanceId });
+      prevInstanceId.current = instanceId;
+      setCoreSessionId(null);
+      autoCreated.current = false;
+    }
+  }, [instanceId]);
+
   const cwdRef = useRef(cwd);
   cwdRef.current = cwd;
 
   const createSession = useCallback(async () => {
-    // Before creating a new session, check for detached terminal runs
-    // that are still alive on the Core — re-attach instead of spawning anew.
+    // Before creating a new session, check for detached terminal runs.
+    // run.list goes to the active target node via CoreClient's targetNodeId,
+    // so it only finds terminals on the correct node. If targetNodeId is
+    // set to a remote node, run.list returns that node's terminals.
     try {
       const list = await core.call<{ runs?: Array<{ runId: string; sessionId: string; state: string; kind: string }> }>('run.list', { kind: 'terminal' });
       const detached = list?.runs?.find(r => r.state === 'running' && r.sessionId);

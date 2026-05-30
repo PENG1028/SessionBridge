@@ -274,8 +274,9 @@ export class ProxyCoreClient implements CoreClient {
       get hasToken() { return host.hasToken; },
       get authMode() { return host.authMode; },
       call: <T>(method: string, params?: Record<string, unknown>) => {
-        const scoped = new ProxyCoreClient(pluginId);
-        return scoped.call<T>(method, params);
+        // Inherit targetNodeId from the host client
+        const merged = host._targetNodeId ? { ...params, targetNodeId: host._targetNodeId } : params;
+        return host.call<T>(method, merged);
       },
       on: (event: string, handler: (data: CoreEvent) => void) => host.on(event, handler),
       once: (event: string, handler: (data: CoreEvent) => void) => host.once(event, handler),
