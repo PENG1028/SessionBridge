@@ -55,10 +55,13 @@ export async function POST(request: NextRequest) {
   try {
     const result = await coreCall(connectUrl, method, params, body.pluginId || 'sessionnode-core', token);
     return NextResponse.json(result);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Core call failed';
-    console.error(`[core-call] wsUrl=${wsUrl} token=${token ? 'set' : 'NOT SET'} method=${method} error=${message}`);
-    return NextResponse.json({ error: message }, { status: 502 });
+  } catch (err: unknown) {
+    const code = (err as Record<string, unknown>)?.code as string | undefined;
+    const message = typeof (err as Record<string, unknown>)?.message === 'string'
+      ? (err as Record<string, unknown>).message as string
+      : 'Core call failed';
+    console.error(`[core-call] wsUrl=${wsUrl} token=${token ? 'set' : 'NOT SET'} method=${method} code=${code || '-'} error=${message}`);
+    return NextResponse.json({ error: code ? { code, message } : message }, { status: 502 });
   }
 }
 
@@ -121,10 +124,11 @@ async function coreCall(
           ws.close();
 
           if (msg.ok === false || msg.error != null) {
+            const errCode = msg.error && typeof msg.error === 'object' ? msg.error.code : undefined;
             const errMsg = msg.error
               ? (typeof msg.error === 'string' ? msg.error : (msg.error.message || JSON.stringify(msg.error)))
               : 'Core action failed';
-            reject(new Error(errMsg));
+            reject({ code: errCode, message: errMsg });
           } else {
             resolve(msg.payload);
           }
