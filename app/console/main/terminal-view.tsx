@@ -57,25 +57,9 @@ export function TerminalView({ instanceId }: TerminalViewProps) {
   cwdRef.current = cwd;
 
   const createSession = useCallback(async () => {
-    // Before creating a new session, check for detached terminal runs.
-    // run.list goes to the active target node via CoreClient's targetNodeId,
-    // so it only finds terminals on the correct node. If targetNodeId is
-    // set to a remote node, run.list returns that node's terminals.
-    try {
-      const list = await core.call<{ runs?: Array<{ runId: string; sessionId: string; state: string; kind: string }> }>('run.list', { kind: 'terminal' });
-      const detached = list?.runs?.find(r => r.state === 'running' && r.sessionId);
-      if (detached) {
-        debugLog('TerminalView re-attaching detached run', { runId: detached.runId, sessionId: detached.sessionId });
-        setSessionFresh(false);
-        setPtyMode(null);
-        setCoreSessionId(detached.sessionId);
-        bindCurrentTabInstance(detached.runId, undefined);
-        return;
-      }
-    } catch {
-      // run.list unavailable — proceed with fresh create
-    }
-
+    // Always create a fresh terminal session on the active target node.
+    // CoreClient injects targetNodeId automatically so run.create goes
+    // to the correct node — no need to check for detached runs here.
     debugLog('TerminalView creating new session via run.create', { cwd: cwdRef.current });
     setCreating(true);
     setSessionFresh(true);
