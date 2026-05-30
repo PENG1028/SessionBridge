@@ -13,6 +13,7 @@
 // proxy mode.
 
 import type { CoreClient, CoreEvent, CoreConnectionStatus } from './core-types';
+import { CoreError, classifyCode } from './core-error';
 
 export class ProxyCoreClient implements CoreClient {
   readonly pluginId: string;
@@ -32,6 +33,10 @@ export class ProxyCoreClient implements CoreClient {
   private _isConnected = false;
   private _lastError: string | null = null;
   private _disconnected = false;
+
+  // ── Reachability tracking (which remote nodes are connected) ──
+  private _reachableTargets = new Set<string>();
+  private _reachabilityListeners = new Set<() => void>();
 
   constructor(pluginId = 'sessionnode-core') {
     this.pluginId = pluginId;
@@ -71,6 +76,36 @@ export class ProxyCoreClient implements CoreClient {
     return this._targetNodeId;
   }
 
+  // ── Reachability API ──────────────────────────────────────
+
+  /** Check if a remote node is currently reachable via mesh. */
+  isNodeReachable(nodeId: string): boolean {
+    return this._reachableTargets.has(nodeId);
+  }
+
+  /** Get all currently reachable remote node IDs. */
+  getReachableNodeIds(): string[] {
+    return Array.from(this._reachableTargets);
+  }
+
+  /** Subscribe to reachability changes. Returns unsubscribe function. */
+  onReachabilityChange(handler: () => void): () => void {
+    this._reachabilityListeners.add(handler);
+    return () => this._reachabilityListeners.delete(handler);
+  }
+
+  /** Update reachability set and notify listeners. */
+  private _updateReachability(event: CoreEvent): void {
+    if (event.type === 'node.connected') {
+      this._reachableTargets.add(event.nodeId);
+    } else if (event.type === 'node.disconnected') {
+      this._reachableTargets.delete(event.nodeId);
+    } else {
+      return; // no change
+    }
+    this._reachabilityListeners.forEach(fn => { try { fn(); } catch { /* ignore */ } });
+  }
+
   // ── Core call via HTTP proxy ──────────────────────────────
 
   async call<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T> {
@@ -82,7 +117,7 @@ export class ProxyCoreClient implements CoreClient {
       }
       body.params = merged;
     }
-    const res = await fetch('/api/core/call/', {
+    const res = await fetch('/api/core/call', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
@@ -97,9 +132,18 @@ export class ProxyCoreClient implements CoreClient {
     const data = await res.json();
 
     if (!res.ok) {
-      const msg = data?.error || `Core call failed (${res.status})`;
+      const err = data?.error;
+      // err may be a string (HTTP-level error) or { code, message } (Core error).
+      if (typeof err === 'object' && err !== null) {
+        const code = (err as Record<string, unknown>)?.code as string | undefined;
+        const msg = (err as Record<string, unknown>)?.message as string || `Core call failed (${res.status})`;
+        this._lastError = msg;
+        const ce = new CoreError(msg, classifyCode(code));
+        throw ce;
+      }
+      const msg = typeof err === 'string' ? err : `Core call failed (${res.status})`;
       this._lastError = msg;
-      throw new Error(msg);
+      throw new CoreError(msg);
     }
 
     return data as T;
@@ -164,7 +208,7 @@ export class ProxyCoreClient implements CoreClient {
     this._setStatus('connecting');
 
     try {
-      const es = new EventSource('/api/core/events/', { withCredentials: true });
+      const es = new EventSource('/api/core/events', { withCredentials: true });
 
       es.addEventListener('core', (event: MessageEvent) => {
         try {
@@ -182,6 +226,7 @@ export class ProxyCoreClient implements CoreClient {
           // Forward all other Core messages to subscribers
           if (msg.type) {
             this._emit(msg.type, msg);
+            this._updateReachability(msg);
           }
         } catch {
           // Ignore parse errors on individual SSE events

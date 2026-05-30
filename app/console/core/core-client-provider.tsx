@@ -1,9 +1,11 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useRef, useCallback, useSyncExternalStore, type ReactNode } from 'react';
 import type { CoreClient, CoreConnectionStatus } from './core-types';
 import { createMockCoreClient } from './core-client';
 import { ProxyCoreClient } from './proxy-core-client';
+
+const EMPTY_SET = new Set<string>();
 
 // ─── Context ────────────────────────────────────────────────────
 interface CoreClientContextValue {
@@ -14,6 +16,8 @@ interface CoreClientContextValue {
   /** The node ID that capability calls are routed to via mesh.
    *  null = local node (no mesh routing). */
   activeNodeId: string | null;
+  /** The local node's own ID, resolved from node.identity.get on connect. */
+  localNodeId: string | null;
   /** Set the active target node for mesh routing. Pass null to reset to local. */
   setActiveNode: (nodeId: string | null) => void;
 }
@@ -44,6 +48,7 @@ export function CoreClientProvider({
   });
   const [isOffline, setIsOffline] = useState(forceOffline);
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
+  const [localNodeId, setLocalNodeId] = useState<string | null>(null);
   const coreRef = useRef<CoreClient>(core);
   coreRef.current = core;
 
@@ -90,15 +95,23 @@ export function CoreClientProvider({
       }
     }, 2000);
 
+    // Fetch local node identity as soon as the Core responds.
+    const idTimer = setTimeout(() => {
+      proxyClient.call<{nodeId: string}>('node.identity.get', {}).then(id => {
+        if (id?.nodeId) setLocalNodeId(id.nodeId);
+      }).catch(() => {});
+    }, 500);
+
     return () => {
       unsub();
       clearTimeout(probeTimer);
+      clearTimeout(idTimer);
       proxyClient.disconnect();
     };
   }, [forceOffline, reconnectKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // eslint-disable-next-line react-perf/jsx-no-new-object-as-prop
-  const value = { core, status, isOffline, activeNodeId, setActiveNode };
+  const value = { core, status, isOffline, activeNodeId, localNodeId, setActiveNode };
 
   return (
     <CoreClientContext.Provider value={value}>
@@ -136,4 +149,66 @@ export function useActiveNodeId(): string | null {
 /** Returns a setter to switch the active target node for mesh routing. */
 export function useSetActiveNode(): (nodeId: string | null) => void {
   return useCoreClient().setActiveNode;
+}
+
+/** Returns the local node's own ID (resolved from node.identity.get). */
+export function useLocalNodeId(): string | null {
+  return useCoreClient().localNodeId;
+}
+
+/**
+ * useTargetReachability — returns true if a given remote node is currently
+ * reachable via mesh. Always returns true for local node (null target).
+ *
+ * Uses useSyncExternalStore so the layout can react instantly when
+ * a node connects or disconnects without polling.
+ */
+export function useTargetReachability(nodeId: string | null): boolean {
+  const core = useCore();
+
+  const subscribe = useCallback(
+    (onChange: () => void) => {
+      if (!(core instanceof ProxyCoreClient)) return () => {};
+      return core.onReachabilityChange(onChange);
+    },
+    [core],
+  );
+
+  const getSnapshot = useCallback((): boolean => {
+    if (!nodeId) return true; // local node, always reachable
+    if (!(core instanceof ProxyCoreClient)) return true; // mock core
+    return core.isNodeReachable(nodeId);
+  }, [core, nodeId]);
+
+  return useSyncExternalStore(subscribe, getSnapshot, () => true);
+}
+
+/**
+ * useReachableNodeIds — returns a Set of node IDs currently reachable via mesh.
+ * Updates instantly when a node connects or disconnects.
+ */
+export function useReachableNodeIds(): Set<string> {
+  const core = useCore();
+  const cachedRef = useRef<Set<string>>(EMPTY_SET);
+
+  const subscribe = useCallback(
+    (onChange: () => void) => {
+      if (!(core instanceof ProxyCoreClient)) return () => {};
+      return core.onReachabilityChange(onChange);
+    },
+    [core],
+  );
+
+  const getSnapshot = useCallback((): Set<string> => {
+    if (!(core instanceof ProxyCoreClient)) return EMPTY_SET;
+    const ids = core.getReachableNodeIds();
+    const prev = cachedRef.current;
+    // Return cached Set unless contents changed.
+    if (prev.size !== ids.length || ids.some(id => !prev.has(id))) {
+      cachedRef.current = new Set(ids);
+    }
+    return cachedRef.current;
+  }, [core]);
+
+  return useSyncExternalStore(subscribe, getSnapshot, () => EMPTY_SET);
 }
