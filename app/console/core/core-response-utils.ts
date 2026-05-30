@@ -53,7 +53,6 @@ function normalizeNodeStatus(status: string): NodeStatus {
     case 'local':
       return 'online';
     case 'connecting':
-    case 'reconnecting':
       return 'connecting';
     case 'error':
     case 'revoked':

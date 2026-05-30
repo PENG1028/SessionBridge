@@ -464,38 +464,6 @@ export function NodeNetworkView({
       () => onEnterNode?.(relay.nodeId));
   }
 
-  // ── Build connection panel entries ──
-
-  type PanelConnection = {
-    id: string;
-    name: string;
-    direction: string;
-    connType: string;
-    status: 'connected' | 'connecting' | 'failed' | 'saved';
-    active: boolean;
-    isPeer: boolean;
-  };
-
-  const panelConns: PanelConnection[] = [];
-
-  // Incoming leaf agents
-  for (const leaf of leafNodes) {
-    panelConns.push({
-      id: `incoming:${leaf.nodeId}`,
-      name: leaf.name,
-      direction: '被连接',
-      connType: 'incoming leaf',
-      status: leaf.status === 'online' || leaf.status === 'connecting' ? leaf.status === 'connecting' ? 'connecting' : 'connected' : 'failed',
-      active: leaf.status === 'online',
-      isPeer: true,
-    });
-  }
-
-  // Sort: active first
-  panelConns.sort((a, b) => {
-    if (a.active !== b.active) return a.active ? -1 : 1;
-    return 0;
-  });
 
   // ── Render ──
   return (
@@ -523,25 +491,6 @@ export function NodeNetworkView({
       ) : (
         <div className="border rounded-lg border-gray-700/60 bg-gray-800/20 px-3.5 py-4 text-sm text-gray-500">
           disconnected / loading
-        </div>
-      )}
-
-      {/* ── Active connections ── */}
-      {panelConns.length > 0 && (
-        <div className="border-t border-gray-800 pt-3">
-          <div className="flex items-center justify-between mb-2 px-1">
-            <h3 className="text-[9px] font-bold text-gray-600 tracking-wider uppercase">
-              Connections
-              <span className="ml-2 text-emerald-500 font-normal text-[9px]">
-                ● {panelConns.filter(c => c.active).length} active
-              </span>
-            </h3>
-          </div>
-          <div className="space-y-1.5">
-            {panelConns.map((pc) => (
-              <ConnectionCard key={pc.id} {...pc} />
-            ))}
-          </div>
         </div>
       )}
 
@@ -631,37 +580,3 @@ export function NodeNetworkView({
 
 // ─── Connection Card (simplified) ───
 
-function ConnectionCard({
-  name, direction, connType, status, active,
-}: {
-  name: string;
-  direction: string;
-  connType: string;
-  status: 'connected' | 'connecting' | 'failed' | 'saved';
-  active: boolean;
-  isPeer: boolean;
-}) {
-  return (
-    <div className={`border rounded-md bg-gray-900/20 overflow-hidden ${active ? 'border-emerald-700/40' : 'border-gray-700/60'}`}>
-      <div className="px-2.5 py-1.5 text-xs">
-        <div className="flex items-center justify-between gap-2">
-          <div className="min-w-0 flex-1 font-mono text-gray-300 truncate">{name}</div>
-          {active && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" title="active" />}
-        </div>
-        <div className="mt-1 flex flex-wrap items-center gap-1">
-          <DirectionBadge direction={direction} />
-          <TypeBadge connType={connType} />
-          <StatusBadge status={status} />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function DirectionBadge({ direction }: { direction: string }) {
-  const colors: Record<string, string> = {
-    '被访问': 'text-gray-400 border-gray-700/50 bg-gray-800/50',
-    '被连接': 'text-blue-400 border-blue-700/30 bg-blue-900/20',
-  };
-  return <span className={`text-[8px] px-1.5 py-0.5 rounded font-mono border ${colors[direction] || 'text-gray-500 border-gray-700 bg-gray-800'}`}>{direction}</span>;
-}

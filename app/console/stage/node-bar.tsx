@@ -91,15 +91,19 @@ export function NodeBar({ activeNodeId, onEnterNode, onOpenConnection }: NodeBar
   const localPeerId = localNodeId || '__local__';
   const localPeer: NodeBarPeer = {
     id: localPeerId,
-    name: core?.isConnected ? '本机' : '本机 (offline)',
+    name: '本机',
     ip: '127.0.0.1',
     type: 'agent',
     role: 'leaf',
     networkType: 'loopback',
-    connectedAt: core?.isConnected ? Date.now() : undefined,
+    connectedAt: Date.now(),
   };
 
-  const allEntries: NodeBarPeer[] = [localPeer, ...remotePeers];
+  // Only show local node when Core is actually connected.
+  // Showing an offline entry lets users click into a broken session.
+  const allEntries: NodeBarPeer[] = core?.isConnected
+    ? [localPeer, ...remotePeers]
+    : [...remotePeers];
   // Deduplicate by id — the local peer may briefly appear in remotePeers
   // if node.list returns before node.identity.get resolves.
   const seenIds = new Set<string>();
