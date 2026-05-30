@@ -114,6 +114,11 @@ export interface WorkbenchContextValue {
   // Navigation
   onNavigatePath?: (path: string) => void;
 
+  // Live working directory — single source of truth for all components.
+  // Updated by TerminalView.sendCd and re-fetched on node switch via env.cwd.
+  absoluteCwd: string;
+  onCwdChange: (path: string) => void;
+
   // Refs
   scrollContainerRef: RefObject<HTMLDivElement | null>;
   actionEndRef: RefObject<HTMLDivElement | null>;

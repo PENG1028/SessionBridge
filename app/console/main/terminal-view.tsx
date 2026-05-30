@@ -19,7 +19,7 @@ interface TerminalViewProps {
 }
 
 export function TerminalView({ instanceId }: TerminalViewProps) {
-  const { token, bindCurrentTabInstance, projectCwd, homeDir, onNavigatePath } = useWorkbench();
+  const { token, bindCurrentTabInstance, projectCwd, homeDir, onNavigatePath, absoluteCwd, onCwdChange } = useWorkbench();
   const core = useCore();
   const coreStatus = useCoreStatus();
   const [creating, setCreating] = useState(false);
@@ -29,12 +29,6 @@ export function TerminalView({ instanceId }: TerminalViewProps) {
   const [sessionFresh, setSessionFresh] = useState(true);
   const autoCreated = useRef(false);
   const prevInstanceId = useRef<string | undefined>(instanceId);
-  const [cwd, setCwd] = useState(() => {
-    if (typeof window !== 'undefined' && getRestoreLastPath()) {
-      return getLastActiveDir() || homeDir || projectCwd || '.';
-    }
-    return homeDir || projectCwd || '.';
-  });
   const [pickerOpen, setPickerOpen] = useState(false);
 
   // Debug: log mount/render with current props
@@ -53,8 +47,8 @@ export function TerminalView({ instanceId }: TerminalViewProps) {
     }
   }, [instanceId]);
 
-  const cwdRef = useRef(cwd);
-  cwdRef.current = cwd;
+  const cwdRef = useRef(absoluteCwd);
+  cwdRef.current = absoluteCwd;
 
   const createSession = useCallback(async () => {
     // Always create a fresh terminal session on the active target node.
@@ -126,14 +120,12 @@ export function TerminalView({ instanceId }: TerminalViewProps) {
     }
   }, [instanceId, core, coreSessionId, bindCurrentTabInstance, coreStatus, restoreSession, createSession]);
 
-  // Sync cwd when projectCwd changes — but only if RESTORE is OFF
-  // or there's no saved last-active directory.
+  // Sync cwd when projectCwd changes (node switch) — push into the unified source.
   useEffect(() => {
-    if (projectCwd) {
-      if (getRestoreLastPath() && getLastActiveDir()) return;
-      setCwd(projectCwd);
+    if (projectCwd && absoluteCwd !== projectCwd) {
+      onCwdChange(projectCwd);
     }
-  }, [projectCwd]);
+  }, [projectCwd, absoluteCwd, onCwdChange]);
 
   /** Resolve a relative path (from picker, e.g. "./src/foo") to absolute using project root.
    *  Leaves already-absolute paths untouched so Windows paths (F:/...) aren't
@@ -149,7 +141,7 @@ export function TerminalView({ instanceId }: TerminalViewProps) {
   // Send cd command to the terminal shell
   const sendCd = useCallback((path: string) => {
     const absPath = resolveRel(path);
-    setCwd(absPath);
+    onCwdChange(absPath);
     setLastActiveDir(absPath);
     onNavigatePath?.(absPath);
     if (!coreSessionId) return;
@@ -159,7 +151,7 @@ export function TerminalView({ instanceId }: TerminalViewProps) {
     if (core?.isConnected) {
       core.call('stream.write', { sessionId: coreSessionId, streamType: 'stdin', data: cdCmd }).catch(() => {});
     }
-  }, [coreSessionId, core, resolveRel, onNavigatePath]);
+  }, [coreSessionId, core, resolveRel, onNavigatePath, onCwdChange]);
 
   const handleSelectDir = useCallback((path: string) => {
     sendCd(path);
@@ -179,7 +171,7 @@ export function TerminalView({ instanceId }: TerminalViewProps) {
             title="Browse directories"
           >
             <Folder className="w-3.5 h-3.5" />
-            <span className="text-[11px] font-mono">{cwd}</span>
+            <span className="text-[11px] font-mono">{absoluteCwd}</span>
           </button>
         </TitleBar>
         <div className="flex-1 flex flex-col items-center justify-center bg-[#0a0a0a] min-h-0 gap-3">
@@ -195,7 +187,7 @@ export function TerminalView({ instanceId }: TerminalViewProps) {
           open={pickerOpen}
           onClose={() => setPickerOpen(false)}
           onSelect={handleSelectDir}
-          absoluteCwd={cwd}
+          absoluteCwd={absoluteCwd}
           initialPath="."
           title="Directory Browser"
         />
@@ -225,7 +217,7 @@ export function TerminalView({ instanceId }: TerminalViewProps) {
           title="Change directory"
         >
           <Folder className="w-3.5 h-3.5" />
-          <span className="text-[11px] font-mono max-w-[160px] truncate">{cwd}</span>
+          <span className="text-[11px] font-mono max-w-[160px] truncate">{absoluteCwd}</span>
         </button>
       </TitleBar>
 
@@ -237,7 +229,7 @@ export function TerminalView({ instanceId }: TerminalViewProps) {
         open={pickerOpen}
         onClose={() => setPickerOpen(false)}
         onSelect={handleSelectDir}
-        absoluteCwd={cwd}
+        absoluteCwd={absoluteCwd}
         initialPath="."
         title="Terminal Directory"
       />

@@ -1269,6 +1269,8 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
       window.location.reload();
     },
     onNavigatePath,
+    absoluteCwd: absoluteCwd || activeNodeProjectInfo?.cwd || '.',
+    onCwdChange: (path: string) => { setCurrentDir(path); setAbsoluteCwd(path); },
     scrollContainerRef: scrollContainerRef as React.RefObject<HTMLDivElement | null>,
     actionEndRef: actionEndRef as React.RefObject<HTMLDivElement | null>,
   }), [
