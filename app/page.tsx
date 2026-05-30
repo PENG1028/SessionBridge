@@ -384,6 +384,8 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
       .catch(() => {});
   }, [core, core.isConnected]);
 
+  // Re-fetch project info when the active target node changes.
+
   // ── Fetch real absolute working directory from Core (not from node.info) ──
   useEffect(() => {
     if (!core?.isConnected) return;
@@ -474,6 +476,29 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
   useEffect(() => {
     setActiveNode(appState.activeInstanceId || null);
   }, [appState.activeInstanceId, setActiveNode]);
+
+  // Re-fetch project info when the active target node changes.
+  useEffect(() => {
+    if (!core?.isConnected) return;
+    core.call<{cwd?: string; projectName?: string; homeDir?: string}>("node.info", {})
+      .then(info => {
+        setProjectInfo({
+          cwd: info.cwd || ".",
+          projectName: info.projectName || "",
+          homeDir: info.homeDir || "",
+        });
+      })
+      .catch(() => {});
+    core.call<{cwd?: string}>("env.cwd", {})
+      .then(res => {
+        var cwd = (res?.cwd || "").split('\\').join('/');
+        if (cwd) {
+          setAbsoluteCwd(cwd);
+          setCurrentDir(cwd);
+        }
+      })
+      .catch(() => {});
+  }, [appState.activeInstanceId, core, core.isConnected]);
 
   const activeNodeWsUrl = useMemo(() => {
     const nodeId = appState.activeInstanceId;
