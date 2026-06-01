@@ -139,3 +139,33 @@ export interface AppGrantEntry {
   mode: 'allow' | 'deny' | 'ask';
   grantedAt: number;
 }
+
+// ─── Dependency Checking ─────────────────────────────────────────
+
+export interface CheckResult {
+  id: string;
+  type: string;
+  command: string;
+  found: boolean;
+  version?: string;
+  path?: string;
+  error?: string;
+  required: boolean;
+  installHint?: string;
+  /** Cascading: if a parent dependency is missing, this check is blocked. */
+  blockedBy?: string;
+}
+
+// ─── Install History ─────────────────────────────────────────────
+
+export interface InstallRecord {
+  installId: string;
+  appId: string;
+  checkId: string;
+  command: string;
+  status: 'running' | 'success' | 'failed';
+  startedAt: number;
+  finishedAt?: number;
+  stdout?: string;
+  stderr?: string;
+}
