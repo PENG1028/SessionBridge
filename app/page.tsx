@@ -23,6 +23,10 @@ import { CoreErrorBanner } from './console/core/core-error-banner';
 import { classifyCoreError } from './console/core/core-error';
 import { useCoreErrors } from './console/core/use-core-call';
 import { useAppSync } from './console/core/use-app-sync';
+import { useCoreConnection } from './console/core/use-core-connection';
+import type { CoreConnectionConfig } from './console/core/use-core-connection';
+import { useAppRuntime } from './console/core/use-app-runtime';
+import { useFileTree } from './console/files/use-file-tree';
 import { normalizeWsUrlAndToken, stripTokenFromWsUrl } from './console/core/core-url';
 
 
@@ -247,24 +251,12 @@ export default function Page() {
  * for legacy terminal/chat sessions.
  */
 function PageContent() {
-  const defaultUrl = typeof window !== 'undefined'
-    ? location.port === '3000'
-      ? 'ws://localhost:9090/ws'
-      : `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}`
-    : 'ws://localhost:9090/ws';
-  const params = typeof window !== 'undefined' ? new URL(window.location.href).searchParams : new URLSearchParams();
-  const urlParam = params.get('url');
-  const tokenParam = params.get('token');
-  // Normalize: extract any token from urlParam, explicit tokenParam wins
-  const initNormalized = normalizeWsUrlAndToken(urlParam || defaultUrl, tokenParam || undefined);
-  const [wsUrl, setWsUrl] = useState(() => initNormalized.wsUrl);
-  const [token, setToken] = useState<string | undefined>(initNormalized.token);
-  const [reconnectKey, setReconnectKey] = useState(0);
+  const { wsUrl, setWsUrl, token, setToken, reconnectKey, triggerReconnect, isLocalPage, browserId } = useCoreConnection();
 
   return (
     <CoreClientProvider forceOffline={false} reconnectKey={reconnectKey}>
       <CoreErrorProvider>
-        <AppCore wsUrl={wsUrl} setWsUrl={setWsUrl} token={token} setToken={setToken} onReconnect={() => setReconnectKey(k => k + 1)} />
+        <AppCore wsUrl={wsUrl} setWsUrl={setWsUrl} token={token} setToken={setToken} onReconnect={triggerReconnect} isLocalPage={isLocalPage} browserId={browserId} />
       </CoreErrorProvider>
     </CoreClientProvider>
   );
@@ -276,64 +268,11 @@ interface AppCoreProps {
   token: string | undefined;
   setToken: React.Dispatch<React.SetStateAction<string | undefined>>;
   onReconnect: () => void;
+  isLocalPage: boolean;
+  browserId: string | undefined;
 }
 
-function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps) {
-  // ── Page access mode: LOCAL (localhost) vs VIEW (remote) ──
-  // Use state + effect to avoid SSR/CSR hydration mismatch
-  const [isLocalPage, setIsLocalPage] = useState(false);
-  const [browserId, setBrowserId] = useState<string | undefined>(undefined);
-  useEffect(() => {
-    setIsLocalPage(
-      window.location.hostname === 'localhost' ||
-      window.location.hostname === '127.0.0.1' ||
-      window.location.hostname === '0.0.0.0'
-    );
-    if (typeof sessionStorage !== 'undefined') {
-      setBrowserId(sessionStorage.getItem('bridge-browser-id') || undefined);
-    }
-  }, []);
-
-  // Hydrate wsUrl from localStorage on mount (avoids SSR/CSR mismatch)
-  useEffect(() => {
-    if (typeof window !== 'undefined' && new URL(window.location.href).searchParams.has('url')) return; // URL param takes precedence
-    // When page is loaded from localhost, always use local relay
-    // Don't restore a potentially stale remote wsUrl from localStorage
-    const host = window.location.hostname;
-    if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0') return;
-    try {
-      const saved = localStorage.getItem('bridge-ws-url');
-      // Only restore if the saved URL points to the same host as the current page
-      // (prevents stale cross-origin wsUrl from localStorage)
-      if (saved && saved !== wsUrl) {
-        try {
-          const savedHost = new URL(saved).hostname;
-          if (savedHost === host) {
-            // Migrate: strip any token from old localStorage value
-            const { wsUrl: cleanUrl, token: migratedToken } = normalizeWsUrlAndToken(saved);
-            setWsUrl(cleanUrl);
-            // If the old URL had a token and no explicit token is set, migrate it
-            if (migratedToken) {
-              setToken(prev => prev ?? migratedToken);
-            }
-            // Immediately persist clean URL (no token) to localStorage
-            localStorage.setItem('bridge-ws-url', cleanUrl);
-          }
-        } catch {
-          // Invalid URL in storage, ignore
-        }
-      }
-    } catch {}
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Persist wsUrl to localStorage on change (only if it matches current page)
-  useEffect(() => {
-    try {
-      const curHost = window.location.hostname;
-      const urlHost = new URL(wsUrl).hostname;
-      if (urlHost === curHost) localStorage.setItem('bridge-ws-url', stripTokenFromWsUrl(wsUrl)); // belt-and-suspenders: strip in case state somehow has token
-    } catch {} // ignore cross-origin or invalid URLs
-  }, [wsUrl]);
+function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect, isLocalPage, browserId }: AppCoreProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const { state, dispatch } = useLayout();
 
