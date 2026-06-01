@@ -38,3 +38,11 @@ export function executeCommand(id: string, ...args: any[]): void {
 export function getAllCommands(): Command[] {
   return Array.from(_commands.values());
 }
+
+export function unregisterCommand(id: string): void {
+  _commands.delete(id);
+}
+
+export function clearCommands(): void {
+  _commands.clear();
+}

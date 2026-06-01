@@ -44,6 +44,10 @@ export class HostComponentRegistry {
     return this._components.has(componentId);
   }
 
+  unregister(componentId: string): void {
+    this._components.delete(componentId);
+  }
+
   getAll(): Map<string, ComponentType<HostComponentProps>> {
     return new Map(this._components);
   }

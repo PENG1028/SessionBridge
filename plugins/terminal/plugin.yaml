@@ -68,6 +68,13 @@ core:
 
 adapters:
   system-ui:
+    views:
+      - id: terminal
+        surface: main.editor
+        type: host-rendered
+        componentId: TerminalView
+        title: Terminal
+        icon: terminal
     panels:
       - id: terminal.sessions
         surface: panel.bottom

@@ -36,7 +36,8 @@ import { useKeyboardShortcuts } from './console/hooks/use-keyboard-shortcuts';
 import { useContextMenu } from './console/hooks/use-context-menu';
 import type { ContextMenuRequest, ContextMenuItemSpec } from './console/menus/context-menu-types';
 import { registerBuiltinCommands } from './console/commands/register-builtin-commands';
-import { registerBuiltinHostComponents, registerPluginHostComponents } from './console/plugin-host';
+// Host component registration is now driven by plugin.yaml → syncAllPlugins
+import './console/plugin-host'; // side-effect: registers host component library
 import { registerCommand, getCommand } from './console/commands/command-registry';
 import { getAction, getActions } from './console/actions/action-registry';
 import { runWorkbenchCommand } from './console/actions/workbench-command-dispatch';
@@ -640,10 +641,8 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
       reload: () => window.location.reload(),
     });
 
-    // Plugin host initialization: register builtin host components
-    // and plugin host components (TerminalView, SystemInfoPanel, etc.).
-    registerBuiltinHostComponents();
-    registerPluginHostComponents();
+    // Plugin host component library registered via side-effect import above.
+    // Actual activation of components is driven by plugin.yaml → syncAllPlugins.
 
     // Phase 4N: keep/unkeep tab commands for context menu
     registerCommand({
