@@ -1,0 +1,25 @@
+id: dashboard
+name: Dashboard
+version: 1.0.0
+type: system
+trusted: true
+description: System overview dashboard — node info, logs, and health metrics
+
+core:
+  permissions:
+    - id: dashboard.read
+      description: Read system diagnostics and log data
+      capabilities:
+        - node.info
+        - logs.tail
+      default: ask
+
+adapters:
+  system-ui:
+    views:
+      - id: dashboard
+        surface: main.editor
+        type: custom-react
+        entry: ./index
+        title: Dashboard
+        icon: Activity

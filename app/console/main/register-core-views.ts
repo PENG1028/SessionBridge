@@ -1,8 +1,7 @@
 'use client';
 
-import { Activity, List, Orbit } from 'lucide-react';
+import { List, Orbit } from 'lucide-react';
 import { registerView } from './view-registry';
-import { DashboardView } from './dashboard-view';
 import { LogsView } from './logs-view';
 import { AgentMonitorView } from './agent-monitor-view';
 
@@ -10,11 +9,7 @@ import { AgentMonitorView } from './agent-monitor-view';
 export const __coreViewsRegistered = true;
 
 // ── Workspace (non-adapter) views ─────────────────────────
-
-registerView('dashboard', {
-  component: DashboardView,
-  meta: { title: 'Dashboard', icon: Activity, showInSelector: true, launchable: true, launchMode: 'direct', category: 'workspace', viewType: 'main.editor', sidebarRequirements: { left: 'auto', right: 'auto' } },
-});
+// Dashboard is now a plugin — registered via plugins/dashboard/plugin.yaml
 
 registerView('logs', {
   component: LogsView,

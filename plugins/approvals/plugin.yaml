@@ -1,0 +1,23 @@
+id: approvals
+name: Approval Center
+version: 1.0.0
+type: system
+trusted: true
+description: Approval center for capability permission requests
+
+core:
+  permissions:
+    - id: approvals.read
+      capabilities:
+        - approval.list
+        - notify.respond
+      default: ask
+
+adapters:
+  system-ui:
+    views:
+      - id: approvals
+        surface: main.editor
+        type: custom-react
+        title: Approvals
+        icon: Bell
