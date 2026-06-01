@@ -5,10 +5,11 @@ export const dynamic = 'force-dynamic';
 import { useRef, useEffect, useState } from 'react';
 import { CoreClientImpl } from '../console/core/core-client';
 import { PluginHost } from '../console/plugin-host/plugin-host';
-import {
-  registerBuiltinHostComponents,
-  registerPluginHostComponents,
-} from '../console/plugin-host';
+import { registerBuiltinHostComponents } from '../console/plugin-host';
+import { hostComponentRegistry } from '../console/plugin-host/host-component-registry';
+import { TerminalView } from '../../plugins/terminal/index';
+import { SessionListPanel } from '../console/panels/session-list-panel';
+import { SystemInfoPanel } from '../console/panels/system-info-panel';
 import type { SurfaceRenderContext } from '../console/surface/surface-types';
 
 /**
@@ -23,7 +24,9 @@ import type { SurfaceRenderContext } from '../console/surface/surface-types';
 // Register at module level so both SSR and client see the same manifests.
 // Prevents hydration mismatch that would cause WebSocket to disconnect/reconnect.
 registerBuiltinHostComponents();
-registerPluginHostComponents();
+hostComponentRegistry.register('TerminalView', TerminalView);
+hostComponentRegistry.register('SessionListPanel', SessionListPanel);
+hostComponentRegistry.register('SystemInfoPanel', SystemInfoPanel);
 
 export default function TestGoCorePage() {
   const [wsStatus, setWsStatus] = useState('connecting');

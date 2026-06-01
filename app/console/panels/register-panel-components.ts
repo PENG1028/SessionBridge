@@ -22,7 +22,8 @@ import { TerminalLogPanel } from './terminal-log-panel';
 
 import { FilesPanel } from './files-panel';
 import { PathBookmarksPanel } from './path-bookmarks-panel';
-import { SessionListPanel, SystemInfoPanel } from '../plugin-host/plugin-components';
+import { SessionListPanel } from './session-list-panel';
+import { SystemInfoPanel } from './system-info-panel';
 
 // Plugin-manifest-declared sidebar panels (registered by manifest panel id)
 registerPanelComponent('terminal.files', FilesPanel);

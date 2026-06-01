@@ -1,9 +1,7 @@
 export { ContributionRegistry, contributionRegistry } from './contribution-registry';
 export { HostComponentRegistry, hostComponentRegistry, registerBuiltinHostComponents } from './host-component-registry';
 export { PluginHost } from './plugin-host';
-export { CustomReactPlaceholder } from './custom-react-placeholder';
 export { PluginManifestViewRenderer } from './plugin-manifest-view-renderer';
-export { registerPluginHostComponents } from './plugin-components';
 export type {
   PluginManifest,
   PluginContributions,

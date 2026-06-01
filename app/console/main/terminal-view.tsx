@@ -10,7 +10,7 @@ import { getLastActiveDir, getRestoreLastPath, setLastActiveDir } from '../../li
 import { useCore, useCoreStatus } from '../core/core-client-provider';
 import { useCoreErrors } from '../core/use-core-call';
 import { classifyCoreError } from '../core/core-error';
-import { TerminalView as PluginHostTerminalView } from '../plugin-host/plugin-components';
+import { TerminalView as PluginHostTerminalView } from '../../../plugins/terminal/index';
 
 const DEBUG_SURFACE = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debugSurface');
 function debugLog(...args: any[]) { if (DEBUG_SURFACE) console.log('[debugSurface]', ...args); }
