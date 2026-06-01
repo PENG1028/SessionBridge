@@ -1,0 +1,28 @@
+id: plugin-manager
+name: Plugin Manager
+version: 1.0.0
+type: system
+trusted: true
+description: Manage installed plugins — enable/disable, permissions, dependencies
+
+core:
+  permissions:
+    - id: plugin-manager.read
+      capabilities:
+        - node.list
+        - env.which
+      default: ask
+
+adapters:
+  system-ui:
+    views:
+      - id: app-manager
+        surface: main.editor
+        type: custom-react
+        title: Apps
+        icon: Puzzle
+      - id: app-detail
+        surface: main.editor
+        type: custom-react
+        title: App Detail
+        icon: Puzzle

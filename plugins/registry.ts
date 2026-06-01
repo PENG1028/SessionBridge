@@ -24,4 +24,5 @@ export const pluginComponents: Record<
   dashboard: () => import('./dashboard/index').then(m => ({ default: m.DashboardView as ComponentType<HostComponentProps> })),
   approvals: () => import('./approvals/index').then(m => ({ default: m.ApprovalCenter as ComponentType<HostComponentProps> })),
   'claude-chat': () => import('./claude-chat/index').then(m => ({ default: m.ClaudeChatView as ComponentType<HostComponentProps> })),
+  'plugin-manager': () => import('./plugin-manager/index').then(m => ({ default: m.AppManager as ComponentType<HostComponentProps> })),
 };
