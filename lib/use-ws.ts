@@ -338,25 +338,15 @@ export function useSession(
 
   return {
     connStatus,
-    output,
     msgLog,
-    serverBlocks,
     sendInput,
     sendCommand,
-    sendShellInput,
-    sendResize,
     queueStatus,
-    sessions,
     activeSessionId,
-    activateSession,
-    spawnSession,
-    activeBlocks,
-    isWorkspace: true,
     instances,
     activeInstanceId,
     activateInstance,
     createInstance,
     killInstance,
-    sendMessage,
   };
 }

@@ -337,7 +337,7 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
   }, [notify]);
 
 
-  const { connStatus, msgLog, sendInput, sendCommand, serverBlocks, sessions, activeSessionId, activateSession, spawnSession, isWorkspace, queueStatus, instances, activeInstanceId, activateInstance, createInstance, killInstance } = useSession(wsUrl, token ?? undefined, undefined, undefined, undefined, onSystemNotify, dismiss);
+  const { connStatus, msgLog, sendInput, sendCommand, activeSessionId, queueStatus, instances, activeInstanceId, activateInstance, createInstance, killInstance } = useSession(wsUrl, token ?? undefined, undefined, undefined, undefined, onSystemNotify, dismiss);
 
   // ── Core plugin manifest → extension points sync ──
   const handleCorePluginCommand = useCallback((commandId: string) => {
@@ -724,11 +724,11 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
   }, [activeNodeWsUrl, wsUrl, createInstance, addLog]);
 
   const { messagesBySession, setMessagesBySession, messages, sessionKey, updateSession, handleNewSession, isRestoring, snapshots, saveSnapshot, loadSnapshot, forkFromSnapshot, knownFiles } = useMessageSessions(
-    projectInfo, isWorkspace, activeSessionId, activeInstanceId, addLog, sendCommand
+    projectInfo, true, activeSessionId, activeInstanceId, addLog, sendCommand
   );
 
   const { historyLoadedRef, historyLoading, historyCutoffRef, processedRef, activeExternalSession, setActiveExternalSession } = useHistoryLoader(
-    projectInfo, serverBlocks, addLog, setMessagesBySession
+    projectInfo, [], addLog, setMessagesBySession
   );
 
   const { inputValue, setInputValue, showFileSuggest, fileSuggestions, handleSubmit, handleInputChange, handleKeyDown, handleFileSuggestionClick, submittingRef, showCommands, setShowCommands, handleQuickAction, handleCommandClick } = useCommandHandlers(
@@ -803,7 +803,7 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
       // Clear in-memory messages — sessionKey is always 'default' in non-workspace mode
       setMessagesBySession({});
       // Skip old server blocks they belong to the old project
-      processedRef.current = serverBlocks.length;
+      processedRef.current = 0;
       historyLoadedRef.current = false; // reload history for new directory
       setPhase('idle'); setCurrentActivity(null);
       setProjectInfo({ cwd: dir, projectName: dir.split(/[/\\]/).pop() || '', homeDir: dir });
@@ -815,7 +815,7 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
     setSwitching(false);
     setShowDirSwitcher(false);
     setSwitchDirLocal('');
-  }, [projectInfo, fetchDir, addLog, serverBlocks.length]);
+  }, [projectInfo, fetchDir, addLog, 0]);
 
   // ── Search Sessions ────────────────────────
   const {
@@ -885,7 +885,7 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
 
   // ── serverBlocks → Message Store (per-session) ──
   useBlockProcessor({
-    serverBlocks,
+    serverBlocks: [],
     sessionKey,
     updateSession,
     processedRef,
