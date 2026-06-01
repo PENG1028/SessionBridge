@@ -5,7 +5,7 @@ import { useCore } from '../core/core-client-provider';
 import { contributionRegistry } from './contribution-registry';
 import { hostComponentRegistry } from './host-component-registry';
 import type { HostComponentProps } from './host-component-registry';
-import { pluginComponents } from '../../plugins/registry';
+import { pluginComponents } from '../../../plugins/registry';
 
 interface PluginManifestViewRendererProps {
   viewId: string;

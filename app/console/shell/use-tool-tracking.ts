@@ -5,7 +5,7 @@
 // Extracted from app-shell.tsx / page.tsx.
 
 import { useState, useCallback, useEffect, useRef } from 'react';
-import type { TaskInfo, ToolActivity, Phase } from '../../../lib/session-types';
+import type { TaskInfo, ToolActivity, Phase } from '../../lib/session-types';
 
 export function useToolTracking(
   sendCommand: (name: string, args?: Record<string, unknown>) => void,

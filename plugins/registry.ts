@@ -13,7 +13,7 @@
 // The component MUST accept HostComponentProps.
 
 import type { ComponentType } from 'react';
-import type { HostComponentProps } from '../console/plugin-host/host-component-registry';
+import type { HostComponentProps } from '../app/console/plugin-host/host-component-registry';
 
 export const pluginComponents: Record<
   string,

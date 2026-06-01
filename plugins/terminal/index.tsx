@@ -4,9 +4,9 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
-import type { HostComponentProps } from '../../console/plugin-host/host-component-registry';
-import type { NodeInfo, RunInfo } from '../../console/core/core-types';
-import { TerminalInputBuffer, createDebouncedResize } from '../../console/core/terminal-input-buffer';
+import type { HostComponentProps } from '../../app/console/plugin-host/host-component-registry';
+import type { NodeInfo, RunInfo } from '../../app/console/core/core-types';
+import { TerminalInputBuffer, createDebouncedResize } from '../../app/console/core/terminal-input-buffer';
 
 export function TerminalView({ core, config }: HostComponentProps) {
   // Guard: if rendered outside PluginHost (e.g. sidebar panel with wrong props),
