@@ -14,6 +14,7 @@
 
 import type { CoreClient, CoreEvent, CoreConnectionStatus } from './core-types';
 import { CoreError, classifyCode } from './core-error';
+import { debug, debugWarn, debugError } from './debug';
 
 export class ProxyCoreClient implements CoreClient {
   readonly pluginId: string;
@@ -219,6 +220,7 @@ export class ProxyCoreClient implements CoreClient {
             this._isConnected = true;
             this._lastError = null;
             this._setStatus('connected');
+            debug('sse:proxy', 'bridge connected');
             this._emit('connected', msg);
             return;
           }
@@ -253,6 +255,7 @@ export class ProxyCoreClient implements CoreClient {
         this._isConnected = false;
         this._lastError = 'SSE connection lost — auto-reconnecting';
         this._setStatus('disconnected');
+        debugWarn('sse:proxy', 'EventSource error — auto-reconnecting');
       };
 
       // EventSource 'open' fires when the HTTP connection establishes,

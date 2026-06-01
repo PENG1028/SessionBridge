@@ -2,6 +2,7 @@
 
 import type { CoreClient, CoreEvent, CoreConnectionStatus } from './core-types';
 import { normalizeWsUrlAndToken, buildConnectUrl } from './core-url';
+import { debug, debugWarn, debugError } from './debug';
 
 // ─── CoreClient Config ──────────────────────────────────────────
 export interface CoreClientConfig {
@@ -109,6 +110,7 @@ export class CoreClientImpl implements CoreClient {
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         this._pendingCalls.delete(requestId);
+        debugWarn('ws:direct', `call timeout: ${method} (${this._callTimeout}ms)`);
         reject(new Error(`Core call timeout: ${method}`));
       }, this._callTimeout);
 
@@ -193,6 +195,7 @@ export class CoreClientImpl implements CoreClient {
         this._reconnectAttempts = 0;
         this._lastError = null;
         this._setStatus('connected');
+        debug('ws:direct', 'connected', { url: this.wsUrl });
         this._emit("connected", { type: "connected", pluginId: this.pluginId });
       };
 
@@ -222,6 +225,7 @@ export class CoreClientImpl implements CoreClient {
       };
 
       ws.onclose = (ev: CloseEvent) => {
+        debugWarn('ws:direct', `closed code=${ev.code} clean=${ev.wasClean} attempt=${this._reconnectAttempts}/${this._maxReconnectAttempts}`);
         if (!ev.wasClean) {
           this._lastError = `Connection closed unexpectedly (code=${ev.code}${ev.reason ? ': ' + ev.reason : ''})`;
         }
@@ -235,6 +239,7 @@ export class CoreClientImpl implements CoreClient {
         if (!this._disconnected) {
           if (this._maxReconnectAttempts < 0 || this._reconnectAttempts < this._maxReconnectAttempts) {
             this._reconnectAttempts++;
+            debug('ws:direct', `reconnecting in ${this._reconnectInterval}ms (attempt ${this._reconnectAttempts})`);
             setTimeout(() => this._connect(), this._reconnectInterval);
           } else {
             this._lastError = `Failed to connect after ${this._maxReconnectAttempts} attempts`;
@@ -245,6 +250,8 @@ export class CoreClientImpl implements CoreClient {
 
       ws.onerror = () => {
         this._lastError = 'WebSocket connection error — check that the Go Core server is running and the port is not occupied';
+        this._setStatus('disconnected'); // transition so UI doesn't stall on 'connecting'
+        debugError('ws:direct', 'WebSocket error', { url: this.wsUrl });
       };
 
       this._ws = ws;

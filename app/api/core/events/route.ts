@@ -58,6 +58,8 @@ export async function GET(request: NextRequest) {
         if (!cleanup) {
           cleanup = true;
           if (connectTimer) { clearTimeout(connectTimer); connectTimer = null; }
+        if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+          if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
           if (coreWs) {
             coreWs.close();
             coreWs = null;
@@ -80,15 +82,28 @@ export async function GET(request: NextRequest) {
         }
       }, CONNECT_TIMEOUT);
 
+      // Heartbeat: send SSE comment every 25s to keep proxies alive.
+      // Most proxies (nginx, Cloudflare) timeout idle connections at 60-120s.
+      let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+
       coreWs.on('open', () => {
         if (cleanup) return;
         if (connectTimer) { clearTimeout(connectTimer); connectTimer = null; }
+        if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
 
         // Signal that the bridge is up — client event multiplexer
         // transitions to 'connected' on receiving this.
         controller.enqueue(new TextEncoder().encode(
           `event: core\ndata: ${JSON.stringify({ type: 'connected', pluginId: 'sessionnode-core' })}\n\n`
         ));
+
+        // Start heartbeat (SSE comment lines are ignored by EventSource)
+        heartbeatTimer = setInterval(() => {
+          if (cleanup) return;
+          try {
+            controller.enqueue(new TextEncoder().encode(': heartbeat\n\n'));
+          } catch { /* stream closed */ }
+        }, 25_000);
       });
 
       coreWs.on('message', (raw: Buffer) => {
@@ -107,6 +122,7 @@ export async function GET(request: NextRequest) {
         if (cleanup) return;
         cleanup = true;
         if (connectTimer) { clearTimeout(connectTimer); connectTimer = null; }
+        if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
         try {
           controller.enqueue(new TextEncoder().encode(
             `event: error\ndata: {"type":"error","message":"${err.message.replace(/["\\]/g, '')}"}\n\n`
@@ -121,6 +137,7 @@ export async function GET(request: NextRequest) {
         if (cleanup) return;
         cleanup = true;
         if (connectTimer) { clearTimeout(connectTimer); connectTimer = null; }
+        if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
         try { controller.close(); } catch {}
         coreWs = null;
       });
