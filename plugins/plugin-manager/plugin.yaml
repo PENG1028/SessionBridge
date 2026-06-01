@@ -11,6 +11,7 @@ core:
       capabilities:
         - node.list
         - env.which
+        - process.spawn
       default: ask
 
 adapters:

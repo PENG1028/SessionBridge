@@ -6,6 +6,7 @@ import { contributionRegistry } from './contribution-registry';
 import { hostComponentRegistry } from './host-component-registry';
 import type { HostComponentProps } from './host-component-registry';
 import { pluginComponents } from '../../../plugins/registry';
+import { PluginErrorBoundary } from './plugin-error-boundary';
 
 interface PluginManifestViewRendererProps {
   viewId: string;
@@ -65,15 +66,17 @@ export function PluginManifestViewRenderer({ viewId, instanceId, _surfaceId }: P
     }
 
     return (
-      <Component
-        core={core}
-        config={{
-          componentId: view.componentId,
-          pluginId: manifest.id,
-          title: view.title || viewId,
-        }}
-        container={{ surface, width: 0, height: 0 }}
-      />
+      <PluginErrorBoundary pluginId={manifest.id}>
+        <Component
+          core={core}
+          config={{
+            componentId: view.componentId,
+            pluginId: manifest.id,
+            title: view.title || viewId,
+          }}
+          container={{ surface, width: 0, height: 0 }}
+        />
+      </PluginErrorBoundary>
     );
   }
 
@@ -92,11 +95,15 @@ export function PluginManifestViewRenderer({ viewId, instanceId, _surfaceId }: P
         </div>
       );
     }
-    return <CustomReactLoader loader={loader} core={core} config={{
-      componentId: viewId,
-      pluginId: manifest.id,
-      title: view.title || viewId,
-    }} surface={surface} />;
+    return (
+      <PluginErrorBoundary pluginId={manifest.id}>
+        <CustomReactLoader loader={loader} core={core} config={{
+          componentId: viewId,
+          pluginId: manifest.id,
+          title: view.title || viewId,
+        }} surface={surface} />
+      </PluginErrorBoundary>
+    );
   }
 
   // ── unknown type ──
@@ -156,10 +163,12 @@ function CustomReactLoader({
   }
 
   return (
-    <Component
-      core={core}
-      config={config}
-      container={{ surface, width: 0, height: 0 }}
-    />
+    <PluginErrorBoundary pluginId={config.pluginId}>
+      <Component
+        core={core}
+        config={config}
+        container={{ surface, width: 0, height: 0 }}
+      />
+    </PluginErrorBoundary>
   );
 }
