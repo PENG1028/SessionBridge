@@ -19,17 +19,11 @@ import { StatusBar } from '../shell/status-bar';
 import { ConsoleHeader } from '../shell/console-header';
 import { getAdapterViewId, getAdapterCapabilities, getViewEntry, getAllAdapterTypes, resolveChromePolicy, type ChromePolicy } from '../main/view-registry';
 import { ensureBootstrapped } from '../bootstrap';
-import { CoreClientProvider, useCore, useSetActiveNode, useActiveNodeId, useLocalNodeId, useTargetReachability } from '../core/core-client-provider';
-import { CoreErrorProvider } from '../core/core-error-provider';
+import { useCore, useSetActiveNode, useActiveNodeId, useLocalNodeId, useTargetReachability } from '../core/core-client-provider';
 import { CoreErrorBanner } from '../core/core-error-banner';
 import { classifyCoreError } from '../core/core-error';
 import { useCoreErrors } from '../core/use-core-call';
 import { useAppSync } from '../core/use-app-sync';
-import { useCoreConnection } from '../core/use-core-connection';
-import type { CoreConnectionConfig } from '../core/use-core-connection';
-import { useAppRuntime } from '../core/use-app-runtime';
-import { useFileTree } from '../files/use-file-tree';
-import { normalizeWsUrlAndToken, stripTokenFromWsUrl } from '../core/core-url';
 
 
 ensureBootstrapped();
