@@ -71,8 +71,8 @@ adapters:
     views:
       - id: terminal
         surface: main.editor
-        type: host-rendered
-        componentId: TerminalView
+        type: custom-react
+        entry: ./index
         title: Terminal
         icon: terminal
     panels:
