@@ -1,5 +1,12 @@
 'use client';
 
+// ─── 协议类型镜像 ──────────────────────────────────
+// 以下类型映射 Go Core 的 capability 返回形状。
+// 来源：go-core/pkg/types/（CapabilityRequest/Response, CoreError 等）
+//      go-core/internal/server/（NodeInfo, SessionInfo 等 HTTP 返回）
+//      go-core/internal/executor/（capability handler 的 payload 结构）
+// 改 Go Core 侧字段时请同步更新此文件。
+
 // ─── Core API method signatures ─────────────────────────────────
 // These types mirror SYSTEM_UI_API_MAP.md naming conventions.
 

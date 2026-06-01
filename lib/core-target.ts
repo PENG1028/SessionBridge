@@ -16,7 +16,7 @@ import { homedir } from 'os';
 let _customTarget: string | null = null;
 
 export function getCoreWsUrl(): string {
-  return _customTarget || process.env.SESSIONBRIDGE_CORE_WS_URL || 'ws://127.0.0.1:9090/ws';
+  return _customTarget || process.env.SESSIONBRIDGE_CORE_WS_URL || 'ws://localhost:9090/ws';
 }
 
 export function setCoreTargetPort(port: number): void {
