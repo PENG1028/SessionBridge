@@ -10,13 +10,13 @@
 
 import { Box } from 'lucide-react';
 import type { AppManifest, AppSystemUI } from './app-types';
-import { registerView, unregisterView } from '../main/view-registry';
-import { syncPluginPanels, clearPanels } from '../panels/panel-registry';
-import { syncChromeContributions, clearChromeContributions } from '../chrome/chrome-registry';
-import { registerCommand, unregisterCommand } from '../commands/command-registry';
-import { contributionRegistry } from '../plugin-host/contribution-registry';
-import { PluginManifestViewRenderer } from '../plugin-host/plugin-manifest-view-renderer';
-import type { PluginManifest, PluginViewContribution, PluginPanelContribution } from '../plugin-host/plugin-manifest-types';
+import { registerView, unregisterView } from '../../console/main/view-registry';
+import { syncPluginPanels, clearPanels } from '../../console/panels/panel-registry';
+import { syncChromeContributions, clearChromeContributions } from '../../console/chrome/chrome-registry';
+import { registerCommand, unregisterCommand } from '../../console/commands/command-registry';
+import { contributionRegistry } from '../../console/plugin-host/contribution-registry';
+import { PluginManifestViewRenderer } from '../../console/plugin-host/plugin-manifest-view-renderer';
+import type { PluginManifest, PluginViewContribution, PluginPanelContribution } from '../../console/plugin-host/plugin-manifest-types';
 import { isEnabled } from './app-registry';
 
 // ─── Track what we've registered so we can unregister ────────────

@@ -2,7 +2,7 @@
 
 import type { CoreClient, CoreEvent, CoreConnectionStatus } from './core-types';
 import { normalizeWsUrlAndToken, buildConnectUrl } from './core-url';
-import { debug, debugWarn, debugError } from './debug';
+import { debug, debugWarn, debugError } from '../../lib/debug/debug';
 
 // ─── CoreClient Config ──────────────────────────────────────────
 export interface CoreClientConfig {

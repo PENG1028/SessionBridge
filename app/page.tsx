@@ -50,7 +50,7 @@ import type { ContextMenuItem } from './console/shell/context-menu';
 import { ConsoleOverlays } from './console/overlays/console-overlays';
 import { getLastActiveDir, setLastActiveDir, getRestoreLastPath, addPathBookmark, setBookmarkScope } from './lib/path-bookmarks';
 import { NodeBar } from './console/stage/node-bar';
-import { NodeNetworkView } from './console/sidebar/node-network-view';
+import { NodeNetworkView } from './features/mesh';
 import { KeyHintOverlay } from './console/chrome/key-hint-overlay';
 import { LayoutProvider, useLayout, SidebarSlot, MainSlot, FocusProvider, RuntimePolicyProvider, useFocus, useRuntimePolicy, WorkbenchProvider } from './console/workbench';
 import { WorkbenchLayout } from './console/stage/workbench-layout';

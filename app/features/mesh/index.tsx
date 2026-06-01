@@ -1,10 +1,10 @@
 'use client';
 
 import { Cpu, Monitor, Server, X, Plus, Copy, Check, RefreshCw } from 'lucide-react';
-import { useCore, useReachableNodeIds } from '../core/core-client-provider';
+import { useCore, useReachableNodeIds } from '../../console/core/core-client-provider';
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { PeerEntry, NodeInvite, NodeInfo } from '../core/core-types';
-import { normalizeNodeInfo } from '../core/core-response-utils';
+import type { PeerEntry, NodeInvite, NodeInfo } from '../../console/core/core-types';
+import { normalizeNodeInfo } from '../../console/core/core-response-utils';
 
 // ─── Types ───
 

@@ -14,7 +14,7 @@
 
 import type { CoreClient, CoreEvent, CoreConnectionStatus } from './core-types';
 import { CoreError, classifyCode } from './core-error';
-import { debug, debugWarn, debugError } from './debug';
+import { debug, debugWarn, debugError } from '../../lib/debug/debug';
 
 export class ProxyCoreClient implements CoreClient {
   readonly pluginId: string;

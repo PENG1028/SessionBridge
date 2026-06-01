@@ -7,8 +7,8 @@
 
 import { useEffect, useRef } from 'react';
 import type { CoreClient } from './core-types';
-import { syncAllPlugins } from '../app-registry/plugin-sync';
-import { subscribe } from '../app-registry/app-registry';
+import { syncAllPlugins } from '../../lib/app-registry/plugin-sync';
+import { subscribe } from '../../lib/app-registry/app-registry';
 
 export function useAppSync(
   core: CoreClient,
