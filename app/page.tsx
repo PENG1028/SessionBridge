@@ -22,7 +22,7 @@ import { CoreErrorProvider } from './console/core/core-error-provider';
 import { CoreErrorBanner } from './console/core/core-error-banner';
 import { classifyCoreError } from './console/core/core-error';
 import { useCoreErrors } from './console/core/use-core-call';
-import { useCorePluginRegistrySync } from './console/core/use-core-plugin-sync';
+import { useAppSync } from './console/core/use-app-sync';
 import { normalizeWsUrlAndToken, stripTokenFromWsUrl } from './console/core/core-url';
 
 
@@ -434,7 +434,7 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
   const handleCorePluginCommand = useCallback((commandId: string) => {
     sendCommand(commandId, {});
   }, [sendCommand]);
-  useCorePluginRegistrySync(core, handleCorePluginCommand);
+  useAppSync(core, handleCorePluginCommand);
 
   // ── 30s grace before showing disconnect banner ──
   const [showBanner, setShowBanner] = useState(false);
@@ -457,7 +457,7 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
   // from paneFocus below — context menu and extension commands follow the
   // current tab's binding, not the global activeInstanceId.
 
-  // Plugin contributions are registered by useCorePluginRegistrySync via CoreClient.
+  // Plugin contributions are registered by useAppSync via CoreClient.
 
   // ── Workbench pane/tab layout state (Phase 4N: per-instance workbench) ──
   const [appState, setAppState] = useState<AppWorkbenchState>(() => createAppInitialState());
@@ -618,7 +618,7 @@ function AppCore({ wsUrl, setWsUrl, token, setToken, onReconnect }: AppCoreProps
   const focusWhenContext = { activeAdapterId: focusAdapterId, view: focusViewId, isRunning: focusIsRunning };
 
   // Command palette entries come from the action registry only.
-  // Plugin commands are registered directly by useCorePluginRegistrySync.
+  // Plugin commands are registered directly by useAppSync.
   const paletteCommands = useMemo(() => {
     const registryActions: Array<{ id: string; title: string; category?: string }>
       = getActions('commandPalette', focusWhenContext as Record<string, unknown>);

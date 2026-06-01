@@ -1,9 +1,17 @@
 'use client';
 
+// ─── useAppSync ───────────────────────────────────────────────────
+// Replaces useCorePluginSync. Reads app manifests from /api/apps/*
+// (server-side YAML scan) instead of calling Core plugin.* APIs.
+// Registers views, panels, commands, status items, and contributions
+// into the App UI registries — just like the old hook did, but
+// enable/disable state is now fully UI-controlled.
+
 import { useEffect, useRef } from 'react';
 import { Box } from 'lucide-react';
 import type { CoreClient } from './core-types';
-import type { ManifestSystemUI } from './manifest-mapper';
+import { loadApps, getManifest, isEnabled } from '../app-registry/app-registry';
+import type { AppManifest, AppSystemUI } from '../app-registry/app-types';
 import { mapPanelsToSidebarViews, mapStatusToChrome, registerManifestCommands } from './manifest-mapper';
 import { registerView } from '../main/view-registry';
 import { syncPluginPanels } from '../panels/panel-registry';
@@ -12,33 +20,14 @@ import { contributionRegistry } from '../plugin-host/contribution-registry';
 import type { PluginManifest, PluginViewContribution, PluginPanelContribution } from '../plugin-host/plugin-manifest-types';
 import { PluginManifestViewRenderer } from '../plugin-host/plugin-manifest-view-renderer';
 
-// Track which plugin IDs have been registered, so we can skip re-registration
-const registeredPluginIds = new Set<string>();
+const registeredAppIds = new Set<string>();
 
 /**
- * Extracts plugin list from plugin.list response, which may be:
- * - Array<{ pluginId: string }>
- * - { plugins: Array<{ pluginId: string }> }
+ * Syncs plugin manifests from /api/apps/* and registers UI contributions.
+ * Enable/disable is checked via app-registry.isEnabled().
+ * Does NOT call any Core plugin.* APIs.
  */
-function extractPluginList(raw: unknown): Array<{ pluginId: string }> {
-  if (Array.isArray(raw)) return raw as Array<{ pluginId: string }>;
-  if (raw && typeof raw === 'object' && Array.isArray((raw as Record<string, unknown>).plugins)) {
-    return (raw as Record<string, unknown>).plugins as Array<{ pluginId: string }>;
-  }
-  return [];
-}
-
-/**
- * Fetches Go Core plugin manifests and directly registers adapters.system-ui
- * contributions into App UI registries (view-registry, panel-registry,
- * chrome-registry, command-registry, contribution-registry).
- *
- * Plugin views are registered with PluginManifestViewRenderer, which
- * resolves host-rendered → componentId → hostComponentRegistry at render time.
- *
- * Reads plugin manifests directly from Core. Does not use relay extension points.
- */
-export function useCorePluginRegistrySync(
+export function useAppSync(
   core: CoreClient,
   onExecuteCommand: (commandId: string) => void,
 ): void {
@@ -50,27 +39,27 @@ export function useCorePluginRegistrySync(
 
     let cancelled = false;
 
-    async function sync() {
+    async function sync(): Promise<void> {
       try {
-        const rawList = await core.call<unknown>('plugin.list');
-        const plugins = extractPluginList(rawList);
-        if (cancelled || !plugins.length) return;
+        const apps = await loadApps();
+        if (cancelled || !apps.length) return;
 
         const allLeftPanels: Array<{ id: string; title: string; icon: string; defaultVisible: boolean; order?: number }> = [];
         const allRightPanels: Array<{ id: string; title: string; icon: string; defaultVisible: boolean; order?: number }> = [];
         const allStatusBar: Array<{ id: string; text: string; icon?: string; command?: string; side: 'left' | 'right'; order: number }> = [];
 
-        for (const p of plugins) {
+        for (const app of apps) {
           if (cancelled) return;
+          // Skip disabled apps
+          if (!isEnabled(app.id)) continue;
+
           try {
-            const info = await core.call<{ adapters?: { 'system-ui'?: ManifestSystemUI }; enabled?: boolean; trusted?: boolean; version?: string; name?: string; description?: string }>('plugin.get', { pluginId: p.pluginId });
-            if (cancelled || !info?.adapters?.['system-ui']) continue;
+            const manifest = await getManifest(app.id);
+            if (cancelled || !manifest?.adapters?.['system-ui']) continue;
 
-            const sysUI = info.adapters['system-ui'] as ManifestSystemUI;
-            const enabled = info.enabled !== false;
+            const sysUI = manifest.adapters['system-ui'] as AppSystemUI;
 
-            // Register views from manifest — all use PluginManifestViewRenderer.
-            // The renderer resolves host-rendered / custom-react / errors at render time.
+            // Register views via PluginManifestViewRenderer
             if (sysUI.views) {
               for (const v of sysUI.views) {
                 if (!v.id || !v.surface) continue;
@@ -81,10 +70,10 @@ export function useCorePluginRegistrySync(
                     icon: Box,
                     category: 'plugin',
                     viewType: 'main.editor',
-                    launchable: enabled,
-                    launchMode: enabled ? 'direct' : 'hidden',
-                    showInSelector: enabled,
-                    pluginId: p.pluginId,
+                    launchable: true,
+                    launchMode: 'direct',
+                    showInSelector: true,
+                    pluginId: app.id,
                   },
                 });
               }
@@ -99,23 +88,23 @@ export function useCorePluginRegistrySync(
             const chrome = mapStatusToChrome(sysUI.status);
             if (chrome.statusBar) allStatusBar.push(...chrome.statusBar as any);
 
-            // Register commands (with duplicate guard)
-            registerManifestCommands(p.pluginId, sysUI.commands, onExecuteRef.current);
+            // Register commands
+            registerManifestCommands(app.id, sysUI.commands, onExecuteRef.current);
 
-            // Register into contribution registry (for PluginHost / Plugin Manager)
-            if (!registeredPluginIds.has(p.pluginId)) {
-              const manifest: PluginManifest = {
-                id: p.pluginId,
-                version: info.version || '0.0.0',
-                name: info.name || p.pluginId,
-                description: info.description || '',
-                type: info.trusted ? 'builtin' : 'feature',
-                capabilities: [],
+            // Register into contribution registry
+            if (!registeredAppIds.has(app.id)) {
+              const pm: PluginManifest = {
+                id: app.id,
+                version: manifest.version || '0.0.0',
+                name: manifest.name || app.id,
+                description: manifest.description || '',
+                type: manifest.trusted ? 'builtin' : 'feature',
+                capabilities: app.capabilities,
                 contributes: {
                   views: {},
                   panels: {},
                   commands: sysUI.commands?.map(c => ({
-                    id: c.command || `${p.pluginId}.${c.id}`,
+                    id: c.command || `${app.id}.${c.id}`,
                     title: c.title,
                   })) || [],
                   status: sysUI.status?.map(s => ({
@@ -139,7 +128,7 @@ export function useCorePluginRegistrySync(
                     title: v.title || v.id,
                   });
                 }
-                manifest.contributes!.views = viewMap;
+                pm.contributes!.views = viewMap;
               }
 
               if (sysUI.panels) {
@@ -154,14 +143,14 @@ export function useCorePluginRegistrySync(
                     title: pn.title || pn.id,
                   });
                 }
-                manifest.contributes!.panels = panelMap;
+                pm.contributes!.panels = panelMap;
               }
 
-              contributionRegistry.registerManifest(manifest);
-              registeredPluginIds.add(p.pluginId);
+              contributionRegistry.registerManifest(pm);
+              registeredAppIds.add(app.id);
             }
           } catch {
-            // Individual plugin.get failure shouldn't block others
+            // Individual manifest fetch failure shouldn't block others
           }
         }
 
@@ -178,7 +167,7 @@ export function useCorePluginRegistrySync(
           syncChromeContributions({ statusBar: allStatusBar } as any);
         }
       } catch {
-        // plugin.list failed — core may not support it yet
+        // /api/apps/list failed — server may not support it yet
       }
     }
 

@@ -1,7 +1,7 @@
 export { CoreClientImpl, createCoreClient, createMockCoreClient } from './core-client';
 export { CoreClientProvider, useCoreClient, useCore, useCoreStatus, useIsOnline } from './core-client-provider';
 export { useCoreEvent, useCoreEvents, CoreEvents } from './core-events';
-export { useCorePluginRegistrySync } from './use-core-plugin-sync';
+export { useAppSync } from './use-app-sync';
 export type {
   CoreClient,
   CoreConnectionStatus,

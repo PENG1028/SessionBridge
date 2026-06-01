@@ -1,6 +1,10 @@
-// ─── Go Core plugin adapter → App UI registry descriptors ──
-// Maps plugin.get adapters.system-ui into shapes consumed by App UI registries:
-// panel-registry, chrome-registry, command-registry, contribution-registry.
+// ─── App manifest → App UI registry descriptors ──
+// Maps adapters.system-ui from plugin manifests into shapes consumed
+// by App UI registries: panel-registry, chrome-registry, command-registry,
+// contribution-registry. Manifests are now read by the App Registry
+// (/api/apps/*) instead of Core plugin.* APIs.
+//
+// These input types match the shape of adapters.system-ui in plugin.yaml.
 
 import { registerCommand, getCommand } from '../commands/command-registry';
 
@@ -18,9 +22,9 @@ export interface ChromeContributions {
   statusBar?: StatusBarChromeContribution[];
 }
 
-// ─── Go Core raw types (what plugin.info / plugin.get actually return) ──
+// ─── Input types (from plugin.yaml adapters.system-ui) ──
 
-export interface GoCoreUIView {
+export interface ManifestView {
   id: string;
   surface: string;
   type: string;
@@ -30,50 +34,34 @@ export interface GoCoreUIView {
   icon?: string;
 }
 
-export interface GoCoreUIPanel {
+export interface ManifestPanel {
   id: string;
   surface: string;
   type: string;
   entry?: string;
   componentId?: string;
   title?: string;
+  icon?: string;
 }
 
-export interface GoCoreUICommand {
+export interface ManifestCommand {
   id: string;
   title: string;
   command?: string;
 }
 
-export interface GoCoreUIStatus {
+export interface ManifestStatus {
   id: string;
   label: string;
   icon?: string;
   command?: string;
 }
 
-export interface GoCoreSystemUI {
-  views?: GoCoreUIView[];
-  panels?: GoCoreUIPanel[];
-  commands?: GoCoreUICommand[];
-  status?: GoCoreUIStatus[];
-}
-
-export interface GoCoreAdapters {
-  'system-ui'?: GoCoreSystemUI;
-  cli?: unknown;
-}
-
-export interface GoCorePluginDetail {
-  pluginId: string;
-  version: string;
-  name?: string;
-  description?: string;
-  enabled?: boolean;
-  trusted?: boolean;
-  manifestVersion?: string;
-  core?: Record<string, unknown>;
-  adapters?: GoCoreAdapters;
+export interface ManifestSystemUI {
+  views?: ManifestView[];
+  panels?: ManifestPanel[];
+  commands?: ManifestCommand[];
+  status?: ManifestStatus[];
 }
 
 // ─── Mappers ──────────────────────────────────────────────────────
@@ -83,7 +71,7 @@ export interface GoCorePluginDetail {
  * adapterViews: Record<viewId, adapterId>
  */
 export function mapViewsToAdapterViews(
-  views: GoCoreUIView[] | undefined,
+  views: ManifestView[] | undefined,
 ): Record<string, string> {
   if (!views) return {};
   const map: Record<string, string> = {};
@@ -101,7 +89,7 @@ export function mapViewsToAdapterViews(
  * Skips panels whose surface is not 'left' or 'right' (e.g. 'panel.bottom').
  */
 export function mapPanelsToSidebarViews(
-  panels: GoCoreUIPanel[] | undefined,
+  panels: ManifestPanel[] | undefined,
 ): Record<string, Array<{ id: string; title: string; icon: string; defaultVisible: boolean; componentId?: string; order?: number }>> {
   if (!panels || panels.length === 0) return {};
   const left: Array<{ id: string; title: string; icon: string; defaultVisible: boolean; componentId?: string; order?: number }> = [];
@@ -129,7 +117,7 @@ export function mapPanelsToSidebarViews(
  * Build chrome contributions from system-ui status items.
  */
 export function mapStatusToChrome(
-  statusItems: GoCoreUIStatus[] | undefined,
+  statusItems: ManifestStatus[] | undefined,
 ): ChromeContributions {
   if (!statusItems || statusItems.length === 0) return {};
   const statusBar: StatusBarChromeContribution[] = statusItems.map((s, i) => ({
@@ -150,7 +138,7 @@ export function mapStatusToChrome(
  */
 export function registerManifestCommands(
   pluginId: string,
-  commands: GoCoreUICommand[] | undefined,
+  commands: ManifestCommand[] | undefined,
   onExecute: (commandId: string) => void,
 ): void {
   if (!commands) return;
