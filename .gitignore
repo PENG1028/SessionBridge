@@ -49,3 +49,4 @@ flutter_app/android/key.properties
 flutter_app/android/.gradle/
 flutter_app/android/hs_err_pid*.log
 flutter_app/session_bridge/
+.gocache/
