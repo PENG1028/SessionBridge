@@ -1,7 +1,5 @@
 'use client';
 
-'use client';
-
 // Prerendering disabled — page uses browser-only APIs (WebSocket, localStorage, indexedDB)
 export const dynamic = 'force-dynamic';
 
@@ -17,16 +15,12 @@ import { LeftSidebar } from '../sidebar/left-sidebar';
 import { RightSidebar } from '../sidebar/right-sidebar';
 import { StatusBar } from '../shell/status-bar';
 import { ConsoleHeader } from '../shell/console-header';
-import { getAdapterViewId, getAdapterCapabilities, getViewEntry, getAllAdapterTypes, resolveChromePolicy, type ChromePolicy } from '../main/view-registry';
-import { ensureBootstrapped } from '../bootstrap';
+import { getAdapterViewId, getViewEntry, getAllAdapterTypes, resolveChromePolicy } from '../main/view-registry';
 import { useCore, useSetActiveNode, useActiveNodeId, useLocalNodeId, useTargetReachability } from '../core/core-client-provider';
 import { CoreErrorBanner } from '../core/core-error-banner';
 import { classifyCoreError } from '../core/core-error';
 import { useCoreErrors } from '../core/use-core-call';
 import { useAppSync } from '../core/use-app-sync';
-
-
-ensureBootstrapped();
 import { useNotification } from '../shared/notification-context';
 import { sessionStore } from '../../../lib/session-store';
 import { useMessageSessions } from '../hooks/use-message-sessions';

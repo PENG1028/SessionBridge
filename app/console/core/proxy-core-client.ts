@@ -31,7 +31,6 @@ export class ProxyCoreClient implements CoreClient {
 
   // ── Connection state ──────────────────────────────────────
   private _connectionStatus: CoreConnectionStatus = 'disconnected';
-  private _isConnected = false;
   private _lastError: string | null = null;
   private _disconnected = false;
 
@@ -46,7 +45,7 @@ export class ProxyCoreClient implements CoreClient {
   // ── Public accessors ──────────────────────────────────────
 
   get isConnected(): boolean {
-    return this._isConnected;
+    return this._connectionStatus === 'connected';
   }
 
   get lastError(): string | null {
@@ -197,7 +196,6 @@ export class ProxyCoreClient implements CoreClient {
   disconnect(): void {
     this._disconnected = true;
     this._closeSSE();
-    this._isConnected = false;
     this._connectionStatus = 'disconnected';
     this._eventListeners.clear();
     this._statusListeners.clear();
@@ -222,7 +220,6 @@ export class ProxyCoreClient implements CoreClient {
 
           // The 'connected' event means the server-side Core WS is open
           if (msg.type === 'connected') {
-            this._isConnected = true;
             this._lastError = null;
             this._setStatus('connected');
             debug('sse:proxy', 'bridge connected');
@@ -244,12 +241,10 @@ export class ProxyCoreClient implements CoreClient {
         try {
           const msg = JSON.parse(event.data);
           this._lastError = msg.message || 'SSE error';
-          this._isConnected = false;
           this._setStatus('error');
         } catch {
           // Parse failure in error event — just mark disconnected
           this._lastError = 'SSE connection error';
-          this._isConnected = false;
           this._setStatus('disconnected');
         }
       });
@@ -257,7 +252,6 @@ export class ProxyCoreClient implements CoreClient {
       es.onerror = () => {
         // EventSource auto-reconnects on network loss.
         // Mark disconnected so UI can show the transient state.
-        this._isConnected = false;
         this._lastError = 'SSE connection lost — auto-reconnecting';
         this._setStatus('disconnected');
         debugWarn('sse:proxy', 'EventSource error — auto-reconnecting');
@@ -285,7 +279,6 @@ export class ProxyCoreClient implements CoreClient {
   /** Called by CoreClientProvider when the HTTP probe confirms the Core is
    *  reachable, even if SSE hasn't yet delivered the 'connected' event. */
   setConnected(): void {
-    this._isConnected = true;
     this._lastError = null;
     this._setStatus('connected');
   }

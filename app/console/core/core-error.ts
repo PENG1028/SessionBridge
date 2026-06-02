@@ -97,7 +97,7 @@ export function classifyCoreError(err: unknown): CoreError {
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
 
   // Fallback: guess from message text.
-  if (msg.includes('webocket') || msg.includes('econnect') || msg.includes('sse') ||
+  if (msg.includes('websocket') || msg.includes('econnect') || msg.includes('sse') ||
       msg.includes('authentication required') || msg.includes('session expired') ||
       msg.includes('not connected')) {
     return new CoreError(String(err), 'connection');

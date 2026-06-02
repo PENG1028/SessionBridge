@@ -1,6 +1,6 @@
 'use client';
 
-import type { NodeInfo, NodeStatus, SessionInfo } from '../core/core-types';
+import type { NodeInfo, NodeStatus, SessionInfo } from './core-types';
 
 export function listFromResponse<T>(result: unknown, ...keys: string[]): T[] {
   if (Array.isArray(result)) return result as T[];

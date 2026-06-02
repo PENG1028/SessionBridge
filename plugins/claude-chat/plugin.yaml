@@ -1,0 +1,27 @@
+manifestVersion: "1"
+id: claude-chat
+name: Claude Chat
+version: 1.0.0
+type: system
+trusted: true
+description: Claude AI chat interface — interactive sessions with tool-use tracking
+
+core:
+  permissions:
+    - id: claude.session
+      description: Create and manage AI chat sessions
+      capabilities:
+        - process.spawn
+        - fs.read
+        - fs.write
+      default: ask
+
+adapters:
+  system-ui:
+    views:
+      - id: claude-chat
+        surface: main.editor
+        type: custom-react
+        entry: ./index
+        title: Claude Chat
+        icon: MessageSquare

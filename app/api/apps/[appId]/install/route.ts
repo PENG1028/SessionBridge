@@ -4,13 +4,19 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getInstallHistory, createInstallRecord, updateInstallRecord } from '../../../../lib/install-manager';
+import { verifySessionFromCookie } from '../../../../../lib/auth/app-ui-auth';
 
 export const runtime = 'nodejs';
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   context: { params: Promise<{ appId: string }> },
 ): Promise<NextResponse> {
+  if (process.env.SESSIONBRIDGE_AUTH_BYPASS !== '1') {
+    const cookie = request.cookies.get('sessionbridge_view')?.value;
+    const session = await verifySessionFromCookie(cookie);
+    if (!session.ok) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+  }
   const { appId } = await context.params;
   if (!/^[a-z][a-z0-9-]*$/.test(appId)) {
     return NextResponse.json({ error: 'Invalid app ID' }, { status: 400 });
@@ -22,6 +28,11 @@ export async function POST(
   request: NextRequest,
   context: { params: Promise<{ appId: string }> },
 ): Promise<NextResponse> {
+  if (process.env.SESSIONBRIDGE_AUTH_BYPASS !== '1') {
+    const cookie = request.cookies.get('sessionbridge_view')?.value;
+    const session = await verifySessionFromCookie(cookie);
+    if (!session.ok) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+  }
   const { appId } = await context.params;
   if (!/^[a-z][a-z0-9-]*$/.test(appId)) {
     return NextResponse.json({ error: 'Invalid app ID' }, { status: 400 });

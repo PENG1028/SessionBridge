@@ -58,7 +58,6 @@ export async function GET(request: NextRequest) {
         if (!cleanup) {
           cleanup = true;
           if (connectTimer) { clearTimeout(connectTimer); connectTimer = null; }
-        if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
           if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
           if (coreWs) {
             coreWs.close();

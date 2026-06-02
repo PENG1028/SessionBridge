@@ -5,8 +5,8 @@
 // when a core.call() fails with certain categories.
 
 import { useCallback } from 'react';
-import { useCoreErrors } from '../core/use-core-call';
-import { categoryLabel, type CoreErrorCategory } from '../core/core-error';
+import { useCoreErrors } from './use-core-call';
+import { categoryLabel, type CoreErrorCategory } from './core-error';
 
 const SHOW_CATEGORIES: CoreErrorCategory[] = ['connection', 'mesh-unreachable', 'timeout', 'forbidden', 'unknown'];
 const BANNER_COLORS: Record<CoreErrorCategory, string> = {

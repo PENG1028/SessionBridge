@@ -7,15 +7,29 @@
 // Returns { ok: true, url: "<current-target>" } on success.
 
 import { NextRequest, NextResponse } from 'next/server';
+import { verifySessionFromCookie } from '../../../../lib/auth/app-ui-auth';
 import { getCoreWsUrl, setCoreTargetPort, setCoreTargetUrl } from '../../../../lib/core-target';
 
 export const runtime = 'nodejs';
 
-export async function GET() {
+function authError() {
+  return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+}
+
+async function checkAuth(request: NextRequest): Promise<boolean> {
+  if (process.env.SESSIONBRIDGE_AUTH_BYPASS === '1') return true;
+  const cookie = request.cookies.get('sessionbridge_view')?.value;
+  const session = await verifySessionFromCookie(cookie);
+  return session.ok;
+}
+
+export async function GET(request: NextRequest) {
+  if (!(await checkAuth(request))) return authError();
   return NextResponse.json({ ok: true, url: getCoreWsUrl() });
 }
 
 export async function POST(request: NextRequest) {
+  if (!(await checkAuth(request))) return authError();
   try {
     const body = await request.json();
 

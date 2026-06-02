@@ -4,12 +4,20 @@
 // Unlike the old plugin.list Core capability, this runs on the Next.js
 // server and has no dependency on the Core runtime.
 
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { readFileSync, readdirSync, existsSync, statSync } from 'fs';
 import { join } from 'path';
 import { load } from 'js-yaml';
+import { verifySessionFromCookie } from '../../../../lib/auth/app-ui-auth';
 
 export const runtime = 'nodejs';
+
+async function checkAuth(request: NextRequest): Promise<boolean> {
+  if (process.env.SESSIONBRIDGE_AUTH_BYPASS === '1') return true;
+  const cookie = request.cookies.get('sessionbridge_view')?.value;
+  const session = await verifySessionFromCookie(cookie);
+  return session.ok;
+}
 
 interface RawManifest {
   id?: string;
@@ -52,7 +60,8 @@ function extractCapabilities(manifest: RawManifest): string[] {
   return Array.from(caps).sort();
 }
 
-export async function GET(): Promise<NextResponse> {
+export async function GET(request: NextRequest): Promise<NextResponse> {
+  if (!(await checkAuth(request))) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
   if (!isDir(PLUGINS_DIR)) {
     return NextResponse.json({ apps: [] });
   }
