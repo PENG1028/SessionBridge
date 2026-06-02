@@ -6,13 +6,15 @@
 
 import { useState, useEffect } from 'react';
 import { RefreshCw, Settings, ChevronRight } from 'lucide-react';
-import { loadApps, isEnabled, setEnabled } from '../../app/lib/app-registry/app-registry';
+import { loadApps, isEnabled, setEnabled, getLoadError } from '../../app/lib/app-registry/app-registry';
 import type { AppSummary } from '../../app/lib/app-registry/app-types';
+import { useCoreStatus } from '../../app/console/core/core-client-provider';
 
 export function AppManager() {
   const [apps, setApps] = useState<AppSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const coreStatus = useCoreStatus();
 
   async function refresh() {
     setLoading(true);
@@ -59,7 +61,11 @@ export function AppManager() {
 
         {!loading && apps.length === 0 && (
           <div className="p-8 text-center text-gray-600 text-xs">
-            No plugins found in plugins/ directory.
+            {coreStatus !== 'connected'
+              ? 'Cannot load plugins — Core is not connected.'
+              : getLoadError()
+                ? `Failed to load plugins: ${getLoadError()}`
+                : 'No plugins found in plugins/ directory.'}
           </div>
         )}
 

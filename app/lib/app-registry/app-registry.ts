@@ -13,8 +13,12 @@ let _summaries: AppSummary[] = [];
 let _states: Map<string, AppState> = new Map();
 let _listeners: Set<Listener> = new Set();
 let _loaded = false;
+let _loadError: string | null = null;
 
 // ─── Public API ───────────────────────────────────────────────────
+
+/** Returns the last load error, or null if successful. */
+export function getLoadError(): string | null { return _loadError; }
 
 /** Fetch and cache the app list from the server. */
 export async function loadApps(): Promise<AppSummary[]> {
@@ -22,14 +26,19 @@ export async function loadApps(): Promise<AppSummary[]> {
 
   try {
     const res = await fetch('/api/apps/list', { credentials: 'same-origin' });
-    if (!res.ok) return [];
+    if (!res.ok) {
+      _loadError = `Server returned ${res.status}`;
+      return [];
+    }
     const data = await res.json();
     _summaries = data.apps ?? [];
     _loaded = true;
+    _loadError = null;
     notify();
     return _summaries;
-  } catch {
-    return _summaries;
+  } catch (err) {
+    _loadError = `Connection failed: ${err instanceof Error ? err.message : String(err)}`;
+    return [];
   }
 }
 
@@ -125,6 +134,7 @@ export function reset(): void {
   _states.clear();
   _listeners.clear();
   _loaded = false;
+  _loadError = null;
 }
 
 // ─── Internal ─────────────────────────────────────────────────────

@@ -85,6 +85,7 @@ export function DependencyPanel({ appId }: DependencyPanelProps) {
   const core = useCore();
   const { results, loading, error, runChecks } = useDependencyCheck(core);
   const [checking, setChecking] = useState(false);
+  const [installError, setInstallError] = useState<string | null>(null);
 
   async function handleCheck() {
     setChecking(true);
@@ -115,12 +116,14 @@ export function DependencyPanel({ appId }: DependencyPanelProps) {
       });
       // Re-check after install
       await runChecks(appId);
-    } catch {
+    } catch (err) {
+      setInstallError(`Install failed: ${err instanceof Error ? err.message : String(err)}`);
       await fetch(`/api/apps/${appId}/install`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ checkId: check.id, status: 'failed' }),
       });
+      setTimeout(() => setInstallError(null), 5000);
     }
   }
 
@@ -155,6 +158,9 @@ export function DependencyPanel({ appId }: DependencyPanelProps) {
       <div className="flex-1 overflow-y-auto">
         {error && (
           <div className="p-3 text-[10px] text-red-400 text-center">{error}</div>
+        )}
+        {installError && (
+          <div className="p-2 mx-3 mt-2 text-[10px] text-red-400 bg-red-900/20 border border-red-800/40 rounded">{installError}</div>
         )}
 
         {!loading && results.length === 0 && !error && (
