@@ -5,7 +5,8 @@
 // visibility, and chrome policy derived from the active view.
 // Extracted from page.tsx.
 
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import type { Dispatch, SetStateAction } from 'react';
 import { useLayout } from '../workbench';
 import type { ConnStatus } from '../../../lib/use-ws';
 import type { PaneTab } from '../stage/workbench-state';
@@ -14,7 +15,7 @@ import { getViewEntry, resolveChromePolicy } from '../main/view-registry';
 export interface AppChromeState {
   showBanner: boolean;
   showCommandPalette: boolean;
-  setShowCommandPalette: (v: boolean) => void;
+  setShowCommandPalette: Dispatch<SetStateAction<boolean>>;
   settingsOpen: boolean;
   setSettingsOpen: (v: boolean) => void;
   effectiveLeftOpen: boolean;
@@ -27,7 +28,7 @@ export interface AppChromeState {
 
 export function useAppChrome(
   connStatus: ConnStatus,
-  paneFocus: { paneId: string; viewType: string; instanceId: string | null } | null,
+  paneFocus: { paneId: string; viewType: string; instanceId?: string | null } | null,
   noActiveNode: boolean,
 ): AppChromeState {
   const { state, dispatch } = useLayout();

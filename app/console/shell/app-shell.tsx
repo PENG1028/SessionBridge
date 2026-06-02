@@ -11,11 +11,13 @@ import {
 import { MobileSidebar } from '../sidebar/mobile-sidebar';
 import { MobileRightPanel } from '../sidebar/mobile-right-panel';
 import { useSessionSearch } from '../shell/use-session-search';
+import { useAppChrome } from '../shell/use-app-chrome';
+import { useToolTracking } from '../shell/use-tool-tracking';
 import { LeftSidebar } from '../sidebar/left-sidebar';
 import { RightSidebar } from '../sidebar/right-sidebar';
 import { StatusBar } from '../shell/status-bar';
 import { ConsoleHeader } from '../shell/console-header';
-import { getAdapterViewId, getViewEntry, getAllAdapterTypes, resolveChromePolicy } from '../main/view-registry';
+import { getAdapterViewId, getViewEntry, getAllAdapterTypes } from '../main/view-registry';
 import { useCore, useSetActiveNode, useActiveNodeId, useLocalNodeId, useTargetReachability } from '../core/core-client-provider';
 import { CoreErrorBanner } from '../core/core-error-banner';
 import { classifyCoreError } from '../core/core-error';
@@ -236,30 +238,13 @@ interface AppCoreProps {
 }
 
 export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLocalPage, browserId }: AppCoreProps) {
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const { state, dispatch } = useLayout();
 
-  // ── Core state ──────────────────────────
-  const [phase, setPhase] = useState<Phase>('idle');
-  const [currentActivity, setCurrentActivity] = useState<string | null>(null);
-  const [logs, setLogs] = useState<string[]>(['[$] session-bridge connected']);
   // ── No virtual window — render all messages ──
   const [terminalTab, setTerminalTab] = useState<'log' | 'raw'>('log');
-  const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [viewingFile, setViewingFile] = useState<{path: string; content: string} | null>(null);
-  // ── Background task tracking ──────────────
-  const [activeTasks, setActiveTasks] = useState<Map<string, TaskInfo>>(new Map());
-  const [toolActivities, setToolActivities] = useState<Map<string, ToolActivity>>(new Map());
-  const [expandedToolOutputs, setExpandedToolOutputs] = useState<Set<string>>(new Set());
-  const [taskTimer, setTaskTimer] = useState(0);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mobileRightOpen, setMobileRightOpen] = useState(false);
-  // Timer to refresh task durations and queue every 5s
-  useEffect(() => {
-    if (activeTasks.size === 0 && !phase) return;
-    const timer = setInterval(() => setTaskTimer(t => t + 1), 5000);
-    return () => clearInterval(timer);
-  }, [activeTasks.size, phase]);
   // ── Project / Session state ──────────────
   const [projectInfo, setProjectInfo] = useState<{cwd: string; projectName: string; homeDir?: string} | null>(null);
   const [savedSessions, setSavedSessions] = useState<{id: string; label: string; dir: string; ts: string}[]>([]);
@@ -333,27 +318,24 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
 
   const { connStatus, msgLog, sendInput, sendCommand, activeSessionId, queueStatus, instances, activeInstanceId, activateInstance, createInstance, killInstance } = useSession(wsUrl, token ?? undefined, undefined, undefined, undefined, onSystemNotify, dismiss);
 
+  // ── Tool tracking ────────────────────────
+  const {
+    phase, setPhase,
+    currentActivity, setCurrentActivity,
+    logs, setLogs, addLog,
+    activeTasks, setActiveTasks,
+    toolActivities, setToolActivities,
+    expandedToolOutputs, setExpandedToolOutputs,
+    taskTimer,
+    handleInterrupt,
+  } = useToolTracking(sendCommand);
+
   // ── Core plugin manifest → extension points sync ──
   const handleCorePluginCommand = useCallback((commandId: string) => {
     sendCommand(commandId, {});
   }, [sendCommand]);
   useAppSync(core, handleCorePluginCommand);
 
-  // ── 30s grace before showing disconnect banner ──
-  const [showBanner, setShowBanner] = useState(false);
-  const disconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    if (connStatus.status === 'connected') {
-      if (disconnectTimerRef.current) {
-        clearTimeout(disconnectTimerRef.current);
-        disconnectTimerRef.current = null;
-      }
-      setShowBanner(false);
-    } else if (!disconnectTimerRef.current) {
-      disconnectTimerRef.current = setTimeout(() => setShowBanner(true), 30000);
-    }
-    return () => { if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current); };
-  }, [connStatus.status]);
   const connectionUnstable = connStatus.status !== 'connected';
 
   // Phase 4I: activeAdapterId/viewId/isActiveRunning/whenContext are derived
@@ -479,15 +461,17 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
     if (!activeTab) return null;
     return { paneId: activePane.id, viewType: activeTab.viewType, instanceId: activeTab.instanceId };
   }, [activeWorkbenchState]);
-  const activeViewChrome = paneFocus ? getViewEntry(paneFocus.viewType)?.meta.chrome : undefined;
-  const chromePolicy = resolveChromePolicy(activeViewChrome);
-  const showStatusBar = chromePolicy.statusBar !== 'hidden';
-  const activeSidebarReqs = paneFocus ? getViewEntry(paneFocus.viewType)?.meta.sidebarRequirements : undefined;
-
-  // Effective sidebar open state: sidebarRequirements drive defaults per view;
-  // manual toggle (sidebarOverride) takes precedence.
-  // Sidebars are hidden when no node is active (NodeNetworkView visible).
   const noActiveNode = !appState.activeInstanceId;
+
+  // ── Shell chrome (banners, sidebars, command palette, status bar) ──
+  const {
+    showBanner, showCommandPalette, setShowCommandPalette,
+    settingsOpen, setSettingsOpen,
+    effectiveLeftOpen, effectiveRightOpen,
+    showStatusBar, chromePolicy,
+    toggleLeftSidebar, toggleRightSidebar,
+  } = useAppChrome(connStatus, paneFocus, noActiveNode);
+
   // Reachability: if a remote node is selected but mesh is broken, overlay the content area.
   const reachabilityNodeId = appState.activeInstanceId ?? null;
   const localNodeId = useLocalNodeId();
@@ -498,16 +482,6 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
     reachabilityNodeId !== localNodeId &&
     !remoteReachable
   );
-  const effectiveLeftOpen = noActiveNode ? false : state.sidebarOverride
-    ? state.leftSidebarOpen
-    : activeSidebarReqs?.left === 'hidden' ? false
-    : activeSidebarReqs?.left === 'shown' ? true
-    : state.leftSidebarOpen;
-  const effectiveRightOpen = noActiveNode ? false : state.sidebarOverride
-    ? state.rightSidebarOpen
-    : activeSidebarReqs?.right === 'hidden' ? false
-    : activeSidebarReqs?.right === 'shown' ? true
-    : state.rightSidebarOpen;
 
   // ── Focus-based context (for context menu + command palette) ───
   const focusInstanceId = paneFocus?.instanceId ?? null;
@@ -688,15 +662,6 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, []);
 
-  const addLog = useCallback((msg: string) => setLogs(prev => [...prev, msg]), []);
-
-  const handleInterrupt = useCallback(() => {
-    sendCommand('interrupt');
-    addLog('[System] ⏹ Interrupting Claude...');
-    setPhase('idle');
-    setCurrentActivity('Interrupted');
-  }, [sendCommand, addLog]);
-
   // ── Remote node project info (legacy /api/info removed; uses hostname fallback) ──
   const activeNodeProjectInfo = useMemo(() => {
     if (activeNodeWsUrl === wsUrl) return projectInfo;
@@ -758,8 +723,8 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
     localStorage.removeItem('sessionbridge-messages');
     setLogs(['[$] session-bridge connected']);
   }, [setMessagesBySession, setLogs]);
-  const handleToggleCommandPalette = useCallback(() => setShowCommandPalette(v => !v), []);
-  const handleToggleLeftSidebar = useCallback(() => dispatch({ type: 'TOGGLE_SIDEBAR', position: 'left' }), [dispatch]);
+  const handleToggleCommandPalette = useCallback(() => setShowCommandPalette(v => !v), [setShowCommandPalette]);
+  const handleToggleLeftSidebar = toggleLeftSidebar;
   const handleRestart = useCallback(() => sendCommand('clear'), [sendCommand]);
 
   useKeyboardShortcuts(messages, handleClearSession, handleToggleCommandPalette, handleToggleLeftSidebar, handleRestart, chromePolicy.globalShortcuts, state.activeViewId);

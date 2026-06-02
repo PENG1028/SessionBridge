@@ -4,11 +4,11 @@
 // Manages tool activity tracking: phase, currentActivity, tasks, logs.
 // Extracted from app-shell.tsx / page.tsx.
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import type { TaskInfo, ToolActivity, Phase } from '../../lib/session-types';
 
 export function useToolTracking(
-  sendCommand: (name: string, args?: Record<string, unknown>) => void,
+  sendCommand: (name: string) => void,
 ) {
   const [phase, setPhase] = useState<Phase>('idle');
   const [currentActivity, setCurrentActivity] = useState<string | null>(null);
@@ -34,21 +34,14 @@ export function useToolTracking(
     setCurrentActivity('Interrupted');
   }, [sendCommand, addLog]);
 
-  // Reset submitting guard when phase leaves 'running'
-  const submittingRef = useRef(false);
-  useEffect(() => {
-    if (phase !== 'running') submittingRef.current = false;
-  }, [phase]);
-
   return {
     phase, setPhase,
     currentActivity, setCurrentActivity,
-    logs, addLog,
+    logs, setLogs, addLog,
     activeTasks, setActiveTasks,
     toolActivities, setToolActivities,
     expandedToolOutputs, setExpandedToolOutputs,
     taskTimer,
     handleInterrupt,
-    submittingRef,
   };
 }
