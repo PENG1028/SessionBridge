@@ -5,7 +5,7 @@
 // Always returns { data, error, loading, execute } — never throws.
 // The error is a CoreError with a category, so UI can branch on it.
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect, createContext, useContext } from 'react';
 import { useCore } from './core-client-provider';
 import { CoreError, classifyCoreError, type CoreErrorCategory } from './core-error';
 
@@ -27,8 +27,6 @@ type UseCoreCallOptions = {
   onError?: (err: CoreError) => void;
 };
 
-const EMPTY = {};
-
 /**
  * useCoreCall — unified Core call hook.
  *
@@ -49,6 +47,12 @@ export function useCoreCall<T = unknown>(
   const [loading, setLoading] = useState(options?.immediate !== false);
   const mountedRef = useRef(true);
   const callIdRef = useRef(0);
+
+  // Cleanup: mark unmounted so pending async callbacks skip setState
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   const reset = useCallback(() => {
     setData(null);
@@ -80,15 +84,14 @@ export function useCoreCall<T = unknown>(
     }
   }, [core, method, params, options, ctx]);
 
-  // Auto-execute on mount
-  const initialDone = useRef(false);
-  if (!initialDone.current && options?.immediate !== false) {
-    initialDone.current = true;
-    // Use setTimeout to avoid setState during render
-    setTimeout(() => {
-      execute().catch(() => {});
-    }, 0);
-  }
+  // Auto-execute on mount (via useEffect to avoid setState during render)
+  useEffect(() => {
+    if (options?.immediate !== false) {
+      execute();
+    }
+    // Only fire on mount — execute identity is stable per method+params
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return { data, error, loading, execute, reset };
 }
@@ -106,8 +109,6 @@ export function useCoreCallLazy<T = unknown>(
 }
 
 // ─── CoreErrorContext — global error aggregation ──────────────
-
-import { createContext, useContext } from 'react';
 
 export interface CoreErrorEntry {
   method: string;

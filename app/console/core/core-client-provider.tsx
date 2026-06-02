@@ -108,7 +108,7 @@ export function CoreClientProvider({
       clearTimeout(idTimer);
       proxyClient.disconnect();
     };
-  }, [forceOffline, reconnectKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [forceOffline, reconnectKey, mockData, activeNodeId]);
 
   // eslint-disable-next-line react-perf/jsx-no-new-object-as-prop
   const value = { core, status, isOffline, activeNodeId, localNodeId, setActiveNode };

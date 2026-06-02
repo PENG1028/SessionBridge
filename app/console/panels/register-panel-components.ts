@@ -25,6 +25,12 @@ import { PathBookmarksPanel } from './path-bookmarks-panel';
 import { SessionListPanel } from './session-list-panel';
 import { SystemInfoPanel } from './system-info-panel';
 
+// ── Panel component registrations ─────────────────────────────
+// These map plugin manifest panel IDs (e.g. "terminal.files") to React components.
+// Resolution order in syncPluginPanels: componentOverrides → hostComponentRegistry fallback.
+// panel-registry handles sidebar docking; hostComponentRegistry handles host-rendered views.
+// These are distinct registries because panel components and host-rendered views have different prop contracts.
+
 // Plugin-manifest-declared sidebar panels (registered by manifest panel id)
 registerPanelComponent('terminal.files', FilesPanel);
 registerPanelComponent('terminal.raw', TerminalPanel);
@@ -33,8 +39,7 @@ registerPanelComponent('terminal.processes', ProcessesPanel);
 registerPanelComponent('terminal.tasks', TaskPanel);
 registerPanelComponent('terminal.system', SystemPanel);
 
-// Host-rendered plugin panels (registered by componentId via hostComponentRegistry,
-// also as panel component overrides here as belt-and-suspenders)
+// Host-rendered plugin panels
 registerPanelComponent('system-info.panel', SystemInfoPanel);
 registerPanelComponent('terminal.sessions', SessionListPanel);
 
