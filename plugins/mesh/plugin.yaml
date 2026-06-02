@@ -31,5 +31,6 @@ adapters:
       - id: mesh
         surface: main.editor
         type: custom-react
+        entry: ./index
         title: Mesh
         icon: Share2
