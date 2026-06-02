@@ -1,0 +1,34 @@
+id: mesh
+name: Mesh Network
+version: 1.0.0
+type: system
+trusted: true
+description: Peer-to-peer mesh network management — nodes, invites, topology
+
+core:
+  permissions:
+    - id: mesh.read
+      capabilities:
+        - node.identity.get
+        - node.list
+        - node.peer.list
+        - node.invite.list
+      default: ask
+    - id: mesh.manage
+      capabilities:
+        - node.peer.reconnect
+        - node.peer.disconnect
+        - node.peer.revoke
+        - node.invite.create
+        - node.invite.accept
+        - node.invite.revoke
+      default: ask
+
+adapters:
+  system-ui:
+    views:
+      - id: mesh
+        surface: main.editor
+        type: custom-react
+        title: Mesh
+        icon: Share2

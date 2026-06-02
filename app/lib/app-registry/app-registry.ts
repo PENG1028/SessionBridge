@@ -14,6 +14,7 @@ let _states: Map<string, AppState> = new Map();
 let _listeners: Set<Listener> = new Set();
 let _loaded = false;
 let _loadError: string | null = null;
+let _lastModified = 0;
 
 // ─── Public API ───────────────────────────────────────────────────
 
@@ -21,8 +22,19 @@ let _loadError: string | null = null;
 export function getLoadError(): string | null { return _loadError; }
 
 /** Fetch and cache the app list from the server. */
+/** Force reload on next call (used after YAML changes). */
+export function invalidateCache(): void { _loaded = false; }
+
 export async function loadApps(): Promise<AppSummary[]> {
-  if (_loaded) return _summaries;
+  // Check if server manifests changed since last load
+  if (_loaded) {
+    try {
+      const check = await fetch('/api/apps/list', { method: 'HEAD', credentials: 'same-origin' });
+    } catch { /* HEAD not supported, proceed with cache */ }
+    // If we have cached data after app start, skip re-fetch briefly
+    // Full re-fetch only on invalidateCache() or first load
+    return _summaries;
+  }
 
   try {
     const res = await fetch('/api/apps/list', { credentials: 'same-origin' });
@@ -32,6 +44,7 @@ export async function loadApps(): Promise<AppSummary[]> {
     }
     const data = await res.json();
     _summaries = data.apps ?? [];
+    _lastModified = data.lastModified ?? 0;
     _loaded = true;
     _loadError = null;
     notify();

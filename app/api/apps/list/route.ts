@@ -5,7 +5,7 @@
 // server and has no dependency on the Core runtime.
 
 import { NextResponse } from 'next/server';
-import { readFileSync, readdirSync, existsSync } from 'fs';
+import { readFileSync, readdirSync, existsSync, statSync } from 'fs';
 import { join } from 'path';
 import { load } from 'js-yaml';
 
@@ -59,9 +59,12 @@ export async function GET(): Promise<NextResponse> {
 
   const entries = readdirSync(PLUGINS_DIR, { withFileTypes: true });
   const apps = [];
+  let lastModified = 0;
 
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
+    const yamlPath = join(PLUGINS_DIR, entry.name, 'plugin.yaml');
+    try { lastModified = Math.max(lastModified, statSync(yamlPath).mtimeMs); } catch {}
     const manifest = readManifest(entry.name);
     if (!manifest) continue;
 
@@ -76,5 +79,5 @@ export async function GET(): Promise<NextResponse> {
     });
   }
 
-  return NextResponse.json({ apps });
+  return NextResponse.json({ apps, lastModified });
 }

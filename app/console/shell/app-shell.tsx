@@ -46,7 +46,7 @@ import type { ContextMenuItem } from '../shell/context-menu';
 import { ConsoleOverlays } from '../overlays/console-overlays';
 import { getLastActiveDir, setLastActiveDir, getRestoreLastPath, addPathBookmark, setBookmarkScope } from '../../lib/path-bookmarks';
 import { NodeBar } from '../stage/node-bar';
-import { NodeNetworkView } from '../../features/mesh';
+import { NodeNetworkView } from '../../../plugins/mesh';
 import { KeyHintOverlay } from '../chrome/key-hint-overlay';
 import { LayoutProvider, useLayout, SidebarSlot, MainSlot, FocusProvider, RuntimePolicyProvider, useFocus, useRuntimePolicy, WorkbenchProvider } from '../workbench';
 import { WorkbenchLayout } from '../stage/workbench-layout';

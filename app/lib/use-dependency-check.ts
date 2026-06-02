@@ -64,10 +64,11 @@ export function useDependencyCheck(core: CoreClient) {
         }
 
         try {
-          const result = await core.call<{ found: boolean; path?: string }>('env.which', {
+          const result = await core.call<{ found?: unknown; path?: string }>('env.which', {
             name: check.command || check.id,
           });
-          const found = result?.found ?? false;
+          // Validate: found must be boolean
+          const found = typeof result?.found === 'boolean' ? result.found : false;
           if (found) foundCommands.add(check.command || check.id);
 
           results.push({
