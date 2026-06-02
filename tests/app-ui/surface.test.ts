@@ -5,7 +5,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { SurfaceRegistry, surfaceRegistry } from '../../app/console/surface/surface-registry';
-import { rebuildTabsFromSessions, instanceIdToSessionId } from '../../app/console/surface/surface-renderer';
+import { rebuildTabsFromSessions } from '../../app/console/surface/surface-renderer';
 import type { TabProjection } from '../../app/console/surface/surface-types';
 
 describe('SurfaceRegistry', () => {
@@ -140,12 +140,6 @@ describe('TabProjection', () => {
       { sessionId: 'sess_unknown', kind: 'unknown', pluginId: 'unknown', nodeId: 'n1', status: 'running' },
     ]);
     expect(tabs[0].viewType).toBe('unknown');
-  });
-});
-
-describe('instanceId compatibility shim', () => {
-  it('instanceIdToSessionId maps directly (for migration)', () => {
-    expect(instanceIdToSessionId('inst_123')).toBe('inst_123');
   });
 });
 

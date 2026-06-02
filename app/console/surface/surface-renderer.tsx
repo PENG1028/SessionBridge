@@ -83,13 +83,3 @@ export function resolveViewType(pluginId?: string, kind?: string): string {
   return mapping?.viewType ?? 'unknown';
 }
 
-// ─── Compatibility shim: instanceId → sessionId ────────────────
-// TODO: Remove once all old code is migrated to sessionId.
-// This maps the old `instanceId` concept to the new `sessionId`.
-export function instanceIdToSessionId(instanceId: string): string {
-  return instanceId;
-}
-
-export function sessionIdToTabId(sessionId: string): string {
-  return `tab_${sessionId}`;
-}

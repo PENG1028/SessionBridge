@@ -1,3 +1,4 @@
+manifestVersion: "1"
 id: plugin-manager
 name: Plugin Manager
 version: 1.0.0

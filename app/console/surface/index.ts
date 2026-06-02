@@ -1,5 +1,5 @@
 export { SurfaceRegistry, surfaceRegistry } from './surface-registry';
-export { SurfaceRenderer, SurfaceContextProvider, useSurfaceContext, rebuildTabsFromSessions, resolveViewType, instanceIdToSessionId, sessionIdToTabId } from './surface-renderer';
+export { SurfaceRenderer, SurfaceContextProvider, useSurfaceContext, rebuildTabsFromSessions, resolveViewType } from './surface-renderer';
 export type {
   SurfaceType,
   SurfaceRenderContext,
