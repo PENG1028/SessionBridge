@@ -5,6 +5,7 @@ import type { SurfaceRenderContext } from '../surface/surface-types';
 import type { CoreClient } from '../core/core-types';
 import { contributionRegistry } from './contribution-registry';
 import { hostComponentRegistry } from './host-component-registry';
+import { getPanelComponentOverride } from '../panels/panel-registry';
 import { CustomReactPlaceholder } from './custom-react-placeholder';
 
 // ─── PluginHost Props ──────────────────────────────────────────
@@ -128,7 +129,8 @@ function renderContribution(
       return <div className="flex-1 flex items-center justify-center text-gray-500 text-xs">host-rendered view missing componentId: {viewId}</div>;
     }
 
-    const Component = hostComponentRegistry.get(componentId);
+    // Resolve component: hostComponentRegistry first, then panel component overrides
+    const Component = hostComponentRegistry.get(componentId) ?? getPanelComponentOverride(componentId) as React.ComponentType<import('./host-component-registry').HostComponentProps> | undefined;
     if (!Component) {
       return <div className="flex-1 flex items-center justify-center text-gray-500 text-xs">Host component not found: {componentId}</div>;
     }

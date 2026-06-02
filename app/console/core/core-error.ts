@@ -117,16 +117,3 @@ export function classifyCoreError(err: unknown): CoreError {
 
   return new CoreError(String(err), 'unknown');
 }
-
-/** Human-readable label for each category. */
-export function categoryLabel(cat: CoreErrorCategory): string {
-  switch (cat) {
-    case 'connection':        return 'Core 未连接';
-    case 'mesh-unreachable':  return '远端节点离线';
-    case 'timeout':           return '请求超时';
-    case 'forbidden':         return '权限不足';
-    case 'bad-request':       return '请求参数错误';
-    case 'not-found':         return '资源不存在';
-    case 'unknown':           return '未知错误';
-  }
-}

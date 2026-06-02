@@ -6,7 +6,20 @@
 
 import { useCallback } from 'react';
 import { useCoreErrors } from './use-core-call';
-import { categoryLabel, type CoreErrorCategory } from './core-error';
+import { type CoreErrorCategory } from './core-error';
+
+/** Human-readable label for each error category (UI presentation). */
+function categoryLabel(cat: CoreErrorCategory): string {
+  switch (cat) {
+    case 'connection':        return 'Core 未连接';
+    case 'mesh-unreachable':  return '远端节点离线';
+    case 'timeout':           return '请求超时';
+    case 'forbidden':         return '权限不足';
+    case 'bad-request':       return '请求参数错误';
+    case 'not-found':         return '资源不存在';
+    case 'unknown':           return '未知错误';
+  }
+}
 
 const SHOW_CATEGORIES: CoreErrorCategory[] = ['connection', 'mesh-unreachable', 'timeout', 'forbidden', 'unknown'];
 const BANNER_COLORS: Record<CoreErrorCategory, string> = {

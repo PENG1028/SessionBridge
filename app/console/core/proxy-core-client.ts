@@ -202,6 +202,9 @@ export class ProxyCoreClient implements CoreClient {
     this._lastError = null;
   }
 
+  // ── Connection probes (internal) ────────────────────────────
+  private _probeTimer: ReturnType<typeof setTimeout> | null = null;
+
   // ── SSE lifecycle ─────────────────────────────────────────
 
   private _connectSSE(): void {
@@ -220,6 +223,7 @@ export class ProxyCoreClient implements CoreClient {
 
           // The 'connected' event means the server-side Core WS is open
           if (msg.type === 'connected') {
+            this._clearProbe();
             this._lastError = null;
             this._setStatus('connected');
             debug('sse:proxy', 'bridge connected');
@@ -238,6 +242,7 @@ export class ProxyCoreClient implements CoreClient {
       });
 
       es.addEventListener('error', (event: MessageEvent) => {
+        this._clearProbe();
         try {
           const msg = JSON.parse(event.data);
           this._lastError = msg.message || 'SSE error';
@@ -257,9 +262,20 @@ export class ProxyCoreClient implements CoreClient {
         debugWarn('sse:proxy', 'EventSource error — auto-reconnecting');
       };
 
-      // EventSource 'open' fires when the HTTP connection establishes,
-      // but the Core WS bridge may not be open yet.
-      // The 'connected' event from SSE tells us the bridge is ready.
+      // ── Internal connectivity probe ──────────────────────────
+      // If SSE hasn't delivered 'connected' within 2s, try a direct
+      // HTTP call to give immediate feedback. This races with SSE —
+      // whichever confirms first wins.
+      this._probeTimer = setTimeout(() => {
+        if (this._connectionStatus !== 'connected') {
+          this.call('node.health', {}).then(() => {
+            this._lastError = null;
+            this._setStatus('connected');
+          }).catch(() => {
+            // Probe failed — stay in current status, SSE may still connect
+          });
+        }
+      }, 2000);
 
       this._eventSource = es;
     } catch (err) {
@@ -269,18 +285,18 @@ export class ProxyCoreClient implements CoreClient {
   }
 
   private _closeSSE(): void {
+    this._clearProbe();
     if (this._eventSource) {
       this._eventSource.close();
       this._eventSource = null;
     }
   }
 
-  // ── Force-connected (called by CoreClientProvider when probe confirms) ──
-  /** Called by CoreClientProvider when the HTTP probe confirms the Core is
-   *  reachable, even if SSE hasn't yet delivered the 'connected' event. */
-  setConnected(): void {
-    this._lastError = null;
-    this._setStatus('connected');
+  private _clearProbe(): void {
+    if (this._probeTimer) {
+      clearTimeout(this._probeTimer);
+      this._probeTimer = null;
+    }
   }
 
   // ── Status notification ───────────────────────────────────

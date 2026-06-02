@@ -80,20 +80,8 @@ export function CoreClientProvider({
 
     // ProxyCoreClient auto-connects via SSE to /api/core/events
     // when on() is called. Status updates flow through onStatusChange.
+    // Connectivity probes are handled internally by ProxyCoreClient.
     const unsub = proxyClient.onStatusChange(setStatus);
-
-    // Seed a connectivity probe — if no SSE event has triggered within 2s,
-    // try a direct core call to give immediate feedback.
-    const probeTimer = setTimeout(() => {
-      if (proxyClient.connectionStatus === 'disconnected') {
-        proxyClient.call('node.health', {}).then(() => {
-          proxyClient.setConnected();
-          setStatus('connected');
-        }).catch(() => {
-          setStatus('disconnected');
-        });
-      }
-    }, 2000);
 
     // Fetch local node identity as soon as the Core responds.
     const idTimer = setTimeout(() => {
@@ -104,7 +92,6 @@ export function CoreClientProvider({
 
     return () => {
       unsub();
-      clearTimeout(probeTimer);
       clearTimeout(idTimer);
       proxyClient.disconnect();
     };
