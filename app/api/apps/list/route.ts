@@ -35,7 +35,8 @@ function readManifest(appId: string): RawManifest | null {
   try {
     const raw = readFileSync(yamlPath, 'utf-8');
     return load(raw) as RawManifest;
-  } catch {
+  } catch (err) {
+    console.error(`[apps] Failed to parse ${appId}/plugin.yaml:`, (err as Error).message);
     return null;
   }
 }

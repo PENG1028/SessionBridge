@@ -53,9 +53,9 @@ export function getSummaries(): AppSummary[] {
   return _summaries;
 }
 
-/** Check if an app is enabled. Defaults to true for unknown apps. */
+/** Check if an app is enabled. Defaults to false for unknown apps (fail closed). */
 export function isEnabled(appId: string): boolean {
-  return _states.get(appId)?.enabled ?? true;
+  return _states.get(appId)?.enabled ?? false;
 }
 
 /** Get the grant mode for a capability of an app. */
@@ -77,8 +77,9 @@ export async function loadAppState(appId: string): Promise<AppState> {
   }
 }
 
-/** Toggle enable/disable for an app. Persists to server. */
+/** Toggle enable/disable for an app. Persists to server. Rolls back on failure. */
 export async function setEnabled(appId: string, enabled: boolean): Promise<void> {
+  const prev = _states.get(appId)?.enabled;
   const res = await fetch(`/api/apps/${appId}/state`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -88,6 +89,10 @@ export async function setEnabled(appId: string, enabled: boolean): Promise<void>
   if (res.ok) {
     const state = await res.json() as AppState;
     _states.set(appId, state);
+    notify();
+  } else if (prev !== undefined) {
+    // Rollback: request failed, keep previous state
+    _states.set(appId, { ..._states.get(appId)!, enabled: prev });
     notify();
   }
 }

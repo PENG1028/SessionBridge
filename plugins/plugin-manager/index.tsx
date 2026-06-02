@@ -28,11 +28,10 @@ export function AppManager() {
 
   useEffect(() => { refresh(); }, []);
 
-  async function handleToggle(appId: string, currentlyEnabled: boolean) {
-    try {
-      await setEnabled(appId, !currentlyEnabled);
-      setApps(prev => prev.map(a => a.id === appId ? { ...a, enabled: !currentlyEnabled } : a));
-    } catch { /* toggle failed */ }
+  async function handleToggle(appId: string) {
+    const currentlyEnabled = isEnabled(appId);
+    await setEnabled(appId, !currentlyEnabled);
+    refresh(); // re-read from server to get authoritative state
   }
 
   return (
@@ -101,7 +100,7 @@ export function AppManager() {
 
               {/* Enable/Disable toggle */}
               <button
-                onClick={() => handleToggle(app.id, enabled)}
+                onClick={() => handleToggle(app.id)}
                 className={`text-[9px] font-bold px-2 py-1 rounded border transition-colors shrink-0 ${
                   enabled
                     ? 'bg-green-900/30 text-green-400 border-green-700/50 hover:bg-green-800/40'

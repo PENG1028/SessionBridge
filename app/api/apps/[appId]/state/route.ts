@@ -4,7 +4,7 @@
 // This replaces the old plugin.enable/plugin.disable Core capabilities.
 
 import { NextRequest, NextResponse } from 'next/server';
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'fs';
 import { join } from 'path';
 
 export const runtime = 'nodejs';
@@ -34,7 +34,10 @@ function readState(): StateStore {
 function writeState(store: StateStore): void {
   const dir = join(process.cwd(), '.sessionbridge');
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  writeFileSync(STATE_FILE, JSON.stringify(store, null, 2), 'utf-8');
+  // Atomic write: temp file → rename
+  const tmp = STATE_FILE + '.tmp';
+  writeFileSync(tmp, JSON.stringify(store, null, 2), 'utf-8');
+  renameSync(tmp, STATE_FILE);
 }
 
 function ensureApp(store: StateStore, appId: string): AppState {

@@ -23,21 +23,34 @@ import { isEnabled } from './app-registry';
 const _registeredViewIds = new Map<string, Set<string>>(); // appId → Set<viewId>
 const _registeredCommandIds = new Map<string, Set<string>>(); // appId → Set<commandId>
 
+let _syncLock = false;
+
 /**
  * Sync ALL UI contributions for all enabled apps.
  * Call this on startup and when enable/disable state changes (hot-reload).
+ * Guarded against concurrent calls.
  */
 export async function syncAllPlugins(
   onExecuteCommand: (commandId: string) => void,
 ): Promise<void> {
-  const { loadApps, getManifest } = await import('./app-registry');
-  const apps = await loadApps();
-  if (!apps.length) return;
+  if (_syncLock) return;
+  _syncLock = true;
+  try {
+    const { loadApps, getManifest } = await import('./app-registry');
+    const apps = await loadApps();
+    if (!apps.length) return;
 
   // Collect contributions from all enabled apps
   const allLeft: Array<{ id: string; title: string; icon: string; defaultVisible: boolean; componentId?: string; order?: number }> = [];
   const allRight: Array<{ id: string; title: string; icon: string; defaultVisible: boolean; componentId?: string; order?: number }> = [];
   const allStatusBar: Array<{ id: string; text: string; icon?: string; command?: string; side: 'left' | 'right'; order: number }> = [];
+
+  // Clean up stale registrations from deleted plugins
+  for (const appId of _registeredViewIds.keys()) {
+    if (!apps.some(a => a.id === appId)) {
+      unregisterApp(appId);
+    }
+  }
 
   for (const app of apps) {
     if (!isEnabled(app.id)) {
@@ -64,6 +77,9 @@ export async function syncAllPlugins(
     allRight.length > 0 ? allRight : undefined,
   );
   syncChromeContributions(allStatusBar.length > 0 ? { statusBar: allStatusBar as any } : undefined);
+  } finally {
+    _syncLock = false;
+  }
 }
 
 /**
