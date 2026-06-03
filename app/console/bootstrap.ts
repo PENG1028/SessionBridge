@@ -8,6 +8,8 @@ import { __coreViewsRegistered } from './main/register-core-views';
 import { __extensionPanelComponentsRegistered } from './panels/register-panel-components';
 import { __coreActionsRegistered } from './actions/register-core-actions';
 import { registerBuiltinHostComponents } from './plugin-host/host-component-registry';
+// Self-contained plugin panel registrations (registerPanelComponent calls)
+import '../../plugins/terminal/panels/index';
 
 /** Trigger all module-level side effects. Call once at app startup. */
 export function ensureBootstrapped() {
