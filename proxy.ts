@@ -37,19 +37,9 @@ function isApiCoreCall(pathname: string): boolean {
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Dev bypass: SESSIONBRIDGE_AUTH_BYPASS=1
+  // Dev bypass: SESSIONBRIDGE_AUTH_BYPASS=1 — passes all requests through.
+  // Core token validation is handled by the API route handlers themselves.
   if (process.env.SESSIONBRIDGE_AUTH_BYPASS === '1') {
-    if (isApiCoreCall(pathname)) {
-      // Verify Core token is configured — without it, API calls will fail
-      // or expose unauthenticated endpoints.
-      if (!process.env.SESSIONNODE_TOKEN) {
-        return NextResponse.json(
-          { error: 'Core token not configured — set SESSIONNODE_TOKEN' },
-          { status: 401 },
-        );
-      }
-      return NextResponse.next();
-    }
     return NextResponse.next();
   }
 
