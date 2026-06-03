@@ -117,7 +117,7 @@ export function DirectoryPicker({
   title = 'Select Directory',
 }: DirectoryPickerProps) {
   const core = useCore();
-  const [tree, setTree] = useState<Record<string, { items: DirEntry[]; loaded: boolean }>>({});
+  const [tree, setTree] = useState<Record<string, { items: DirEntry[]; loaded: boolean; error?: string }>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState('');
   const [search, setSearch] = useState('');
@@ -128,15 +128,19 @@ export function DirectoryPicker({
   const cwd = useMemo(() => absoluteCwd.replace(/\\/g, '/'), [absoluteCwd]);
 
   const fetchDir = useCallback(async (dir: string) => {
-    if (!core?.isConnected) return;
+    if (!core?.isConnected) {
+      setTree(prev => ({ ...prev, [dir]: { items: [], loaded: true, error: 'Core not connected' } }));
+      return;
+    }
     try {
       const res = await core.call<{ path: string; entries: Array<{ name: string; isDir: boolean; size: number; mode: string }> }>('fs.list', { path: dir });
       const entries = res?.entries ?? [];
-      // Build entries with absolute paths
       const prefix = dir.endsWith('/') ? dir : dir + '/';
       const items: DirEntry[] = entries.map(e => ({ name: e.name, type: e.isDir ? 'dir' : 'file', path: prefix + e.name }));
       setTree(prev => ({ ...prev, [dir]: { items, loaded: true } }));
-    } catch (_e) {}
+    } catch (err) {
+      setTree(prev => ({ ...prev, [dir]: { items: [], loaded: true, error: String(err) } }));
+    }
   }, [core]);
 
   useEffect(() => {
@@ -149,6 +153,14 @@ export function DirectoryPicker({
       fetchDir(resolved);
     }
   }, [open, fetchDir, cwd, initialPath]);
+
+  // Auto-fetch when selected changes to a directory not yet in the tree.
+  // Prevents permanent "Loading files..." when user single-clicks a dir.
+  useEffect(() => {
+    if (selected && !tree[selected]?.loaded) {
+      fetchDir(selected);
+    }
+  }, [selected, tree, fetchDir]);
 
   const toggleDir = useCallback((path: string) => {
     setExpanded(prev => {
@@ -165,16 +177,8 @@ export function DirectoryPicker({
     setSelected(path);
     setExpanded(new Set([path]));
     setTree({});
-    if (!core?.isConnected) return;
-    core.call<{ path: string; entries: Array<{ name: string; isDir: boolean; size: number; mode: string }> }>('fs.list', { path })
-      .then(res => {
-        const entries = res?.entries ?? [];
-        const prefix = path.endsWith('/') ? path : path + '/';
-        const items: DirEntry[] = entries.map(e => ({ name: e.name, type: e.isDir ? 'dir' : 'file', path: prefix + e.name }));
-        setTree(prev => ({ ...prev, [path]: { items, loaded: true } }));
-      })
-      .catch(() => {});
-  }, [core]);
+    fetchDir(path);
+  }, [fetchDir]);
 
   const breadcrumb = useMemo(() => pathSegments(selected), [selected]);
 
@@ -308,6 +312,8 @@ export function DirectoryPicker({
       <div className="flex-1 overflow-y-auto px-1 pb-1 min-h-0">
         {!tree[selected]?.loaded ? (
           <div className={`text-gray-600 p-3 italic ${mobile ? 'text-[12px]' : 'text-[10px]'}`}>Loading files...</div>
+        ) : tree[selected]?.error ? (
+          <div className={`text-red-400 p-3 italic ${mobile ? 'text-[12px]' : 'text-[10px]'}`}>{tree[selected]!.error}</div>
         ) : searchResults !== null && searchResults.length === 0 ? (
           <div className={`text-gray-700 p-3 italic ${mobile ? 'text-[12px]' : 'text-[10px]'}`}>No matches</div>
         ) : searchResults !== null ? (
