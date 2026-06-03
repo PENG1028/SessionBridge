@@ -89,13 +89,19 @@ export function getGrant(appId: string, capability: string): 'allow' | 'deny' | 
 export async function loadAppState(appId: string): Promise<AppState> {
   try {
     const res = await fetch(`/api/apps/${appId}/state`, { credentials: 'same-origin' });
-    if (!res.ok) return { enabled: true, updatedAt: 0, grants: {} };
+    if (!res.ok) {
+      const def = { enabled: true, updatedAt: 0, grants: {} };
+      _states.set(appId, def);
+      return def;
+    }
     const state = await res.json() as AppState;
     _states.set(appId, state);
     notify();
     return state;
   } catch (_e) {
-    return { enabled: true, updatedAt: 0, grants: {} };
+    const def = { enabled: true, updatedAt: 0, grants: {} };
+    _states.set(appId, def);
+    return def;
   }
 }
 
