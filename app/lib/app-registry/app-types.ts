@@ -99,6 +99,10 @@ export interface AppUIPanel {
   componentId?: string;
   title?: string;
   icon?: string;
+  /** When-condition for panel visibility (e.g. 'activeAdapterId != ""'). */
+  when?: string;
+  /** Display order within the sidebar (lower = first). */
+  order?: number;
 }
 
 export interface AppUICommand {

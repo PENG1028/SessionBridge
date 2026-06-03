@@ -17,7 +17,7 @@ import type { HostComponentProps } from '../app/console/plugin-host/host-compone
 
 export const pluginComponents: Record<
   string,
-  () => Promise<{ default: ComponentType<HostComponentProps> }>
+  () => Promise<{ default: ComponentType<any> }>
 > = {
   terminal: () => import('./terminal/index'),
   'system-info': () => import('./system-info/index'),

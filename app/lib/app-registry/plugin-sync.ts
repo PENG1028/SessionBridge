@@ -145,13 +145,18 @@ function registerAppContributions(
   if (ui.panels) {
     for (const p of ui.panels) {
       if (!p.id) continue;
-      const entry = {
+      const entry: {
+        id: string; title: string; icon: string; defaultVisible: boolean;
+        componentId?: string; when?: string; order?: number;
+      } = {
         id: p.id,
         title: p.title || p.id,
         icon: p.icon || 'PanelRight',
         defaultVisible: true,
         componentId: p.componentId,
       };
+      if (p.when) entry.when = p.when;
+      if (p.order !== undefined) entry.order = p.order;
       if (p.surface === 'left') allLeft.push(entry);
       else if (p.surface === 'right') allRight.push(entry);
     }
