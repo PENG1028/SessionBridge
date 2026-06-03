@@ -1,12 +1,13 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { useCore } from '../core/core-client-provider';
+import { useCore, useActiveNodeId } from '../core/core-client-provider';
 
 // ── Logs Panel ──────────────────────────────────────────────
 
 export function LogsPanel(props: { logs?: string[]; msgLog?: any[] }) {
   const core = useCore();
+  const activeNodeId = useActiveNodeId();
   const [coreLogs, setCoreLogs] = useState<string[] | null>(null);
   const { logs } = props;
 
@@ -18,7 +19,7 @@ export function LogsPanel(props: { logs?: string[]; msgLog?: any[] }) {
         setCoreLogs(entries.map((e: { message: string }) => e.message));
       })
       .catch(() => {});
-  }, [core]);
+  }, [core, activeNodeId]);
 
   const displayLogs = coreLogs ?? logs;
   if (!displayLogs || displayLogs.length === 0) {
@@ -44,12 +45,14 @@ export function LogsPanel(props: { logs?: string[]; msgLog?: any[] }) {
 
 export function TerminalPanel(props: { msgLog?: any[] }) {
   const core = useCore();
+  const activeNodeId = useActiveNodeId();
   const { msgLog } = props;
   const [streamEntries, setStreamEntries] = useState<Array<{ id: number; sessionId: string; time: string; data: string }>>([]);
   const nextIdRef = useRef(0);
 
   useEffect(() => {
     if (!core?.isConnected) return;
+    setStreamEntries([]); // clear on target switch
     const handler = (event: any) => {
       if (event.type !== 'stream.chunk') return;
       const now = new Date();
@@ -61,7 +64,7 @@ export function TerminalPanel(props: { msgLog?: any[] }) {
     };
     core.on('stream.chunk', handler);
     return () => { core.off('stream.chunk', handler); };
-  }, [core]);
+  }, [core, activeNodeId]);
 
   // Prefer CoreClient stream data, fallback to msgLog prop
   if (streamEntries.length > 0) {
@@ -106,6 +109,7 @@ export function TerminalPanel(props: { msgLog?: any[] }) {
 
 export function SystemPanel(props: { projectCwd?: string }) {
   const core = useCore();
+  const activeNodeId = useActiveNodeId();
   const [info, setInfo] = useState<{ cwd?: string; platform?: string; hostname?: string; uptime?: number } | null>(null);
 
   useEffect(() => {
@@ -120,7 +124,7 @@ export function SystemPanel(props: { projectCwd?: string }) {
         });
       })
       .catch(() => {});
-  }, [core]);
+  }, [core, activeNodeId]);
 
   return (
     <div className="border-t border-gray-800 bg-[#111]">

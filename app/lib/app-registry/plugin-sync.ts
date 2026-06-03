@@ -36,9 +36,12 @@ export async function syncAllPlugins(
   if (_syncLock) return;
   _syncLock = true;
   try {
-    const { loadApps, getManifest } = await import('./app-registry');
+    const { loadApps, getManifest, loadAppState } = await import('./app-registry');
     const apps = await loadApps();
     if (!apps.length) return;
+
+    // Load all app states so isEnabled() returns correct values
+    await Promise.all(apps.map((a: any) => loadAppState(a.id).catch(() => {})));
 
   // Collect contributions from all enabled apps
   const allLeft: Array<{ id: string; title: string; icon: string; defaultVisible: boolean; componentId?: string; order?: number }> = [];
@@ -54,12 +57,10 @@ export async function syncAllPlugins(
 
   for (const app of apps) {
     if (!isEnabled(app.id)) {
-      // DISABLED → unregister everything from this app
       unregisterApp(app.id);
       continue;
     }
 
-    // ENABLED → register everything
     try {
       const manifest = await getManifest(app.id);
       if (!manifest?.adapters?.['system-ui']) continue;
@@ -67,7 +68,6 @@ export async function syncAllPlugins(
       const ui = manifest.adapters['system-ui'] as AppSystemUI;
       registerAppContributions(app.id, manifest, ui, onExecuteCommand, allLeft, allRight, allStatusBar);
     } catch (_e) {
-      // Individual app failure doesn't block others
     }
   }
 

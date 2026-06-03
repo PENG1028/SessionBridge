@@ -19,6 +19,7 @@ export function SessionListPanel({ core, config }: HostComponentProps) {
   const [loading, setLoading] = useState(true);
 
   async function refresh() {
+    if (!core?.isConnected) return;
     setLoading(true);
     try {
       const result = await core.call<{ sessions: Array<{ sessionId: string; state: string; command: string }> }>('session.list');
@@ -30,7 +31,7 @@ export function SessionListPanel({ core, config }: HostComponentProps) {
     }
   }
 
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => { refresh(); }, [core, core.isConnected]);
 
   return (
     <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-gray-950">

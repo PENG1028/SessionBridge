@@ -22,7 +22,9 @@ export function useAppSync(
     if (!core.isConnected) return;
     let cancelled = false;
 
-    syncAllPlugins(onExecuteRef.current).catch(() => {});
+    syncAllPlugins(onExecuteRef.current).then(() => {
+    }).catch((err) => {
+    });
 
     // Hot-reload: re-sync when app state changes (enable/disable)
     const unsub = subscribe(() => {
