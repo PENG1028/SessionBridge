@@ -853,11 +853,10 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
   const handleRequestView = useCallback((paneId: string, tabId: string, viewType: ViewType) => {
     const entry = getViewEntry(viewType);
     const defaultTitle = entry?.meta.title || viewType.charAt(0).toUpperCase() + viewType.slice(1);
-    // Preserve existing instanceId so remote-agent binding isn't lost
-    const state = workbenchStateRef.current;
-    const pane = findPaneInTree(state.root, paneId) || state.bottom;
-    const existingTab = pane?.tabs.find(t => t.id === tabId);
-    activeWorkbenchDispatch({ type: 'SET_TAB_VIEW', paneId, tabId, viewType, title: defaultTitle, instanceId: existingTab?.instanceId });
+    // Don't inherit the previous tab's instanceId — each view type manages its
+    // own instance binding via bindCurrentTabInstance (e.g. TerminalView).
+    // Inheriting would cause FocusProvider to report stale activeAdapterId.
+    activeWorkbenchDispatch({ type: 'SET_TAB_VIEW', paneId, tabId, viewType, title: defaultTitle, instanceId: undefined });
   }, [activeWorkbenchDispatch]);
 
   // Phase 4F: Bind the active pane's current tab to an instanceId (called by views after explicit create).
