@@ -1,35 +1,15 @@
 'use client';
 
 import type { ComponentType, ReactNode } from 'react';
-import {
-  Activity, Bookmark, Camera, Cpu, FileText, Folder, ListChecks, Play, ScrollText, Terminal, Upload, Zap,
-} from 'lucide-react';
 import { evaluateWhen, type WhenContext } from '../../../lib/evaluate-when';
 import { hostComponentRegistry } from '../plugin-host/host-component-registry';
+import { resolveIcon } from '../shared/icon-registry';
 
 // ── Icon Name Resolution ──────────────────────────────────────────
 // Maps string icon names from plugin manifests to lucide components.
 
-const iconMap: Record<string, ComponentType<{ className?: string }>> = {
-  activity: Activity,
-  bookmark: Bookmark,
-  camera: Camera,
-  cpu: Cpu,
-  'file-text': FileText,
-  folder: Folder,
-  'list-checks': ListChecks,
-  play: Play,
-  'scroll-text': ScrollText,
-  terminal: Terminal,
-  upload: Upload,
-  zap: Zap,
-};
+// ── Icon resolution — delegated to shared icon-registry ─────────
 
-function resolveIcon(name?: string): ComponentType<{ className?: string }> | undefined {
-  return name ? iconMap[name] : undefined;
-}
-
-// ── Panel Registration ────────────────────────────────────────
 
 export interface PanelRegistration {
   id: string;

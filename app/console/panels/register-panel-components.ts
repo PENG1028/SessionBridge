@@ -12,45 +12,24 @@
 // This file runs at module init time via import from page.tsx.
 
 import { registerPanelComponent } from './panel-registry';
-import { LogsPanel, TerminalPanel, SystemPanel, ProcessesPanel } from './extension-panels';
-import { TaskPanel } from './task-panel';
-import { QuickActionsPanel } from './quick-actions-panel';
-import { SessionActionsPanel } from './session-actions-panel';
-import { SnapshotsPanel } from './snapshots-panel';
-import { FilesContextPanel } from './files-context-panel';
-import { TerminalLogPanel } from './terminal-log-panel';
-
-import { FilesPanel } from './files-panel';
-import { PathBookmarksPanel } from './path-bookmarks-panel';
+import { LogsPanel, TerminalPanel, ProcessesPanel } from './extension-panels';
 import { SessionListPanel } from './session-list-panel';
 import { SystemInfoPanel } from './system-info-panel';
+import { FilesPanel } from './files-panel';
 
 // ── Panel component registrations ─────────────────────────────
-// These map plugin manifest panel IDs (e.g. "terminal.files") to React components.
-// Resolution order in syncPluginPanels: componentOverrides → hostComponentRegistry fallback.
-// panel-registry handles sidebar docking; hostComponentRegistry handles host-rendered views.
-// These are distinct registries because panel components and host-rendered views have different prop contracts.
+// Maps plugin manifest panel IDs (declared in plugin.yaml panels: section)
+// to React components. Panels without a matching plugin.yaml declaration
+// are never created by syncPluginPanels() — remove them here.
+//
+// Resolution order: componentOverrides → hostComponentRegistry fallback.
 
-// Plugin-manifest-declared sidebar panels (registered by manifest panel id)
 registerPanelComponent('terminal.files', FilesPanel);
 registerPanelComponent('terminal.raw', TerminalPanel);
 registerPanelComponent('terminal.logs', LogsPanel);
 registerPanelComponent('terminal.processes', ProcessesPanel);
-registerPanelComponent('terminal.tasks', TaskPanel);
-registerPanelComponent('terminal.system', SystemPanel);
-
-// Host-rendered plugin panels
 registerPanelComponent('system-info.panel', SystemInfoPanel);
 registerPanelComponent('terminal.sessions', SessionListPanel);
-
-// Core panels — components provided by the platform, registration via plugin manifests
-registerPanelComponent('quick-actions', QuickActionsPanel);
-registerPanelComponent('session-actions', SessionActionsPanel);
-registerPanelComponent('snapshots', SnapshotsPanel);
-registerPanelComponent('files-context', FilesContextPanel);
-registerPanelComponent('terminal-log', TerminalLogPanel);
-registerPanelComponent('files', FilesPanel);
-registerPanelComponent('path-bookmarks', PathBookmarksPanel);
 
 /** Prevent tree-shaking — ensures module-level side effects fire. */
 export const __extensionPanelComponentsRegistered = true;

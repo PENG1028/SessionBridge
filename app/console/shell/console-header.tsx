@@ -1,6 +1,6 @@
 'use client';
 
-import { Cpu, Search, Settings, Terminal } from 'lucide-react';
+import { Cpu } from 'lucide-react';
 import { useFocus } from '../workbench/focus-context';
 import { useRuntimePolicy } from '../workbench/runtime-policy-context';
 import { getAdapterMeta, getViewEntry, getAdapterCapabilities, type ChromePolicy } from '../main/view-registry';
@@ -10,13 +10,7 @@ import type { ActionRunContext, WorkbenchAction } from '../actions/action-types'
 import type { LucideIcon } from 'lucide-react';
 import { getHeaderChromeItems, getContextControls } from '../chrome/chrome-registry';
 import { useCoreStatus } from '../core/core-client-provider';
-
-// ── Icon name → Lucide component map ──────────────────────────
-const ICON_MAP: Record<string, LucideIcon> = {
-  search: Search,
-  settings: Settings,
-  terminal: Terminal,
-};
+import { iconRegistry } from '../shared/icon-registry';
 
 export interface ConsoleHeaderProps {
   onMobileOpen: () => void;
@@ -267,7 +261,7 @@ export function ConsoleHeader({
         {/* Header chrome: actions (registry) + contributions (manifests) */}
         <div className="flex items-center gap-2">
           {!isMinimal && headerRightActions.map(a => {
-            const IconComp = a.icon ? ICON_MAP[a.icon] : null;
+            const IconComp = a.icon ? iconRegistry[a.icon] : null;
             return (
               <button key={a.id}
                 onClick={() => { if (actionCtx) a.run(actionCtx); }}
@@ -280,7 +274,7 @@ export function ConsoleHeader({
           })}
 
           {!isMinimal && headerChromeItems.map(item => {
-            const IconComp = item.icon ? ICON_MAP[item.icon] : null;
+            const IconComp = item.icon ? iconRegistry[item.icon] : null;
             return (
             <button key={item.id}
               onClick={() => {
@@ -298,7 +292,7 @@ export function ConsoleHeader({
           })}
 
           {!isMinimal && headerContextControls.map(cc => {
-            const IconComp = cc.icon ? ICON_MAP[cc.icon] : null;
+            const IconComp = cc.icon ? iconRegistry[cc.icon] : null;
             const hasCommand = !!cc.command;
 
             // kind === 'button' renders as a standard button.
