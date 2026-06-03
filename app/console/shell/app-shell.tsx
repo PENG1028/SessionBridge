@@ -38,6 +38,7 @@ import type { ActionRunContext } from '../actions/action-types';
 import type { ContextMenuItem } from '../shell/context-menu';
 import { ConsoleOverlays } from '../overlays/console-overlays';
 import { getLastActiveDir, setLastActiveDir, getRestoreLastPath, addPathBookmark, setBookmarkScope } from '../../lib/path-bookmarks';
+import { useFileTree } from '../files/use-file-tree';
 import { NodeBar } from '../stage/node-bar';
 import { NodeNetworkView } from '../../../plugins/mesh';
 import { KeyHintOverlay } from '../chrome/key-hint-overlay';
@@ -124,8 +125,6 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
 
   // ── File tree state (per-node, keyed by wsUrl) ──
   const [absoluteCwd, setAbsoluteCwd] = useState('');
-  const [nodeFileTree, setNodeFileTree] = useState<Record<string, Record<string, {items: any[]; loaded: boolean; error?: string}>>>({});
-  const [nodeExpandedDirs, setNodeExpandedDirs] = useState<Record<string, string[]>>({});
 
   const actionEndRef = useRef<HTMLDivElement>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
@@ -216,6 +215,12 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
     return nodeId?.startsWith('upstream:') ? nodeId.slice('upstream:'.length) : wsUrl;
   }, [appState.activeInstanceId, wsUrl]);
 
+  // ── File tree state (uses activeNodeWsUrl, must be after its definition) ──
+  const {
+    fileTree, expandedDirs,
+    fetchDir, onNavigatePath: fileTreeNavigatePath, toggleDir,
+  } = useFileTree(wsUrl, activeNodeWsUrl, absoluteCwd);
+
   // ── File open: CoreClient fs.read ──
   const handleOpenFile = useCallback((filePath: string) => {
     if (!core?.isConnected) return;
@@ -228,10 +233,6 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
       .catch(err => coreErrors.reportError({method: "fs.read", error: classifyCoreError(err), timestamp: Date.now()}));
   }, [core]);
 
-  // Derived active-node file tree values
-  const fileTree = nodeFileTree[activeNodeWsUrl] || {};
-  const expandedDirs = new Set(nodeExpandedDirs[activeNodeWsUrl] || [absoluteCwd || '.']);
-
   // Sync bookmark scope with active node
   useEffect(() => {
     try {
@@ -241,32 +242,11 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
     } catch {}
   }, [activeNodeWsUrl, wsUrl]);
 
-  const fetchDir = useCallback(async (dir: string) => {
-    if (!core?.isConnected) return;
-    try {
-      const res = await core.call<{ path: string; entries: Array<{ name: string; isDir: boolean; size: number; mode: string }> }>('fs.list', { path: dir });
-      const entries = res?.entries ?? [];
-      const prefix = dir.endsWith('/') ? dir : dir + '/';
-      const items = entries.map((e: { name: string; isDir: boolean }) => ({ name: e.name, type: e.isDir ? 'dir' : 'file', path: prefix + e.name }));
-      setNodeFileTree(prev => ({
-        ...prev,
-        [activeNodeWsUrl]: { ...(prev[activeNodeWsUrl] || {}), [dir]: {items, loaded: true} }
-      }));
-    } catch (err) {
-      setNodeFileTree(prev => ({
-        ...prev,
-        [activeNodeWsUrl]: { ...(prev[activeNodeWsUrl] || {}), [dir]: {items: [], loaded: true, error: String(err)} }
-      }));
-    }
-  }, [activeNodeWsUrl, core]);
-  // Fetch root when active node changes, core connects, or absoluteCwd is resolved
-  useEffect(() => { if (absoluteCwd) fetchDir(absoluteCwd); }, [fetchDir, core.isConnected, absoluteCwd]);
-
+  // Wraps useFileTree's onNavigatePath with bookmark persistence
   const onNavigatePath = useCallback((path: string) => {
     setLastActiveDir(path);
-    fetchDir(path);
-    setNodeExpandedDirs(prev => ({...prev, [activeNodeWsUrl]: [absoluteCwd, path]}));
-  }, [fetchDir, activeNodeWsUrl, absoluteCwd]);
+    fileTreeNavigatePath(path);
+  }, [fileTreeNavigatePath]);
 
   // Phase 4I: Instance changes (sidebar click) no longer auto-create tabs.
   // Tab is the subject — instance is a tab's binding. Only shell tabs are
@@ -595,9 +575,6 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
       setPhase('idle'); setCurrentActivity(null);
       setProjectInfo({ cwd: dir, projectName: dir.split(/[/\\]/).pop() || '', homeDir: dir });
       addLog(`[System] Switched to ${dir.split(/[/\\]/).pop() || dir}`);
-      setNodeFileTree(prev => ({...prev, [wsUrl]: {}}));
-      setNodeExpandedDirs(prev => ({...prev, [wsUrl]: [absoluteCwd || '.']}));
-      fetchDir(absoluteCwd || '.');
     } catch {}
     setSwitching(false);
     setShowDirSwitcher(false);
@@ -1071,17 +1048,7 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
           <LeftSidebar
           fileTree={fileTree}
           expandedDirs={expandedDirs}
-          onToggleDir={(dirPath) => {
-            setNodeExpandedDirs(prev => {
-              const current = prev[activeNodeWsUrl] || [absoluteCwd || '.'];
-              const isExpanded = current.includes(dirPath);
-              const next = isExpanded
-                ? current.filter(d => d !== dirPath)
-                : [...current, dirPath];
-              if (!isExpanded) fetchDir(dirPath);
-              return { ...prev, [activeNodeWsUrl]: next };
-            });
-          }}
+          onToggleDir={toggleDir}
           onOpenFile={handleOpenFile}
           onSendFile={(filePath) => {
             setInputValue(prev => prev + `@${filePath} `);
@@ -1247,17 +1214,7 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
         onClose={() => setMobileOpen(false)}
         fileTree={fileTree}
         expandedDirs={expandedDirs}
-        onToggleDir={(dirPath) => {
-          setNodeExpandedDirs(prev => {
-            const current = prev[activeNodeWsUrl] || [absoluteCwd || '.'];
-            const isExpanded = current.includes(dirPath);
-            const next = isExpanded
-              ? current.filter(d => d !== dirPath)
-              : [...current, dirPath];
-            if (!isExpanded) fetchDir(dirPath);
-            return { ...prev, [activeNodeWsUrl]: next };
-          });
-        }}
+        onToggleDir={toggleDir}
         onOpenFile={handleOpenFile}
         onSendFile={(filePath) => {
           setInputValue(prev => prev + `@${filePath} `);
