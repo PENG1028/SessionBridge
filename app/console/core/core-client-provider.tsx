@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect, useRef, useCallback, useSyncExternalStore, type ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo, useSyncExternalStore, type ReactNode } from 'react';
 import type { CoreClient, CoreConnectionStatus } from './core-types';
 import { createMockCoreClient } from './core-client';
 import { ProxyCoreClient } from './proxy-core-client';
@@ -97,8 +97,9 @@ export function CoreClientProvider({
     };
   }, [forceOffline, reconnectKey, mockData, activeNodeId]);
 
-  // eslint-disable-next-line react-perf/jsx-no-new-object-as-prop
-  const value = { core, status, isOffline, activeNodeId, localNodeId, setActiveNode };
+  const value = useMemo(() => ({ core, status, isOffline, activeNodeId, localNodeId, setActiveNode }), [
+    core, status, isOffline, activeNodeId, localNodeId, setActiveNode,
+  ]);
 
   return (
     <CoreClientContext.Provider value={value}>

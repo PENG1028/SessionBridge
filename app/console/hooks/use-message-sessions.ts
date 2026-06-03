@@ -111,7 +111,7 @@ export function useMessageSessions(
     idbDebounceRef.current = setTimeout(() => {
       try {
         localStorage.setItem('bridge-messages', JSON.stringify(messagesBySession));
-      } catch {}
+      } catch { /* localStorage quota — safe to ignore */ }
       for (const [sid, msgs] of Object.entries(messagesBySession)) {
         if (msgs.length > 0) {
           sessionStore.replaceMessages(sid, toStorageMessages(msgs)).catch(() => {});
@@ -132,7 +132,7 @@ export function useMessageSessions(
         if (hasContent) {
           localStorage.setItem('sessionbridge-messages', JSON.stringify(msgs));
         }
-      } catch {}
+      } catch { /* localStorage quota — safe to ignore */ }
     }, 2000);
     return () => { if (persistTimerRef.current) clearTimeout(persistTimerRef.current); };
   }, [messagesBySession]);
@@ -155,8 +155,8 @@ export function useMessageSessions(
       const cached = JSON.parse(localStorage.getItem('bridge-messages') || '{}');
       delete cached[sk];
       localStorage.setItem('bridge-messages', JSON.stringify(cached));
-    } catch {}
-    try { localStorage.removeItem('sessionbridge-active-session'); } catch {}
+    } catch { /* localStorage quota — safe to ignore */ }
+    try { localStorage.removeItem('sessionbridge-active-session'); } catch { /* localStorage quota — safe to ignore */ }
     addLog('[System] Session cleared — started fresh');
   }, [updateSession, addLog, sessionKey]);
 

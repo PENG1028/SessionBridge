@@ -239,7 +239,7 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
       const host = activeNodeWsUrl !== wsUrl ? new URL(activeNodeWsUrl).hostname : null;
       setBookmarkScope(host);
       window.dispatchEvent(new CustomEvent('sb-bookmarks-changed'));
-    } catch {}
+      } catch { /* URL may be malformed during transition — harmless */ }
   }, [activeNodeWsUrl, wsUrl]);
 
   // Wraps useFileTree's onNavigatePath with bookmark persistence
@@ -476,7 +476,7 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
     try {
       const host = new URL(activeNodeWsUrl).hostname;
       return { cwd: '.', projectName: host, homeDir: '.' };
-    } catch {
+    } catch { /* React state setters never throw — safe to ignore */ }
       return { cwd: '.', projectName: 'remote', homeDir: '.' };
     }
   }, [activeNodeWsUrl, wsUrl, projectInfo]);
@@ -563,7 +563,7 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
         const cached = JSON.parse(localStorage.getItem('bridge-messages') || '{}');
         cached[prevKey] = prevMsgs;
         localStorage.setItem('bridge-messages', JSON.stringify(cached));
-      } catch {}
+      } catch { /* localStorage may fail (quota/availability) — safe to ignore */ }
     }
     setSwitching(true);
     try {
@@ -575,7 +575,7 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
       setPhase('idle'); setCurrentActivity(null);
       setProjectInfo({ cwd: dir, projectName: dir.split(/[/\\]/).pop() || '', homeDir: dir });
       addLog(`[System] Switched to ${dir.split(/[/\\]/).pop() || dir}`);
-    } catch {}
+    } /* React state setters never throw — safe to ignore */ }
     setSwitching(false);
     setShowDirSwitcher(false);
     setSwitchDirLocal('');
@@ -953,7 +953,7 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
 
   const clearExternalSession = useCallback(() => {
     setActiveExternalSession(null);
-    try { localStorage.removeItem('sessionbridge-active-session'); } catch {}
+    try { localStorage.removeItem('sessionbridge-active-session'); } catch { /* localStorage may be unavailable */ }
     historyLoadedRef.current = false;
     window.location.reload();
   }, [setActiveExternalSession]);

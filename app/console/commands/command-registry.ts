@@ -31,7 +31,7 @@ export function executeCommand(id: string, ...args: any[]): void {
   if (cmd) {
     cmd.handler(...args);
   } else {
-    console.warn(`[commands] No handler registered for "${id}"`);
+    if (process.env.NODE_ENV !== "'production'") console.warn(`[commands] No handler registered for "${id}"`);
   }
 }
 
