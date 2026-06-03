@@ -421,30 +421,17 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
     }
   }, [connStatus.status]);
 
-  // Auto-enter local node on first visit (no saved layout, but CoreClient is connected)
-  const autoEnterAttemptedRef = useRef(false);
+  // Restore last node from localStorage on connect — no saved state = console (NodeNetworkView)
+  const restoreAttemptedRef = useRef(false);
   useEffect(() => {
-    if (!core?.isConnected || autoEnterAttemptedRef.current) return;
-    if (appState.activeInstanceId) return; // already in a node
+    if (!core?.isConnected || restoreAttemptedRef.current) return;
+    if (appState.activeInstanceId) return;
     const saved = loadLayoutsFromStorage();
-    if (saved?.activeInstanceId) return; // layout restore will handle it
-    autoEnterAttemptedRef.current = true;
-    core.call<{ nodeId: string }>('node.identity.get').then(identity => {
-      const localId = identity?.nodeId || 'local';
-      if (!appStateRef.current.activeInstanceId) {
-        setAppState(prev => {
-          if (prev.instanceStates[localId]) {
-            return appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: localId });
-          }
-          const newLayout = createInitialState();
-          return appReducer(
-            { ...prev, instanceStates: { ...prev.instanceStates, [localId]: newLayout } },
-            { type: 'SET_ACTIVE_INSTANCE', instanceId: localId }
-          );
-        });
-      }
-    }).catch(err => coreErrors.reportError({method: "node.identity.get", error: classifyCoreError(err), timestamp: Date.now()})); // node.identity.get unavailable
-  }, [core?.isConnected, appState.activeInstanceId]);
+    if (saved?.activeInstanceId && appState.instanceStates[saved.activeInstanceId]) {
+      setAppState(prev => appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: saved.activeInstanceId }));
+    }
+    restoreAttemptedRef.current = true;
+  }, [core?.isConnected]);
 
   // ── Auto-save layouts to localStorage with debounce (Phase 4N) ──
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
