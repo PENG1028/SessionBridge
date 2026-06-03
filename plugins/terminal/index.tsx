@@ -30,7 +30,7 @@ function debugLog(...args: any[]) { if (DEBUG_SURFACE) console.log('[debugSurfac
  * - Surface mode (replay terminal) – see _surfaceId
  */
 export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }: { _surfaceId?: string } & Record<string, unknown>) {
-  const { token, bindCurrentTabInstance, projectCwd, onNavigatePath, absoluteCwd, onCwdChange } = useWorkbench();
+  const { token, bindCurrentTabInstance, createInstance, projectCwd, onNavigatePath, absoluteCwd, onCwdChange } = useWorkbench();
   const focus = useFocus();
   const core = useCore();
   const coreStatus = useCoreStatus();
@@ -68,39 +68,36 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
   cwdRef.current = absoluteCwd;
 
   const createSession = useCallback(async () => {
-    // Always create a fresh terminal session on the active target node.
-    // CoreClient injects targetNodeId automatically so run.create goes
-    // to the correct node — no need to check for detached runs here.
-    debugLog('TerminalView creating new session via run.create', { cwd: cwdRef.current });
+    debugLog('TerminalView creating new session via createInstance', { cwd: cwdRef.current });
     setCreating(true);
     setSessionFresh(true);
     setError(null);
-    return core.call<{ runId: string; sessionId: string; ptyMode?: string }>('run.create', {
-      pty: true,
-      cols: 80,
-      rows: 24,
-      cwd: cwdRef.current,
-      label: 'Terminal',
-      pluginId: 'shell',
-      policy: { restartRestore: true },
-    }).then(run => {
-      if (run?.sessionId) {
-        debugLog('TerminalView run.create SUCCESS', { runId: run.runId, sessionId: run.sessionId, ptyMode: run.ptyMode });
-        setPtyMode(run.ptyMode || null);
-        setCoreSessionId(run.sessionId);
-        bindCurrentTabInstance(run.runId, undefined);
+    try {
+      const result = await createInstance(cwdRef.current, 'Terminal', 'shell');
+      if (result?.success && result?.instance) {
+        const run = result.instance;
+        const sessionId = result.sessionId;
+        debugLog('TerminalView createInstance SUCCESS', { runId: run.id, sessionId });
+        setCoreSessionId(sessionId);
+        bindCurrentTabInstance(run.id, undefined);
+        // Resize terminal to proper dimensions
+        core.call('run.resize', { runId: run.id, cols: 80, rows: 24 }).catch(() => {});
+        // Fetch ptyMode from run.info (createInstance doesn't return it)
+        core.call<{ ptyMode?: string }>('run.info', { runId: run.id }).then(info => {
+          if (info?.ptyMode) setPtyMode(info.ptyMode);
+        }).catch(() => {});
       } else {
-        throw new Error('run.create returned no sessionId');
+        throw new Error(result?.error || 'createInstance failed');
       }
-    }).catch(err => {
+    } catch (err: any) {
       debugLog('TerminalView create FAIL', { error: String(err) });
       const ce = classifyCoreError(err);
       setError(ce.message);
       coreErrors.reportError({ method: 'run.create', error: ce, timestamp: Date.now() });
-    }).finally(() => {
+    } finally {
       setCreating(false);
-    });
-  }, [core, bindCurrentTabInstance]);
+    }
+  }, [createInstance, bindCurrentTabInstance, core]);
 
   const restoreSession = useCallback(async (runId: string) => {
     debugLog('TerminalView trying restore via run.info', { runId });
