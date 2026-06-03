@@ -190,6 +190,14 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
   const appStateRef = useRef(appState);
   appStateRef.current = appState;
 
+  // Track last-active node for brand toggle
+  const lastActiveNodeRef = useRef<string | null>(null);
+  const prevActiveId = useRef(appState.activeInstanceId);
+  if (appState.activeInstanceId && appState.activeInstanceId !== prevActiveId.current) {
+    lastActiveNodeRef.current = appState.activeInstanceId;
+  }
+  prevActiveId.current = appState.activeInstanceId;
+
   // Sync activeInstanceId -> CoreClient targetNodeId.
   // Go dispatcher's localNodeID check handles local vs remote routing.
   useEffect(() => {
@@ -1011,7 +1019,16 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
         onToggleLeftSidebar={() => dispatch({ type: 'TOGGLE_SIDEBAR', position: 'left' })}
         onToggleRightSidebar={() => dispatch({ type: 'TOGGLE_SIDEBAR', position: 'right' })}
         connectionLabel={connectionLabel}
-        onOpenConnectionManager={() => setAppState(prev => appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: null }))}
+        onOpenConnectionManager={() => {
+  if (appState.activeInstanceId) {
+    setAppState(prev => appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: null }));
+  } else {
+    const target = lastActiveNodeRef.current || localNodeId;
+    if (target && appState.instanceStates[target]) {
+      setAppState(prev => appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: target }));
+    }
+  }
+}}
       />
 
       {/* ── Disconnect banner (30s grace) ── */}
