@@ -6,9 +6,9 @@
 
 import { useState, useEffect } from 'react';
 import { RefreshCw, Settings, ChevronRight } from 'lucide-react';
-import { loadApps, isEnabled, setEnabled, getLoadError } from '../../app/lib/app-registry/app-registry';
-import type { AppSummary } from '../../app/lib/app-registry/app-types';
-import { useCoreStatus } from '../../app/console/core/core-client-provider';
+import { loadApps, isEnabled, setEnabled, getLoadError } from '../../sdk';
+import type { AppSummary } from '../../sdk';
+import { useCoreStatus } from '../../sdk';
 
 export function AppManager() {
   const [apps, setApps] = useState<AppSummary[]>([]);

@@ -6,11 +6,11 @@ import {
   Square, GitBranch, ChevronRight,
   Globe, Sparkles, AlertCircle,
 } from 'lucide-react';
-import { TOOL_SEMANTICS } from '../../app/console/shared/tool-constants';
+import { TOOL_SEMANTICS } from '../../sdk';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { SystemContextBar } from '../../app/console/main/system-context-bar';
-import { useWorkbench, useSessionContext, useInputContext, useToolActivityContext } from '../../app/console/workbench';
+import { SystemContextBar } from '../../sdk/components';
+import { useWorkbench, useSessionContext, useInputContext, useToolActivityContext } from '../../sdk';
 
 // ─── Internal types (duplicated from context for local references) ──
 

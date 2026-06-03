@@ -2,15 +2,15 @@
 
 import { Terminal, Folder } from 'lucide-react';
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { useWorkbench } from '../../app/console/workbench/workbench-context';
-import { useFocus } from '../../app/console/workbench/focus-context';
-import ShellTerminal from '../../app/shell-terminal';
-import { DirectoryPicker } from '../../app/console/dialogs/directory-picker';
-import { TitleBar } from '../../app/console/shared/title-bar';
-import { getLastActiveDir, getRestoreLastPath, setLastActiveDir } from '../../app/lib/path-bookmarks';
-import { useCore, useCoreStatus } from '../../app/console/core/core-client-provider';
-import { useCoreErrors } from '../../app/console/core/use-core-call';
-import { classifyCoreError } from '../../app/console/core/core-error';
+import { useWorkbench } from '../../sdk';
+import { useFocus } from '../../sdk';
+import { ShellTerminal } from '../../sdk';
+import { DirectoryPicker } from '../../sdk';
+import { TitleBar } from '../../sdk';
+import { getLastActiveDir, setLastActiveDir, getRestoreLastPath } from '../../sdk';
+import { useCore, useCoreStatus } from '../../sdk';
+import { useCoreErrors } from '../../sdk';
+import { classifyCoreError } from '../../sdk';
 
 const DEBUG_SURFACE = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debugSurface');
 function debugLog(...args: any[]) { if (DEBUG_SURFACE) console.log('[debugSurface]', ...args); }

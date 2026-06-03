@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { Bell, X, Check, Ban } from 'lucide-react';
-import type { CoreClient } from '../../app/console/core/core-types';
+import type { CoreClient } from '../../sdk';
 
 interface PendingApproval {
   requestId: string;

@@ -1,6 +1,6 @@
 'use client';
 
-import type { HostComponentProps } from '../../app/console/plugin-host/host-component-registry';
+import type { HostComponentProps } from '../../sdk';
 
 // Placeholder — will be moved from plugin-components.tsx
 export default function SystemInfoView({ core, config }: HostComponentProps) {

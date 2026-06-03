@@ -5,7 +5,7 @@ import {
   Cpu, Activity, HardDrive, Clock, Fingerprint, Server,
   Puzzle, Terminal, Bell,
 } from 'lucide-react';
-import { useCore } from '../../app/console/core/core-client-provider';
+import { useCore } from '../../sdk';
 
 // ─── Types ─────────────────────────────────────
 
