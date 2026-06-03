@@ -1018,15 +1018,6 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
           setShowDirSwitcher(false);
         }}
         onOpenSettings={() => setSettingsOpen(true)}
-        onToggleDashboard={() => {
-                // Add a dashboard tab to the active pane
-                const tabId = 'dash_' + Date.now().toString(36);
-                activeWorkbenchDispatch({
-                  type: 'ADD_TAB',
-                  paneId: activeWorkbenchState.activePaneId,
-                  tab: { id: tabId, title: 'Dashboard', viewType: 'dashboard' },
-                });
-              }}
         onToggleCommandPalette={() => setShowCommandPalette(v => !v)}
         leftSidebarOpen={effectiveLeftOpen}
         rightSidebarOpen={effectiveRightOpen}

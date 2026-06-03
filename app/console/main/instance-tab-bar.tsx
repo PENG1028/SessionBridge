@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { Plus, LayoutDashboard } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { getAdapterMeta, type AdapterMeta } from './view-registry';
 import type { InstanceInfo } from '../../../lib/use-ws';
 
@@ -11,8 +11,6 @@ interface InstanceTabBarProps {
   onActivate: (id: string) => void;
   onCreate: (dir: string, adapterId: string) => void;
   projectCwd: string;
-  activeViewId?: string;
-  onSelectSystemView?: (viewId: string) => void;
   adapterTypes?: Array<{ id: string; meta: AdapterMeta }>;
 }
 
@@ -22,8 +20,6 @@ export function InstanceTabBar({
   onActivate,
   onCreate,
   projectCwd,
-  activeViewId,
-  onSelectSystemView,
   adapterTypes,
 }: InstanceTabBarProps) {
   const [showNewMenu, setShowNewMenu] = useState(false);
@@ -36,19 +32,6 @@ export function InstanceTabBar({
   return (
     <div className="flex items-center border-b border-gray-800 bg-[#0a0a0a] shrink-0 select-none">
       <div className="flex-1 flex items-center overflow-x-auto">
-        {onSelectSystemView && (
-          <button
-            onClick={() => onSelectSystemView('dashboard')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] border-r border-gray-800 transition-colors shrink-0 ${
-              activeViewId === 'dashboard'
-                ? 'bg-[#111] text-gray-200 border-b-2 border-b-purple-500'
-                : 'text-gray-500 hover:text-gray-300 hover:bg-[#0d0d0d]'
-            }`}
-          >
-            <LayoutDashboard className="w-3 h-3" />
-            Dashboard
-          </button>
-        )}
         {instances.map(inst => {
           const isActive = inst.id === activeInstanceId;
           const meta = getAdapterMeta(inst.adapterId);

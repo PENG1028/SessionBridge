@@ -1,6 +1,6 @@
 'use client';
 
-import { Cpu, Search, Settings, LayoutDashboard, Terminal } from 'lucide-react';
+import { Cpu, Search, Settings, Terminal } from 'lucide-react';
 import { useFocus } from '../workbench/focus-context';
 import { useRuntimePolicy } from '../workbench/runtime-policy-context';
 import { getAdapterMeta, getViewEntry, getAdapterCapabilities, type ChromePolicy } from '../main/view-registry';
@@ -14,7 +14,6 @@ import { useCoreStatus } from '../core/core-client-provider';
 // ── Icon name → Lucide component map ──────────────────────────
 const ICON_MAP: Record<string, LucideIcon> = {
   search: Search,
-  'layout-dashboard': LayoutDashboard,
   settings: Settings,
   terminal: Terminal,
 };
@@ -41,7 +40,6 @@ export interface ConsoleHeaderProps {
   savedSessions: { id: string; label: string; dir: string; ts: string }[];
   onSelectSavedSession: (s: { label: string; dir: string }) => void;
   onOpenSettings?: () => void;
-  onToggleDashboard?: () => void;
   onToggleCommandPalette?: () => void;
   leftSidebarOpen?: boolean;
   rightSidebarOpen?: boolean;
@@ -79,7 +77,6 @@ export function ConsoleHeader({
   savedSessions,
   onSelectSavedSession,
   onOpenSettings,
-  onToggleDashboard,
   onToggleCommandPalette,
   leftSidebarOpen,
   rightSidebarOpen,
@@ -264,16 +261,6 @@ export function ConsoleHeader({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                 d={rightSidebarOpen ? 'M9 5l7 7-7 7' : 'M15 19l-7-7 7-7'} />
             </svg>
-          </button>
-        )}
-
-        {/* Dashboard button — uses onToggleDashboard with real dispatch */}
-        {onToggleDashboard && (
-          <button onClick={onToggleDashboard}
-            className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#1a1a1a] border border-gray-700 hover:border-purple-500 text-gray-400 hover:text-gray-200 text-[10px] transition-colors"
-            title="Dashboard"
-          >
-            <LayoutDashboard className="w-3 h-3" />
           </button>
         )}
 

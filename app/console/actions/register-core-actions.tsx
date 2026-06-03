@@ -58,20 +58,6 @@ function def(
     { icon: 'settings', shortcut: '⌘,', order: 40, category: 'Host' },
   ));
 
-  registerAction(def('host.dashboard.open', 'Dashboard',
-    ['commandPalette'],
-    (ctx) => {
-      // Add a dashboard tab to the active pane
-      const tabId = 'dash_' + Date.now().toString(36);
-      (ctx.workbenchDispatch as any)({
-        type: 'ADD_TAB',
-        paneId: (ctx.workbenchState as any)?.activePaneId,
-        tab: { id: tabId, title: 'Dashboard', viewType: 'dashboard' },
-      });
-    },
-    { icon: 'layout-dashboard', order: 30, category: 'Host' },
-  ));
-
   registerAction(def('host.search.open', 'Search Sessions',
     ['commandPalette'],
     (ctx) => ctx.openSearch(),
