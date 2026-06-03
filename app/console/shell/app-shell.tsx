@@ -810,20 +810,10 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
     }
   }, []);
 
-  // ── Brand toggle: console ↔ last-active node ──
-  const handleToggleConsole = useCallback(() => {
-    if (appState.activeInstanceId) {
-      setAppState(prev => appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: null }));
-    } else {
-      const target = lastActiveNodeRef.current || localNodeId;
-      if (target) {
-        setAppState(prev => {
-          if (!prev.instanceStates[target]) return prev;
-          return appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: target });
-        });
-      }
-    }
-  }, [appState.activeInstanceId, localNodeId]);
+  // ── Brand click: always return to console (NodeNetworkView) ──
+  const handleGoToConsole = useCallback(() => {
+    setAppState(prev => appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: null }));
+  }, []);
 
   // ── Closed kept tabs for ≡ menu (Phase 4N) ──
   const closedKeptTabs = useMemo(() => {
@@ -1030,7 +1020,7 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
         onToggleLeftSidebar={() => dispatch({ type: 'TOGGLE_SIDEBAR', position: 'left' })}
         onToggleRightSidebar={() => dispatch({ type: 'TOGGLE_SIDEBAR', position: 'right' })}
         connectionLabel={connectionLabel}
-        onOpenConnectionManager={handleToggleConsole}
+        onOpenConnectionManager={handleGoToConsole}
       />
 
       {/* ── Disconnect banner (30s grace) ── */}
