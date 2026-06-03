@@ -12,7 +12,7 @@ export function LogsPanel(props: { logs?: string[]; msgLog?: any[] }) {
   const { logs } = props;
 
   useEffect(() => {
-    if (!core?.isConnected) return;
+    if (!core?.isConnected || !activeNodeId) return;
     core.call<{ entries?: Array<{ message: string }> }>('logs.tail', { source: 'core', lines: 50 })
       .then(data => {
         const entries = data?.entries ?? [];
@@ -51,7 +51,7 @@ export function TerminalPanel(props: { msgLog?: any[] }) {
   const nextIdRef = useRef(0);
 
   useEffect(() => {
-    if (!core?.isConnected) return;
+    if (!core?.isConnected || !activeNodeId) return;
     setStreamEntries([]); // clear on target switch
     const handler = (event: any) => {
       if (event.type !== 'stream.chunk') return;
@@ -113,7 +113,7 @@ export function SystemPanel(props: { projectCwd?: string }) {
   const [info, setInfo] = useState<{ cwd?: string; platform?: string; hostname?: string; uptime?: number } | null>(null);
 
   useEffect(() => {
-    if (!core?.isConnected) return;
+    if (!core?.isConnected || !activeNodeId) return;
     core.call<{ cwd?: string; platform?: string; hostname?: string; uptime?: number }>('node.info', {})
       .then(data => {
         setInfo({
