@@ -165,7 +165,7 @@ export default function ShellTerminal({ core, coreSessionId, onOpenDirectoryPick
       lineHeight: 1.0,
       letterSpacing: 0,
       allowTransparency: true,
-      convertEol: true,          // \n → \r\n on Windows
+      convertEol: typeof navigator !== 'undefined' && !/Win/i.test(navigator.userAgent),  // Windows shells already output CRLF; double-conversion causes blank lines
       scrollback: 5000,
       theme: {
         background: '#0a0a0a',

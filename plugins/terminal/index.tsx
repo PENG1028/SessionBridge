@@ -17,6 +17,14 @@ import { classifyCoreError } from '../../sdk';
 const DEBUG_SURFACE = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debugSurface');
 function debugLog(...args: any[]) { if (DEBUG_SURFACE) console.log('[debugSurface]', ...args); }
 
+/** Truncate a path from the middle so the drive/root and leaf name are both visible.
+ *  e.g. "C:\\Users\\ZHP\\AppData\\Local\\Microsoft" → "C:\\Users\\ZHP\\...\\Microsoft" */
+function middleTruncate(path: string, maxLen: number): string {
+  if (path.length <= maxLen) return path;
+  const half = Math.floor((maxLen - 3) / 2);
+  return path.slice(0, half) + '...' + path.slice(path.length - (maxLen - half - 3));
+}
+
 /**
  * TerminalView — complete terminal session management.
  *
@@ -188,7 +196,7 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
             title="Browse directories"
           >
             <Folder className="w-3.5 h-3.5" />
-            <span className="text-[11px] font-mono">{absoluteCwd || '.'}</span>
+            <span className="text-[11px] font-mono max-w-[160px] truncate" title={absoluteCwd}>{middleTruncate(absoluteCwd || '.', 32)}</span>
           </button>
         </TitleBar>
         <div className="flex-1 flex flex-col items-center justify-center bg-[#0a0a0a] min-h-0 gap-3">
@@ -234,7 +242,7 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
           title="Change directory"
         >
           <Folder className="w-3.5 h-3.5" />
-          <span className="text-[11px] font-mono max-w-[160px] truncate">{absoluteCwd || '.'}</span>
+          <span className="text-[11px] font-mono max-w-[160px] truncate" title={absoluteCwd}>{middleTruncate(absoluteCwd || '.', 32)}</span>
         </button>
       </TitleBar>
 

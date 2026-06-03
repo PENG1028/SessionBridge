@@ -61,10 +61,21 @@ export function useFileTree(
     }
   }, [activeNodeWsUrl, core]);
 
-  // Fetch root on connect or CWD change
+  // Fetch root on connect or CWD change.
+  // Also ensures the CWD is always in expanded dirs so the Files panel
+  // follows directory changes (picker, cd, bookmarks).
   useEffect(() => {
-    if (absoluteCwd && core.isConnected) fetchDir(absoluteCwd);
-  }, [fetchDir, core.isConnected, absoluteCwd]);
+    if (absoluteCwd && core.isConnected) {
+      fetchDir(absoluteCwd);
+      setNodeExpandedDirs(prev => {
+        const current = prev[activeNodeWsUrl] || [];
+        if (!current.includes(absoluteCwd)) {
+          return { ...prev, [activeNodeWsUrl]: [absoluteCwd, ...current] };
+        }
+        return prev;
+      });
+    }
+  }, [fetchDir, core.isConnected, absoluteCwd, activeNodeWsUrl]);
 
   const onNavigatePath = useCallback((path: string) => {
     fetchDir(path);
