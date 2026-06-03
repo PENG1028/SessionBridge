@@ -75,7 +75,7 @@ function extractHost(address?: string): string {
     const colonIdx = address.lastIndexOf(':');
     if (colonIdx > 0) return address.slice(0, colonIdx);
     return address;
-  } catch { return '127.0.0.1'; }
+  } catch (_e) { return '127.0.0.1'; }
 }
 
 function extractPort(address?: string, defaultPort = 9090): number {
@@ -87,7 +87,7 @@ function extractPort(address?: string, defaultPort = 9090): number {
       if (!isNaN(port) && port > 0 && port < 65536) return port;
     }
     return defaultPort;
-  } catch { return defaultPort; }
+  } catch (_e) { return defaultPort; }
 }
 
 function categorizeNetwork(ip: string): 'loopback' | 'lan' | 'wan' {
@@ -153,7 +153,7 @@ function NodeCard({ peer, kind, nodeId, onEnter, reachable }: {
     setFailed(false);
     try {
       await core.call('node.peer.reconnect', { nodeId });
-    } catch { /* ignore — SSE event will confirm or timeout will fire */ }
+    } catch (_e) { /* ignore — SSE event will confirm or timeout will fire */ }
     // Don't reset reconnecting here — wait for SSE node.connected or timeout.
     reconnectTimerRef.current = setTimeout(() => {
       setReconnecting(false);
@@ -423,7 +423,7 @@ export function NodeNetworkView({
     try {
       const result = await core.call<{ peers: PeerEntry[] }>('node.peer.list');
       setMeshPeers(result.peers || []);
-    } catch {
+    } catch (_e) {
       setMeshPeers([]);
     } finally {
       setMeshPeersLoading(false);
@@ -435,7 +435,7 @@ export function NodeNetworkView({
     try {
       const result = await core.call<{ invites: NodeInvite[]; total: number }>('node.invite.list');
       setMeshInvites(result.invites || []);
-    } catch {
+    } catch (_e) {
       setMeshInvites([]);
     }
   }, [core]);

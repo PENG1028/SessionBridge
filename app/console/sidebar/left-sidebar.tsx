@@ -78,7 +78,7 @@ export function LeftSidebar(props: LeftSidebarProps) {
     try {
       const saved = localStorage.getItem('sb-left-width');
       if (saved) setWidth(Math.min(MAX_W, Math.max(MIN_W, parseInt(saved, 10) || DEFAULT_W)));
-    } catch {}
+    } catch (_e) {}
   }, []);
 
   const onDragStart = useCallback((e: React.MouseEvent) => {
@@ -101,7 +101,7 @@ export function LeftSidebar(props: LeftSidebarProps) {
       dragRef.current = false;
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
-      try { localStorage.setItem('sb-left-width', String(widthRef.current)); } catch {}
+      try { localStorage.setItem('sb-left-width', String(widthRef.current)); } catch (_e) {}
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);

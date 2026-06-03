@@ -136,7 +136,7 @@ export function DirectoryPicker({
       const prefix = dir.endsWith('/') ? dir : dir + '/';
       const items: DirEntry[] = entries.map(e => ({ name: e.name, type: e.isDir ? 'dir' : 'file', path: prefix + e.name }));
       setTree(prev => ({ ...prev, [dir]: { items, loaded: true } }));
-    } catch {}
+    } catch (_e) {}
   }, [core]);
 
   useEffect(() => {

@@ -127,12 +127,12 @@ export async function createCryptoSession(): Promise<BrowserCryptoSession | null
             combined,
           );
           return new TextDecoder().decode(decrypted);
-        } catch {
+        } catch (_e) {
           return null;
         }
       },
     };
-  } catch {
+  } catch (_e) {
     return null;
   }
 }

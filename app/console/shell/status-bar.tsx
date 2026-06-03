@@ -35,7 +35,7 @@ export function StatusBar({
       isRunning: focus.isRunning,
       instanceId: focus.instanceId,
     };
-  } catch {}
+  } catch (_e) {}
 
   const core = useCore();
   const [pickerOpen, setPickerOpen] = useState(false);

@@ -110,7 +110,7 @@ export function LayoutProvider({ children }: { children: ReactNode }) {
         const parsed = JSON.parse(saved);
         dispatch({ type: 'RESTORE', state: { activeViewId: parsed.activeViewId || getDefaultViewId(), leftSidebarOpen: parsed.leftSidebarOpen ?? true, rightSidebarOpen: parsed.rightSidebarOpen ?? true } });
       }
-    } catch {}
+    } catch (_e) {}
   }, []);
 
   // Persist layout state changes
@@ -122,7 +122,7 @@ export function LayoutProvider({ children }: { children: ReactNode }) {
         leftSidebarOpen: state.leftSidebarOpen,
         rightSidebarOpen: state.rightSidebarOpen,
       }));
-    } catch {}
+    } catch (_e) {}
   }, [state.activeViewId, state.leftSidebarOpen, state.rightSidebarOpen]);
 
   return (

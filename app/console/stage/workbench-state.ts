@@ -575,7 +575,7 @@ function serializeLayout(state: WorkbenchState): string {
 }
 
 function deserializeLayout(json: string): WorkbenchState | null {
-  try { return JSON.parse(json); } catch { return null; }
+  try { return JSON.parse(json); } catch (_e) { return null; }
 }
 
 export function saveLayoutsToStorage(
@@ -599,7 +599,7 @@ export function saveLayoutsToStorage(
     } else {
       localStorage.removeItem(STORAGE_ACTIVE_INSTANCE_KEY);
     }
-  } catch { /* best effort */ }
+  } catch (_e) { /* best effort */ }
 }
 
 export function loadLayoutsFromStorage(): {
@@ -620,7 +620,7 @@ export function loadLayoutsFromStorage(): {
       workbenchInstanceIds: workbenchRaw ? JSON.parse(workbenchRaw) : [],
       activeInstanceId: activeRaw || null,
     };
-  } catch { return null; }
+  } catch (_e) { return null; }
 }
 
 /** Given saved serialized layouts + current server instances, return deserialized states. */

@@ -61,7 +61,7 @@ class SessionStore {
   private async initDB(): Promise<void> {
     try {
       this.db = await openDB();
-    } catch {
+    } catch (_e) {
       this.db = null; // IndexedDB unavailable (private browsing, etc.)
     }
   }
@@ -77,7 +77,7 @@ class SessionStore {
     try {
       const raw = localStorage.getItem(LS_SESSIONS_META);
       return raw ? JSON.parse(raw) : [];
-    } catch {
+    } catch (_e) {
       return [];
     }
   }
@@ -93,14 +93,14 @@ class SessionStore {
     else sessions.push(session);
     try {
       localStorage.setItem(LS_SESSIONS_META, JSON.stringify(sessions));
-    } catch { /* quota exceeded */ }
+    } catch (_e) { /* quota exceeded */ }
   }
 
   deleteSession(id: string): void {
     const sessions = this.listSessions().filter(s => s.id !== id);
     try {
       localStorage.setItem(LS_SESSIONS_META, JSON.stringify(sessions));
-    } catch { /* ignore */ }
+    } catch (_e) { /* ignore */ }
     // Also remove from IndexedDB
     this.clearMessages(id).catch(() => {});
   }
@@ -159,7 +159,7 @@ class SessionStore {
   getActiveSessionId(): string | null {
     try {
       return localStorage.getItem(LS_ACTIVE_SESSION);
-    } catch {
+    } catch (_e) {
       return null;
     }
   }
@@ -168,7 +168,7 @@ class SessionStore {
     try {
       if (id) localStorage.setItem(LS_ACTIVE_SESSION, id);
       else localStorage.removeItem(LS_ACTIVE_SESSION);
-    } catch { /* ignore */ }
+    } catch (_e) { /* ignore */ }
   }
 }
 

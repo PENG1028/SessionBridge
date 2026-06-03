@@ -27,7 +27,7 @@ function readState(): StateStore {
     if (!existsSync(STATE_FILE)) return {};
     const raw = readFileSync(STATE_FILE, 'utf-8');
     return JSON.parse(raw);
-  } catch {
+  } catch (_e) {
     return {};
   }
 }
@@ -87,7 +87,7 @@ export async function PUT(
   let body: Partial<AppState>;
   try {
     body = await request.json();
-  } catch {
+  } catch (_e) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 

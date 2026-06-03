@@ -36,7 +36,7 @@ function loadAll(): Record<string, DockProfileState> {
   try {
     const raw = localStorage.getItem(PROFILES_KEY);
     return raw ? JSON.parse(raw) : {};
-  } catch {
+  } catch (_e) {
     return {};
   }
 }
@@ -45,7 +45,7 @@ function saveAll(profiles: Record<string, DockProfileState>): void {
   if (typeof window === 'undefined') return;
   try {
     localStorage.setItem(PROFILES_KEY, JSON.stringify(profiles));
-  } catch {}
+  } catch (_e) {}
 }
 
 // ── Legacy fallback readers ───────────────────────────────────
@@ -55,7 +55,7 @@ function loadLegacyOrder(): Partial<Record<DockArea, string[]>> | null {
   try {
     const raw = localStorage.getItem(LEGACY_ORDER_KEY);
     return raw ? JSON.parse(raw) : null;
-  } catch {
+  } catch (_e) {
     return null;
   }
 }
@@ -65,7 +65,7 @@ function loadLegacyCollapsed(): string[] {
   try {
     const raw = localStorage.getItem(LEGACY_COLLAPSE_KEY);
     return raw ? JSON.parse(raw) : [];
-  } catch {
+  } catch (_e) {
     return [];
   }
 }
@@ -92,7 +92,7 @@ function loadProfile(profileKey: string): DockProfileState {
     try {
       localStorage.removeItem(LEGACY_ORDER_KEY);
       localStorage.removeItem(LEGACY_COLLAPSE_KEY);
-    } catch {}
+    } catch (_e) {}
     return migrated;
   }
 

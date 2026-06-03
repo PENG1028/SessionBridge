@@ -23,7 +23,7 @@ export function SessionListPanel({ core, config }: HostComponentProps) {
     try {
       const result = await core.call<{ sessions: Array<{ sessionId: string; state: string; command: string }> }>('session.list');
       setSessions(result?.sessions || []);
-    } catch {
+    } catch (_e) {
       setSessions([]);
     } finally {
       setLoading(false);

@@ -37,7 +37,7 @@ export async function GET(
     const raw = readFileSync(yamlPath, 'utf-8');
     const manifest = load(raw);
     return NextResponse.json(manifest);
-  } catch {
+  } catch (_e) {
     return NextResponse.json({ error: 'Failed to parse manifest' }, { status: 500 });
   }
 }

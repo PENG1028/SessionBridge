@@ -45,11 +45,11 @@ export function useSessionSearch() {
             }
             if (results.length >= 50) break;
           }
-        } catch {}
+        } catch (_e) {}
         if (results.length >= 50) break;
       }
       setSearchResults(results);
-    } catch {
+    } catch (_e) {
       setSearchResults([]);
     }
     setSearchLoading(false);

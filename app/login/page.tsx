@@ -63,7 +63,7 @@ function LoginForm() {
 
       const redirect = searchParams.get('redirect') || '/';
       window.location.href = redirect.startsWith('/') ? redirect : '/';
-    } catch {
+    } catch (_e) {
       setError('Network error');
       setLoading(false);
     }

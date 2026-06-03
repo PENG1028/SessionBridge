@@ -41,7 +41,7 @@ export async function POST(
   let body: { checkId?: string; command?: string; status?: string; stdout?: string; stderr?: string };
   try {
     body = await request.json();
-  } catch {
+  } catch (_e) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 

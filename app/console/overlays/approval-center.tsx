@@ -57,7 +57,7 @@ export function ApprovalCenter({ core }: ApprovalCenterProps) {
         }
         return prev;
       });
-    } catch {
+    } catch (_e) {
       // Server may not support approval.list yet — ignore
     }
   }, [core]);
@@ -81,7 +81,7 @@ export function ApprovalCenter({ core }: ApprovalCenterProps) {
       const raw = event as Record<string, unknown>;
       let payload: Record<string, unknown> = {};
       if (typeof raw.payload === 'string') {
-        try { payload = JSON.parse(raw.payload as string); } catch { /* ignore */ }
+        try { payload = JSON.parse(raw.payload as string); } catch (_e) { /* ignore */ }
       } else if (typeof raw.payload === 'object' && raw.payload !== null) {
         payload = raw.payload as Record<string, unknown>;
       }

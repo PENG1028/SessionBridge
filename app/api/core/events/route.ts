@@ -77,7 +77,7 @@ export async function GET(request: NextRequest) {
           controller.enqueue(new TextEncoder().encode(
             'event: error\ndata: {"type":"error","message":"Core connection timeout"}\n\n'
           ));
-          try { controller.close(); } catch { /* controller may already be closed — safe to ignore */ }
+          try { controller.close(); } catch (_e) { /* controller may already be closed — safe to ignore */ }
         }
       }, CONNECT_TIMEOUT);
 
@@ -101,7 +101,7 @@ export async function GET(request: NextRequest) {
           if (cleanup) return;
           try {
             controller.enqueue(new TextEncoder().encode(': heartbeat\n\n'));
-          } catch { /* stream closed */ }
+          } catch (_e) { /* stream closed */ }
         }, 25_000);
       });
 
@@ -112,7 +112,7 @@ export async function GET(request: NextRequest) {
           controller.enqueue(new TextEncoder().encode(
             `event: core\ndata: ${text}\n\n`
           ));
-        } catch {
+        } catch (_e) {
           // Ignore encode errors (e.g. stream already closed)
         }
       });
@@ -126,8 +126,8 @@ export async function GET(request: NextRequest) {
           controller.enqueue(new TextEncoder().encode(
             `event: error\ndata: {"type":"error","message":"${err.message.replace(/["\\]/g, '')}"}\n\n`
           ));
-        } catch { /* controller may already be closed — safe to ignore */ }
-        try { controller.close(); } catch { /* controller may already be closed — safe to ignore */ }
+        } catch (_e) { /* controller may already be closed — safe to ignore */ }
+        try { controller.close(); } catch (_e) { /* controller may already be closed — safe to ignore */ }
         coreWs?.close();
         coreWs = null;
       });
@@ -137,7 +137,7 @@ export async function GET(request: NextRequest) {
         cleanup = true;
         if (connectTimer) { clearTimeout(connectTimer); connectTimer = null; }
         if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
-        try { controller.close(); } catch { /* controller may already be closed — safe to ignore */ }
+        try { controller.close(); } catch (_e) { /* controller may already be closed — safe to ignore */ }
         coreWs = null;
       });
     },

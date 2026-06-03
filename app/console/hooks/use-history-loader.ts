@@ -64,11 +64,11 @@ export function useHistoryLoader(
               const { display } = JSON.parse(activeSaved);
               setActiveExternalSession(display);
             }
-          } catch {}
+          } catch (_e) {}
           return;
         }
       }
-    } catch {}
+    } catch (_e) {}
     // No localStorage fallback — App UI no longer calls /api/sessions/current.
     // Mark history as loaded so subsequent renders don't re-trigger.
     setHistoryLoading(true);

@@ -22,7 +22,7 @@ export function AppManager() {
     try {
       const list = await loadApps();
       setApps(list);
-    } catch {
+    } catch (_e) {
       setError('Failed to load apps');
     }
     setLoading(false);

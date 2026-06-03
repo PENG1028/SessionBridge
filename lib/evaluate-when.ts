@@ -23,7 +23,7 @@ export function evaluateWhen(expression: string | undefined, ctx: WhenContext): 
   if (!expression || expression.trim() === '') return true;
   try {
     return evaluateOr(expression.trim(), ctx);
-  } catch {
+  } catch (_e) {
     return true; // fail open
   }
 }

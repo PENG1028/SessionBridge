@@ -34,7 +34,7 @@ interface RawManifest {
 const PLUGINS_DIR = join(process.cwd(), 'plugins');
 
 function isDir(path: string): boolean {
-  try { return readdirSync(path).length >= 0; } catch { return false; }
+  try { return readdirSync(path).length >= 0; } catch (_e) { return false; }
 }
 
 function readManifest(appId: string): RawManifest | null {
@@ -73,7 +73,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const yamlPath = join(PLUGINS_DIR, entry.name, 'plugin.yaml');
-    try { lastModified = Math.max(lastModified, statSync(yamlPath).mtimeMs); } catch {}
+    try { lastModified = Math.max(lastModified, statSync(yamlPath).mtimeMs); } catch (_e) {}
     const manifest = readManifest(entry.name);
     if (!manifest) continue;
 

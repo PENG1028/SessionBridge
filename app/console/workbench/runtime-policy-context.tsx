@@ -48,7 +48,7 @@ export function RuntimePolicyProvider({ children }: { children: ReactNode }) {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
       return saved ? JSON.parse(saved) : {};
-    } catch {
+    } catch (_e) {
       return {};
     }
   });
@@ -60,7 +60,7 @@ export function RuntimePolicyProvider({ children }: { children: ReactNode }) {
     persistRef.current = setTimeout(() => {
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(policies));
-      } catch {}
+      } catch (_e) {}
     }, 500);
     return () => {
       if (persistRef.current) clearTimeout(persistRef.current);

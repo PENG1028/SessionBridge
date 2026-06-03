@@ -15,7 +15,7 @@ function readHistory(): Record<string, InstallRecord[]> {
     if (!existsSync(HISTORY_FILE)) return {};
     const raw = readFileSync(HISTORY_FILE, 'utf-8');
     return JSON.parse(raw);
-  } catch {
+  } catch (_e) {
     return {};
   }
 }

@@ -41,7 +41,7 @@ export function useSessionPersistence(
       // Fast path: full-map localStorage cache
       try {
         localStorage.setItem(LS_MESSAGES_CACHE, JSON.stringify(messagesBySession));
-      } catch { /* quota exceeded */ }
+      } catch (_e) { /* quota exceeded */ }
       // Complete path: per-session IndexedDB writes
       for (const [sid, msgs] of Object.entries(messagesBySession)) {
         if (msgs.length > 0) {

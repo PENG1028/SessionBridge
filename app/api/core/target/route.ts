@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
     } else if (body.url && typeof body.url === 'string') {
       try {
         new URL(body.url);
-      } catch {
+      } catch (_e) {
         return NextResponse.json({ error: 'Invalid URL' }, { status: 400 });
       }
       setCoreTargetUrl(body.url);
@@ -51,7 +51,7 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json({ ok: true, url: getCoreWsUrl() });
-  } catch {
+  } catch (_e) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 }

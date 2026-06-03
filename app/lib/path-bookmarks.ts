@@ -20,7 +20,7 @@ const BOOKMARKS_CHANGED_EVENT = 'sb-bookmarks-changed';
 function notifyBookmarksChanged(): void {
   try {
     window.dispatchEvent(new CustomEvent(BOOKMARKS_CHANGED_EVENT));
-  } catch {}
+  } catch (_e) {}
 }
 
 export function getPathBookmarks(): string[] {
@@ -29,7 +29,7 @@ export function getPathBookmarks(): string[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed.filter((p): p is string => typeof p === 'string') : [];
-  } catch {
+  } catch (_e) {
     return [];
   }
 }
@@ -38,7 +38,7 @@ export function setPathBookmarks(bookmarks: string[]): void {
   try {
     localStorage.setItem(storageKey(), JSON.stringify(bookmarks));
     notifyBookmarksChanged();
-  } catch {}
+  } catch (_e) {}
 }
 
 export function addPathBookmark(path: string): void {
@@ -62,7 +62,7 @@ export function isPathBookmarked(path: string): boolean {
 export function getLastActiveDir(): string | null {
   try {
     return localStorage.getItem(_bookmarkScope ? `${LAST_DIR_KEY}-${_bookmarkScope}` : LAST_DIR_KEY);
-  } catch {
+  } catch (_e) {
     return null;
   }
 }
@@ -71,7 +71,7 @@ export function setLastActiveDir(path: string): void {
   try {
     const key = _bookmarkScope ? `${LAST_DIR_KEY}-${_bookmarkScope}` : LAST_DIR_KEY;
     localStorage.setItem(key, path.replace(/\\/g, '/').replace(/\/$/, ''));
-  } catch {}
+  } catch (_e) {}
 }
 
 export function getRestoreLastPath(): boolean {
@@ -79,7 +79,7 @@ export function getRestoreLastPath(): boolean {
     const raw = localStorage.getItem(RESTORE_KEY);
     if (raw === null) return true; // default ON
     return raw === 'true';
-  } catch {
+  } catch (_e) {
     return true;
   }
 }
@@ -87,5 +87,5 @@ export function getRestoreLastPath(): boolean {
 export function setRestoreLastPath(v: boolean): void {
   try {
     localStorage.setItem(RESTORE_KEY, String(v));
-  } catch {}
+  } catch (_e) {}
 }

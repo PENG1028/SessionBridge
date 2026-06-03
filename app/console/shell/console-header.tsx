@@ -118,7 +118,7 @@ export function ConsoleHeader({
         : activePolicy.effortLevel === 'medium' ? 'ON' : 'MAX';
       runtimeBadge = `${label} [${modeBadge}] T:${effortBadge}`;
     }
-  } catch {}
+  } catch (_e) {}
 
   // Chrome items + action context — always resolved (never inside try-catch)
   const headerRightActions: WorkbenchAction[] = getActions('header.right', focus.whenContext as Record<string, unknown>);

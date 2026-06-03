@@ -66,7 +66,7 @@ export async function syncAllPlugins(
 
       const ui = manifest.adapters['system-ui'] as AppSystemUI;
       registerAppContributions(app.id, manifest, ui, onExecuteCommand, allLeft, allRight, allStatusBar);
-    } catch {
+    } catch (_e) {
       // Individual app failure doesn't block others
     }
   }

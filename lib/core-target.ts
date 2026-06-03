@@ -37,7 +37,7 @@ export function getCoreToken(): string | undefined {
     const raw = readFileSync(cfgPath, 'utf-8');
     const cfg = JSON.parse(raw);
     return cfg?.core?.auth?.adminToken || undefined;
-  } catch {
+  } catch (_e) {
     return undefined;
   }
 }

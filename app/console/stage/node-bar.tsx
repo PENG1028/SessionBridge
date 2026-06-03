@@ -76,7 +76,7 @@ export function NodeBar({ activeNodeId, onEnterNode, onOpenConnection }: NodeBar
               hasPublicAccess: n.hasPublicAccess,
             }))
         );
-      } catch {
+      } catch (_e) {
         // node.list unavailable — no remote peers to show
       }
     };

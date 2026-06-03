@@ -190,7 +190,7 @@ export function SettingsPanel({ open, onClose, onReconnect }: SettingsPanelProps
             try {
               const port = new URL(data.url).port || '9090';
               setLocalPort(port);
-            } catch {}
+            } catch (_e) {}
           }
         })
         .catch(() => {});
@@ -205,7 +205,7 @@ export function SettingsPanel({ open, onClose, onReconnect }: SettingsPanelProps
       const res = await fetch('/api/core/discover');
       const data = await res.json() as { results: Array<{ port: number; status: string; info?: any }> };
       setScanResults(data.results);
-    } catch {
+    } catch (_e) {
       setScanResults([]);
     }
     setScanning(false);
@@ -222,7 +222,7 @@ export function SettingsPanel({ open, onClose, onReconnect }: SettingsPanelProps
         body: JSON.stringify({ port: parseInt(cleanPort, 10) }),
       });
       setLocalPort(cleanPort);
-    } catch {}
+    } catch (_e) {}
     // Trigger SSE reconnection so ProxyCoreClient picks up the new target
     setTimeout(onReconnect, 100);
   }, [onReconnect]);
@@ -370,7 +370,7 @@ export function SettingsPanel({ open, onClose, onReconnect }: SettingsPanelProps
           lastCheckError: result.lastCheckError as string | undefined,
         });
       }
-    } catch {
+    } catch (_e) {
       // Update manager may not be available
     }
   }, [core]);

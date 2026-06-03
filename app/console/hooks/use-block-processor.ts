@@ -71,7 +71,7 @@ function inferDetail(toolName: string, args: string): string {
     if (toolName === 'WebSearch')
       return p.query || args;
     return args;
-  } catch {
+  } catch (_e) {
     return args.length > 120 ? args.slice(0, 120) + '...' : args;
   }
 }

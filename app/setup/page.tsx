@@ -53,7 +53,7 @@ export default function SetupPage() {
       }
 
       window.location.href = '/';
-    } catch {
+    } catch (_e) {
       setError('Network error');
       setLoading(false);
     }

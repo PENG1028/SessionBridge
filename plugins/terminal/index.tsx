@@ -119,7 +119,7 @@ export function TerminalView({ core, config }: HostComponentProps) {
 
     // Container resize → fit + debounced process.resize
     const ro = new ResizeObserver(() => {
-      try { fitAddon.fit(); } catch {}
+      try { fitAddon.fit(); } catch (_e) {}
       const dims = fitAddon.proposeDimensions();
       if (dims) debouncedResizeRef.current?.resize(dims.cols, dims.rows);
     });
@@ -305,7 +305,7 @@ export function TerminalView({ core, config }: HostComponentProps) {
         // Best-effort: fallback to process.signal
         try {
           await core.call('process.signal', { sessionId: sid, signal: 'SIGTERM', ...(targetNodeId ? { targetNodeId } : {}) });
-        } catch { /* best-effort */ }
+        } catch (_e) { /* best-effort */ }
         termRef.current?.writeln(`\r\n\x1b[91m[Stop error: ${err}]\x1b[0m`);
       }
     } else {
@@ -372,7 +372,7 @@ export function TerminalView({ core, config }: HostComponentProps) {
       if (targetNodeId) params.targetNodeId = targetNodeId;
       const result = await core.call<{ runs: RunInfo[] }>('run.list', params);
       setExistingRuns(result?.runs || []);
-    } catch {
+    } catch (_e) {
       // silent
     }
     setRefreshingRuns(false);

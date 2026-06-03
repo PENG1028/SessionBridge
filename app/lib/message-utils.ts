@@ -75,7 +75,7 @@ export function parseSessionBlocks(apiBlocks: any[]): Block[] {
             detail = input.file_path || '';
           else if (name === 'WebSearch')
             detail = input.query || '';
-        } catch { /* ignore */ }
+        } catch (_e) { /* ignore */ }
         result.push({
           id: genId(), type: 'tool_use', semantic: sem.label,
           toolName: name, detail, output: b.output || '', toolArgs: b.input || '',

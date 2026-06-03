@@ -73,7 +73,7 @@ export class ReconnectManager {
     try {
       await this._onConnect();
       this.markConnected();
-    } catch {
+    } catch (_e) {
       this.scheduleReconnect(attempt + 1);
     }
   }
@@ -84,6 +84,6 @@ export class ReconnectManager {
 
   private transition(next: ReconnectState): void {
     this._state = next;
-    this._listeners.forEach(fn => { try { fn(); } catch { /* ignore */ } });
+    this._listeners.forEach(fn => { try { fn(); } catch (_e) { /* ignore */ } });
   }
 }

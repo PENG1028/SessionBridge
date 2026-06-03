@@ -26,7 +26,7 @@ export function stripTokenFromWsUrl(url: string): string {
     const u = new URL(url);
     u.searchParams.delete('token');
     return u.toString();
-  } catch {
+  } catch (_e) {
     // Malformed URL — use word-boundary to only match exact `token`, not
     // access_token/refresh_token. Covers bare `token=secret`, `?token=secret`,
     // `&token=secret`, ` ws token=secret`.
@@ -53,7 +53,7 @@ export function extractTokenFromWsUrl(url: string): string | undefined {
     const u = new URL(url);
     const tok = u.searchParams.get('token');
     return tok ?? undefined;
-  } catch {
+  } catch (_e) {
     // Malformed — match exact `token` (word-boundary guarded), not
     // access_token/refresh_token.
     const m = url.match(/\btoken=([^&\s#]*)/);
@@ -102,7 +102,7 @@ export function buildConnectUrl(wsUrl: string, token?: string): string {
     const u = new URL(wsUrl);
     u.searchParams.set('token', token);
     return u.toString();
-  } catch {
+  } catch (_e) {
     // Malformed wsUrl — try to do our best
     const sep = wsUrl.includes('?') ? '&' : '?';
     return wsUrl + sep + 'token=' + encodeURIComponent(token);

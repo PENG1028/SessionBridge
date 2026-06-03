@@ -219,7 +219,7 @@ export class CoreClientImpl implements CoreClient {
           if (msg.type) {
             this._emit(msg.type as string, msg as CoreEvent);
           }
-        } catch {
+        } catch (_e) {
           // Ignore parse errors on individual messages
         }
       };
@@ -285,13 +285,13 @@ export class CoreClientImpl implements CoreClient {
     const handlers = this._eventListeners.get(event);
     if (handlers) {
       handlers.forEach(fn => {
-        try { fn(data); } catch { /* handler error */ }
+        try { fn(data); } catch (_e) { /* handler error */ }
       });
     }
     const allHandlers = this._eventListeners.get('*');
     if (allHandlers) {
       allHandlers.forEach(fn => {
-        try { fn(data); } catch { /* handler error */ }
+        try { fn(data); } catch (_e) { /* handler error */ }
       });
     }
   }

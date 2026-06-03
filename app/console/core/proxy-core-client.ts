@@ -103,7 +103,7 @@ export class ProxyCoreClient implements CoreClient {
     } else {
       return; // no change
     }
-    this._reachabilityListeners.forEach(fn => { try { fn(); } catch { /* ignore */ } });
+    this._reachabilityListeners.forEach(fn => { try { fn(); } catch (_e) { /* ignore */ } });
   }
 
   // ── Core call via HTTP proxy ──────────────────────────────
@@ -236,7 +236,7 @@ export class ProxyCoreClient implements CoreClient {
             this._emit(msg.type, msg);
             this._updateReachability(msg);
           }
-        } catch {
+        } catch (_e) {
           // Ignore parse errors on individual SSE events
         }
       });
@@ -247,7 +247,7 @@ export class ProxyCoreClient implements CoreClient {
           const msg = JSON.parse(event.data);
           this._lastError = msg.message || 'SSE error';
           this._setStatus('error');
-        } catch {
+        } catch (_e) {
           // Parse failure in error event — just mark disconnected
           this._lastError = 'SSE connection error';
           this._setStatus('disconnected');
@@ -304,7 +304,7 @@ export class ProxyCoreClient implements CoreClient {
   private _setStatus(status: CoreConnectionStatus): void {
     this._connectionStatus = status;
     this._statusListeners.forEach(fn => {
-      try { fn(status); } catch { /* listener error */ }
+      try { fn(status); } catch (_e) { /* listener error */ }
     });
     this._emit('connectionStatus', { type: 'connectionStatus', status, pluginId: this.pluginId });
   }
@@ -315,14 +315,14 @@ export class ProxyCoreClient implements CoreClient {
     const handlers = this._eventListeners.get(event);
     if (handlers) {
       handlers.forEach(fn => {
-        try { fn(data); } catch { /* handler error */ }
+        try { fn(data); } catch (_e) { /* handler error */ }
       });
     }
     // Wildcard listeners
     const allHandlers = this._eventListeners.get('*');
     if (allHandlers) {
       allHandlers.forEach(fn => {
-        try { fn(data); } catch { /* handler error */ }
+        try { fn(data); } catch (_e) { /* handler error */ }
       });
     }
   }

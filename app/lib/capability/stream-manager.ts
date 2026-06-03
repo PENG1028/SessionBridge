@@ -135,7 +135,7 @@ export class StreamManager {
 
   private transition(next: StreamState): void {
     this._state = next;
-    this._listeners.forEach(fn => { try { fn(); } catch { /* ignore */ } });
+    this._listeners.forEach(fn => { try { fn(); } catch (_e) { /* ignore */ } });
   }
 
   private clearTimers(): void {

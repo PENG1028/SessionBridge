@@ -70,9 +70,9 @@ export function useCoreConnection(): CoreConnectionConfig {
             if (migratedToken) setToken(prev => prev ?? migratedToken);
             localStorage.setItem('bridge-ws-url', cleanUrl);
           }
-        } catch { /* invalid saved URL */ }
+        } catch (_e) { /* invalid saved URL */ }
       }
-    } catch { /* localStorage unavailable */ }
+    } catch (_e) { /* localStorage unavailable */ }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Persist wsUrl to localStorage ──
@@ -83,7 +83,7 @@ export function useCoreConnection(): CoreConnectionConfig {
       if (urlHost === curHost) {
         localStorage.setItem('bridge-ws-url', stripTokenFromWsUrl(wsUrl));
       }
-    } catch { /* cross-origin or invalid URL */ }
+    } catch (_e) { /* cross-origin or invalid URL */ }
   }, [wsUrl]);
 
   return {

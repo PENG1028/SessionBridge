@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
   let body: { method?: string; params?: Record<string, unknown>; pluginId?: string };
   try {
     body = await request.json();
-  } catch {
+  } catch (_e) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
@@ -139,7 +139,7 @@ async function coreCall(
         if (msg.type === 'hello' || msg.type === 'welcome') {
           return;
         }
-      } catch {
+      } catch (_e) {
         // Ignore parse errors on individual messages
       }
     });

@@ -33,7 +33,7 @@ export function PermissionPanel({ appId, permissions }: PermissionPanelProps) {
     try {
       await setGrant(appId, capability, next as 'allow' | 'deny' | 'ask');
       setGrants(prev => ({ ...prev, [capability]: next }));
-    } catch { /* grant save failed */ }
+    } catch (_e) { /* grant save failed */ }
     setLoading(false);
   }
 

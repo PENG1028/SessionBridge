@@ -30,7 +30,7 @@ export function readEnvChecks(appId: string): EnvCheckSpec[] {
     const raw = readFileSync(yamlPath, 'utf-8');
     const manifest = load(raw) as { core?: { environment?: { checks?: EnvCheckSpec[] } } };
     return manifest.core?.environment?.checks ?? [];
-  } catch {
+  } catch (_e) {
     return [];
   }
 }

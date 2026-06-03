@@ -74,7 +74,7 @@ export async function isAuthConfigured(): Promise<boolean> {
   try {
     await access(p);
     return true;
-  } catch {
+  } catch (_e) {
     return false;
   }
 }
@@ -88,7 +88,7 @@ export async function loadAuthConfig(): Promise<AppUiAuthConfig | null> {
     if (!parsed.passwordHash || !parsed.passwordSalt || !parsed.sessionSecret) return null;
     if (parsed.version !== 1) return null;
     return parsed;
-  } catch {
+  } catch (_e) {
     return null;
   }
 }
@@ -148,7 +148,7 @@ export async function verifyPassword(password: string): Promise<boolean> {
 
   try {
     return timingSafeEqual(hashBuf, storedBuf);
-  } catch {
+  } catch (_e) {
     return false;
   }
 }
@@ -196,7 +196,7 @@ export function verifySession(cookieValue: string | undefined, secret: string): 
   try {
     const json = Buffer.from(b64, 'base64url').toString('utf-8');
     payload = JSON.parse(json) as SessionPayload;
-  } catch {
+  } catch (_e) {
     return { ok: false, reason: 'malformed' };
   }
 

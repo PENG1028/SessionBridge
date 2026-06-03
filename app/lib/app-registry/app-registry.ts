@@ -30,7 +30,7 @@ export async function loadApps(): Promise<AppSummary[]> {
   if (_loaded) {
     try {
       const check = await fetch('/api/apps/list', { method: 'HEAD', credentials: 'same-origin' });
-    } catch { /* HEAD not supported, proceed with cache */ }
+    } catch (_e) { /* HEAD not supported, proceed with cache */ }
     // If we have cached data after app start, skip re-fetch briefly
     // Full re-fetch only on invalidateCache() or first load
     return _summaries;
@@ -65,7 +65,7 @@ export async function getManifest(appId: string): Promise<AppManifest | null> {
     const manifest = await res.json() as AppManifest;
     _manifests.set(appId, manifest);
     return manifest;
-  } catch {
+  } catch (_e) {
     return null;
   }
 }
@@ -94,7 +94,7 @@ export async function loadAppState(appId: string): Promise<AppState> {
     _states.set(appId, state);
     notify();
     return state;
-  } catch {
+  } catch (_e) {
     return { enabled: true, updatedAt: 0, grants: {} };
   }
 }
@@ -152,5 +152,5 @@ export function reset(): void {
 
 // ─── Internal ─────────────────────────────────────────────────────
 function notify(): void {
-  _listeners.forEach(fn => { try { fn(); } catch { /* listener error */ } });
+  _listeners.forEach(fn => { try { fn(); } catch (_e) { /* listener error */ } });
 }
