@@ -2,6 +2,8 @@
 
 import { Terminal, Folder } from 'lucide-react';
 import { useEffect, useState, useRef, useCallback } from 'react';
+// Register terminal panel components (side-effect at module level)
+import './panels';
 import { useWorkbench } from '../../sdk';
 import { useFocus } from '../../sdk';
 import { ShellTerminal } from '../../sdk';

@@ -14,7 +14,7 @@
 export { useCore, useCoreStatus, useActiveNodeId, useReachableNodeIds, useTargetReachability, useCoreErrors, classifyCoreError, useWorkbench, useFocus, useSessionContext, useInputContext, useToolActivityContext } from './hooks';
 export type { CoreClient, CoreConnectionStatus, FocusState, CoreErrorCategory } from './hooks';
 
-export { ShellTerminal, TitleBar, DirectoryPicker, SystemContextBar } from './components';
+export { ShellTerminal, TitleBar, DirectoryPicker, SystemContextBar, FileExplorer } from './components';
 
 export { getLastActiveDir, setLastActiveDir, getRestoreLastPath, TOOL_SEMANTICS, evaluateWhen, normalizeNodeInfo, listFromResponse, normalizeSessionInfo, loadApps, isEnabled, setEnabled, getLoadError, invalidateCache } from './utils';
 
