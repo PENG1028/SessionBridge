@@ -38,6 +38,8 @@ import { GET as coreEventsGet } from '../../app/api/core/events/route';
 function mockRequest(body?: unknown, cookieValue?: string): any {
   return {
     json: async () => body,
+    url: 'http://localhost:3000/api/auth/setup',
+    headers: new Map(),
     cookies: {
       get: (_name: string) =>
         cookieValue ? { value: cookieValue } : undefined,

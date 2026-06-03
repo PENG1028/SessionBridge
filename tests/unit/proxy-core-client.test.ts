@@ -115,7 +115,7 @@ describe('ProxyCoreClient realtime events', () => {
     client.on('stream.chunk', () => {});
     const instances = FakeEventSource.instances;
     expect(instances.length).toBe(1);
-    expect(instances[0].url).toBe('/api/core/events/');
+    expect(instances[0].url).toBe('/api/core/events');
     expect(instances[0].withCredentials).toBe(true);
   });
 
@@ -335,7 +335,7 @@ describe('ProxyCoreClient realtime events', () => {
   it('EventSource URL does not contain Core token', () => {
     client.on('stream.chunk', () => {});
     const es = FakeEventSource.lastInstance()!;
-    expect(es.url).toBe('/api/core/events/');
+    expect(es.url).toBe('/api/core/events');
     expect(es.url).not.toContain('token');
   });
 

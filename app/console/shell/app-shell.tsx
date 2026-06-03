@@ -5,9 +5,6 @@ export const dynamic = 'force-dynamic';
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useSession } from '../../../lib/use-ws';
-import {
-  Square,
-} from 'lucide-react';
 import { MobileSidebar } from '../sidebar/mobile-sidebar';
 import { MobileRightPanel } from '../sidebar/mobile-right-panel';
 import { useSessionSearch } from '../shell/use-session-search';
@@ -44,184 +41,15 @@ import { getLastActiveDir, setLastActiveDir, getRestoreLastPath, addPathBookmark
 import { NodeBar } from '../stage/node-bar';
 import { NodeNetworkView } from '../../../plugins/mesh';
 import { KeyHintOverlay } from '../chrome/key-hint-overlay';
-import { LayoutProvider, useLayout, SidebarSlot, MainSlot, FocusProvider, RuntimePolicyProvider, useFocus, useRuntimePolicy, WorkbenchProvider } from '../workbench';
+import { DisconnectBanner } from './disconnect-banner';
+import { WorkbenchTopBar } from './workbench-top-bar';
+import { LayoutProvider, useLayout, SidebarSlot, MainSlot, FocusProvider, RuntimePolicyProvider, useFocus, useRuntimePolicy, WorkbenchProvider, SessionProvider, InputProvider, ToolActivityProvider } from '../workbench';
 import { WorkbenchLayout } from '../stage/workbench-layout';
 import { appReducer, createAppInitialState, getActiveWorkbenchState, createInitialState, findPane as findPaneInTree, ensureInstanceTab, saveLayoutsToStorage, loadLayoutsFromStorage, restoreInstanceStatesFromStorage, genTabId, collectAllTabs, type ViewType, type PaneTab, type LayoutNode, type WorkbenchState, type WorkbenchAction, type AppWorkbenchState, type AppWorkbenchAction } from '../stage/workbench-state';
-
-
-// ==========================================
-// Types
-// ==========================================
-type Phase = 'idle' | 'running' | 'done' | 'error';
-
-interface Block {
-  id: string;
-  type: 'thinking' | 'tool_use' | 'tool_result' | 'text' | 'unknown';
-  /** Human-readable label for what Claude is doing */
-  semantic: string;
-  /** Raw tool name from Claude (Read, Bash, Edit, etc.) */
-  toolName: string;
-  /** Detail: file path for file ops, command for bash, query for search */
-  detail: string;
-  /** Output/result content */
-  output: string;
-  /** Raw tool input args JSON (for Edit/Write diff) */
-  toolArgs: string;
-  status: 'running' | 'done' | 'error';
-  exitCode: number;
-  /** For thinking: the full thinking text */
-  content: string;
-  /** UI-only: whether thinking block is expanded */
-  expanded: boolean;
-  /** Raw JSON for unknown fallback */
-  rawData: string;
-  /** Persistence-only: whether tool result is fully captured */
-  isComplete?: boolean;
-}
-
-interface Message {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  timestamp: string;
-  blocks: Block[];
-  isPending: boolean;
-  isCompactSummary?: boolean;
-}
-
-/** A turn = one user message + all following assistant messages */
-type Turn = {
-  userMsg: Message;
-  assistantMsgs: Message[];
-};
-
-/** Live tool activity for floating task panel */
-interface ToolActivity {
-  id: string;
-  toolName: string;
-  detail: string;
-  semantic: string;
-  status: 'running' | 'done' | 'error';
-}
-
-/** Background task tracking */
-interface TaskInfo {
-  id: string;
-  description: string;
-  taskType: string;
-  startTime: number;
-  lastToolName?: string;
-  summary?: string;
-  usage?: { totalTokens?: number; toolUses?: number; durationMs?: number };
-}
-
-/** Convert persisted messages from session-store into app UI messages. */
-function toAppMessages(sessionId: string, msgs: import('../../../lib/session-store').Message[]): Message[] {
-  return msgs.map((m, i) => ({
-    id: `${sessionId}_${i}`,
-    role: m.role,
-    content: m.content,
-    timestamp: typeof m.timestamp === 'number'
-      ? new Date(m.timestamp).toLocaleTimeString()
-      : m.timestamp || getTime(),
-    blocks: (m.blocks || []) as Block[],
-    isPending: false,
-    isCompactSummary: (m as any).isCompactSummary,
-  }));
-}
-
-/** Strip UI-only fields before persisting to session-store IndexedDB. */
-function toStorageMessages(msgs: Message[]): import('../../../lib/session-store').Message[] {
-  return msgs.map(m => ({
-    role: m.role,
-    content: m.content,
-    timestamp: Date.parse(m.timestamp) || Date.now(),
-    blocks: m.blocks as import('../../../lib/session-store').Block[],
-  }));
-}
-
-// ==========================================
-// Constants — Semantic Layer
-// ==========================================
-import { getSemantic } from '../shared/tool-constants';
 import { useBlockProcessor } from '../hooks/use-block-processor';
+import type { Phase, Block, Message, Turn, ToolActivity, TaskInfo } from '../../lib/session-types';
+import { getTime, genId, shortenPath, toAppMessages, toStorageMessages, parseSessionBlocks } from '../../lib/message-utils';
 
-// ==========================================
-// Helpers
-// ==========================================
-const getTime = () => {
-  const now = new Date();
-  return `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
-};
-
-const genId = () => Math.random().toString(36).substring(2, 11);
-
-/** Show last 2 path segments for compact display */
-function shortenPath(p: string): string {
-  const parts = p.replace(/\\/g, '/').split('/').filter(Boolean);
-  if (parts.length <= 2) return p;
-  return '...' + parts.slice(-2).join('/');
-}
-
-/** Convert API block descriptors into UI Block[] for historical session loading */
-function parseSessionBlocks(apiBlocks: any[]): Block[] {
-  const result: Block[] = [];
-  for (const b of apiBlocks) {
-    switch (b.type) {
-      case 'thinking':
-        result.push({
-          id: genId(), type: 'thinking', semantic: 'Analyzing...',
-          toolName: '', detail: '', output: '', toolArgs: '',
-          status: 'done', exitCode: -1, content: b.text || '',
-          expanded: true, rawData: '',
-        });
-        break;
-      case 'text':
-        result.push({
-          id: genId(), type: 'text', semantic: '', toolName: '', detail: '',
-          output: '', toolArgs: '', status: 'done', exitCode: -1,
-          content: b.text || '', expanded: false, rawData: '',
-        });
-        break;
-      case 'tool_use': {
-        const name = b.name || '';
-        const sem = getSemantic(name);
-        let detail = '';
-        try {
-          const input = JSON.parse(b.input || '{}');
-          if (name === 'Read' || name === 'Glob' || name === 'Grep')
-            detail = input.file_path || input.pattern || input.path || '';
-          else if (name === 'Bash' || name === 'PowerShell')
-            detail = input.command || '';
-          else if (name === 'Edit' || name === 'Write')
-            detail = input.file_path || '';
-          else if (name === 'WebSearch')
-            detail = input.query || '';
-        } catch {}
-        result.push({
-          id: genId(), type: 'tool_use', semantic: sem.label,
-          toolName: name, detail, output: b.output || '', toolArgs: b.input || '',
-          status: 'done', exitCode: 0, content: '', expanded: false, rawData: '',
-        });
-        break;
-      }
-      case 'tool_result':
-        // Only create standalone if no preceding tool_use to attach to
-        if (result.length > 0 && result[result.length - 1].type === 'tool_result' && !result[result.length - 1].output) {
-          result[result.length - 1].output = (b.text || '').slice(0, 5000);
-        } else {
-          result.push({
-            id: genId(), type: 'tool_result', semantic: 'Tool Result',
-            toolName: '', detail: '', output: (b.text || '').slice(0, 5000),
-            toolArgs: '', status: 'done', exitCode: 0, content: '',
-            expanded: false, rawData: '',
-          });
-        }
-        break;
-    }
-  }
-  return result;
-}
 
 // ==========================================
 // Main Page
@@ -1091,11 +919,10 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
     setAppState(prev => appReducer(prev, { type: 'REMOVE_INSTANCE_LAYOUT', instanceId: instId }));
   }, []);
 
-  // ── Workbench context value (provides session/chat state to all view components) ──
-  const workbenchContextValue = useMemo(() => ({
-    wsUrl: activeNodeWsUrl,
-    token: token ?? undefined,
-    logs,
+  // ── Split context values (Session, Input, ToolActivity, Workbench) ──
+  // Each useMemo has a smaller dependency set, so changing inputValue won't
+  // re-render components that only consume session or tool activity state.
+  const sessionContextValue = useMemo(() => ({
     messages,
     turns,
     phase,
@@ -1105,15 +932,24 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
     connStatus,
     isRestoring,
     historyLoading,
+    sendCommand,
+    sendInput,
+    handleInterrupt,
+    setForkTarget,
+    setForkPrompt,
+  }), [
+    messages, turns, phase, setPhase, currentActivity, setCurrentActivity,
+    connStatus, isRestoring, historyLoading,
+    sendCommand, sendInput, handleInterrupt,
+    setForkTarget, setForkPrompt,
+  ]);
+
+  const inputContextValue = useMemo(() => ({
     inputValue,
     setInputValue,
     handleSubmit,
     handleInputChange,
     handleKeyDown,
-    toolActivities,
-    setToolActivities,
-    expandedToolOutputs,
-    setExpandedToolOutputs,
     showFileSuggest,
     fileSuggestions,
     handleFileSuggestionClick,
@@ -1121,11 +957,27 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
     setShowCommands,
     handleCommandClick,
     cmdPanelRef: cmdPanelRef as React.RefObject<HTMLDivElement | null>,
-    sendCommand,
-    sendInput,
-    handleInterrupt,
-    setForkTarget,
-    setForkPrompt,
+  }), [
+    inputValue, setInputValue, handleSubmit, handleInputChange, handleKeyDown,
+    showFileSuggest, fileSuggestions, handleFileSuggestionClick,
+    showCommands, setShowCommands, handleCommandClick,
+    cmdPanelRef,
+  ]);
+
+  const toolActivityContextValue = useMemo(() => ({
+    toolActivities,
+    setToolActivities,
+    expandedToolOutputs,
+    setExpandedToolOutputs,
+  }), [
+    toolActivities, setToolActivities,
+    expandedToolOutputs, setExpandedToolOutputs,
+  ]);
+
+  const workbenchContextValue = useMemo(() => ({
+    wsUrl: activeNodeWsUrl,
+    token: token ?? undefined,
+    logs,
     createInstance: createNodeInstance,
     instances,
     bindCurrentTabInstance: handleBindCurrentTabInstance,
@@ -1146,23 +998,12 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
     scrollContainerRef: scrollContainerRef as React.RefObject<HTMLDivElement | null>,
     actionEndRef: actionEndRef as React.RefObject<HTMLDivElement | null>,
   }), [
-    activeNodeWsUrl, token, logs, messages, turns,
-    phase, setPhase, currentActivity, setCurrentActivity,
-    connStatus, isRestoring, historyLoading,
-    inputValue, setInputValue,
-    handleSubmit, handleInputChange, handleKeyDown,
-    toolActivities, setToolActivities,
-    expandedToolOutputs, setExpandedToolOutputs,
-    showFileSuggest, fileSuggestions, handleFileSuggestionClick,
-    showCommands, setShowCommands, handleCommandClick,
-    handleInterrupt,
-    sendCommand, sendInput,
-    setForkTarget, setForkPrompt,
-    createNodeInstance, handleBindCurrentTabInstance, activateInstance, activeInstanceId,
+    activeNodeWsUrl, token, logs,
+    createNodeInstance, instances, handleBindCurrentTabInstance, activeInstanceId,
     activeNodeProjectInfo?.cwd, absoluteCwd,
-    activeExternalSession,
+    activateInstance, activeExternalSession,
     onNavigatePath,
-    cmdPanelRef, scrollContainerRef, actionEndRef,
+    scrollContainerRef, actionEndRef,
   ]);
 
   return (
@@ -1216,13 +1057,7 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
       />
 
       {/* ── Disconnect banner (30s grace) ── */}
-      {showBanner && (
-        <div className="flex items-center justify-center gap-2 px-3 py-1.5 text-[11px] font-bold tracking-wider uppercase"
-          style={{ backgroundColor: connStatus.status === 'connecting' ? '#1a3a1a' : '#3a1a1a', color: connStatus.status === 'connecting' ? '#4ade80' : '#f87171' }}>
-          <span className={`w-1.5 h-1.5 rounded-full ${statusColor}`} />
-          {connStatus.status === 'connecting' ? 'Connecting to server...' : `Disconnected from server${connStatus.retryCount ? ` (retry #${connStatus.retryCount})` : ''}`}
-        </div>
-      )}
+      <DisconnectBanner showBanner={showBanner} connStatus={connStatus} statusColor={statusColor} />
 
       {/* ── Node bar — shows connected mesh nodes for entering workbenches ── */}
       <NodeBar
@@ -1278,40 +1113,12 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
               </div>
             </div>
           )}
+          <SessionProvider value={sessionContextValue}>
+          <InputProvider value={inputContextValue}>
+          <ToolActivityProvider value={toolActivityContextValue}>
           <WorkbenchProvider value={workbenchContextValue}>
           <div className="flex flex-col flex-1 min-h-0 min-w-0" style={{ display: appState.activeInstanceId ? 'flex' : 'none' }}>
-          <div className="flex items-center justify-between h-7 px-2 border-b border-gray-800 bg-[#0a0a0a] shrink-0">
-            <span className="flex items-center gap-2 text-[10px] font-bold text-gray-500 tracking-wider">
-              WORKBENCH
-              {activeExternalSession && (
-                <span className="text-amber-500 text-[8px] bg-amber-900/20 px-1.5 py-0.5 rounded border border-amber-700/30">
-                  VIEWING: {activeExternalSession}
-                  <button onClick={() => {
-                    setActiveExternalSession(null);
-                    try { localStorage.removeItem('sessionbridge-active-session'); } catch {}
-                    historyLoadedRef.current = false;
-                    window.location.reload();
-                  }} className="ml-1.5 px-1 bg-amber-800/40 hover:bg-amber-700/60 rounded text-[7px] text-amber-300">✕</button>
-                </span>
-              )}
-            </span>
-            <span className="flex items-center gap-2">
-              <span className="text-gray-700 text-[8px] font-mono">
-                msg:{messages.length}
-              </span>
-              {phase === 'running' && (
-                <span className="text-purple-500 animate-pulse text-[9px]">●</span>
-              )}
-              {phase === 'running' && (
-                <button onClick={handleInterrupt}
-                  className="text-red-400 hover:text-red-300 flex items-center gap-1 text-[8px] bg-red-900/20 px-1.5 py-0.5 rounded border border-red-800/30 transition-colors"
-                  title="Stop (Esc)"
-                >
-                  <Square className="w-2 h-2 fill-current" /> STOP
-                </button>
-              )}
-            </span>
-          </div>
+          <WorkbenchTopBar />
 
           {/* ── WorkbenchLayout (pane/tab/view system) — fully generic, no hardcoded viewType checks ── */}
           <WorkbenchLayout
@@ -1345,6 +1152,9 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
               </div>
           </div>
           </WorkbenchProvider>
+          </ToolActivityProvider>
+          </InputProvider>
+          </SessionProvider>
         </main>
 
         <SidebarSlot open={effectiveRightOpen}>

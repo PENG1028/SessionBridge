@@ -35,7 +35,9 @@
     "update": "node scripts/update.js",
     "update:check": "node scripts/check-update.js --notify",
     "package": "node scripts/package.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",

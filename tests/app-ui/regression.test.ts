@@ -136,11 +136,12 @@ describe('Regression: no ClaudeChatView import in host-rendered registry', () =>
 });
 
 describe('Regression: stream.write is the only stdin method', () => {
-  const systemPagesDir = path.resolve(__dirname, '../../app/console/system-pages');
+  const appConsoleShell = path.resolve(__dirname, '../../app/console/shell');
   const coreDir = path.resolve(__dirname, '../../app/console/core');
+  const mainDir = path.resolve(__dirname, '../../app/console/main');
 
   it('App UI pages use stream.write for input', () => {
-    const dirs = [systemPagesDir, coreDir].filter(d => fs.existsSync(d));
+    const dirs = [appConsoleShell, coreDir, mainDir].filter(d => fs.existsSync(d));
     let foundStreamWrite = false;
 
     for (const dir of dirs) {
@@ -159,7 +160,7 @@ describe('Regression: stream.write is the only stdin method', () => {
       }
     }
 
-    // Session manager should use stream.write
+    // App UI should use stream.write for input
     expect(foundStreamWrite).toBe(true);
   });
 });

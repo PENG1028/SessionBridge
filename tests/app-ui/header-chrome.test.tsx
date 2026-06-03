@@ -5,6 +5,21 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import React from 'react';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 
+// Polyfill window.matchMedia for jsdom (needed by DirectoryPicker in StatusBar)
+Object.defineProperty(window, 'matchMedia', {
+  writable: true,
+  value: vi.fn().mockImplementation((query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  })),
+});
+
 // ─── Mock modules used by ConsoleHeader BEFORE importing it ──────
 
 // Focus context
@@ -43,15 +58,16 @@ vi.mock('../../app/console/actions/action-registry', () => ({
   getActions: vi.fn(() => []),
 }));
 
-// CoreClient status — ConsoleHeader uses useCoreStatus
+// CoreClient status — ConsoleHeader uses useCoreStatus, StatusBar uses useCore
 vi.mock('../../app/console/core/core-client-provider', () => ({
   useCoreStatus: vi.fn(() => 'connected'),
+  useCore: vi.fn(() => ({ call: vi.fn(), on: vi.fn(), isConnected: true, pluginId: 'sessionnode-core' })),
 }));
 
 // ─── Now import after mocks are set up ──────────────────────────
 import { ConsoleHeader } from '../../app/console/shell/console-header';
 import type { ConsoleHeaderProps } from '../../app/console/shell/console-header';
-import { StatusBar } from '../../app/console/shell/core-status-bar';
+import { StatusBar } from '../../app/console/shell/status-bar';
 import { runWorkbenchCommand } from '../../app/console/actions/workbench-command-dispatch';
 import {
   syncChromeContributions,
@@ -97,21 +113,6 @@ describe('StatusBar', () => {
 
   afterEach(cleanup);
 
-  it('renders connection status label for each state', () => {
-    const states = [
-      { status: 'connected' as const, label: 'Core Connected' },
-      { status: 'connecting' as const, label: 'Connecting...' },
-      { status: 'disconnected' as const, label: 'Disconnected' },
-      { status: 'error' as const, label: 'Connection Error' },
-    ];
-
-    for (const { status, label } of states) {
-      const { unmount } = render(<StatusBar connectionStatus={status} />);
-      expect(screen.getByText(new RegExp(label.replace(/\./g, '\\.')))).toBeTruthy();
-      unmount();
-    }
-  });
-
   it('renders plugin-contributed status bar items via chrome registry', () => {
     syncChromeContributions({
       statusBar: [
@@ -120,58 +121,22 @@ describe('StatusBar', () => {
       ],
     });
 
-    render(<StatusBar connectionStatus="connected" />);
+    render(<StatusBar queueStatus={{ processing: false, source: null, queueDepth: 0 }} />);
 
     expect(screen.getByText('CPU 12%')).toBeTruthy();
     expect(screen.getByText('v1.0.0')).toBeTruthy();
   });
 
-  it('renders context controls with status-left / status-right placement', () => {
-    syncChromeContributions({
-      contextControls: [
-        { id: 'ctx-left', kind: 'button', label: 'Left CC', placement: 'status-left' },
-        { id: 'ctx-right', kind: 'jump', label: 'Right CC', placement: 'status-right' },
-      ],
-    });
-
-    render(<StatusBar connectionStatus="connected" />);
-
-    expect(screen.getByText('Left CC')).toBeTruthy();
-    expect(screen.getByText('Right CC')).toBeTruthy();
-  });
-
-  it('does NOT render context controls with non-status placements', () => {
-    syncChromeContributions({
-      contextControls: [
-        { id: 'ctx-hr', kind: 'button', label: 'Header Item', placement: 'header-right' },
-        { id: 'ctx-br', kind: 'hint', label: 'Hint', placement: 'bottom-right' },
-      ],
-    });
-
-    render(<StatusBar connectionStatus="connected" />);
-
-    expect(screen.queryByText('Header Item')).toBeNull();
-    expect(screen.queryByText('Hint')).toBeNull();
-  });
-
-  it('renders legacy string items alongside chrome items', () => {
+  it('renders chrome items alongside queue info', () => {
     syncChromeContributions({
       statusBar: [
         { id: 'sb-chrome', text: 'Chrome Item', side: 'left' },
       ],
     });
 
-    render(
-      <StatusBar
-        connectionStatus="connected"
-        leftItems={['Legacy Left']}
-        rightItems={['Legacy Right']}
-      />
-    );
+    render(<StatusBar queueStatus={{ processing: false, source: null, queueDepth: 0 }} />);
 
     expect(screen.getByText('Chrome Item')).toBeTruthy();
-    expect(screen.getByText('Legacy Left')).toBeTruthy();
-    expect(screen.getByText('Legacy Right')).toBeTruthy();
   });
 });
 

@@ -2,50 +2,7 @@
 
 import { createContext, useContext, type ReactNode, type RefObject } from 'react';
 
-// ── Types shared with page.tsx ─────────────────────────────
-
-type Phase = 'idle' | 'running' | 'done' | 'error';
-
-interface Block {
-  id: string;
-  type: 'thinking' | 'tool_use' | 'tool_result' | 'text' | 'unknown';
-  semantic: string;
-  toolName: string;
-  detail: string;
-  output: string;
-  toolArgs: string;
-  status: 'running' | 'done' | 'error';
-  exitCode: number;
-  content: string;
-  expanded: boolean;
-  rawData: string;
-  isComplete?: boolean;
-}
-
-interface Message {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  timestamp: string;
-  blocks: Block[];
-  isPending: boolean;
-  isCompactSummary?: boolean;
-}
-
-type Turn = {
-  userMsg: Message;
-  assistantMsgs: Message[];
-};
-
-interface ToolActivity {
-  id: string;
-  toolName: string;
-  detail: string;
-  semantic: string;
-  status: 'running' | 'done' | 'error';
-}
-
-// ── Context value type ─────────────────────────────────────
+// ── Context value type (remaining after Session/Input/ToolActivity split) ──
 
 export interface WorkbenchContextValue {
   // Connection
@@ -54,48 +11,6 @@ export interface WorkbenchContextValue {
 
   // Logs
   logs: string[];
-
-  // Messages / Chat
-  messages: Message[];
-  turns: Turn[];
-  phase: Phase;
-  setPhase: (p: Phase) => void;
-  currentActivity: string | null;
-  setCurrentActivity: (a: string | null) => void;
-  connStatus: { status: string };
-  isRestoring: boolean;
-  historyLoading: boolean;
-
-  // Input
-  inputValue: string;
-  setInputValue: (v: string) => void;
-  handleSubmit: (overrideCmd?: string) => void;
-  handleInputChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  handleKeyDown: (e: React.KeyboardEvent) => void;
-
-  // Tool activities
-  toolActivities: Map<string, ToolActivity>;
-  setToolActivities: React.Dispatch<React.SetStateAction<Map<string, ToolActivity>>>;
-  expandedToolOutputs: Set<string>;
-  setExpandedToolOutputs: React.Dispatch<React.SetStateAction<Set<string>>>;
-
-  // File suggestions
-  showFileSuggest: boolean;
-  fileSuggestions: unknown[];
-  handleFileSuggestionClick: (item: unknown) => void;
-
-  // Commands
-  showCommands: boolean;
-  setShowCommands: React.Dispatch<React.SetStateAction<boolean>>;
-  handleCommandClick: (cmd: string) => void;
-  cmdPanelRef: RefObject<HTMLDivElement | null>;
-
-  // Actions
-  sendCommand: (cmd: string, args?: Record<string, string>, sessionId?: string) => void;
-  sendInput: (text: string, sessionId?: string) => void;
-  handleInterrupt: () => void;
-  setForkTarget: (v: number | null) => void;
-  setForkPrompt: (v: string) => void;
 
   // Instance management (Phase 4F: explicit instance creation, no auto-bind)
   instances: any[];
@@ -114,7 +29,6 @@ export interface WorkbenchContextValue {
   onNavigatePath?: (path: string) => void;
 
   // Live working directory — single source of truth for all components.
-  // Updated by TerminalView.sendCd and re-fetched on node switch via env.cwd.
   absoluteCwd: string;
   onCwdChange: (path: string) => void;
 

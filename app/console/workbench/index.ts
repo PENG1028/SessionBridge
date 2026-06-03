@@ -6,6 +6,12 @@ export { RuntimePolicyProvider, useRuntimePolicy } from './runtime-policy-contex
 export type { RuntimePolicy, PermissionMode, EffortLevel } from './runtime-policy-context';
 export { WorkbenchProvider, useWorkbench } from './workbench-context';
 export type { WorkbenchContextValue } from './workbench-context';
+export { SessionProvider, useSessionContext } from './session-context';
+export type { SessionContextValue } from './session-context';
+export { InputProvider, useInputContext } from './input-context';
+export type { InputContextValue } from './input-context';
+export { ToolActivityProvider, useToolActivityContext } from './tool-activity-context';
+export type { ToolActivityContextValue } from './tool-activity-context';
 export { MainSlot } from './slots/main-slot';
 export { SidebarSlot } from './slots/sidebar-slot';
 export { HeaderSlot } from './slots/header-slot';

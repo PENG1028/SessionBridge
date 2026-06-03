@@ -10,7 +10,7 @@ import { TOOL_SEMANTICS } from '../shared/tool-constants';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { SystemContextBar } from './system-context-bar';
-import { useWorkbench } from '../workbench/workbench-context';
+import { useWorkbench, useSessionContext, useInputContext, useToolActivityContext } from '../workbench';
 
 // ─── Internal types (duplicated from context for local references) ──
 
@@ -194,15 +194,20 @@ function ClaudeChatEmptyState() {
 
 function ClaudeChatInner({ instanceId }: { instanceId: string }) {
   const {
-    messages, turns,
-    phase, setPhase, currentActivity, setCurrentActivity,
+    messages, turns, phase, setPhase,
+    currentActivity, setCurrentActivity,
     connStatus, isRestoring, historyLoading,
+    handleInterrupt, setForkTarget, setForkPrompt,
+  } = useSessionContext();
+  const {
     inputValue, setInputValue, handleSubmit, handleInputChange, handleKeyDown,
-    toolActivities, setToolActivities, expandedToolOutputs, setExpandedToolOutputs,
     showFileSuggest, fileSuggestions, handleFileSuggestionClick,
     showCommands, setShowCommands, handleCommandClick, cmdPanelRef,
-    handleInterrupt,
-    setForkTarget, setForkPrompt,
+  } = useInputContext();
+  const {
+    toolActivities, setToolActivities, expandedToolOutputs, setExpandedToolOutputs,
+  } = useToolActivityContext();
+  const {
     activeExternalSession, clearExternalSession,
     scrollContainerRef, actionEndRef,
     activeInstanceId, activateInstance,
