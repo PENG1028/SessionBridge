@@ -53,9 +53,20 @@ function evaluateNot(expr: string, ctx: WhenContext): boolean {
   return evaluatePrimary(trimmed, ctx);
 }
 
+function isParenWrapped(expr: string): boolean {
+  if (!expr.startsWith('(') || !expr.endsWith(')')) return false;
+  let depth = 0;
+  for (let i = 0; i < expr.length - 1; i++) {
+    if (expr[i] === '(') depth++;
+    else if (expr[i] === ')') depth--;
+    if (depth === 0) return false;
+  }
+  return true;
+}
+
 function evaluatePrimary(expr: string, ctx: WhenContext): boolean {
   // Parenthesized expression
-  if (expr.startsWith('(') && expr.endsWith(')')) {
+  if (isParenWrapped(expr)) {
     return evaluateOr(expr.slice(1, -1).trim(), ctx);
   }
 

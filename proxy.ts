@@ -40,8 +40,14 @@ export function proxy(request: NextRequest) {
   // Dev bypass: SESSIONBRIDGE_AUTH_BYPASS=1
   if (process.env.SESSIONBRIDGE_AUTH_BYPASS === '1') {
     if (isApiCoreCall(pathname)) {
-      // Even in bypass mode, /api/core/* needs a server-side check.
-      // Let it through — the route handler will use env-configured Core token.
+      // Verify Core token is configured — without it, API calls will fail
+      // or expose unauthenticated endpoints.
+      if (!process.env.SESSIONNODE_TOKEN) {
+        return NextResponse.json(
+          { error: 'Core token not configured — set SESSIONNODE_TOKEN' },
+          { status: 401 },
+        );
+      }
       return NextResponse.next();
     }
     return NextResponse.next();

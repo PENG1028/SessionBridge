@@ -951,6 +951,13 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
     expandedToolOutputs, setExpandedToolOutputs,
   ]);
 
+  const clearExternalSession = useCallback(() => {
+    setActiveExternalSession(null);
+    try { localStorage.removeItem('sessionbridge-active-session'); } catch {}
+    historyLoadedRef.current = false;
+    window.location.reload();
+  }, [setActiveExternalSession]);
+
   const workbenchContextValue = useMemo(() => ({
     wsUrl: activeNodeWsUrl,
     token: token ?? undefined,
@@ -963,12 +970,7 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
     activeNodeWsUrl,
     activateInstance,
     activeExternalSession,
-    clearExternalSession: () => {
-      setActiveExternalSession(null);
-      try { localStorage.removeItem('sessionbridge-active-session'); } catch {}
-      historyLoadedRef.current = false;
-      window.location.reload();
-    },
+    clearExternalSession,
     onNavigatePath,
     absoluteCwd: absoluteCwd || activeNodeProjectInfo?.cwd || '.',
     onCwdChange: (path: string) => { setAbsoluteCwd(path); },
@@ -979,6 +981,7 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
     createNodeInstance, instances, handleBindCurrentTabInstance, activeInstanceId,
     activeNodeProjectInfo?.cwd, absoluteCwd,
     activateInstance, activeExternalSession,
+    clearExternalSession,
     onNavigatePath,
     scrollContainerRef, actionEndRef,
   ]);

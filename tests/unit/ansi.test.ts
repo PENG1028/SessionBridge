@@ -1,16 +1,7 @@
 // ─── Unit tests: ANSI processing ─────────────────────────────
 
 import { describe, it, expect } from 'vitest';
-
-// Strip ANSI escape codes
-function stripAnsi(str: string): string {
-  return str.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '');
-}
-
-// Detect if string contains ANSI codes
-function hasAnsi(str: string): boolean {
-  return /\x1B\[[0-9;]*[a-zA-Z]/.test(str);
-}
+import { stripAnsi, hasAnsi } from '../../lib/ansi';
 
 // Parse simple ANSI-styled segments
 interface AnsiSegment {
@@ -77,6 +68,29 @@ describe('stripAnsi', () => {
 
   it('strips cursor movement codes', () => {
     expect(stripAnsi('\x1B[2J\x1B[Hclear')).toBe('clear');
+  });
+
+  it('strips OSC window title sequences', () => {
+    expect(stripAnsi('\x1B]0;My Title\x07text')).toBe('text');
+    expect(stripAnsi('\x1B]0;Title\x1B\\more')).toBe('more');
+  });
+
+  it('strips DCS sequences', () => {
+    expect(stripAnsi('\x1BP123abc\x07remain')).toBe('remain');
+  });
+
+  it('strips C1 control characters', () => {
+    expect(stripAnsi('\x80\x9Fnormal')).toBe('normal');
+  });
+
+  it('strips box-drawing and block characters', () => {
+    expect(stripAnsi('─╿text')).toBe('text');
+    expect(stripAnsi('▀▟more')).toBe('more');
+  });
+
+  it('normalizes carriage returns', () => {
+    expect(stripAnsi('a\r\nb')).toBe('a\nb');
+    expect(stripAnsi('a\rb')).toBe('a\nb');
   });
 });
 

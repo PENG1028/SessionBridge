@@ -34,7 +34,8 @@ export function MarkdownRenderer({ content }: { content: string }) {
           );
         },
         a({ href, children }: any) {
-          return <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline decoration-blue-800/50">{children}</a>;
+          const safeHref = typeof href === 'string' && /^https?:/.test(href) ? href : undefined;
+          return <a href={safeHref} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline decoration-blue-800/50">{children}</a>;
         },
         p({ children }: any) { return <p className="mb-0 leading-relaxed">{children}</p>; },
         ul({ children }: any) { return <ul className="list-disc pl-4 mb-1 space-y-0.5">{children}</ul>; },

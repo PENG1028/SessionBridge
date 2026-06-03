@@ -72,7 +72,7 @@ async function main() {
       capability: 'run.create',
       pluginId: 'terminal',
       payload: {
-        command: 'cmd.exe',
+        command: process.platform === 'win32' ? 'cmd.exe' : 'bash',
         pty: true,
         cols: 80,
         rows: 24,
