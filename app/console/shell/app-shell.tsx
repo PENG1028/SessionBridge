@@ -476,7 +476,7 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
     try {
       const host = new URL(activeNodeWsUrl).hostname;
       return { cwd: '.', projectName: host, homeDir: '.' };
-    } catch (_e) { /* React state setters never throw — safe to ignore */ }
+    } catch (_e) {
       return { cwd: '.', projectName: 'remote', homeDir: '.' };
     }
   }, [activeNodeWsUrl, wsUrl, projectInfo]);
