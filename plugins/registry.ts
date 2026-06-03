@@ -20,7 +20,6 @@ export const pluginComponents: Record<
   () => Promise<{ default: ComponentType<any> }>
 > = {
   terminal: () => import('./terminal/index'),
-  'system-info': () => import('./system-info/index'),
   dashboard: () => import('./dashboard/index').then(m => ({ default: m.DashboardView as ComponentType<HostComponentProps> })),
   approvals: () => import('./approvals/index').then(m => ({ default: m.ApprovalCenter as ComponentType<HostComponentProps> })),
   'claude-chat': () => import('./claude-chat/index').then(m => ({ default: m.ClaudeChatView as ComponentType<HostComponentProps> })),

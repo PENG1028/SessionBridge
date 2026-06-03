@@ -24,9 +24,3 @@ adapters:
         entry: ./index
         title: Apps
         icon: Puzzle
-      - id: app-detail
-        surface: main.editor
-        type: custom-react
-        entry: ./index
-        title: App Detail
-        icon: Puzzle
