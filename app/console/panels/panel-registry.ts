@@ -20,8 +20,13 @@ export interface PanelRegistration {
   /** Optional when-condition for visibility. */
   when?: string;
   /** If true, panel is always visible regardless of context.
-   *  Default (false): panel only shows when its plugin has an active view. */
+   *  Default (false): panel only shows when the current tab's viewType
+   *  matches this panel's pluginId. */
   alwaysVisible?: boolean;
+  /** The plugin that owns this panel. Used for default visibility:
+   *  panels without `when` and without `alwaysVisible` only show
+   *  when `ctx.view === pluginId`. */
+  pluginId?: string;
   component: ComponentType<any>;
   /** Icon component rendered in the DockPanelFrame header. Stable — visible even when collapsed. */
   icon?: ComponentType<{ className?: string }>;
@@ -109,8 +114,14 @@ export function getPanels(side: 'left' | 'right', ctx?: WhenContext): PanelRegis
     if (reg.when && ctx && !evaluateWhen(reg.when, ctx)) continue;
 
     // Default visibility: panels without when and without alwaysVisible
-    // only show when there's an active adapter (plugin context is active).
-    if (!reg.when && !reg.alwaysVisible && ctx && !ctx.activeAdapterId) continue;
+    // only show when the current tab's viewType matches this panel's pluginId.
+    // This replaces the old activeAdapterId check which was unreliable —
+    // activeAdapterId came from the tab's bound instance, which could be
+    // stale or from a different view after tab switches.
+    if (!reg.when && !reg.alwaysVisible && ctx) {
+      if (!ctx.view || !reg.pluginId) continue;
+      if (ctx.view !== reg.pluginId) continue;
+    }
 
     result.push(reg);
   }
@@ -126,8 +137,8 @@ export function getPanels(side: 'left' | 'right', ctx?: WhenContext): PanelRegis
  * panel types. Panels without a registered component are skipped.
  */
 export function syncPluginPanels(
-  leftViews?: { id: string; title: string; icon: string; defaultVisible: boolean; componentId?: string; when?: string; order?: number; alwaysVisible?: boolean }[],
-  rightViews?: { id: string; title: string; icon: string; defaultVisible: boolean; componentId?: string; when?: string; order?: number; alwaysVisible?: boolean }[],
+  leftViews?: { id: string; title: string; icon: string; defaultVisible: boolean; componentId?: string; when?: string; order?: number; alwaysVisible?: boolean; pluginId?: string }[],
+  rightViews?: { id: string; title: string; icon: string; defaultVisible: boolean; componentId?: string; when?: string; order?: number; alwaysVisible?: boolean; pluginId?: string }[],
 ): void {
   // Remove all panels from the previous sync — stale entries must not linger.
   for (const id of pluginPanelIds) {
@@ -165,6 +176,7 @@ export function syncPluginPanels(
         order: v.order ?? 100,
         when: v.when,
         alwaysVisible: v.alwaysVisible,
+        pluginId: v.pluginId,
         icon: resolveIcon(v.icon),
         component: comp,
       });

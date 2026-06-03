@@ -16,6 +16,6 @@ export type { CoreClient, CoreConnectionStatus, FocusState, CoreErrorCategory } 
 
 export { ShellTerminal, TitleBar, DirectoryPicker, SystemContextBar, FileExplorer } from './components';
 
-export { getLastActiveDir, setLastActiveDir, getRestoreLastPath, TOOL_SEMANTICS, evaluateWhen, normalizeNodeInfo, listFromResponse, normalizeSessionInfo, loadApps, isEnabled, setEnabled, getLoadError, invalidateCache } from './utils';
+export { getLastActiveDir, setLastActiveDir, getRestoreLastPath, TOOL_SEMANTICS, evaluateWhen, normalizeNodeInfo, listFromResponse, normalizeSessionInfo, loadApps, isEnabled, setEnabled, getLoadError, invalidateCache, registerPanelComponent } from './utils';
 
 export type { HostComponentProps, CoreEvent, NodeInfo, PeerEntry, NodeInvite, SessionInfo, AppSummary, AppManifest, AppSystemUI, AppUIPanel, WhenContext } from './types';

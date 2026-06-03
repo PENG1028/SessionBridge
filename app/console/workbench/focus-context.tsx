@@ -86,7 +86,7 @@ export function FocusProvider({
       whenContext,
       dockProfileKey,
     };
-  }, [instances, activeInstanceId, activeViewId, sessionKey, paneFocus]);
+  }, [instances, activeViewId, sessionKey, paneFocus]);
 
   return (
     <FocusContext.Provider value={value}>

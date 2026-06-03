@@ -9,7 +9,7 @@
  * registrations fire when the plugin module is loaded.
  */
 
-import { registerPanelComponent } from '../../../app/console/panels/panel-registry';
+import { registerPanelComponent } from '../../../sdk';
 import { LogsPanel, TerminalPanel, ProcessesPanel } from './extension-panels';
 import { FilesPanel } from './files-panel';
 import { SessionListPanel } from './sessions-panel';

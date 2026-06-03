@@ -44,8 +44,8 @@ export async function syncAllPlugins(
     await Promise.all(apps.map((a: any) => loadAppState(a.id).catch(() => {})));
 
   // Collect contributions from all enabled apps
-  const allLeft: Array<{ id: string; title: string; icon: string; defaultVisible: boolean; componentId?: string; order?: number }> = [];
-  const allRight: Array<{ id: string; title: string; icon: string; defaultVisible: boolean; componentId?: string; order?: number }> = [];
+  const allLeft: Array<{ id: string; title: string; icon: string; defaultVisible: boolean; componentId?: string; order?: number; pluginId?: string }> = [];
+  const allRight: Array<{ id: string; title: string; icon: string; defaultVisible: boolean; componentId?: string; order?: number; pluginId?: string }> = [];
   const allStatusBar: Array<{ id: string; text: string; icon?: string; command?: string; side: 'left' | 'right'; order: number }> = [];
 
   // Clean up stale registrations from deleted plugins
@@ -112,8 +112,8 @@ function registerAppContributions(
   manifest: AppManifest,
   ui: AppSystemUI,
   onExecuteCommand: (commandId: string) => void,
-  allLeft: Array<{ id: string; title: string; icon: string; defaultVisible: boolean; componentId?: string; order?: number }>,
-  allRight: Array<{ id: string; title: string; icon: string; defaultVisible: boolean; componentId?: string; order?: number }>,
+  allLeft: Array<{ id: string; title: string; icon: string; defaultVisible: boolean; componentId?: string; order?: number; pluginId?: string }>,
+  allRight: Array<{ id: string; title: string; icon: string; defaultVisible: boolean; componentId?: string; order?: number; pluginId?: string }>,
   allStatusBar: Array<{ id: string; text: string; icon?: string; command?: string; side: 'left' | 'right'; order: number }>,
 ): void {
   const viewIds: string[] = [];
@@ -148,12 +148,14 @@ function registerAppContributions(
       const entry: {
         id: string; title: string; icon: string; defaultVisible: boolean;
         componentId?: string; when?: string; order?: number; alwaysVisible?: boolean;
+        pluginId?: string;
       } = {
         id: p.id,
         title: p.title || p.id,
         icon: p.icon || 'PanelRight',
         defaultVisible: true,
         componentId: p.componentId,
+        pluginId: appId,
       };
       if (p.when) entry.when = p.when;
       if (p.order !== undefined) entry.order = p.order;
