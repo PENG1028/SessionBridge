@@ -30,7 +30,7 @@ import { useContextMenu } from '../hooks/use-context-menu';
 import type { ContextMenuRequest, ContextMenuItemSpec } from '../menus/context-menu-types';
 import { registerBuiltinCommands } from '../commands/register-builtin-commands';
 // Host component registration is now driven by plugin.yaml → syncAllPlugins
-import './console/plugin-host'; // side-effect: registers host component library
+import '../plugin-host'; // side-effect: registers host component library
 import { registerCommand, getCommand } from '../commands/command-registry';
 import { getAction, getActions } from '../actions/action-registry';
 import { runWorkbenchCommand } from '../actions/workbench-command-dispatch';
