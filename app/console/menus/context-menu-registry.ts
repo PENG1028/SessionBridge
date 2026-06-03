@@ -274,7 +274,7 @@ function dispatchCommand(
   target?: ContextMenuRequest['target'],
 ): void {
   if (!actionRunCtx) {
-    if (process.env.NODE_ENV !== "'production'") console.warn(`[context-menu] No ActionRunContext for command "${command}"`);
+    if (process.env.NODE_ENV !== 'production') console.warn(`[context-menu] No ActionRunContext for command "${command}"`);
     return;
   }
   runWorkbenchCommand({ command, args, target: target as Record<string, unknown> | undefined }, actionRunCtx);

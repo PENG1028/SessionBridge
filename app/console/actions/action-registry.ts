@@ -50,7 +50,7 @@ export function runAction(id: string, ctx: ActionRunContext): void {
   if (action) {
     action.run(ctx);
   } else {
-    if (process.env.NODE_ENV !== "'production'") console.warn(`[actions] No handler registered for "${id}"`);
+    if (process.env.NODE_ENV !== 'production') console.warn(`[actions] No handler registered for "${id}"`);
   }
 }
 
