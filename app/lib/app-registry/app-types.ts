@@ -103,6 +103,9 @@ export interface AppUIPanel {
   when?: string;
   /** Display order within the sidebar (lower = first). */
   order?: number;
+  /** If true, panel is always visible regardless of active context.
+   *  Default: panel only shows when its plugin has an active view. */
+  alwaysVisible?: boolean;
 }
 
 export interface AppUICommand {

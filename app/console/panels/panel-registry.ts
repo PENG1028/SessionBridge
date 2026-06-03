@@ -19,6 +19,9 @@ export interface PanelRegistration {
   order: number;
   /** Optional when-condition for visibility. */
   when?: string;
+  /** If true, panel is always visible regardless of context.
+   *  Default (false): panel only shows when its plugin has an active view. */
+  alwaysVisible?: boolean;
   component: ComponentType<any>;
   /** Icon component rendered in the DockPanelFrame header. Stable — visible even when collapsed. */
   icon?: ComponentType<{ className?: string }>;
@@ -101,7 +104,14 @@ export function getPanels(side: 'left' | 'right', ctx?: WhenContext): PanelRegis
   const result: PanelRegistration[] = [];
   for (const reg of registry.values()) {
     if (reg.side !== side) continue;
+
+    // Explicit when-condition
     if (reg.when && ctx && !evaluateWhen(reg.when, ctx)) continue;
+
+    // Default visibility: panels without when and without alwaysVisible
+    // only show when there's an active adapter (plugin context is active).
+    if (!reg.when && !reg.alwaysVisible && ctx && !ctx.activeAdapterId) continue;
+
     result.push(reg);
   }
   result.sort((a, b) => a.order - b.order);
@@ -116,8 +126,8 @@ export function getPanels(side: 'left' | 'right', ctx?: WhenContext): PanelRegis
  * panel types. Panels without a registered component are skipped.
  */
 export function syncPluginPanels(
-  leftViews?: { id: string; title: string; icon: string; defaultVisible: boolean; componentId?: string; when?: string; order?: number }[],
-  rightViews?: { id: string; title: string; icon: string; defaultVisible: boolean; componentId?: string; when?: string; order?: number }[],
+  leftViews?: { id: string; title: string; icon: string; defaultVisible: boolean; componentId?: string; when?: string; order?: number; alwaysVisible?: boolean }[],
+  rightViews?: { id: string; title: string; icon: string; defaultVisible: boolean; componentId?: string; when?: string; order?: number; alwaysVisible?: boolean }[],
 ): void {
   // Remove all panels from the previous sync — stale entries must not linger.
   for (const id of pluginPanelIds) {
@@ -154,6 +164,7 @@ export function syncPluginPanels(
         title: v.title,
         order: v.order ?? 100,
         when: v.when,
+        alwaysVisible: v.alwaysVisible,
         icon: resolveIcon(v.icon),
         component: comp,
       });

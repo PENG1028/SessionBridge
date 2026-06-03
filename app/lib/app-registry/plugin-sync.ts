@@ -147,7 +147,7 @@ function registerAppContributions(
       if (!p.id) continue;
       const entry: {
         id: string; title: string; icon: string; defaultVisible: boolean;
-        componentId?: string; when?: string; order?: number;
+        componentId?: string; when?: string; order?: number; alwaysVisible?: boolean;
       } = {
         id: p.id,
         title: p.title || p.id,
@@ -157,6 +157,7 @@ function registerAppContributions(
       };
       if (p.when) entry.when = p.when;
       if (p.order !== undefined) entry.order = p.order;
+      if (p.alwaysVisible) entry.alwaysVisible = true;
       if (p.surface === 'left') allLeft.push(entry);
       else if (p.surface === 'right') allRight.push(entry);
     }
