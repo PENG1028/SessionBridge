@@ -190,13 +190,8 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
   const appStateRef = useRef(appState);
   appStateRef.current = appState;
 
-  // Track last-active node for brand toggle
+  // Track last-active node for brand toggle — updated in handleEnterNode
   const lastActiveNodeRef = useRef<string | null>(null);
-  const prevActiveId = useRef(appState.activeInstanceId);
-  if (appState.activeInstanceId && appState.activeInstanceId !== prevActiveId.current) {
-    lastActiveNodeRef.current = appState.activeInstanceId;
-  }
-  prevActiveId.current = appState.activeInstanceId;
 
   // Sync activeInstanceId -> CoreClient targetNodeId.
   // Go dispatcher's localNodeID check handles local vs remote routing.
@@ -800,6 +795,7 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
       // Toggle off — back to node network view
       setAppState(prev => appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: null }));
     } else {
+      lastActiveNodeRef.current = nodeId;
       // Enter this node — create workbench layout if needed
       setAppState(prev => {
         if (prev.instanceStates[nodeId]) {
@@ -813,6 +809,21 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
       });
     }
   }, []);
+
+  // ── Brand toggle: console ↔ last-active node ──
+  const handleToggleConsole = useCallback(() => {
+    if (appState.activeInstanceId) {
+      setAppState(prev => appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: null }));
+    } else {
+      const target = lastActiveNodeRef.current || localNodeId;
+      if (target) {
+        setAppState(prev => {
+          if (!prev.instanceStates[target]) return prev;
+          return appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: target });
+        });
+      }
+    }
+  }, [appState.activeInstanceId, localNodeId]);
 
   // ── Closed kept tabs for ≡ menu (Phase 4N) ──
   const closedKeptTabs = useMemo(() => {
@@ -1019,16 +1030,7 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
         onToggleLeftSidebar={() => dispatch({ type: 'TOGGLE_SIDEBAR', position: 'left' })}
         onToggleRightSidebar={() => dispatch({ type: 'TOGGLE_SIDEBAR', position: 'right' })}
         connectionLabel={connectionLabel}
-        onOpenConnectionManager={() => {
-  if (appState.activeInstanceId) {
-    setAppState(prev => appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: null }));
-  } else {
-    const target = lastActiveNodeRef.current || localNodeId;
-    if (target && appState.instanceStates[target]) {
-      setAppState(prev => appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: target }));
-    }
-  }
-}}
+        onOpenConnectionManager={handleToggleConsole}
       />
 
       {/* ── Disconnect banner (30s grace) ── */}
