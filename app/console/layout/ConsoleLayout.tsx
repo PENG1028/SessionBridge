@@ -73,7 +73,7 @@ export function ConsoleLayout(props: Record<string, any>) {
     setInputValue, addLog,
     handleEnterNode, handleGoToConsole, setAppState,
     setSettingsOpen, settingsOpen,
-    showRemoteOverlay, reachabilityNodeId, isLocalPage,
+    showRemoteOverlay, reachabilityNodeId, overlayStatus, isLocalPage,
     setMobileOpen, setMobileRightOpen, mobileOpen, mobileRightOpen,
     focusViewId, focusWhenContext,
     connectionLabel, showStatusBar,
@@ -173,10 +173,26 @@ export function ConsoleLayout(props: Record<string, any>) {
           {showRemoteOverlay && (
             <div className="absolute inset-0 z-50 flex items-center justify-center bg-[#0a0a0a]/80 backdrop-blur-sm">
               <div className="bg-[#111] border border-gray-800 rounded px-6 py-4 text-center max-w-sm">
-                <div className="text-[10px] font-mono tracking-wider uppercase text-gray-500 mb-2">远端节点离线</div>
-                <p className="text-[11px] text-gray-400 mb-3">目标节点 mesh 连接已断开，当前功能不可用。
-                  请在节点管理页面重新连接。</p>
-                <span className="text-[9px] text-gray-600 font-mono">{reachabilityNodeId}</span>
+                {overlayStatus === 'rejected' ? (
+                  <>
+                    <div className="text-[10px] font-mono tracking-wider uppercase text-red-500 mb-2">配对已失效</div>
+                    <p className="text-[11px] text-gray-400 mb-3">对方不再信任此节点的连接，需要在节点管理页面重新配对。</p>
+                    <button
+                      onClick={() => props.onOpenConnection?.()}
+                      className="text-[10px] px-3 py-1.5 bg-red-900/30 text-red-400 border border-red-800/40 rounded hover:bg-red-900/50 transition-colors"
+                    >打开连接管理器</button>
+                    <div className="mt-2">
+                      <span className="text-[9px] text-gray-600 font-mono">{reachabilityNodeId}</span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="text-[10px] font-mono tracking-wider uppercase text-gray-500 mb-2">远端节点离线</div>
+                    <p className="text-[11px] text-gray-400 mb-3">目标节点 mesh 连接已断开，当前功能不可用。
+                      请在节点管理页面重新连接。</p>
+                    <span className="text-[9px] text-gray-600 font-mono">{reachabilityNodeId}</span>
+                  </>
+                )}
               </div>
             </div>
           )}

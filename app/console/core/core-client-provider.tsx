@@ -175,6 +175,31 @@ export function useTargetReachability(nodeId: string | null): boolean {
  * useReachableNodeIds — returns a Set of node IDs currently reachable via mesh.
  * Updates instantly when a node connects or disconnects.
  */
+/**
+ * useNodeStatus — returns the full status string for a remote node.
+ * Values: 'local', 'connected', 'disconnected', 'connecting', 'rejected'.
+ * Updated from node.list responses (polled by node-bar.tsx).
+ */
+export function useNodeStatus(nodeId: string | null): string | undefined {
+  const core = useCore();
+
+  const subscribe = useCallback(
+    (onChange: () => void) => {
+      if (!(core instanceof ProxyCoreClient)) return () => {};
+      return core.onNodeStatusChange(onChange);
+    },
+    [core],
+  );
+
+  const getSnapshot = useCallback((): string | undefined => {
+    if (!nodeId) return undefined;
+    if (!(core instanceof ProxyCoreClient)) return undefined;
+    return core.getNodeStatus(nodeId);
+  }, [core, nodeId]);
+
+  return useSyncExternalStore(subscribe, getSnapshot, () => undefined);
+}
+
 export function useReachableNodeIds(): Set<string> {
   const core = useCore();
   const cachedRef = useRef<Set<string>>(EMPTY_SET);

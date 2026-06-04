@@ -38,6 +38,11 @@ export class ProxyCoreClient implements CoreClient {
   private _reachableTargets = new Set<string>();
   private _reachabilityListeners = new Set<() => void>();
 
+  // ── Node status tracking (from node.list responses) ──
+  // Maps nodeId -> status string (connected, disconnected, connecting, rejected, local)
+  private _nodeStatuses = new Map<string, string>();
+  private _nodeStatusListeners = new Set<() => void>();
+
   constructor(pluginId = 'sessionnode-core') {
     this.pluginId = pluginId;
   }
@@ -104,6 +109,42 @@ export class ProxyCoreClient implements CoreClient {
       return; // no change
     }
     this._reachabilityListeners.forEach(fn => { try { fn(); } catch (_e) { /* ignore */ } });
+  }
+
+  // ── Node status API (used by node-bar.tsx to track full status) ──
+
+  /** Update the status cache for a node from node.list responses. */
+  updateNodeStatus(nodeId: string, status: string): void {
+    this._nodeStatuses.set(nodeId, status);
+    this._nodeStatusListeners.forEach(fn => { try { fn(); } catch (_e) { /* ignore */ } });
+  }
+
+  /** Remove a node from the status cache (e.g. when it leaves the trust store). */
+  removeNodeStatus(nodeId: string): void {
+    this._nodeStatuses.delete(nodeId);
+    this._nodeStatusListeners.forEach(fn => { try { fn(); } catch (_e) { /* ignore */ } });
+  }
+
+  /** Get the cached status for a node. */
+  getNodeStatus(nodeId: string): string | undefined {
+    return this._nodeStatuses.get(nodeId);
+  }
+
+  /** Get all tracked node statuses as [nodeId, status][] sorted by nodeId. */
+  getAllNodeStatuses(): Array<[string, string]> {
+    return Array.from(this._nodeStatuses.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }
+
+  /** Subscribe to node status changes. Returns unsubscribe function. */
+  onNodeStatusChange(handler: () => void): () => void {
+    this._nodeStatusListeners.add(handler);
+    return () => this._nodeStatusListeners.delete(handler);
+  }
+
+  /** Clear all cached node statuses (e.g. when reconnecting). */
+  clearNodeStatuses(): void {
+    this._nodeStatuses.clear();
+    this._nodeStatusListeners.forEach(fn => { try { fn(); } catch (_e) { /* ignore */ } });
   }
 
   // ── Core call via HTTP proxy ──────────────────────────────

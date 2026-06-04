@@ -15,7 +15,7 @@ import { RightSidebar } from '../sidebar/right-sidebar';
 import { StatusBar } from '../shell/status-bar';
 import { ConsoleHeader } from '../shell/console-header';
 import { getAdapterViewId, getViewEntry, getAllAdapterTypes } from '../main/view-registry';
-import { useCore, useSetActiveNode, useActiveNodeId, useLocalNodeId, useTargetReachability } from '../core/core-client-provider';
+import { useCore, useSetActiveNode, useActiveNodeId, useLocalNodeId, useTargetReachability, useNodeStatus } from '../core/core-client-provider';
 import { CoreErrorBanner } from '../core/core-error-banner';
 import { classifyCoreError } from '../core/core-error';
 import { useCoreErrors } from '../core/use-core-call';
@@ -292,6 +292,7 @@ export function useConsoleController({ wsUrl, setWsUrl, token, setToken, onRecon
   const reachabilityNodeId = appState.activeInstanceId ?? null;
   const localNodeId = useLocalNodeId();
   const remoteReachable = useTargetReachability(reachabilityNodeId);
+  const overlayStatus = useNodeStatus(reachabilityNodeId);
   const showRemoteOverlay = !!(
     reachabilityNodeId &&
     localNodeId &&
@@ -1025,7 +1026,7 @@ export function useConsoleController({ wsUrl, setWsUrl, token, setToken, onRecon
     // Context menu
     ctxMenu, handleWorkbenchContextMenu, closeContextMenu,
     // Overlays
-    showRemoteOverlay, reachabilityNodeId, isLocalPage,
+    showRemoteOverlay, reachabilityNodeId, overlayStatus, isLocalPage,
     // Mobile
     mobileOpen, setMobileOpen, mobileRightOpen, setMobileRightOpen,
     // Other

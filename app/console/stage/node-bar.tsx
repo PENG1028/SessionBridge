@@ -12,6 +12,7 @@ interface NodeBarPeer {
   role?: 'relay' | 'leaf';
   networkType?: 'loopback' | 'lan' | 'wan' | 'unknown';
   hasPublicAccess?: boolean;
+  status?: string;
 }
 
 interface NodeBarProps {
@@ -25,7 +26,8 @@ function nodeIcon(peer: NodeBarPeer) {
   return Cpu;
 }
 
-function statusColor(isConnected: boolean): string {
+function statusColor(isConnected: boolean, status?: string): string {
+  if (status === 'rejected') return 'bg-red-500';
   return isConnected ? 'bg-emerald-500' : 'bg-gray-600';
 }
 
@@ -60,22 +62,30 @@ export function NodeBar({ activeNodeId, onEnterNode, onOpenConnection }: NodeBar
         const lid = identity?.nodeId || '__local__';
         if (!cancelled) setLocalNodeId(lid);
 
-        const nodeList = await core.call<{ nodes: Array<{ nodeId: string; name?: string; displayName?: string; hostname?: string; addresses?: string[]; address?: string; role?: string; networkType?: string; hasPublicAccess?: boolean }> }>('node.list');
+        const nodeList = await core.call<{ nodes: Array<{ nodeId: string; name?: string; displayName?: string; hostname?: string; addresses?: string[]; address?: string; role?: string; networkType?: string; hasPublicAccess?: boolean; status?: string }> }>('node.list');
         if (cancelled || !nodeList?.nodes) return;
 
-        setRemotePeers(
-          nodeList.nodes
-            .filter(n => n.nodeId && n.nodeId !== lid)
-            .map(n => ({
-              id: n.nodeId,
-              name: n.name || n.displayName || n.hostname || n.nodeId.slice(0, 12),
-              ip: n.addresses?.[0] || n.address,
-              type: 'agent' as const,
-              role: (n.role || 'leaf') as 'relay' | 'leaf',
-              networkType: (n.networkType || 'unknown') as 'loopback' | 'lan' | 'wan' | 'unknown',
-              hasPublicAccess: n.hasPublicAccess,
-            }))
-        );
+        const peers = nodeList.nodes
+          .filter(n => n.nodeId && n.nodeId !== lid)
+          .map(n => ({
+            id: n.nodeId,
+            name: n.name || n.displayName || n.hostname || n.nodeId.slice(0, 12),
+            ip: n.addresses?.[0] || n.address,
+            type: 'agent' as const,
+            role: (n.role || 'leaf') as 'relay' | 'leaf',
+            networkType: (n.networkType || 'unknown') as 'loopback' | 'lan' | 'wan' | 'unknown',
+            hasPublicAccess: n.hasPublicAccess,
+            status: n.status,
+          }));
+        // Update status cache on ProxyCoreClient so the overlay can distinguish
+        // "rejected" from "disconnected".
+        if (peers.length > 0 && typeof (core as any).updateNodeStatus === 'function') {
+          const pcc = core as any;
+          for (const p of peers) {
+            pcc.updateNodeStatus(p.id, p.status || 'disconnected');
+          }
+        }
+        setRemotePeers(peers);
       } catch (_e) {
         // node.list unavailable — no remote peers to show
       }
@@ -126,7 +136,7 @@ export function NodeBar({ activeNodeId, onEnterNode, onOpenConnection }: NodeBar
             }`}
           >
             <button onClick={() => onEnterNode(peer.id)} className="flex items-center gap-1.5 flex-1 min-w-0">
-              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusColor(peer.id === localPeerId || reachableNodeIds.has(peer.id))} ${isActive ? 'ring-1 ring-purple-400/40' : ''}`} />
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusColor(peer.id === localPeerId || reachableNodeIds.has(peer.id), peer.status)} ${isActive ? 'ring-1 ring-purple-400/40' : ''}`} />
               <Icon className="w-3 h-3 shrink-0" />
               <span className="truncate max-w-[80px]">{peer.name || peer.id.slice(0, 12)}</span>
               {peer.networkType && peer.networkType !== 'loopback' && (
@@ -143,7 +153,7 @@ export function NodeBar({ activeNodeId, onEnterNode, onOpenConnection }: NodeBar
                 setDismissed(prev => { const n = new Set(prev); n.add(peer.id); return n; });
               }}
               className={`shrink-0 ml-0.5 p-0.5 ${peer.id === activeNodeId ? 'invisible' : 'text-gray-700 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all'}`}
-              title={peer.id === activeNodeId ? "Can't hide active node" : 'Hide this node'}
+              title={peer.id === activeNodeId ? "Can't hide active node" : peer.status === 'rejected' ? '配对已失效，需重新连接' : 'Hide this node'}
             >
               <X className="w-2.5 h-2.5" />
             </button>
