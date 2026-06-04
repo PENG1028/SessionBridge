@@ -2,53 +2,27 @@
 // Replaces the ad-hoc splitLayout + showTerminal pattern with a
 // proper recursive layout tree where all views are first-class panes.
 
-export type ViewType =
-  | 'empty'
-  | (string & {});
+// Re-export types from the dedicated types file
+export type {
+  ViewType,
+  PaneTab,
+  PaneState,
+  SplitNode,
+  LayoutNode,
+  WorkbenchState,
+  WorkbenchAction,
+  AppWorkbenchState,
+  AppWorkbenchAction,
+} from './workbench-state.types';
 
-export interface PaneTab {
-  id: string;
-  title: string;
-  viewType: ViewType;
-  instanceId?: string;
-  pluginId?: string;
-  /** SharedSurface id — set when this tab is backed by a shared surface (surface protocol) */
-  _surfaceId?: string;
-  /** Set when a terminal tab's instanceId points to the node itself but has no
-   *  valid surface backing. The tab should not render as a usable terminal. */
-  _stale?: boolean;
-  /** Server-side keep flag — surface persists even when no browser subscribes. */
-  _keep?: boolean;
-  /** Runtime process lost (relay restart) but surface preserved via keep/persistence. */
-  _orphaned?: boolean;
-}
+// Re-export persistence
+export {
+  saveLayoutsToStorage,
+  loadLayoutsFromStorage,
+  restoreInstanceStatesFromStorage,
+} from './workbench-persistence';
 
-export interface PaneState {
-  kind: 'pane';
-  id: string;
-  tabs: PaneTab[];
-  activeTabId: string;
-  zone: 'main' | 'bottom';
-  minSize?: number;
-}
-
-export interface SplitNode {
-  kind: 'split';
-  id: string;
-  direction: 'horizontal' | 'vertical';
-  children: LayoutNode[];
-  /** Relative sizes (flex-grow) for each child, 1 each if omitted. */
-  sizes?: number[];
-}
-
-export type LayoutNode = SplitNode | PaneState;
-
-export interface WorkbenchState {
-  root: LayoutNode;
-  activePaneId: string;
-  bottom: PaneState | null;
-}
-
+import type { PaneTab, PaneState, LayoutNode, WorkbenchState, WorkbenchAction, AppWorkbenchState, AppWorkbenchAction, ViewType } from './workbench-state.types';
 import { getAllViewEntries } from '../main/view-registry';
 import { firstLaunchableViewId } from '../plugin-host/launchability';
 
@@ -182,24 +156,6 @@ export function createEmptyPane(zone: 'main' | 'bottom' = 'main'): PaneState {
 
 // ─── Reducer ───────────────────────────────────────────────────
 
-export type WorkbenchAction =
-  | { type: 'FOCUS_PANE'; paneId: string }
-  | { type: 'CLOSE_TAB'; paneId: string; tabId: string }
-  | { type: 'SPLIT_PANE'; paneId: string; direction: 'horizontal' | 'vertical'; newInstanceId?: string; viewType?: string }
-  | { type: 'UNSPLIT_PANE'; paneId: string }
-  | { type: 'ADD_TAB'; paneId: string; tab: PaneTab; activate?: boolean }
-  | { type: 'SET_ACTIVE_TAB'; paneId: string; tabId: string }
-  | { type: 'SET_TAB_VIEW'; paneId: string; tabId: string; viewType: ViewType; title: string; instanceId?: string; _surfaceId?: string }
-  | { type: 'ADD_EMPTY_PANE' }
-  | { type: 'ADD_BOTTOM_PANE'; tab?: PaneTab }
-  | { type: 'SET_BOTTOM_HEIGHT'; height: number }
-  | { type: 'REMOVE_PANE'; paneId: string }
-  | { type: 'CLOSE_BOTTOM_PANE' }
-  | { type: 'SPLIT_PANE_VERTICAL'; paneId: string; newInstanceId?: string }
-  | { type: 'SPLIT_PANE_HORIZONTAL'; paneId: string; newInstanceId?: string }
-  | { type: 'REORDER_TABS'; paneId: string; tabId: string; targetId: string }
-  | { type: 'CLEAR_INSTANCE_TABS'; instanceId: string };
-
 export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction): WorkbenchState {
   switch (action.type) {
     case 'FOCUS_PANE':
@@ -246,7 +202,7 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         activeTabId: tabId,
         zone: 'main',
       };
-      const split: SplitNode = {
+      const split: import('./workbench-state.types').SplitNode = {
         kind: 'split',
         id: genPaneId(),
         direction: action.direction,
@@ -260,11 +216,8 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
     }
 
     case 'UNSPLIT_PANE': {
-      // Walk tree: if action.paneId is inside a SplitNode, collapse it
-      // For simplicity, just remove the split and keep the first pane
       const found = findPane(state.root, action.paneId);
       if (!found) return state;
-      // Replace the entire root with just this pane
       const keep: PaneState = {
         ...found,
         id: genPaneId(),
@@ -302,7 +255,6 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
     }
 
     case 'SET_TAB_VIEW': {
-      // Update an existing tab's viewType (empty → real view after user picks one)
       const pane = findPane(state.root, action.paneId) || state.bottom;
       if (!pane || pane.kind !== 'pane') return state;
       const newTabs = pane.tabs.map(t => {
@@ -338,7 +290,6 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
           activePaneId: empty.id,
         };
       }
-      // Add as extra child to root split
       return {
         ...state,
         root: { ...state.root, children: [...state.root.children, empty] },
@@ -347,7 +298,7 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
     }
 
     case 'ADD_BOTTOM_PANE': {
-      if (state.bottom) return state; // already open
+      if (state.bottom) return state;
       const tabId = genTabId();
       const bottom: PaneState = {
         kind: 'pane',
@@ -405,8 +356,6 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
           : t;
       const clearPane = (p: PaneState) =>
         p ? { ...p, tabs: p.tabs.map(clearTab) } : p;
-      // Recursively traverse the layout tree — a split can contain
-      // nested splits, and all panes at any depth must be cleared.
       const clearTree = (node: LayoutNode): LayoutNode => {
         if (node.kind === 'pane') return clearPane(node);
         return { ...node, children: node.children.map(clearTree) };
@@ -462,37 +411,6 @@ export function ensureInstanceTab(state: WorkbenchState, instanceId: string, tit
 // AppWorkbenchState — multi-instance wrapper
 // ═══════════════════════════════════════════════════════════════
 
-export interface AppWorkbenchState {
-  /** Per-instance layout trees — keyed by instanceId */
-  instanceStates: Record<string, WorkbenchState>;
-  /** Fallback layout when no instance is selected */
-  globalState: WorkbenchState;
-  /** Which instance's layout is currently shown. null → global layout */
-  activeInstanceId: string | null;
-  /** Tabs that have been marked "Keep" (survive refresh, shown in ≡ menu when closed) */
-  persistentTabs: PaneTab[];
-  /** Node IDs that appear in the NodeBar (not tab-level processes like shell terminals). */
-  workbenchInstanceIds: string[];
-  /** Cached runtime replay outputs keyed by surfaceId (for tab previews) */
-  tabOutputs?: Record<string, any[]>;
-  /** Cached runtime statuses keyed by surfaceId */
-  runtimeStatuses?: Record<string, string>;
-  /** Cached runtime results keyed by surfaceId */
-  runtimeResults?: Record<string, any>;
-}
-
-export type AppWorkbenchAction =
-  | { type: 'INSTANCE_ACTION'; instanceId: string; action: WorkbenchAction }
-  | { type: 'GLOBAL_ACTION'; action: WorkbenchAction }
-  | { type: 'SET_ACTIVE_INSTANCE'; instanceId: string | null }
-  | { type: 'RESTORE_INSTANCE_STATE'; instanceId: string; state: WorkbenchState }
-  | { type: 'REMOVE_INSTANCE_LAYOUT'; instanceId: string }
-  | { type: 'KEEP_TAB'; tab: PaneTab }
-  | { type: 'UNKEEP_TAB'; tabId: string }
-  | { type: 'ADD_WORKBENCH_INSTANCE'; instanceId: string }
-  | { type: 'REMOVE_WORKBENCH_INSTANCE'; instanceId: string }
-  | { type: 'SET_WORKBENCH_INSTANCES'; instanceIds: string[] };
-
 export function appReducer(state: AppWorkbenchState, action: AppWorkbenchAction): AppWorkbenchState {
   switch (action.type) {
     case 'INSTANCE_ACTION': {
@@ -511,7 +429,7 @@ export function appReducer(state: AppWorkbenchState, action: AppWorkbenchAction)
     case 'SET_ACTIVE_INSTANCE':
       return { ...state, activeInstanceId: action.instanceId };
     case 'RESTORE_INSTANCE_STATE':
-      if (state.instanceStates[action.instanceId]) return state; // already exists
+      if (state.instanceStates[action.instanceId]) return state;
       return {
         ...state,
         instanceStates: { ...state.instanceStates, [action.instanceId]: action.state },
@@ -521,9 +439,6 @@ export function appReducer(state: AppWorkbenchState, action: AppWorkbenchAction)
       return {
         ...state,
         instanceStates: rest,
-        // Keep activeInstanceId — don't kick user back to root. If the layout
-        // that was removed happens to be the active one, getActiveWorkbenchState
-        // falls back to globalState.
         workbenchInstanceIds: state.workbenchInstanceIds.filter(id => id !== action.instanceId),
       };
     }
@@ -562,117 +477,4 @@ export function createAppInitialState(): AppWorkbenchState {
     persistentTabs: [],
     workbenchInstanceIds: [],
   };
-}
-
-// ─── localStorage persistence ────────────────────────────────
-
-const STORAGE_LAYOUTS_KEY = 'sb-instance-layouts';
-const STORAGE_PERSISTENT_KEY = 'sb-persistent-tabs';
-const STORAGE_WORKBENCH_IDS_KEY = 'sb-workbench-ids';
-const STORAGE_ACTIVE_INSTANCE_KEY = 'sb-active-instance';
-
-function serializeLayout(state: WorkbenchState): string {
-  return JSON.stringify(state);
-}
-
-function deserializeLayout(json: string): WorkbenchState | null {
-  try { return JSON.parse(json); } catch (_e) { return null; }
-}
-
-export function saveLayoutsToStorage(
-  instanceStates: Record<string, WorkbenchState>,
-  persistentTabs: PaneTab[],
-  workbenchInstanceIds?: string[],
-  activeInstanceId?: string | null,
-): void {
-  try {
-    const layouts: Record<string, string> = {};
-    for (const [id, state] of Object.entries(instanceStates)) {
-      layouts[id] = serializeLayout(state);
-    }
-    localStorage.setItem(STORAGE_LAYOUTS_KEY, JSON.stringify(layouts));
-    localStorage.setItem(STORAGE_PERSISTENT_KEY, JSON.stringify(persistentTabs));
-    if (workbenchInstanceIds) {
-      localStorage.setItem(STORAGE_WORKBENCH_IDS_KEY, JSON.stringify(workbenchInstanceIds));
-    }
-    if (activeInstanceId) {
-      localStorage.setItem(STORAGE_ACTIVE_INSTANCE_KEY, activeInstanceId);
-    } else {
-      localStorage.removeItem(STORAGE_ACTIVE_INSTANCE_KEY);
-    }
-  } catch (_e) { /* best effort */ }
-}
-
-export function loadLayoutsFromStorage(): {
-  instanceStates: Record<string, string>;
-  persistentTabs: PaneTab[];
-  workbenchInstanceIds: string[];
-  activeInstanceId: string | null;
-} | null {
-  try {
-    const layoutsRaw = localStorage.getItem(STORAGE_LAYOUTS_KEY);
-    const persistentRaw = localStorage.getItem(STORAGE_PERSISTENT_KEY);
-    const workbenchRaw = localStorage.getItem(STORAGE_WORKBENCH_IDS_KEY);
-    const activeRaw = localStorage.getItem(STORAGE_ACTIVE_INSTANCE_KEY);
-    if (!layoutsRaw && !persistentRaw && !workbenchRaw && !activeRaw) return null;
-    return {
-      instanceStates: layoutsRaw ? JSON.parse(layoutsRaw) : {},
-      persistentTabs: persistentRaw ? JSON.parse(persistentRaw) : [],
-      workbenchInstanceIds: workbenchRaw ? JSON.parse(workbenchRaw) : [],
-      activeInstanceId: activeRaw || null,
-    };
-  } catch (_e) { return null; }
-}
-
-/** Given saved serialized layouts + current server instances, return deserialized states. */
-/** Clear stale instanceIds on restored tab data that no longer exist
- *  on the current relay (instance IDs rotate on every relay restart).
- *  When validIds is empty (CoreClient mode), assume all instanceIds are valid. */
-function cleanStaleInstanceIds(state: WorkbenchState, validIds: Set<string>): void {
-  if (validIds.size === 0) return; // CoreClient mode — no relay instances to validate against
-  const clean = (pane: PaneState) => {
-    for (const tab of pane.tabs) {
-      if (tab.instanceId && !validIds.has(tab.instanceId)) {
-        (tab as any).instanceId = undefined;
-      }
-    }
-  };
-  visitPanes(state.root, clean);
-  if (state.bottom) clean(state.bottom);
-}
-
-export function restoreInstanceStatesFromStorage(
-  savedStr: Record<string, string>,
-  persistentTabs: PaneTab[],
-  serverInstanceIds: string[],
-): { states: Record<string, WorkbenchState>; persistentTabs: PaneTab[] } {
-  const states: Record<string, WorkbenchState> = {};
-  const validIdSet = new Set(serverInstanceIds);
-
-  // First pass: restore states keyed by known server instance IDs
-  for (const id of serverInstanceIds) {
-    const saved = savedStr[id];
-    if (saved) {
-      const state = deserializeLayout(saved);
-      if (state) {
-        cleanStaleInstanceIds(state, validIdSet);
-        states[id] = state;
-      }
-    }
-  }
-
-  // Second pass: restore states whose key doesn't match a server instance ID
-  // (e.g. CoreClient node IDs like '__local__', or orphaned relay layouts).
-  // Stale instance IDs are cleared; the layout (tabs, splits) is preserved.
-  for (const [id, raw] of Object.entries(savedStr)) {
-    if (states[id]) continue;
-    if (serverInstanceIds.includes(id)) continue;
-    const state = deserializeLayout(raw);
-    if (state) {
-      cleanStaleInstanceIds(state, validIdSet);
-      states[id] = state;
-    }
-  }
-
-  return { states, persistentTabs: persistentTabs.filter(t => t && t.id) };
 }

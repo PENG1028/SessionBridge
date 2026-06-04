@@ -3,60 +3,9 @@
 import { useEffect, useRef, useCallback, useMemo, useState } from 'react';
 import { useCore } from '../app/console/core/core-client-provider';
 
-export interface ConnStatus {
-  status: 'connecting' | 'connected' | 'disconnected' | 'error';
-  sessionId?: string;
-  retryCount?: number;
-}
-
-export interface MsgLog {
-  id: number;
-  time: string;
-  type: string;
-  data: string;
-  size: number;
-}
-
-export type SessionInfo = {
-  id: string;
-  directory: string;
-  label: string;
-  hasBridge: boolean;
-  hasClient: boolean;
-  webUrl: string;
-};
-
-export type InstanceInfo = {
-  id: string;
-  dir: string;
-  label: string;
-  status: string;
-  source: string;
-  adapterId?: string;
-  model: string | null;
-  blockCount: number;
-  outputSize: number;
-  checkpointCount: number;
-  createdAt: number;
-};
-
-export type QueueStatus = {
-  processing: boolean;
-  source: string | null;
-  queueDepth: number;
-};
-
-type RunLike = {
-  runId?: string;
-  sessionId?: string;
-  kind?: string;
-  label?: string;
-  pluginId?: string;
-  state?: string;
-  createdAt?: number;
-  metadata?: Record<string, string>;
-  process?: { command?: string };
-};
+// Re-export types for consumers
+export type { ConnStatus, MsgLog, SessionInfo, InstanceInfo, QueueStatus } from './session-types';
+import type { ConnStatus, MsgLog, SessionInfo, InstanceInfo, QueueStatus, RunLike } from './session-types';
 
 function nowTime() {
   return new Date().toISOString().slice(11, 23);
