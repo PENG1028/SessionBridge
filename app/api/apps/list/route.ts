@@ -73,7 +73,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const yamlPath = join(PLUGINS_DIR, entry.name, 'plugin.yaml');
-    try { lastModified = Math.max(lastModified, statSync(yamlPath).mtimeMs); } catch (_e) {}
+    try { lastModified = Math.max(lastModified, statSync(yamlPath).mtimeMs); } catch (_e) { console.debug('[apps/list] failed to stat plugin.yaml:', _e); }
     const manifest = readManifest(entry.name);
     if (!manifest) continue;
 

@@ -20,7 +20,7 @@ const BOOKMARKS_CHANGED_EVENT = 'sb-bookmarks-changed';
 function notifyBookmarksChanged(): void {
   try {
     window.dispatchEvent(new CustomEvent(BOOKMARKS_CHANGED_EVENT));
-  } catch (_e) {}
+  } catch (_e) { /* dispatchEvent on detached window — safe to ignore */ }
 }
 
 export function getPathBookmarks(): string[] {
@@ -38,7 +38,7 @@ export function setPathBookmarks(bookmarks: string[]): void {
   try {
     localStorage.setItem(storageKey(), JSON.stringify(bookmarks));
     notifyBookmarksChanged();
-  } catch (_e) {}
+  } catch (_e) { console.debug('[path-bookmarks] failed to save bookmarks:', _e); }
 }
 
 export function addPathBookmark(path: string): void {
@@ -71,7 +71,7 @@ export function setLastActiveDir(path: string): void {
   try {
     const key = _bookmarkScope ? `${LAST_DIR_KEY}-${_bookmarkScope}` : LAST_DIR_KEY;
     localStorage.setItem(key, path.replace(/\\/g, '/').replace(/\/$/, ''));
-  } catch (_e) {}
+  } catch (_e) { console.debug('[path-bookmarks] failed to save last dir:', _e); }
 }
 
 export function getRestoreLastPath(): boolean {
@@ -87,5 +87,5 @@ export function getRestoreLastPath(): boolean {
 export function setRestoreLastPath(v: boolean): void {
   try {
     localStorage.setItem(RESTORE_KEY, String(v));
-  } catch (_e) {}
+  } catch (_e) { console.debug('[path-bookmarks] failed to save restore pref:', _e); }
 }

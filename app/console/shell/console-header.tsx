@@ -104,7 +104,7 @@ export function ConsoleHeader({
         : activePolicy.effortLevel === 'medium' ? 'ON' : 'MAX';
       runtimeBadge = `${label} [${modeBadge}] T:${effortBadge}`;
     }
-  } catch (_e) {}
+  } catch (_e) { console.debug('[console-header] failed to resolve runtime badge:', _e); }
 
   // Chrome items + action context — always resolved (never inside try-catch)
   const actionCtx: ActionRunContext = {

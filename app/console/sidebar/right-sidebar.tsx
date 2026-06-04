@@ -81,7 +81,7 @@ export function RightSidebar(props: RightSidebarProps) {
     try {
       const saved = localStorage.getItem('sb-right-width');
       if (saved) setWidth(Math.min(MAX_W, Math.max(MIN_W, parseInt(saved, 10) || DEFAULT_W)));
-    } catch (_e) {}
+    } catch (_e) { console.debug('[right-sidebar] failed to restore width:', _e); }
   }, []);
 
   const onDragStart = useCallback((e: React.MouseEvent) => {
@@ -105,7 +105,7 @@ export function RightSidebar(props: RightSidebarProps) {
       dragRef.current = false;
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
-      try { localStorage.setItem('sb-right-width', String(widthRef.current)); } catch (_e) {}
+      try { localStorage.setItem('sb-right-width', String(widthRef.current)); } catch (_e) { console.debug('[right-sidebar] failed to save width:', _e); }
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);

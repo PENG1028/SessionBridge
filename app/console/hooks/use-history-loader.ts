@@ -68,11 +68,11 @@ export function useHistoryLoader(
               const { display } = JSON.parse(activeSaved);
               setActiveExternalSession(display);
             }
-          } catch (_e) {}
+          } catch (_e) { console.debug('[history-loader] failed to restore active session:', _e); }
           return;
         }
       }
-    } catch (_e) {}
+    } catch (_e) { console.debug('[history-loader] failed to restore message history:', _e); }
     // No localStorage fallback — App UI no longer calls /api/sessions/current.
     // Mark history as loaded so subsequent renders don't re-trigger.
     setHistoryLoading(true);

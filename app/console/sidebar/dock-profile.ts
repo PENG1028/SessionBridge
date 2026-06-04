@@ -45,7 +45,7 @@ function saveAll(profiles: Record<string, DockProfileState>): void {
   if (typeof window === 'undefined') return;
   try {
     localStorage.setItem(PROFILES_KEY, JSON.stringify(profiles));
-  } catch (_e) {}
+  } catch (_e) { console.debug('[dock-profile] failed to save profiles:', _e); }
 }
 
 // ── Legacy fallback readers ───────────────────────────────────
@@ -92,7 +92,7 @@ function loadProfile(profileKey: string): DockProfileState {
     try {
       localStorage.removeItem(LEGACY_ORDER_KEY);
       localStorage.removeItem(LEGACY_COLLAPSE_KEY);
-    } catch (_e) {}
+    } catch (_e) { console.debug('[dock-profile] failed to clear legacy keys:', _e); }
     return migrated;
   }
 

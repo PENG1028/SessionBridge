@@ -60,7 +60,7 @@ export function RuntimePolicyProvider({ children }: { children: ReactNode }) {
     persistRef.current = setTimeout(() => {
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(policies));
-      } catch (_e) {}
+      } catch (_e) { console.debug('[runtime-policy] failed to persist policies:', _e); }
     }, 500);
     return () => {
       if (persistRef.current) clearTimeout(persistRef.current);

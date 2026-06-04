@@ -35,7 +35,7 @@ export function StatusBar({
       isRunning: focus.isRunning,
       instanceId: focus.instanceId,
     };
-  } catch (_e) {}
+  } catch (_e) { console.debug('[status-bar] failed to resolve chrome items:', _e); }
 
   const core = useCore();
   const [pickerOpen, setPickerOpen] = useState(false);

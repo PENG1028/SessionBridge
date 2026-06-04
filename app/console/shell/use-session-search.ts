@@ -45,7 +45,7 @@ export function useSessionSearch() {
             }
             if (results.length >= 50) break;
           }
-        } catch (_e) {}
+        } catch (_e) { console.debug('[session-search] failed to search key:', _e); }
         if (results.length >= 50) break;
       }
       setSearchResults(results);
