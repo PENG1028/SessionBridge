@@ -293,11 +293,15 @@ export function useConsoleController({ wsUrl, setWsUrl, token, setToken, onRecon
   const localNodeId = useLocalNodeId();
   const remoteReachable = useTargetReachability(reachabilityNodeId);
   const overlayStatus = useNodeStatus(reachabilityNodeId);
+  // Check actual node list status too (since SSE reachability events never fire from Go Core).
+  // If the node is actually connected, don't show the overlay even if SSE says otherwise.
+  const nodeActuallyConnected = overlayStatus === 'connected' || overlayStatus === 'local';
   const showRemoteOverlay = !!(
     reachabilityNodeId &&
     localNodeId &&
     reachabilityNodeId !== localNodeId &&
-    !remoteReachable
+    !remoteReachable &&
+    !nodeActuallyConnected
   );
 
   // ── Focus-based context (for context menu + command palette) ───
