@@ -7,7 +7,7 @@ import { CoreClientProvider } from './console/core/core-client-provider';
 import { CoreErrorProvider } from './console/core/core-error-provider';
 import { LayoutProvider } from './console/workbench';
 import { useCoreConnection } from './console/core/use-core-connection';
-import { AppShell } from './console/shell/app-shell';
+import { ConsoleController } from './console/controller/ConsoleController';
 
 ensureBootstrapped();
 
@@ -24,7 +24,7 @@ function PageContent() {
   return (
     <CoreClientProvider forceOffline={false} reconnectKey={reconnectKey}>
       <CoreErrorProvider>
-        <AppShell
+        <ConsoleController
           wsUrl={wsUrl}
           setWsUrl={setWsUrl}
           token={token}

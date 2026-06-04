@@ -42,8 +42,8 @@ import { useFileTree } from '../files/use-file-tree';
 import { NodeBar } from '../stage/node-bar';
 import { NodeNetworkView } from '../../../plugins/mesh';
 import { KeyHintOverlay } from '../chrome/key-hint-overlay';
-import { DisconnectBanner } from './disconnect-banner';
-import { WorkbenchTopBar } from './workbench-top-bar';
+import { DisconnectBanner } from '../shell/disconnect-banner';
+import { WorkbenchTopBar } from '../shell/workbench-top-bar';
 import { LayoutProvider, useLayout, SidebarSlot, MainSlot, FocusProvider, RuntimePolicyProvider, useFocus, useRuntimePolicy, WorkbenchProvider, SessionProvider, InputProvider, ToolActivityProvider } from '../workbench';
 import { WorkbenchLayout } from '../stage/workbench-layout';
 import { appReducer, createAppInitialState, getActiveWorkbenchState, createInitialState, findPane as findPaneInTree, ensureInstanceTab, saveLayoutsToStorage, loadLayoutsFromStorage, restoreInstanceStatesFromStorage, genTabId, collectAllTabs, type ViewType, type PaneTab, type LayoutNode, type WorkbenchState, type WorkbenchAction, type AppWorkbenchState, type AppWorkbenchAction } from '../stage/workbench-state';
@@ -66,7 +66,7 @@ interface AppCoreProps {
   browserId: string | undefined;
 }
 
-export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLocalPage, browserId }: AppCoreProps) {
+export function useConsoleController({ wsUrl, setWsUrl, token, setToken, onReconnect, isLocalPage, browserId }: AppCoreProps) {
   const { state, dispatch } = useLayout();
 
   // ── No virtual window — render all messages ──
@@ -980,263 +980,77 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
     scrollContainerRef, actionEndRef,
   ]);
 
-  return (
-    <FocusProvider instances={instances} activeInstanceId={activeInstanceId} activeViewId={state.activeViewId} sessionKey={sessionKey} paneFocus={paneFocus}>
-      <RuntimePolicyProvider>
-    <div className="flex flex-col h-screen bg-[#0a0a0a] text-gray-300 font-mono text-sm overflow-hidden selection:bg-purple-900 selection:text-white relative" onContextMenu={handleWorkbenchContextMenu}>
-      <CoreErrorBanner />
-      <ConsoleHeader
-        chromePolicy={chromePolicy}
-        onMobileOpen={() => setMobileOpen(true)}
-        onMobileRightOpen={() => setMobileRightOpen(true)}
-        statusColor={statusColor}
-        statusText={statusText}
-        connStatus={connStatus}
-        connectionUnstable={connectionUnstable}
-        phaseColor={phaseColor}
-        phaseLabel={phaseLabel}
-        phase={phase}
-        currentActivity={currentActivity}
-        parsed={{}}
-        openSearchPanel={openSearchPanel}
-        showDirSwitcher={showDirSwitcher}
-        onToggleDirSwitcher={() => setShowDirSwitcher(v => !v)}
-        projectInfo={projectInfo}
-        switchDirLocal={switchDirLocal}
-        onSwitchDirLocalChange={setSwitchDirLocal}
-        switching={switching}
-        onSwitchDir={handleSwitchDir}
-        savedSessions={savedSessions}
-        onSelectSavedSession={(s) => {
-          addLog(`[System] Previous session: ${s.label} (${s.dir})`);
-          setShowDirSwitcher(false);
-        }}
-        onOpenSettings={() => setSettingsOpen(true)}
-        onToggleCommandPalette={() => setShowCommandPalette(v => !v)}
-        leftSidebarOpen={effectiveLeftOpen}
-        rightSidebarOpen={effectiveRightOpen}
-        onToggleLeftSidebar={() => dispatch({ type: 'TOGGLE_SIDEBAR', position: 'left' })}
-        onToggleRightSidebar={() => dispatch({ type: 'TOGGLE_SIDEBAR', position: 'right' })}
-        connectionLabel={connectionLabel}
-        onOpenConnectionManager={handleGoToConsole}
-      />
-
-      {/* ── Disconnect banner (30s grace) ── */}
-      <DisconnectBanner showBanner={showBanner} connStatus={connStatus} statusColor={statusColor} />
-
-      {/* ── Node bar — shows connected mesh nodes for entering workbenches ── */}
-      <NodeBar
-        activeNodeId={appState.activeInstanceId}
-        onEnterNode={handleEnterNode}
-        onOpenConnection={() => setAppState(prev => appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: null }))}
-      />
-
-      <div className="flex flex-1 overflow-hidden">
-        <SidebarSlot open={effectiveLeftOpen}>
-          <LeftSidebar
-          fileTree={fileTree}
-          expandedDirs={expandedDirs}
-          onToggleDir={toggleDir}
-          onOpenFile={handleOpenFile}
-          onSendFile={(filePath) => {
-            setInputValue(prev => prev + `@${filePath} `);
-          }}
-          onBookmarkDir={(dirPath) => {
-            addPathBookmark(dirPath);
-          }}
-          onCommand={(cmdId) => runWorkbenchCommand({ command: cmdId }, actionRunContext)}
-          projectCwd={activeNodeProjectInfo?.cwd || '.'}
-          absoluteCwd={absoluteCwd || activeNodeProjectInfo?.cwd || '.'}
-          instances={instances.filter((i: any) => appState.workbenchInstanceIds.includes(i.id) && (i.status === 'running' || i.status === 'starting'))}
-          activeInstanceId={activeInstanceId}
-          onActivateInstance={activateInstance}
-          onCreateInstance={(dir, label, adapterId) => createNodeInstance(dir, label, adapterId)}
-          onKillInstance={killInstance}
-        />
-        </SidebarSlot>
-
-        {/* ═══ CENTER: WorkbenchLayout (always mounted; hidden via CSS when no node active,
-             so tab/terminal state survives node toggle) ════════ */}
-        <main className="flex-1 flex flex-col relative bg-black min-w-0 min-h-0">
-          {showRemoteOverlay && (
-            <div className="absolute inset-0 z-50 flex items-center justify-center bg-[#0a0a0a]/80 backdrop-blur-sm">
-              <div className="bg-[#111] border border-gray-800 rounded px-6 py-4 text-center max-w-sm">
-                <div className="text-[10px] font-mono tracking-wider uppercase text-gray-500 mb-2">远端节点离线</div>
-                <p className="text-[11px] text-gray-400 mb-3">目标节点 mesh 连接已断开，当前功能不可用。
-                  请在节点管理页面重新连接。</p>
-                <span className="text-[9px] text-gray-600 font-mono">{reachabilityNodeId}</span>
-              </div>
-            </div>
-          )}
-          <SessionProvider value={sessionContextValue}>
-          <InputProvider value={inputContextValue}>
-          <ToolActivityProvider value={toolActivityContextValue}>
-          <WorkbenchProvider value={workbenchContextValue}>
-          <div className="flex flex-col flex-1 min-h-0 min-w-0" style={{ display: appState.activeInstanceId ? 'flex' : 'none' }}>
-          <WorkbenchTopBar />
-
-          {/* ── WorkbenchLayout (pane/tab/view system) — fully generic, no hardcoded viewType checks ── */}
-          <WorkbenchLayout
-            state={activeWorkbenchState}
-            dispatch={activeWorkbenchDispatch}
-            onRequestView={handleRequestView}
-            onContextTab={handleContextTab}
-            onReorderTabs={handleReorderTabs}
-            closedKeptTabs={closedKeptTabs}
-            onReopenKeptTab={handleReopenKeptTab}
-            onCloseTab={handleCloseTab}
-            persistentTabIds={appState.persistentTabs.map(t => t.id)}
-            renderView={(viewType, instanceId, tab) => {
-              // Generic view resolution: instance-bound views resolve through adapter system,
-              // static views use viewType directly as the registry key.
-              // No viewType-specific branching — plugins can add views without touching page.tsx.
-              const boundInstance = instanceId ? instances.find((i: any) => i.id === instanceId) : null;
-              const resolvedViewId = boundInstance?.adapterId
-                ? getAdapterViewId(boundInstance.adapterId) || viewType
-                : viewType;
-              return <MainSlot viewId={resolvedViewId} instanceId={instanceId} _surfaceId={tab?._surfaceId} />;
-            }}
-          />
-          </div>
-          <div className="flex-1 flex flex-col min-h-0 overflow-y-auto" style={{ display: appState.activeInstanceId ? 'none' : 'flex' }}>
-              <div className="p-6 space-y-6 max-w-3xl mx-auto w-full">
-                <NodeNetworkView
-                  onEnterNode={handleEnterNode}
-                  isLocalPage={isLocalPage}
-                />
-              </div>
-          </div>
-          </WorkbenchProvider>
-          </ToolActivityProvider>
-          </InputProvider>
-          </SessionProvider>
-        </main>
-
-        <SidebarSlot open={effectiveRightOpen}>
-          <RightSidebar
-          activeTasks={activeTasks}
-          onNewSession={handleNewSessionWrapper}
-          onQuickCompact={handleQuickCompact}
-          onSaveSnapshot={() => saveSnapshot()}
-          snapshots={snapshots}
-          onLoadSnapshot={loadSnapshotWrapper}
-          onForkSnapshot={forkFromSnapshotWrapper}
-          knownFiles={knownFiles}
-          onOpenFile={handleOpenFile}
-          shortenPath={shortenPath}
-          logs={logs}
-          msgLog={msgLog}
-          terminalTab={terminalTab}
-          onTerminalTabChange={setTerminalTab}
-          logsEndRef={logsEndRef}
-          onNavigatePath={onNavigatePath}
-          currentActiveDir={absoluteCwd || '.'}
-        />
-        </SidebarSlot>
-      </div>
-
-      {showStatusBar && (
-        <StatusBar
-          queueStatus={queueStatus}
-          onSetMode={setMode}
-          onSetEffort={setEffort}
-          absoluteCwd={absoluteCwd || '.'}
-          terminalCwd={absoluteCwd || '.'}
-          onNavigatePath={onNavigatePath}
-        />
-      )}
-
-      {/* Custom scrollbar styles */}
-      <style>{`
-        ::-webkit-scrollbar { width: 6px; height: 6px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
-        ::-webkit-scrollbar-thumb:hover { background: #555; }
-        ::-webkit-scrollbar-corner { background: transparent; }
-        .prose-container p { margin: 0; overflow-wrap: break-word; line-height: 1.55; }
-        .prose-container code { font-size: 11px; }
-        .prose-container pre { margin: 4px 0; }
-        .prose-container ul, .prose-container ol { margin: 2px 0; }
-        .prose-container li { overflow-wrap: break-word; }
-      `}</style>
-
-    </div>
-
-      {/* ═══ OVERLAYS — outside overflow-hidden to avoid clipping ════ */}
-      <ConsoleOverlays
-        showSearch={showSearch}
-        searchPanelRef={searchPanelRef}
-        searchQuery={searchQuery}
-        searchInputRef={searchInputRef}
-        handleSearchInput={handleSearchInput}
-        searchLoading={searchLoading}
-        onCloseSearch={() => setShowSearch(false)}
-        searchResults={searchResults}
-        addLog={addLog}
-        handleLoadSession={handleLoadSession}
-        showCommandPalette={showCommandPalette}
-        extCommands={paletteCommands}
-        onCommand={handlePaletteSelect}
-        onCloseCommandPalette={() => setShowCommandPalette(false)}
-        viewingFile={viewingFile}
-        onCloseFileViewer={() => setViewingFile(null)}
-        forkTarget={forkTarget}
-        turns={turns}
-        forkPrompt={forkPrompt}
-        setForkPrompt={setForkPrompt}
-        onCloseFork={() => setForkTarget(null)}
-        onRewind={handleForkRewind}
-        onForkSnapshot={handleForkSnapshot}
-        onForkWithPrompt={handleForkWithPrompt}
-        ctxMenu={ctxMenu}
-        onCloseContextMenu={closeContextMenu}
-        settingsOpen={settingsOpen}
-        onCloseSettings={() => setSettingsOpen(false)}
-        onReconnect={onReconnect}
-      />
-
-      <KeyHintOverlay whenContext={focusWhenContext} onCommand={handlePaletteSelect} />
-
-      <MobileSidebar
-        open={mobileOpen}
-        onClose={() => setMobileOpen(false)}
-        fileTree={fileTree}
-        expandedDirs={expandedDirs}
-        onToggleDir={toggleDir}
-        onOpenFile={handleOpenFile}
-        onSendFile={(filePath) => {
-          setInputValue(prev => prev + `@${filePath} `);
-        }}
-        onBookmarkDir={(dirPath) => {
-          addPathBookmark(dirPath);
-        }}
-        activeInstanceId={activeInstanceId}
-        onKill={killInstance}
-        onCommand={handlePaletteSelect}
-        activeView={focusViewId}
-        absoluteCwd={absoluteCwd || undefined}
-      />
-      <MobileRightPanel
-        open={mobileRightOpen}
-        onClose={() => setMobileRightOpen(false)}
-        activeTasks={activeTasks}
-        onNewSession={handleNewSessionWrapper}
-        onQuickCompact={handleQuickCompact}
-        onSaveSnapshot={() => saveSnapshot()}
-        snapshots={snapshots}
-        onLoadSnapshot={loadSnapshotWrapper}
-        onForkSnapshot={forkFromSnapshotWrapper}
-        knownFiles={knownFiles}
-        onOpenFile={handleOpenFile}
-        shortenPath={shortenPath}
-        logs={logs}
-        msgLog={msgLog}
-        terminalTab={terminalTab}
-        onTerminalTabChange={setTerminalTab}
-        logsEndRef={logsEndRef}
-      />
-      </RuntimePolicyProvider>
-    </FocusProvider>
-  );
+  return {
+    // Core connection
+    core, connStatus, connectionUnstable, wsUrl,
+    // Layout state
+    state, dispatch, setAppState,
+    appState, appStateRef, activeWorkbenchState, activeWorkbenchDispatch,
+    activeInstanceId, instances,
+    // Chrome
+    chromePolicy, effectiveLeftOpen, effectiveRightOpen, showStatusBar,
+    showBanner, showCommandPalette, setShowCommandPalette, showSearch,
+    settingsOpen, setSettingsOpen,
+    // Status
+    statusColor, statusText, phaseColor, phaseLabel, phase,
+    currentActivity, connectionLabel,
+    // Pane focus
+    paneFocus, focusViewId, focusAdapterId, focusIsRunning,
+    focusInstanceId, focusWhenContext,
+    // File tree
+    fileTree, expandedDirs, toggleDir, fetchDir, onNavigatePath,
+    // CWD
+    absoluteCwd, projectInfo, activeNodeProjectInfo,
+    fileTreeCwd, showDirSwitcher, setShowDirSwitcher,
+    switchDirLocal, setSwitchDirLocal, switching, savedSessions,
+    // Instance management
+    createNodeInstance, killInstance, activateInstance,
+    handleBindCurrentTabInstance,
+    // Workbench callbacks
+    handleRequestView, handleContextTab, handleReorderTabs,
+    handleEnterNode, handleGoToConsole, handleCloseTab,
+    closedKeptTabs, handleReopenKeptTab,
+    // Session
+    sessionContextValue, inputContextValue, toolActivityContextValue,
+    workbenchContextValue, actionRunContext,
+    handleNewSessionWrapper, loadSnapshotWrapper, forkFromSnapshotWrapper,
+    handleQuickCompact, handleClearSession, handleSwitchDir,
+    saveSnapshot, snapshots, knownFiles, isRestoring,
+    // Input
+    inputValue, setInputValue, handleSubmit, handleInputChange,
+    handleKeyDown, showFileSuggest, fileSuggestions,
+    handleFileSuggestionClick, showCommands, setShowCommands,
+    handleCommandClick, cmdPanelRef,
+    // Tool activity
+    toolActivities, setToolActivities, expandedToolOutputs,
+    setExpandedToolOutputs, activeTasks,
+    // Logs
+    logs, msgLog, logsEndRef, actionEndRef, addLog,
+    terminalTab, setTerminalTab,
+    // File
+    handleOpenFile, viewingFile, setViewingFile, shortenPath,
+    // Search
+    searchPanelRef, searchQuery, searchInputRef,
+    handleSearchInput, searchLoading, setShowSearch,
+    searchResults, handleLoadSession,
+    // Command palette
+    paletteCommands, handlePaletteSelect,
+    // Fork
+    forkTarget, setForkTarget, forkPrompt, setForkPrompt,
+    handleForkRewind, handleForkSnapshot, handleForkWithPrompt,
+    turns,
+    // Context menu
+    ctxMenu, handleWorkbenchContextMenu, closeContextMenu,
+    // Overlays
+    showRemoteOverlay, reachabilityNodeId, isLocalPage,
+    // Mobile
+    mobileOpen, setMobileOpen, mobileRightOpen, setMobileRightOpen,
+    // Other
+    queueStatus, setMode, setEffort, openSearchPanel,
+    onReconnect, runWorkbenchCommand,
+    sessionKey, addPathBookmark,
+    // Scroll refs
+    scrollContainerRef,
+  };
 }
 

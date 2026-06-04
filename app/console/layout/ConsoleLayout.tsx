@@ -1,0 +1,348 @@
+// @ts-nocheck — layout receives a large props bag from useConsoleController().
+// Proper typing will be added in a follow-up as the hook is further split.
+'use client';
+
+import React from 'react';
+import { ConsoleHeader } from '../shell/console-header';
+import { LeftSidebar } from '../sidebar/left-sidebar';
+import { RightSidebar } from '../sidebar/right-sidebar';
+import { StatusBar } from '../shell/status-bar';
+import { ConsoleOverlays } from '../overlays/console-overlays';
+import { DisconnectBanner } from '../shell/disconnect-banner';
+import { WorkbenchTopBar } from '../shell/workbench-top-bar';
+import { NodeBar } from '../stage/node-bar';
+import { NodeNetworkView } from '../../../plugins/mesh';
+import { KeyHintOverlay } from '../chrome/key-hint-overlay';
+import { MobileSidebar } from '../sidebar/mobile-sidebar';
+import { MobileRightPanel } from '../sidebar/mobile-right-panel';
+import { CoreErrorBanner } from '../core/core-error-banner';
+import { SidebarSlot, MainSlot, FocusProvider, RuntimePolicyProvider, WorkbenchProvider, SessionProvider, InputProvider, ToolActivityProvider } from '../workbench';
+import { WorkbenchLayout } from '../stage/workbench-layout';
+import { getAdapterViewId } from '../main/view-registry';
+import type { AppWorkbenchState, AppWorkbenchAction, WorkbenchState, WorkbenchAction, PaneTab, ViewType } from '../stage/workbench-state';
+import { appReducer } from '../stage/workbench-state';
+import type { ConnStatus } from '../../../lib/use-ws';
+import type { ContextMenuItem } from '../shell/context-menu';
+import type { ChromePolicy } from '../main/view-registry';
+import type { Phase, Turn, ToolActivity, TaskInfo } from '../../lib/session-types';
+
+// ═══════════════════════════════════════════════════════════════
+// ConsoleLayout — Pure JSX composition of all shell slots.
+//
+// Slot map (top to bottom, left to right):
+//   HEADER    ConsoleHeader
+//   BANNER    DisconnectBanner (30s grace)
+//   NODEBAR   NodeBar (mesh node switcher)
+//   ┌─────────────────────────────────────────┐
+//   │ LEFT         CENTER              RIGHT  │
+//   │ LeftSidebar  WorkbenchLayout     Right  │
+//   │ (panels)     (tabs/views)        Sidebar│
+//   │              or                 (panels)│
+//   │              NodeNetworkView            │
+//   └─────────────────────────────────────────┘
+//   STATUS    StatusBar
+//   OVERLAYS  ConsoleOverlays, KeyHintOverlay
+//   MOBILE    MobileSidebar, MobileRightPanel
+//
+// All data dependencies come from useConsoleController().
+// No business logic, no state, no effects — just the slot
+// assignment and component wiring.
+// ═══════════════════════════════════════════════════════════════
+
+export function ConsoleLayout(props: Record<string, any>) {
+  const {
+    instances, activeInstanceId, state, sessionKey, paneFocus,
+    chromePolicy, connStatus, connectionUnstable,
+    statusColor, statusText, phaseColor, phaseLabel, phase, currentActivity,
+    showBanner, showCommandPalette, setShowCommandPalette, showSearch,
+    effectiveLeftOpen, effectiveRightOpen,
+    fileTree, expandedDirs, toggleDir,
+    appState, activeWorkbenchState, activeWorkbenchDispatch,
+    handleRequestView, handleContextTab, handleReorderTabs, handleCloseTab,
+    closedKeptTabs, handleReopenKeptTab,
+    handleNewSessionWrapper, loadSnapshotWrapper, forkFromSnapshotWrapper,
+    handleQuickCompact, handleSwitchDir,
+    saveSnapshot, snapshots, knownFiles,
+    handleOpenFile, onNavigatePath, shortenPath,
+    logs, msgLog, activeTasks,
+    terminalTab, setTerminalTab,
+    logsEndRef, actionEndRef,
+    absoluteCwd, projectInfo, activeNodeProjectInfo,
+    showDirSwitcher, setShowDirSwitcher,
+    switchDirLocal, setSwitchDirLocal, switching, savedSessions,
+    setInputValue, addLog,
+    handleEnterNode, handleGoToConsole, setAppState,
+    setSettingsOpen, settingsOpen,
+    showRemoteOverlay, reachabilityNodeId, isLocalPage,
+    setMobileOpen, setMobileRightOpen, mobileOpen, mobileRightOpen,
+    focusViewId, focusWhenContext,
+    connectionLabel, showStatusBar,
+    sessionContextValue, inputContextValue, toolActivityContextValue,
+    workbenchContextValue, actionRunContext,
+    runWorkbenchCommand,
+    openSearchPanel, dispatch,
+    queueStatus, setMode, setEffort,
+    searchPanelRef, searchQuery, searchInputRef,
+    handleSearchInput, searchLoading, setShowSearch,
+    searchResults, handleLoadSession,
+    paletteCommands, handlePaletteSelect,
+    viewingFile, setViewingFile,
+    forkTarget, turns, forkPrompt, setForkPrompt,
+    handleForkRewind, handleForkSnapshot, handleForkWithPrompt,
+    ctxMenu, handleWorkbenchContextMenu, closeContextMenu,
+    onReconnect,
+    createNodeInstance, killInstance, activateInstance,
+    handleBindCurrentTabInstance,
+    addPathBookmark,
+  } = props;
+
+  return (
+    <FocusProvider instances={instances} activeInstanceId={activeInstanceId} activeViewId={state.activeViewId} sessionKey={sessionKey} paneFocus={paneFocus}>
+      <RuntimePolicyProvider>
+    <div className="flex flex-col h-screen bg-[#0a0a0a] text-gray-300 font-mono text-sm overflow-hidden selection:bg-purple-900 selection:text-white relative" onContextMenu={handleWorkbenchContextMenu}>
+      <CoreErrorBanner />
+      <ConsoleHeader
+        chromePolicy={chromePolicy}
+        onMobileOpen={() => setMobileOpen(true)}
+        onMobileRightOpen={() => setMobileRightOpen(true)}
+        statusColor={statusColor}
+        statusText={statusText}
+        connStatus={connStatus}
+        connectionUnstable={connectionUnstable}
+        phaseColor={phaseColor}
+        phaseLabel={phaseLabel}
+        phase={phase}
+        currentActivity={currentActivity}
+        parsed={{}}
+        openSearchPanel={openSearchPanel}
+        showDirSwitcher={showDirSwitcher}
+        onToggleDirSwitcher={() => setShowDirSwitcher(v => !v)}
+        projectInfo={projectInfo}
+        switchDirLocal={switchDirLocal}
+        onSwitchDirLocalChange={setSwitchDirLocal}
+        switching={switching}
+        onSwitchDir={handleSwitchDir}
+        savedSessions={savedSessions}
+        onSelectSavedSession={(s: any) => {
+          addLog(`[System] Previous session: ${s.label} (${s.dir})`);
+          setShowDirSwitcher(false);
+        }}
+        onOpenSettings={() => setSettingsOpen(true)}
+        onToggleCommandPalette={() => setShowCommandPalette(v => !v)}
+        leftSidebarOpen={effectiveLeftOpen}
+        rightSidebarOpen={effectiveRightOpen}
+        onToggleLeftSidebar={() => dispatch({ type: 'TOGGLE_SIDEBAR', position: 'left' })}
+        onToggleRightSidebar={() => dispatch({ type: 'TOGGLE_SIDEBAR', position: 'right' })}
+        connectionLabel={connectionLabel}
+        onOpenConnectionManager={handleGoToConsole}
+      />
+
+      <DisconnectBanner showBanner={showBanner} connStatus={connStatus} statusColor={statusColor} />
+
+      <NodeBar
+        activeNodeId={appState.activeInstanceId}
+        onEnterNode={handleEnterNode}
+        onOpenConnection={() => setAppState(prev => appReducer(prev, { type: 'SET_ACTIVE_INSTANCE', instanceId: null }))}
+      />
+
+      <div className="flex flex-1 overflow-hidden">
+        <SidebarSlot open={effectiveLeftOpen}>
+          <LeftSidebar
+          fileTree={fileTree}
+          expandedDirs={expandedDirs}
+          onToggleDir={toggleDir}
+          onOpenFile={handleOpenFile}
+          onSendFile={(filePath) => {
+            setInputValue(prev => prev + `@${filePath} `);
+          }}
+          onBookmarkDir={(dirPath) => {
+            addPathBookmark(dirPath);
+          }}
+          onCommand={(cmdId) => runWorkbenchCommand({ command: cmdId }, actionRunContext)}
+          projectCwd={activeNodeProjectInfo?.cwd || '.'}
+          absoluteCwd={absoluteCwd || activeNodeProjectInfo?.cwd || '.'}
+          instances={instances.filter((i: any) => appState.workbenchInstanceIds.includes(i.id) && (i.status === 'running' || i.status === 'starting'))}
+          activeInstanceId={activeInstanceId}
+          onActivateInstance={activateInstance}
+          onCreateInstance={(dir, label, adapterId) => createNodeInstance(dir, label, adapterId)}
+          onKillInstance={killInstance}
+        />
+        </SidebarSlot>
+
+        <main className="flex-1 flex flex-col relative bg-black min-w-0 min-h-0">
+          {showRemoteOverlay && (
+            <div className="absolute inset-0 z-50 flex items-center justify-center bg-[#0a0a0a]/80 backdrop-blur-sm">
+              <div className="bg-[#111] border border-gray-800 rounded px-6 py-4 text-center max-w-sm">
+                <div className="text-[10px] font-mono tracking-wider uppercase text-gray-500 mb-2">远端节点离线</div>
+                <p className="text-[11px] text-gray-400 mb-3">目标节点 mesh 连接已断开，当前功能不可用。
+                  请在节点管理页面重新连接。</p>
+                <span className="text-[9px] text-gray-600 font-mono">{reachabilityNodeId}</span>
+              </div>
+            </div>
+          )}
+          <SessionProvider value={sessionContextValue}>
+          <InputProvider value={inputContextValue}>
+          <ToolActivityProvider value={toolActivityContextValue}>
+          <WorkbenchProvider value={workbenchContextValue}>
+          <div className="flex flex-col flex-1 min-h-0 min-w-0" style={{ display: appState.activeInstanceId ? 'flex' : 'none' }}>
+          <WorkbenchTopBar />
+
+          <WorkbenchLayout
+            state={activeWorkbenchState}
+            dispatch={activeWorkbenchDispatch}
+            onRequestView={handleRequestView}
+            onContextTab={handleContextTab}
+            onReorderTabs={handleReorderTabs}
+            closedKeptTabs={closedKeptTabs}
+            onReopenKeptTab={handleReopenKeptTab}
+            onCloseTab={handleCloseTab}
+            persistentTabIds={appState.persistentTabs.map(t => t.id)}
+            renderView={(viewType, instanceId, tab) => {
+              const boundInstance = instanceId ? instances.find((i: any) => i.id === instanceId) : null;
+              const resolvedViewId = boundInstance?.adapterId
+                ? getAdapterViewId(boundInstance.adapterId) || viewType
+                : viewType;
+              return <MainSlot viewId={resolvedViewId} instanceId={instanceId} _surfaceId={tab?._surfaceId} />;
+            }}
+          />
+          </div>
+          <div className="flex-1 flex flex-col min-h-0 overflow-y-auto" style={{ display: appState.activeInstanceId ? 'none' : 'flex' }}>
+              <div className="p-6 space-y-6 max-w-3xl mx-auto w-full">
+                <NodeNetworkView
+                  onEnterNode={handleEnterNode}
+                  isLocalPage={isLocalPage}
+                />
+              </div>
+          </div>
+          </WorkbenchProvider>
+          </ToolActivityProvider>
+          </InputProvider>
+          </SessionProvider>
+        </main>
+
+        <SidebarSlot open={effectiveRightOpen}>
+          <RightSidebar
+          activeTasks={activeTasks}
+          onNewSession={handleNewSessionWrapper}
+          onQuickCompact={handleQuickCompact}
+          onSaveSnapshot={() => saveSnapshot()}
+          snapshots={snapshots}
+          onLoadSnapshot={loadSnapshotWrapper}
+          onForkSnapshot={forkFromSnapshotWrapper}
+          knownFiles={knownFiles}
+          onOpenFile={handleOpenFile}
+          shortenPath={shortenPath}
+          logs={logs}
+          msgLog={msgLog}
+          terminalTab={terminalTab}
+          onTerminalTabChange={setTerminalTab}
+          logsEndRef={logsEndRef}
+          onNavigatePath={onNavigatePath}
+          currentActiveDir={absoluteCwd || '.'}
+        />
+        </SidebarSlot>
+      </div>
+
+      {showStatusBar && (
+        <StatusBar
+          queueStatus={queueStatus}
+          onSetMode={setMode}
+          onSetEffort={setEffort}
+          absoluteCwd={absoluteCwd || '.'}
+          terminalCwd={absoluteCwd || '.'}
+          onNavigatePath={onNavigatePath}
+        />
+      )}
+
+      <style>{`
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #555; }
+        ::-webkit-scrollbar-corner { background: transparent; }
+        .prose-container p { margin: 0; overflow-wrap: break-word; line-height: 1.55; }
+        .prose-container code { font-size: 11px; }
+        .prose-container pre { margin: 4px 0; }
+        .prose-container ul, .prose-container ol { margin: 2px 0; }
+        .prose-container li { overflow-wrap: break-word; }
+      `}</style>
+
+    </div>
+
+      <ConsoleOverlays
+        showSearch={showSearch}
+        searchPanelRef={searchPanelRef}
+        searchQuery={searchQuery}
+        searchInputRef={searchInputRef}
+        handleSearchInput={handleSearchInput}
+        searchLoading={searchLoading}
+        onCloseSearch={() => setShowSearch(false)}
+        searchResults={searchResults}
+        addLog={addLog}
+        handleLoadSession={handleLoadSession}
+        showCommandPalette={showCommandPalette}
+        extCommands={paletteCommands}
+        onCommand={handlePaletteSelect}
+        onCloseCommandPalette={() => setShowCommandPalette(false)}
+        viewingFile={viewingFile}
+        onCloseFileViewer={() => setViewingFile(null)}
+        forkTarget={forkTarget}
+        turns={turns}
+        forkPrompt={forkPrompt}
+        setForkPrompt={setForkPrompt}
+        onCloseFork={() => setForkTarget(null)}
+        onRewind={handleForkRewind}
+        onForkSnapshot={handleForkSnapshot}
+        onForkWithPrompt={handleForkWithPrompt}
+        ctxMenu={ctxMenu}
+        onCloseContextMenu={closeContextMenu}
+        settingsOpen={settingsOpen}
+        onCloseSettings={() => setSettingsOpen(false)}
+        onReconnect={onReconnect}
+      />
+
+      <KeyHintOverlay whenContext={focusWhenContext} onCommand={handlePaletteSelect} />
+
+      <MobileSidebar
+        open={mobileOpen}
+        onClose={() => setMobileOpen(false)}
+        fileTree={fileTree}
+        expandedDirs={expandedDirs}
+        onToggleDir={toggleDir}
+        onOpenFile={handleOpenFile}
+        onSendFile={(filePath) => {
+          setInputValue(prev => prev + `@${filePath} `);
+        }}
+        onBookmarkDir={(dirPath) => {
+          const { addPathBookmark } = require('../../lib/path-bookmarks');
+          addPathBookmark(dirPath);
+        }}
+        activeInstanceId={activeInstanceId}
+        onKill={killInstance}
+        onCommand={handlePaletteSelect}
+        activeView={focusViewId}
+        absoluteCwd={absoluteCwd || undefined}
+      />
+      <MobileRightPanel
+        open={mobileRightOpen}
+        onClose={() => setMobileRightOpen(false)}
+        activeTasks={activeTasks}
+        onNewSession={handleNewSessionWrapper}
+        onQuickCompact={handleQuickCompact}
+        onSaveSnapshot={() => saveSnapshot()}
+        snapshots={snapshots}
+        onLoadSnapshot={loadSnapshotWrapper}
+        onForkSnapshot={forkFromSnapshotWrapper}
+        knownFiles={knownFiles}
+        onOpenFile={handleOpenFile}
+        shortenPath={shortenPath}
+        logs={logs}
+        msgLog={msgLog}
+        terminalTab={terminalTab}
+        onTerminalTabChange={setTerminalTab}
+        logsEndRef={logsEndRef}
+      />
+      </RuntimePolicyProvider>
+    </FocusProvider>
+  );
+}
