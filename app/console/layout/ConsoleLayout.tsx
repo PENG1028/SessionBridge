@@ -314,7 +314,6 @@ export function ConsoleLayout(props: Record<string, any>) {
           setInputValue(prev => prev + `@${filePath} `);
         }}
         onBookmarkDir={(dirPath) => {
-          const { addPathBookmark } = require('../../lib/path-bookmarks');
           addPathBookmark(dirPath);
         }}
         activeInstanceId={activeInstanceId}

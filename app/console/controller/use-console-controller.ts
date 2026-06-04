@@ -48,6 +48,7 @@ import { LayoutProvider, useLayout, SidebarSlot, MainSlot, FocusProvider, Runtim
 import { WorkbenchLayout } from '../stage/workbench-layout';
 import { appReducer, createAppInitialState, getActiveWorkbenchState, createInitialState, findPane as findPaneInTree, ensureInstanceTab, saveLayoutsToStorage, loadLayoutsFromStorage, restoreInstanceStatesFromStorage, genTabId, collectAllTabs, type ViewType, type PaneTab, type LayoutNode, type WorkbenchState, type WorkbenchAction, type AppWorkbenchState, type AppWorkbenchAction } from '../stage/workbench-state';
 import { useBlockProcessor } from '../hooks/use-block-processor';
+import { useForkActions } from '../hooks/use-fork-actions';
 import type { Phase, Block, Message, Turn, ToolActivity, TaskInfo } from '../../lib/session-types';
 import { getTime, genId, shortenPath, toAppMessages, toStorageMessages, parseSessionBlocks } from '../../lib/message-utils';
 
@@ -86,8 +87,10 @@ export function useConsoleController({ wsUrl, setWsUrl, token, setToken, onRecon
   // ── Initial connect: fetch node info, set CWD, rename default session ──
   useEffect(() => {
     if (!core?.isConnected) return;
+    let ignore = false;
     core.call<{cwd?: string; projectName?: string; homeDir?: string}>('node.info', {})
       .then(info => {
+        if (ignore) return;
         const cwd = (info.cwd || '.').replace(/\\/g, '/');
         if (cwd && cwd !== '.') setAbsoluteCwd(cwd);
         setProjectInfo({
@@ -107,7 +110,8 @@ export function useConsoleController({ wsUrl, setWsUrl, token, setToken, onRecon
           });
         }
       })
-      .catch(err => coreErrors.reportError({method: "node.info", error: classifyCoreError(err), timestamp: Date.now()}));
+      .catch(err => { if (!ignore) coreErrors.reportError({method: "node.info", error: classifyCoreError(err), timestamp: Date.now()}); });
+    return () => { ignore = true; };
   }, [core, core.isConnected]);
 
   // ── File tree state (per-node, keyed by wsUrl) ──
@@ -168,10 +172,14 @@ export function useConsoleController({ wsUrl, setWsUrl, token, setToken, onRecon
 
   // Re-fetch node info when the active target node changes.
   // Only updates CWD — the session rename only happens on initial connect.
+  // Uses ignore flag to prevent stale responses from overwriting the latest
+  // request when the user switches nodes rapidly (A→B→A race).
   useEffect(() => {
     if (!core?.isConnected || !appState.activeInstanceId) return;
+    let ignore = false;
     core.call<{cwd?: string; projectName?: string; homeDir?: string}>('node.info', {})
       .then(info => {
+        if (ignore) return;
         const cwd = (info.cwd || '').replace(/\\/g, '/');
         if (cwd) setAbsoluteCwd(cwd);
         setProjectInfo(prev => prev ? {
@@ -181,7 +189,8 @@ export function useConsoleController({ wsUrl, setWsUrl, token, setToken, onRecon
           homeDir: info.homeDir || prev.homeDir,
         } : { cwd: info.cwd || '.', projectName: info.projectName || '', homeDir: info.homeDir || '' });
       })
-      .catch(err => coreErrors.reportError({method: "node.info", error: classifyCoreError(err), timestamp: Date.now()}));
+      .catch(err => { if (!ignore) coreErrors.reportError({method: "node.info", error: classifyCoreError(err), timestamp: Date.now()}); });
+    return () => { ignore = true; };
   }, [appState.activeInstanceId, core, core.isConnected]);
 
   const activeWorkbenchDispatch = useCallback((action: WorkbenchAction) => {
@@ -664,41 +673,15 @@ export function useConsoleController({ wsUrl, setWsUrl, token, setToken, onRecon
     return result;
   }, [messages]);
 
-  // ── Fork dialog state ────────────────────
-  const [forkTarget, setForkTarget] = useState<number | null>(null);
-  const [forkPrompt, setForkPrompt] = useState('');
-
-  // Fork dialog callbacks
-  const handleForkRewind = useCallback((targetIdx: number) => {
-    const allMsgs = messagesBySession[sessionKey] || [];
-    const turnMsgs: Message[] = [turns[targetIdx].userMsg, ...turns[targetIdx].assistantMsgs];
-    const cutoffIdx = allMsgs.indexOf(turnMsgs[turnMsgs.length - 1]) + 1;
-    updateSession(sessionKey, () => allMsgs.slice(0, cutoffIdx));
-    processedRef.current = 0;
-    setPhase('idle');
-    setCurrentActivity(null);
-    addLog(`[System] Rewound to turn ${targetIdx + 1}`);
-    setForkTarget(null);
-  }, [messagesBySession, sessionKey, turns, updateSession, processedRef, setPhase, setCurrentActivity, addLog, setForkTarget]);
-
-  const handleForkSnapshot = useCallback((targetIdx: number) => {
-    saveSnapshot(`Fork from turn ${targetIdx + 1}`);
-    const targetText = turns[targetIdx].userMsg.content;
-    addLog(`[System] Forked from turn ${targetIdx + 1}: "${targetText.slice(0, 60)}..."`);
-    setForkTarget(null);
-  }, [saveSnapshot, turns, addLog, setForkTarget]);
-
-  const handleForkWithPrompt = useCallback((targetIdx: number, prompt: string) => {
-    saveSnapshot(`Fork from turn ${targetIdx + 1}`);
-    const targetText = turns[targetIdx].userMsg.content;
-    addLog(`[System] Forked from turn ${targetIdx + 1}: "${targetText.slice(0, 60)}..." → "${prompt.slice(0, 60)}"`);
-    setInputValue(prompt);
-    setForkTarget(null);
-    setTimeout(() => {
-      const input = document.querySelector<HTMLInputElement>('.msg-input');
-      input?.focus();
-    }, 100);
-  }, [saveSnapshot, turns, addLog, setInputValue, setForkTarget]);
+  // ── Fork dialog state & callbacks ──────────
+  const {
+    forkTarget, setForkTarget, forkPrompt, setForkPrompt,
+    handleForkRewind, handleForkSnapshot, handleForkWithPrompt,
+  } = useForkActions({
+    messagesBySession, sessionKey, turns, updateSession,
+    processedRef, setPhase, setCurrentActivity, addLog,
+    saveSnapshot, setInputValue,
+  });
 
   // ── Sync messagesRef for handleSwitchDir ──
   useEffect(() => { messagesRef.current = messages; }, [messages]);
