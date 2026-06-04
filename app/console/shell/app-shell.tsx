@@ -83,10 +83,13 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
   const core = useCore();
   const setActiveNode = useSetActiveNode();
 
+  // ── Initial connect: fetch node info, set CWD, rename default session ──
   useEffect(() => {
     if (!core?.isConnected) return;
     core.call<{cwd?: string; projectName?: string; homeDir?: string}>('node.info', {})
       .then(info => {
+        const cwd = (info.cwd || '.').replace(/\\/g, '/');
+        if (cwd && cwd !== '.') setAbsoluteCwd(cwd);
         setProjectInfo({
           cwd: info.cwd || '.',
           projectName: info.projectName || '',
@@ -105,22 +108,6 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
         }
       })
       .catch(err => coreErrors.reportError({method: "node.info", error: classifyCoreError(err), timestamp: Date.now()}));
-  }, [core, core.isConnected]);
-
-  // Re-fetch project info when the active target node changes.
-
-  // ── Fetch real absolute working directory from Core (not from node.info) ──
-  useEffect(() => {
-    if (!core?.isConnected) return;
-    core.call<{cwd?: string}>('env.cwd', {})
-      .then(res => {
-        const cwd = (res?.cwd || '').replace(/\\/g, '/');
-        if (cwd) {
-          setAbsoluteCwd(cwd);
-          setProjectInfo(prev => prev ? { ...prev, cwd } : { cwd, projectName: '', homeDir: '' });
-        }
-      })
-      .catch(err => coreErrors.reportError({method: "env.cwd", error: classifyCoreError(err), timestamp: Date.now()}));
   }, [core, core.isConnected]);
 
   // ── File tree state (per-node, keyed by wsUrl) ──
@@ -161,7 +148,9 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
   const handleCorePluginCommand = useCallback((commandId: string) => {
     sendCommand(commandId, {});
   }, [sendCommand]);
-  useAppSync(core, handleCorePluginCommand);
+  const [pluginsSynced, setPluginsSynced] = useState(false);
+  const handlePluginsSynced = useCallback(() => setPluginsSynced(true), []);
+  useAppSync(core, handleCorePluginCommand, handlePluginsSynced);
 
   const connectionUnstable = connStatus.status !== 'connected';
 
@@ -176,6 +165,24 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
   const appDispatch = useCallback((action: AppWorkbenchAction) => {
     setAppState(prev => appReducer(prev, action));
   }, []);
+
+  // Re-fetch node info when the active target node changes.
+  // Only updates CWD — the session rename only happens on initial connect.
+  useEffect(() => {
+    if (!core?.isConnected || !appState.activeInstanceId) return;
+    core.call<{cwd?: string; projectName?: string; homeDir?: string}>('node.info', {})
+      .then(info => {
+        const cwd = (info.cwd || '').replace(/\\/g, '/');
+        if (cwd) setAbsoluteCwd(cwd);
+        setProjectInfo(prev => prev ? {
+          ...prev,
+          cwd: info.cwd || prev.cwd,
+          projectName: info.projectName || prev.projectName,
+          homeDir: info.homeDir || prev.homeDir,
+        } : { cwd: info.cwd || '.', projectName: info.projectName || '', homeDir: info.homeDir || '' });
+      })
+      .catch(err => coreErrors.reportError({method: "node.info", error: classifyCoreError(err), timestamp: Date.now()}));
+  }, [appState.activeInstanceId, core, core.isConnected]);
 
   const activeWorkbenchDispatch = useCallback((action: WorkbenchAction) => {
     setAppState(prev => {
@@ -199,30 +206,19 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
     setActiveNode(appState.activeInstanceId || null);
   }, [appState.activeInstanceId, setActiveNode]);
 
-  // Re-fetch project info when the active target node changes.
-  useEffect(() => {
-    if (!core?.isConnected) return;
-    core.call<{cwd?: string; projectName?: string; homeDir?: string}>("node.info", {})
-      .then(info => {
-        setProjectInfo(prev => ({
-          cwd: info.cwd || prev?.cwd || ".",
-          projectName: info.projectName || prev?.projectName || "",
-          homeDir: info.homeDir || prev?.homeDir || "",
-        }));
-      })
-      .catch(err => coreErrors.reportError({method: "node.info", error: classifyCoreError(err), timestamp: Date.now()}));
-  }, [appState.activeInstanceId, core, core.isConnected]);
-
   const activeNodeWsUrl = useMemo(() => {
     const nodeId = appState.activeInstanceId;
     return nodeId?.startsWith('upstream:') ? nodeId.slice('upstream:'.length) : wsUrl;
   }, [appState.activeInstanceId, wsUrl]);
 
   // ── File tree state (uses activeNodeWsUrl, must be after its definition) ──
+  // Use the same fallback chain as workbench/FilesPanel so keys always match:
+  // absoluteCwd may be '' before env.cwd resolves, but projectInfo.cwd is set by node.info
+  const fileTreeCwd = absoluteCwd || projectInfo?.cwd || '.';
   const {
     fileTree, expandedDirs,
     fetchDir, onNavigatePath: fileTreeNavigatePath, toggleDir,
-  } = useFileTree(wsUrl, activeNodeWsUrl, absoluteCwd);
+  } = useFileTree(wsUrl, activeNodeWsUrl, fileTreeCwd);
 
   // ── File open: CoreClient fs.read ──
   const handleOpenFile = useCallback((filePath: string) => {
@@ -383,13 +379,16 @@ export function AppShell({ wsUrl, setWsUrl, token, setToken, onReconnect, isLoca
       if (wasDisconnectedRef.current) {
         wasDisconnectedRef.current = false;
         instancesRestoredRef.current = false;
+        setPluginsSynced(false); // will be set true by useAppSync callback
       }
     } else {
       wasDisconnectedRef.current = true;
     }
   }, [connStatus.status]);
   useEffect(() => {
-    if (connStatus.status !== 'connected' || instancesRestoredRef.current) return;
+    // Wait for plugin views to be registered before restoring layout.
+    // Otherwise terminal tabs render "View not found" before plugins sync.
+    if (connStatus.status !== 'connected' || instancesRestoredRef.current || !pluginsSynced) return;
     instancesRestoredRef.current = true;
 
     const saved = loadLayoutsFromStorage();
