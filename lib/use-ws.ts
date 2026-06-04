@@ -245,7 +245,9 @@ export function useSession(
   const sendResize = useCallback((cols: number, rows: number) => {
     const sid = activeSessionIdRef.current || activeInstanceIdRef.current;
     if (sid && core.isConnected) {
-      core.call('process.resize', { sessionId: sid, cols, rows }).catch(() => {});
+      core.call('process.resize', { sessionId: sid, cols, rows }).catch(err => {
+        console.warn('[use-ws] process.resize failed:', err);
+      });
     }
   }, [core]);
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { X, Search, ChevronRight, Radio } from 'lucide-react';
 import { useCoreStatus, useCoreClient, useCore } from '../core/core-client-provider';
 
@@ -179,22 +179,28 @@ export function SettingsPanel({ open, onClose, onReconnect }: SettingsPanelProps
   const [scanning, setScanning] = useState(false);
   const [scanResults, setScanResults] = useState<Array<{ port: number; status: string }> | null>(null);
 
+  // Track mount state so async callbacks don't setState after unmount
+  const mountedRef = useRef(true);
+  useEffect(() => { return () => { mountedRef.current = false; }; }, []);
+
   // Fetch current server-side Core target on panel open
   useEffect(() => {
-    if (open) {
-      setScanResults(null);
-      fetch('/api/core/target')
-        .then(r => r.json())
-        .then(data => {
-          if (data?.url) {
-            try {
-              const port = new URL(data.url).port || '9090';
-              setLocalPort(port);
-            } catch (_e) {}
-          }
-        })
-        .catch(() => {});
-    }
+    if (!open) return;
+    let ignore = false;
+    setScanResults(null);
+    fetch('/api/core/target')
+      .then(r => r.json())
+      .then(data => {
+        if (ignore) return;
+        if (data?.url) {
+          try {
+            const port = new URL(data.url).port || '9090';
+            setLocalPort(port);
+          } catch (_e) { /* URL parse failure — keep default port */ }
+        }
+      })
+      .catch(() => {});
+    return () => { ignore = true; };
   }, [open]);
 
   // ── Port scan handler ─────────────────────────────────────────
@@ -203,11 +209,14 @@ export function SettingsPanel({ open, onClose, onReconnect }: SettingsPanelProps
     setScanResults(null);
     try {
       const res = await fetch('/api/core/discover');
-      const data = await res.json() as { results: Array<{ port: number; status: string; info?: any }> };
+      const data = await res.json() as { results: Array<{ port: number; status: string; info?: unknown }> };
+      if (!mountedRef.current) return;
       setScanResults(data.results);
     } catch (_e) {
+      if (!mountedRef.current) return;
       setScanResults([]);
     }
+    if (!mountedRef.current) return;
     setScanning(false);
   }, []);
 
@@ -221,10 +230,14 @@ export function SettingsPanel({ open, onClose, onReconnect }: SettingsPanelProps
         credentials: 'same-origin',
         body: JSON.stringify({ port: parseInt(cleanPort, 10) }),
       });
+      if (!mountedRef.current) return;
       setLocalPort(cleanPort);
-    } catch (_e) {}
-    // Trigger SSE reconnection so ProxyCoreClient picks up the new target
-    setTimeout(onReconnect, 100);
+      // Trigger reconnection after state is settled. Uses rAF so the
+      // reconnect fires after the next paint, picking up the new target.
+      requestAnimationFrame(() => {
+        if (mountedRef.current) onReconnect();
+      });
+    } catch (_e) { /* fetch failure — keep current port */ }
   }, [onReconnect]);
 
   // ── Core Settings state ───────────────────────────────────────
@@ -246,13 +259,16 @@ export function SettingsPanel({ open, onClose, onReconnect }: SettingsPanelProps
     setError('');
     try {
       const result = await core.call('config.list') as { configs: CoreConfigEntry[] } | undefined;
+      if (!mountedRef.current) return;
       const entries: CoreConfigEntry[] = result?.configs ?? [];
       setCoreConfigs(entries);
       setDirtyMap(new Map());
       setValidationErrors({});
     } catch (err) {
+      if (!mountedRef.current) return;
       setError((err as Error).message || 'Failed to load config');
     }
+    if (!mountedRef.current) return;
     setLoading(false);
   }, [core, coreStatus, isOffline]);
 
@@ -284,6 +300,7 @@ export function SettingsPanel({ open, onClose, onReconnect }: SettingsPanelProps
   const handleReset = useCallback(async (key: string) => {
     try {
       await core.call('config.reset', { key });
+      if (!mountedRef.current) return;
       setCoreConfigs((prev) => prev.filter((e) => e.key !== key));
       setDirtyMap((prev) => {
         const next = new Map(prev);
@@ -291,6 +308,7 @@ export function SettingsPanel({ open, onClose, onReconnect }: SettingsPanelProps
         return next;
       });
     } catch (err) {
+      if (!mountedRef.current) return;
       setValidationErrors((prev) => ({ ...prev, [key]: [(err as Error).message] }));
     }
   }, [core]);
@@ -311,6 +329,7 @@ export function SettingsPanel({ open, onClose, onReconnect }: SettingsPanelProps
       }
     }
 
+    if (!mountedRef.current) return;
     setValidationErrors(errors);
 
     // Merge saved entries into local state
@@ -360,6 +379,7 @@ export function SettingsPanel({ open, onClose, onReconnect }: SettingsPanelProps
   const fetchUpdateStatus = useCallback(async () => {
     try {
       const result = await core.call('update.status') as Record<string, unknown> | undefined;
+      if (!mountedRef.current) return;
       if (result) {
         setUpdateStatus(String(result.status ?? 'unknown'));
         setUpdateInfo({
@@ -371,7 +391,7 @@ export function SettingsPanel({ open, onClose, onReconnect }: SettingsPanelProps
         });
       }
     } catch (_e) {
-      // Update manager may not be available
+      // Update manager may not be available on this Core version
     }
   }, [core]);
 
@@ -379,6 +399,7 @@ export function SettingsPanel({ open, onClose, onReconnect }: SettingsPanelProps
     setUpdateChecking(true);
     try {
       const result = await core.call('update.check') as Record<string, unknown> | undefined;
+      if (!mountedRef.current) return;
       if (result) {
         setUpdateStatus(String(result.status ?? 'unknown'));
         setUpdateInfo({
@@ -390,9 +411,11 @@ export function SettingsPanel({ open, onClose, onReconnect }: SettingsPanelProps
         });
       }
     } catch (err) {
+      if (!mountedRef.current) return;
       setUpdateStatus('error');
       setUpdateInfo(prev => ({ ...prev, lastCheckError: (err as Error).message }));
     }
+    if (!mountedRef.current) return;
     setUpdateChecking(false);
   }, [core]);
 

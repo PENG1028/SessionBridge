@@ -41,7 +41,9 @@ export async function syncAllPlugins(
     if (!apps.length) return;
 
     // Load all app states so isEnabled() returns correct values
-    await Promise.all(apps.map((a: any) => loadAppState(a.id).catch(() => {})));
+    await Promise.all(apps.map((a: any) => loadAppState(a.id).catch(err => {
+      console.warn(`[plugin-sync] Failed to load state for app "${a.id}":`, err);
+    })));
 
   // Collect contributions from all enabled apps
   const allLeft: Array<{ id: string; title: string; icon: string; defaultVisible: boolean; componentId?: string; order?: number; pluginId?: string }> = [];
@@ -67,7 +69,8 @@ export async function syncAllPlugins(
 
       const ui = manifest.adapters['system-ui'] as AppSystemUI;
       registerAppContributions(app.id, manifest, ui, onExecuteCommand, allLeft, allRight, allStatusBar);
-    } catch (_e) {
+    } catch (err) {
+      console.error(`[plugin-sync] Failed to sync plugin "${app.name || app.id}":`, err);
     }
   }
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef, useState, type ReactNode, type MouseEvent as ReactMouseEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode, type MouseEvent as ReactMouseEvent } from 'react';
 import { PaneView } from './pane-view';
 import type { LayoutNode, SplitNode, PaneState, PaneTab, ViewType, WorkbenchState, WorkbenchAction } from './workbench-state';
 import { genTabId, findPane } from './workbench-state';
@@ -147,6 +147,18 @@ function SplitRenderer({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState<{ index: number; start: number; startSizes: number[] } | null>(null);
+  // Track active drag listeners so we can clean them up if SplitRenderer
+  // unmounts mid-drag (e.g. pane removed while user is resizing).
+  const dragCleanupRef = useRef<{ move: (e: MouseEvent) => void; up: () => void } | null>(null);
+  useEffect(() => {
+    return () => {
+      if (dragCleanupRef.current) {
+        document.removeEventListener('mousemove', dragCleanupRef.current.move);
+        document.removeEventListener('mouseup', dragCleanupRef.current.up);
+        dragCleanupRef.current = null;
+      }
+    };
+  }, []);
 
   const handleMouseDown = useCallback(
     (e: ReactMouseEvent, index: number) => {
@@ -207,8 +219,15 @@ function SplitRenderer({
         setDragging(null);
         document.removeEventListener('mousemove', handleMouseMove);
         document.removeEventListener('mouseup', handleMouseUp);
+        dragCleanupRef.current = null;
       };
 
+      // Clean up any previous drag (shouldn't happen, but guards against leaks)
+      if (dragCleanupRef.current) {
+        document.removeEventListener('mousemove', dragCleanupRef.current.move);
+        document.removeEventListener('mouseup', dragCleanupRef.current.up);
+      }
+      dragCleanupRef.current = { move: handleMouseMove, up: handleMouseUp };
       document.addEventListener('mousemove', handleMouseMove);
       document.addEventListener('mouseup', handleMouseUp);
     },

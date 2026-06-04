@@ -89,6 +89,10 @@ export class StreamManager {
       this.transition({ type: 'disconnected', sessionId: this._state.sessionId, lastSeq: { ...this._state.lastSeq } });
     } else if (this._state.type === 'replaying') {
       this.transition({ type: 'disconnected', sessionId: this._state.sessionId, lastSeq: { stdout: 0, stderr: 0 } });
+    } else if (this._state.type === 'reconnecting') {
+      // Connection dropped while reconnect was in flight — transition back
+      // to disconnected so onReconnect can be retried by the caller.
+      this.transition({ type: 'disconnected', sessionId: this._state.sessionId, lastSeq: { ...this._state.lastSeq } });
     }
   }
 
