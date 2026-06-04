@@ -4,8 +4,8 @@
 // Shows all declared permissions for a plugin and allows grant toggling.
 
 import { useState, useEffect } from 'react';
-import type { AppPermissionSpec } from '../../app/lib/app-registry/app-types';
-import { getGrant, setGrant } from '../../app/lib/app-registry/app-registry';
+import type { AppPermissionSpec } from '../../sdk';
+import { getGrant, setGrant } from '../../sdk';
 
 interface PermissionPanelProps {
   appId: string;

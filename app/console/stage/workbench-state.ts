@@ -405,12 +405,13 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
           : t;
       const clearPane = (p: PaneState) =>
         p ? { ...p, tabs: p.tabs.map(clearTab) } : p;
-      let root = state.root;
-      if (root.kind === 'pane') {
-        root = clearPane(root);
-      } else {
-        root = { ...root, children: root.children.map(c => c.kind === 'pane' ? clearPane(c) : c) };
-      }
+      // Recursively traverse the layout tree — a split can contain
+      // nested splits, and all panes at any depth must be cleared.
+      const clearTree = (node: LayoutNode): LayoutNode => {
+        if (node.kind === 'pane') return clearPane(node);
+        return { ...node, children: node.children.map(clearTree) };
+      };
+      const root = clearTree(state.root);
       const bottom = state.bottom ? clearPane(state.bottom) : null;
       return { ...state, root, bottom };
     }

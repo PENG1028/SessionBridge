@@ -6,9 +6,8 @@
 
 import { useState } from 'react';
 import { Check, X, RefreshCw, Play } from 'lucide-react';
-import { useDependencyCheck } from '../../app/lib/use-dependency-check';
-import { useCore } from '../../app/console/core/core-client-provider';
-import type { CheckResult } from '../../app/lib/app-registry/app-types';
+import { useCore, useDependencyCheck } from '../../sdk';
+import type { CheckResult } from '../../sdk';
 
 // ─── Row: single dependency check ────────────────────────────────
 function DepRow({ check, onInstall }: { check: CheckResult; onInstall: (c: CheckResult) => void }) {

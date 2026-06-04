@@ -22,6 +22,9 @@ export { useSessionContext } from '../app/console/workbench/session-context';
 export { useInputContext } from '../app/console/workbench/input-context';
 export { useToolActivityContext } from '../app/console/workbench/tool-activity-context';
 
+// Dependency checking for plugins
+export { useDependencyCheck } from '../app/lib/use-dependency-check';
+
 // A newly exported standalone error hook
 export { useCoreErrors } from '../app/console/core/use-core-call';
 export { classifyCoreError } from '../app/console/core/core-error';

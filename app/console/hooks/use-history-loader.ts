@@ -41,6 +41,10 @@ export function useHistoryLoader(
   const historyCutoffRef = useRef(0);
   const processedRef = useRef(0);
   const [activeExternalSession, setActiveExternalSession] = useState<string | null>(null);
+  // serverBlocks may arrive after the effect runs — keep a ref so we always
+  // see the latest length when setting the stream position on restore.
+  const serverBlocksRef = useRef(serverBlocks);
+  serverBlocksRef.current = serverBlocks;
 
   useEffect(() => {
     if (historyLoadedRef.current) return;
@@ -54,7 +58,7 @@ export function useHistoryLoader(
         if (parsed[key]?.length > 0) {
           setMessagesBySession(parsed);
           historyCutoffRef.current = Date.now();
-          processedRef.current = serverBlocks.length;
+          processedRef.current = serverBlocksRef.current.length;
           historyLoadedRef.current = true;
           addLog(`[System] Restored ${parsed[key].length} messages from localStorage`);
           // Restore active external session indicator

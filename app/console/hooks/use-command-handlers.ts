@@ -111,10 +111,13 @@ export function useCommandHandlers(
   const handleCommandClick = useCallback((cmd: string) => {
     setInputValue(cmd + ' ');
     setShowCommands(false);
-    setTimeout(() => {
+    // Focus the message input after the next frame — same pattern as
+    // useForkActions.handleForkWithPrompt.
+    // Debt: replace with ref when InputProvider exposes focusInput().
+    requestAnimationFrame(() => {
       const input = document.querySelector<HTMLInputElement>('.msg-input');
       input?.focus();
-    }, 50);
+    });
   }, []);
 
   return {

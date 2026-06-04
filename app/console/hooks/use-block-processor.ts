@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { getSemantic } from '../shared/tool-constants';
 
 // ── Local types (minimal, used only within this hook) ──
@@ -118,6 +118,11 @@ export function useBlockProcessor({
   setActiveTasks,
   onNotify,
 }: UseBlockProcessorConfig) {
+  // onNotify is a prop that may change — keep a ref so the effect always
+  // calls the latest version without needing it in the dependency array.
+  const onNotifyRef = useRef(onNotify);
+  onNotifyRef.current = onNotify;
+
   useEffect(() => {
     try {
       if (serverBlocks.length <= processedRef.current) return;
@@ -291,7 +296,7 @@ export function useBlockProcessor({
             });
           }
           addLog(`[System] ✓ ${block.text || 'Task completed'}`);
-          onNotify?.({ type: 'success', title: 'Task completed', message: block.text });
+          onNotifyRef.current?.({ type: 'success', title: 'Task completed', message: block.text });
           continue;
         }
 
@@ -328,7 +333,7 @@ export function useBlockProcessor({
             startTime: Date.now(),
           }));
           addLog(`[Task] Started: ${block.description || block.taskId}`);
-          onNotify?.({ type: 'info', title: 'Background task started', message: block.description });
+          onNotifyRef.current?.({ type: 'info', title: 'Background task started', message: block.description });
           continue;
         }
 
@@ -355,7 +360,7 @@ export function useBlockProcessor({
             return next;
           });
           addLog(`[Task] Completed: ${block.taskId}`);
-          onNotify?.({ type: 'success', title: 'Background task done', message: block.taskId });
+          onNotifyRef.current?.({ type: 'success', title: 'Background task done', message: block.taskId });
           continue;
         }
 
@@ -381,6 +386,8 @@ export function useBlockProcessor({
       console.error('[FATAL] Block processing error:', err);
       addLog(`[Error] ${err instanceof Error ? err.message : String(err)}`);
     }
+    // setState/setPhase/addLog are stable setters; onNotify goes through
+    // onNotifyRef to avoid stale closure without re-running the effect.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverBlocks, sessionKey, updateSession]);
 }

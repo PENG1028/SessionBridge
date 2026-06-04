@@ -11,11 +11,11 @@
  * dynamic loading, sandboxing, and independent plugin distribution.
  */
 
-export { useCore, useCoreStatus, useActiveNodeId, useReachableNodeIds, useTargetReachability, useCoreErrors, classifyCoreError, useWorkbench, useFocus, useSessionContext, useInputContext, useToolActivityContext } from './hooks';
+export { useCore, useCoreStatus, useActiveNodeId, useReachableNodeIds, useTargetReachability, useCoreErrors, classifyCoreError, useDependencyCheck, useWorkbench, useFocus, useSessionContext, useInputContext, useToolActivityContext } from './hooks';
 export type { CoreClient, CoreConnectionStatus, FocusState, CoreErrorCategory } from './hooks';
 
 export { ShellTerminal, TitleBar, DirectoryPicker, SystemContextBar, FileExplorer } from './components';
 
-export { getLastActiveDir, setLastActiveDir, getRestoreLastPath, TOOL_SEMANTICS, evaluateWhen, normalizeNodeInfo, listFromResponse, normalizeSessionInfo, loadApps, isEnabled, setEnabled, getLoadError, invalidateCache, registerPanelComponent } from './utils';
+export { getLastActiveDir, setLastActiveDir, getRestoreLastPath, TOOL_SEMANTICS, evaluateWhen, normalizeNodeInfo, listFromResponse, normalizeSessionInfo, loadApps, isEnabled, setEnabled, getLoadError, invalidateCache, getGrant, setGrant, registerPanelComponent } from './utils';
 
-export type { HostComponentProps, CoreEvent, NodeInfo, PeerEntry, NodeInvite, SessionInfo, AppSummary, AppManifest, AppSystemUI, AppUIPanel, WhenContext } from './types';
+export type { HostComponentProps, CoreEvent, NodeInfo, PeerEntry, NodeInvite, SessionInfo, AppSummary, AppManifest, AppSystemUI, AppUIPanel, AppPermissionSpec, CheckResult, WhenContext } from './types';
