@@ -110,7 +110,7 @@ function def(
     ['commandPalette', 'keybinding', 'contextMenu'],
     (ctx) => {
       const msgs = [...ctx.messages].reverse();
-      const last = msgs.find((m: any) => m.role === 'assistant');
+      const last = msgs.find(m => m.role === 'assistant');
       if (last?.content) {
         navigator.clipboard.writeText(last.content).catch(() => {});
       }
@@ -127,7 +127,7 @@ function def(
   registerAction(def('claude.copyAll', 'Copy All',
     ['contextMenu'],
     (ctx) => {
-      const text = [...ctx.messages].map((m: any) => `[${m.role}] ${m.content}`).join('\n');
+      const text = [...ctx.messages].map(m => `[${m.role}] ${m.content}`).join('\n');
       navigator.clipboard.writeText(text).catch(() => {});
     },
     { when: 'view == "claude-chat"', shortcut: '⌘⇧C', keybinding: 'Ctrl+Shift+C', order: 30, category: 'Claude', group: 'edit' },

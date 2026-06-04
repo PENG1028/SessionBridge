@@ -2,10 +2,11 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useCore, useActiveNodeId } from '../core/core-client-provider';
+import type { MsgLog, InstanceInfo } from '../../../lib/session-types';
 
 // ── Logs Panel ──────────────────────────────────────────────
 
-export function LogsPanel(props: { logs?: string[]; msgLog?: any[] }) {
+export function LogsPanel(props: { logs?: string[]; msgLog?: MsgLog[] }) {
   const core = useCore();
   const activeNodeId = useActiveNodeId();
   const [coreLogs, setCoreLogs] = useState<string[] | null>(null);
@@ -43,7 +44,7 @@ export function LogsPanel(props: { logs?: string[]; msgLog?: any[] }) {
 
 // ── Terminal Panel ──────────────────────────────────────────
 
-export function TerminalPanel(props: { msgLog?: any[] }) {
+export function TerminalPanel(props: { msgLog?: MsgLog[] }) {
   const core = useCore();
   const activeNodeId = useActiveNodeId();
   const { msgLog } = props;
@@ -91,7 +92,7 @@ export function TerminalPanel(props: { msgLog?: any[] }) {
     <div className="border-t border-gray-800 bg-black">
       <div className="p-2 text-[10px] font-bold text-gray-500 tracking-wider">RAW</div>
       <div className="max-h-36 overflow-y-auto px-2 pb-2 space-y-0.5">
-        {msgLog.slice(-100).map((entry: any) => (
+        {msgLog.slice(-100).map((entry: MsgLog) => (
           <div key={entry.id} className="text-[9px] font-mono">
             <span className="text-gray-700">{entry.time}</span>{' '}
             <span className={entry.type === 'error' ? 'text-red-400' : 'text-gray-500'}>
@@ -172,7 +173,7 @@ export function SystemPanel(props: { projectCwd?: string }) {
 
 // ── Processes Panel ─────────────────────────────────────────
 
-export function ProcessesPanel(props: { instances?: any[]; activeInstanceId?: string | null }) {
+export function ProcessesPanel(props: { instances?: InstanceInfo[]; activeInstanceId?: string | null }) {
   const { instances, activeInstanceId } = props;
   if (!instances || instances.length === 0) {
     return <div className="text-gray-700 text-[10px] italic p-3">No processes</div>;
@@ -181,7 +182,7 @@ export function ProcessesPanel(props: { instances?: any[]; activeInstanceId?: st
     <div className="border-t border-gray-800 bg-[#111]">
       <div className="p-2 text-[10px] font-bold text-gray-500 tracking-wider">PROCESSES</div>
       <div className="max-h-40 overflow-y-auto px-2 pb-2 space-y-1">
-        {instances.map((inst: any) => (
+        {instances.map((inst: InstanceInfo) => (
           <div key={inst.id} className={`flex items-center gap-2 px-2 py-1 rounded text-[9px] ${
             inst.id === activeInstanceId ? 'bg-purple-900/20 text-purple-300' : 'text-gray-400'
           }`}>

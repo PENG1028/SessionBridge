@@ -4,6 +4,9 @@
 // Phase 4E: Lightweight action surface registry. Actions are
 // registered once at startup and queried by surface at render time.
 
+import type { WorkbenchAction as WbAction } from '../stage/workbench-state.types';
+import type { Message } from '../hooks/block-types';
+
 /** UI surfaces that can host actions. */
 export type ActionSurface =
   | 'commandPalette'
@@ -22,10 +25,10 @@ export interface ActionRunContext {
   isRunning: boolean;
   instanceId: string | null;
   projectCwd: string;
-  messages: readonly any[];
+  messages: readonly Message[];
   workbenchState: unknown;
-  workbenchDispatch: (action: any) => void;
-  sendCommand: (cmd: string, args?: any, sessionId?: string) => void;
+  workbenchDispatch: (action: WbAction) => void;
+  sendCommand: (cmd: string, args?: Record<string, unknown>, sessionId?: string) => void;
   sendInput: (text: string, sessionId?: string) => void;
   createInstance: (dir: string, label?: string, adapterId?: string) => unknown;
   killInstance: (id: string) => void;

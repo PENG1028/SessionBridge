@@ -86,7 +86,7 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
         const run = result.instance;
         const sessionId = result.sessionId;
         debugLog('TerminalView createInstance SUCCESS', { runId: run.id, sessionId });
-        setCoreSessionId(sessionId);
+        setCoreSessionId(sessionId ?? null);
         bindCurrentTabInstance(run.id, undefined);
         // Resize terminal to proper dimensions
         core.call('run.resize', { runId: run.id, cols: 80, rows: 24 }).catch(() => {});

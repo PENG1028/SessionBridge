@@ -169,7 +169,7 @@ export function useSession(
     addMsgLog('input', text);
   }, [core, addMsgLog]);
 
-  const sendCommand = useCallback((name: string, args?: Record<string, string>, sessionId?: string) => {
+  const sendCommand = useCallback((name: string, args?: Record<string, unknown>, sessionId?: string) => {
     const sid = sessionId || activeSessionIdRef.current || activeInstanceIdRef.current || undefined;
     if (name === 'interrupt' && sid && core.isConnected) {
       core.call('run.stop', { runId: sid, signal: 'interrupt' }).catch(err => {

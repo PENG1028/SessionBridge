@@ -1,13 +1,22 @@
+'use client';
+
 // ─── Session Search Hook ─────────────────────────────────────
 // Extracted from page.tsx. Encapsulates session search state
 // and search panel logic.
 
 import { useState, useRef, useCallback } from 'react';
 
+interface SearchResult {
+  id: string;
+  snippet: string;
+  timestamp: string;
+  role: string;
+}
+
 export function useSessionSearch() {
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchPanelRef = useRef<HTMLDivElement>(null);
@@ -23,7 +32,7 @@ export function useSessionSearch() {
         return;
       }
       // Local search across localStorage — no remote API call
-      const results: any[] = [];
+      const results: SearchResult[] = [];
       const keys = ['sessionbridge-messages', 'bridge-messages'];
       for (const key of keys) {
         try {

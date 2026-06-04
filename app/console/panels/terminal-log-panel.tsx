@@ -1,10 +1,11 @@
 'use client';
 
 import { AlertCircle } from 'lucide-react';
+import type { MsgLog } from '../../../lib/session-types';
 
 interface TerminalLogPanelProps {
   logs?: string[];
-  msgLog?: any[];
+  msgLog?: MsgLog[];
   terminalTab?: 'log' | 'raw';
   onTerminalTabChange?: (tab: 'log' | 'raw') => void;
   logsEndRef?: React.RefObject<HTMLDivElement | null>;
@@ -51,7 +52,7 @@ export function TerminalLogPanel(props: TerminalLogPanelProps) {
           !msgLog || msgLog.length === 0 ? (
             <div className="text-gray-700 text-[10px] italic">Raw output will appear here</div>
           ) : (
-            msgLog.slice(-200).map((entry: any) => (
+            msgLog.slice(-200).map((entry: MsgLog) => (
               <div key={entry.id} className="text-[10px] leading-relaxed font-mono">
                 <span className="text-gray-700">{entry.time}</span>{' '}
                 <span className={`${

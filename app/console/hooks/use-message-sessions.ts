@@ -71,7 +71,7 @@ export function useMessageSessions(
   activeSessionId: string | null | undefined,
   activeInstanceId: string | null | undefined,
   addLog: (msg: string) => void,
-  sendCommand: (cmd: string, args?: any) => void,
+  sendCommand: (cmd: string, args?: Record<string, unknown>) => void,
 ) {
   const [messagesBySession, setMessagesBySession] = useState<Record<string, Message[]>>({});
   const [isRestoring, setIsRestoring] = useState(true);

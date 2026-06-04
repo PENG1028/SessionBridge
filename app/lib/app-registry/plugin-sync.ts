@@ -9,7 +9,7 @@
 // No hardcoded registration in page.tsx, register-*.ts, or bootstrap.
 
 import { Box } from 'lucide-react';
-import type { AppManifest, AppSystemUI } from './app-types';
+import type { AppManifest, AppSummary, AppSystemUI } from './app-types';
 import { registerView, unregisterView } from '../../console/main/view-registry';
 import { syncPluginPanels, clearPanels } from '../../console/panels/panel-registry';
 import { syncChromeContributions, clearChromeContributions } from '../../console/chrome/chrome-registry';
@@ -41,7 +41,7 @@ export async function syncAllPlugins(
     if (!apps.length) return;
 
     // Load all app states so isEnabled() returns correct values
-    await Promise.all(apps.map((a: any) => loadAppState(a.id).catch(err => {
+    await Promise.all(apps.map((a: AppSummary) => loadAppState(a.id).catch(err => {
       console.warn(`[plugin-sync] Failed to load state for app "${a.id}":`, err);
     })));
 

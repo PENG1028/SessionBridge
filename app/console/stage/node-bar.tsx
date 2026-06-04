@@ -60,19 +60,19 @@ export function NodeBar({ activeNodeId, onEnterNode, onOpenConnection }: NodeBar
         const lid = identity?.nodeId || '__local__';
         if (!cancelled) setLocalNodeId(lid);
 
-        const nodeList = await core.call<{ nodes: any[] }>('node.list');
+        const nodeList = await core.call<{ nodes: Array<{ nodeId: string; name?: string; displayName?: string; hostname?: string; addresses?: string[]; address?: string; role?: string; networkType?: string; hasPublicAccess?: boolean }> }>('node.list');
         if (cancelled || !nodeList?.nodes) return;
 
         setRemotePeers(
           nodeList.nodes
-            .filter((n: any) => n.nodeId && n.nodeId !== lid)
-            .map((n: any) => ({
+            .filter(n => n.nodeId && n.nodeId !== lid)
+            .map(n => ({
               id: n.nodeId,
               name: n.name || n.displayName || n.hostname || n.nodeId.slice(0, 12),
               ip: n.addresses?.[0] || n.address,
               type: 'agent' as const,
-              role: n.role || 'leaf',
-              networkType: n.networkType || 'unknown',
+              role: (n.role || 'leaf') as 'relay' | 'leaf',
+              networkType: (n.networkType || 'unknown') as 'loopback' | 'lan' | 'wan' | 'unknown',
               hasPublicAccess: n.hasPublicAccess,
             }))
         );

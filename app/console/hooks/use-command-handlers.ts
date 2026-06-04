@@ -10,7 +10,7 @@ export function useCommandHandlers(
   setPhase: (p: Phase) => void,
   setCurrentActivity: (a: string | null) => void,
   sendInput: (text: string, sessionId?: string) => void,
-  sendCommand: (cmd: string, args?: any) => void,
+  sendCommand: (cmd: string, args?: Record<string, unknown>) => void,
   addLog: (msg: string) => void,
   activeSessionId: string | null | undefined,
   fileTree: Record<string, { items: any[]; loaded: boolean }>,

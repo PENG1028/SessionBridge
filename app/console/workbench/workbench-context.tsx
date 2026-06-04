@@ -1,6 +1,7 @@
 'use client';
 
 import { createContext, useContext, type ReactNode, type RefObject } from 'react';
+import type { InstanceInfo } from '../../../lib/session-types';
 
 // ── Context value type (remaining after Session/Input/ToolActivity split) ──
 
@@ -13,9 +14,9 @@ export interface WorkbenchContextValue {
   logs: string[];
 
   // Instance management (Phase 4F: explicit instance creation, no auto-bind)
-  instances: any[];
-  createInstance: (dir: string, label?: string, adapterId?: string) => Promise<any>;
-  bindCurrentTabInstance: (instanceId: string, surface?: any) => void;
+  instances: InstanceInfo[];
+  createInstance: (dir: string, label?: string, adapterId?: string) => Promise<{ success: boolean; instance?: InstanceInfo; runId?: string; sessionId?: string; error?: string }>;
+  bindCurrentTabInstance: (instanceId: string, surface?: string) => void;
   activeInstanceId: string | null;
   projectCwd: string;
   activeNodeWsUrl: string;

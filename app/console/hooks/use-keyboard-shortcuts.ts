@@ -2,13 +2,18 @@
 
 import { useEffect, useRef } from 'react';
 
+interface MessageLike {
+  role: string;
+  content?: string;
+}
+
 /**
  * Global keyboard shortcuts with view-context awareness.
  * Claude-specific shortcuts (Ctrl+L, Ctrl+R, Ctrl+Shift+C, Ctrl+Shift+M) only
  * fire when the active view is claude-chat.
  */
 export function useKeyboardShortcuts(
-  messages: any[],
+  messages: MessageLike[],
   onClearSession: () => void,
   onToggleCommandPalette: () => void,
   onToggleLeftSidebar: () => void,
@@ -38,7 +43,7 @@ export function useKeyboardShortcuts(
         if (!isClaude()) return;
         e.preventDefault();
         const msgs = messagesRef.current;
-        const lastAssistant = [...msgs].reverse().find((m: any) => m.role === 'assistant');
+        const lastAssistant = [...msgs].reverse().find(m => m.role === 'assistant');
         if (lastAssistant?.content) {
           navigator.clipboard.writeText(lastAssistant.content).catch(() => {});
         }
