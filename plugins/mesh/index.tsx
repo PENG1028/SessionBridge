@@ -117,7 +117,7 @@ export function NodeNetworkView({
   const topo: TopoEntry[] = [];
 
   function pushNode(
-    id: string, name: string, address: string | undefined,
+    name: string, address: string | undefined,
     networkType: string | undefined, kind: NodeKind,
     nodeId: string | undefined, onEnter?: () => void, reachable?: boolean,
   ) {
@@ -135,11 +135,11 @@ export function NodeNetworkView({
   // Build tree — explicit order: VIEW → LOCAL → RELAY(s) → LEAF(s) → trust-only
   if (core.isConnected) {
     // 1. VIEW — browser session, dashed link to local
-    pushNode('__view__', `View on ${localName}`, undefined, undefined, 'VIEW', undefined);
+    pushNode(`View on ${localName}`, undefined, undefined, 'VIEW', undefined);
     pushLink(localAddress || '127.0.0.1:9090', true, true);
 
     // 2. LOCAL
-    pushNode('__local__', localName, localAddress, localNetworkType, 'LOCAL',
+    pushNode(localName, localAddress, localNetworkType, 'LOCAL',
       localNodeId || undefined, () => onEnterNode?.(localNodeId || '__local__'));
 
     // 3. RELAY nodes — link labeled "relay / upstream"
@@ -147,7 +147,7 @@ export function NodeNetworkView({
       const netType = r.address ? categorizeNetwork(extractHost(r.address)) : 'wan';
       const name = peerMap.get(r.nodeId)?.name || r.displayName || r.name;
       pushLink('relay / upstream', false);
-      pushNode(r.nodeId, name, r.address, netType, 'RELAY',
+      pushNode(name, r.address, netType, 'RELAY',
         r.nodeId, () => onEnterNode?.(r.nodeId), reachableNodeIds.has(r.nodeId));
     }
 
@@ -157,7 +157,7 @@ export function NodeNetworkView({
       const name = peerMap.get(l.nodeId)?.name || l.displayName || l.name;
       const fromTrust = peerMap.has(l.nodeId);
       pushLink(fromTrust ? 'leaf / paired' : 'leaf connected', false);
-      pushNode(l.nodeId, name, l.address, netType, 'LEAF',
+      pushNode(name, l.address, netType, 'LEAF',
         l.nodeId, () => onEnterNode?.(l.nodeId), reachableNodeIds.has(l.nodeId));
     }
 
@@ -166,7 +166,7 @@ export function NodeNetworkView({
       const addr = mp.addresses?.[0];
       const netType = addr ? categorizeNetwork(extractHost(addr)) : 'wan';
       pushLink('leaf / paired', true);
-      pushNode(mp.nodeId, mp.name || mp.nodeId, addr, netType, 'LEAF',
+      pushNode(mp.name || mp.nodeId, addr, netType, 'LEAF',
         mp.nodeId, () => onEnterNode?.(mp.nodeId), false);
     }
   }
