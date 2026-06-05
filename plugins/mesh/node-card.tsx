@@ -19,9 +19,18 @@ export function NodeCard({ peer, kind, nodeId, onEnter, reachable }: {
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const isRemote = kind !== 'LOCAL';
   const isView = kind === 'VIEW';
+  const isLocal = kind === 'LOCAL';
   const host = extractHost(peer.address);
   const port = extractPort(peer.address);
   const addressLine = peer.address || `${host}:${port}`;
+
+  // Status dot — VIEW and LOCAL are always "connected"
+  const showDot = true;
+  const dotColor = isView || isLocal
+    ? 'bg-emerald-500'
+    : reachable
+      ? 'bg-emerald-500 animate-pulse'
+      : 'bg-gray-600';
 
   useEffect(() => {
     if (reachable && reconnecting) {
@@ -47,14 +56,14 @@ export function NodeCard({ peer, kind, nodeId, onEnter, reachable }: {
     }, 10000);
   }, [core, nodeId]);
 
-  const showEnter = isRemote && reachable;
+  const showEnter = isRemote && reachable && !isView;
   const showReconnect = isRemote && !reachable && onEnter && !reconnecting;
   const showReconnecting = isRemote && !reachable && reconnecting;
   const showRetry = isRemote && !reachable && failed;
 
   return (
     <div
-      className={`border rounded-lg overflow-hidden transition-colors ${isRemote ? 'cursor-pointer hover:border-purple-600/50' : 'cursor-default'} ${nodeTheme(kind)}`}
+      className={`border rounded-lg overflow-hidden transition-colors ${isRemote && !isView ? 'cursor-pointer hover:border-purple-600/50' : 'cursor-default'} ${nodeTheme(kind)}`}
       onClick={showEnter ? onEnter : undefined}
     >
       <div className="px-3.5 py-2.5 flex items-start gap-2.5 bg-gray-800/30">
@@ -69,12 +78,18 @@ export function NodeCard({ peer, kind, nodeId, onEnter, reachable }: {
           )}
         </div>
         <div className="flex items-center gap-1.5 shrink-0 mt-0.5">
-          {peer.networkType && kind !== 'VIEW' && (
+          {/* Status dot */}
+          {showDot && (
+            <span className={`w-2 h-2 rounded-full shrink-0 ${dotColor}`} />
+          )}
+          {/* Network badge — only for Core nodes with a real address */}
+          {peer.networkType && !isView && (
             <span className={`text-[8px] px-1.5 py-0.5 rounded font-mono border shrink-0 ${networkClass(peer.networkType)}`}>
               {peer.networkType.toUpperCase()}
             </span>
           )}
-          {kind !== 'LOCAL' && (
+          {/* Kind badge — all except LOCAL */}
+          {!isLocal && (
             <span className={`text-[8px] px-1.5 py-0.5 rounded font-mono border shrink-0 ${kindBadgeStyle(kind)}`}>
               {kind}
             </span>

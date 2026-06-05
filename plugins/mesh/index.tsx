@@ -7,7 +7,7 @@ import type { PeerEntry, NodeInvite, NodeInfo } from '../../sdk';
 import { normalizeNodeInfo } from '../../sdk';
 import { NodeCard } from './node-card';
 import { AddPeerDialog } from './add-peer-dialog';
-import { LinkLine, extractHost, categorizeNetwork, type NodeKind } from './theme';
+import { LinkLine, extractHost, categorizeNetwork, determineKind, type NodeKind } from './theme';
 
 // ─── Types ───
 interface NodeNetworkViewProps {
@@ -81,117 +81,29 @@ export function NodeNetworkView({
     fetchInvites();
   }, [core.isConnected, fetchTopology, fetchMeshPeers, fetchInvites]);
 
-  // ── Build unified node list (topology + trust store merged by nodeId) ──
+  // ── Build topology tree ──
+  const peerMap = new Map(meshPeers.map(p => [p.nodeId, p]));
+
+  // Categorize remote topo nodes
+  const remoteTopoNodes = topoNodes.filter(n => n.nodeId !== localNodeId);
+  const relayNodes = remoteTopoNodes.filter(n => determineKind(n) === 'RELAY');
+  const leafNodes = remoteTopoNodes.filter(n => determineKind(n) === 'LEAF');
+
+  // Trust-only peers (paired but not in topology)
+  const topoNodeIds = new Set(topoNodes.map(n => n.nodeId));
+  const trustOnlyPeers = meshPeers.filter(mp => !topoNodeIds.has(mp.nodeId));
+
+  // Connected count from SSE (reactive, not polling)
+  const connectedCount = reachableNodeIds.size;
+
+  // ── Local node info ──
   const localNode = topoNodes.find(n => n.nodeId === localNodeId);
   const localName = localNode?.name || (isLocalPage ? '本机' : 'Local Core');
   const localAddress = localNode?.address;
   const localHost = extractHost(localAddress);
   const localNetworkType = localAddress ? categorizeNetwork(localHost) : 'loopback';
 
-  // Build peer map for fast lookup
-  const peerMap = new Map(meshPeers.map(p => [p.nodeId, p]));
-
-  // Unified node type: merge topology runtime data with trust store persistence
-  type UnifiedNode = {
-    nodeId: string;
-    name: string;
-    kind: 'LOCAL' | 'RELAY' | 'LEAF' | 'VIEW';
-    address?: string;
-    networkType: ReturnType<typeof categorizeNetwork>;
-    status: string;
-    fromTopology: boolean;
-    fromTrust: boolean;
-    topo?: typeof topoNodes[number];
-    peer?: typeof meshPeers[number];
-    onEnter?: () => void;
-  };
-
-  const unifiedNodes: UnifiedNode[] = [];
-
-  // Phase 1: local node
-  if (core.isConnected) {
-    unifiedNodes.push({
-      nodeId: localNodeId || '__local__',
-      name: localName,
-      kind: 'LOCAL',
-      address: localAddress,
-      networkType: localNetworkType,
-      status: 'connected',
-      fromTopology: true,
-      fromTrust: false,
-      topo: localNode,
-      onEnter: () => onEnterNode?.(localNodeId || '__local__'),
-    });
-  }
-
-  // Phase 2: topology nodes (runtime connections)
-  const seenIds = new Set([localNodeId, '__local__']);
-  for (const n of topoNodes) {
-    if (seenIds.has(n.nodeId)) continue;
-    seenIds.add(n.nodeId);
-    const netType = n.address ? categorizeNetwork(extractHost(n.address)) : 'wan';
-    unifiedNodes.push({
-      nodeId: n.nodeId,
-      name: peerMap.get(n.nodeId)?.name || n.displayName || n.name,
-      kind: n.role === 'relay' || n.inboundPeerReachable ? 'RELAY' : 'LEAF',
-      address: n.address,
-      networkType: netType,
-      status: n.status,
-      fromTopology: true,
-      fromTrust: peerMap.has(n.nodeId),
-      topo: n,
-      peer: peerMap.get(n.nodeId),
-      onEnter: () => onEnterNode?.(n.nodeId),
-    });
-  }
-
-  // Phase 3: trust-only nodes (paired but not in topology)
-  for (const mp of meshPeers) {
-    if (seenIds.has(mp.nodeId)) continue;
-    seenIds.add(mp.nodeId);
-    const addr = mp.addresses?.[0];
-    const netType = addr ? categorizeNetwork(extractHost(addr)) : 'wan';
-    unifiedNodes.push({
-      nodeId: mp.nodeId,
-      name: mp.name || mp.nodeId,
-      kind: 'LEAF',
-      address: addr,
-      networkType: netType,
-      status: mp.status === 'revoked' ? 'revoked' : mp.status === 'expired' ? 'expired' : 'offline',
-      fromTopology: false,
-      fromTrust: true,
-      peer: mp,
-      onEnter: () => onEnterNode?.(mp.nodeId),
-    });
-  }
-
-  // Phase 4: View — the browser session (not a Core node).
-  // A View has no network address or type; those belong to the Core it connects through.
-  unifiedNodes.push({
-    nodeId: '__view__',
-    name: `View on ${localName}`,
-    kind: 'VIEW' as const,
-    status: 'connected',
-    networkType: undefined as unknown as ReturnType<typeof categorizeNetwork>,
-    address: undefined,
-    fromTopology: false,
-    fromTrust: false,
-  });
-
-  // Sort: LOCAL first, then RELAY, then LEAF, then VIEW last
-  const kindOrder: Record<string, number> = { LOCAL: 0, RELAY: 1, LEAF: 2, VIEW: 3 };
-  unifiedNodes.sort((a, b) => {
-    if (a.kind !== b.kind) return (kindOrder[a.kind] || 99) - (kindOrder[b.kind] || 99);
-    return a.nodeId.localeCompare(b.nodeId);
-  });
-
-  const relayNodes = unifiedNodes.filter(n => n.kind === 'RELAY');
-  const leafNodes = unifiedNodes.filter(n => n.kind === 'LEAF');
-  const connectedCount = unifiedNodes.filter(n => n.fromTopology && n.status === 'connected').length;
-
-
-
-  // ── Build topology tree from unified list ──
+  // ── Tree entries ──
   type TopoEntry = {
     kind: 'node';
     data: { peer: { name: string; address?: string; networkType?: string }; kind: NodeKind; nodeId?: string; onEnter?: () => void; reachable?: boolean };
@@ -199,43 +111,66 @@ export function NodeNetworkView({
     kind: 'link';
     label: string;
     muted?: boolean;
+    dashed?: boolean;
   };
 
   const topo: TopoEntry[] = [];
-  const addedIds = new Set<string>();
 
-  function addNode(
-    id: string,
-    info: { name: string; address?: string; networkType?: string; nodeId?: string },
-    kind: NodeKind,
-    linkLabel?: string, linkMuted?: boolean,
-    onEnter?: () => void,
-    reachable?: boolean,
+  function pushNode(
+    id: string, name: string, address: string | undefined,
+    networkType: string | undefined, kind: NodeKind,
+    nodeId: string | undefined, onEnter?: () => void, reachable?: boolean,
   ) {
-    if (addedIds.has(id)) return;
-    if (linkLabel && topo.length > 0) {
-      topo.push({ kind: 'link', label: linkLabel, muted: linkMuted });
-    }
-    topo.push({ kind: 'node', data: { peer: { name: info.name, address: info.address, networkType: info.networkType }, kind, nodeId: info.nodeId, onEnter, reachable } });
-    addedIds.add(id);
+    topo.push({ kind: 'node', data: {
+      peer: { name, address, networkType },
+      kind, nodeId, onEnter, reachable,
+    }});
   }
 
-  // Build tree from unified list, with appropriate link labels
-  for (const n of unifiedNodes) {
-    if (n.kind === 'LOCAL') {
-      addNode('__local__', { name: n.name, address: n.address, networkType: n.networkType, nodeId: n.nodeId }, 'LOCAL');
-    } else if (n.kind === 'RELAY') {
-      addNode(n.nodeId, { name: n.name, address: n.address, networkType: n.networkType, nodeId: n.nodeId }, 'RELAY',
-        'relay / upstream', false,
-        n.onEnter, reachableNodeIds.has(n.nodeId));
-    } else if (n.kind === 'LEAF') {
-      addNode(n.nodeId, { name: n.name, address: n.address, networkType: n.networkType, nodeId: n.nodeId }, 'LEAF',
-        n.fromTrust ? 'leaf (paired)' : undefined, false,
-        n.onEnter, reachableNodeIds.has(n.nodeId));
-    } else if (n.kind === 'VIEW') {
-      addNode('__view__', { name: n.name }, 'VIEW');
+  function pushLink(label: string, muted?: boolean, dashed?: boolean) {
+    if (topo.length === 0) return;
+    topo.push({ kind: 'link', label, muted, dashed });
+  }
+
+  // Build tree — explicit order: VIEW → LOCAL → RELAY(s) → LEAF(s) → trust-only
+  if (core.isConnected) {
+    // 1. VIEW — browser session, dashed link to local
+    pushNode('__view__', `View on ${localName}`, undefined, undefined, 'VIEW', undefined);
+    pushLink(localAddress || '127.0.0.1:9090', true, true);
+
+    // 2. LOCAL
+    pushNode('__local__', localName, localAddress, localNetworkType, 'LOCAL',
+      localNodeId || undefined, () => onEnterNode?.(localNodeId || '__local__'));
+
+    // 3. RELAY nodes — link labeled "relay / upstream"
+    for (const r of relayNodes) {
+      const netType = r.address ? categorizeNetwork(extractHost(r.address)) : 'wan';
+      const name = peerMap.get(r.nodeId)?.name || r.displayName || r.name;
+      pushLink('relay / upstream', false);
+      pushNode(r.nodeId, name, r.address, netType, 'RELAY',
+        r.nodeId, () => onEnterNode?.(r.nodeId), reachableNodeIds.has(r.nodeId));
+    }
+
+    // 4. LEAF nodes — link labeled "leaf / paired" or "leaf connected"
+    for (const l of leafNodes) {
+      const netType = l.address ? categorizeNetwork(extractHost(l.address)) : 'wan';
+      const name = peerMap.get(l.nodeId)?.name || l.displayName || l.name;
+      const fromTrust = peerMap.has(l.nodeId);
+      pushLink(fromTrust ? 'leaf / paired' : 'leaf connected', false);
+      pushNode(l.nodeId, name, l.address, netType, 'LEAF',
+        l.nodeId, () => onEnterNode?.(l.nodeId), reachableNodeIds.has(l.nodeId));
+    }
+
+    // 5. Trust-only peers (paired but not in topology)
+    for (const mp of trustOnlyPeers) {
+      const addr = mp.addresses?.[0];
+      const netType = addr ? categorizeNetwork(extractHost(addr)) : 'wan';
+      pushLink('leaf / paired', true);
+      pushNode(mp.nodeId, mp.name || mp.nodeId, addr, netType, 'LEAF',
+        mp.nodeId, () => onEnterNode?.(mp.nodeId), false);
     }
   }
+
   // ── Render ──
   return (
     <div className="space-y-5 px-1 pb-4">
@@ -255,7 +190,7 @@ export function NodeNetworkView({
           {topo.map((entry, i) =>
             entry.kind === 'node'
               ? <NodeCard key={`n-${i}`} {...entry.data} />
-              : <LinkLine key={`l-${i}`} label={entry.label} muted={entry.muted} />
+              : <LinkLine key={`l-${i}`} label={entry.label} muted={entry.muted} dashed={entry.dashed} />
           )}
         </div>
       ) : (

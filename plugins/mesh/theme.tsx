@@ -81,7 +81,24 @@ export function categorizeNetwork(ip: string): 'loopback' | 'lan' | 'wan' {
     const seg = parseInt(ip.split('.')[1] || '0', 10);
     if (seg >= 16 && seg <= 31) return 'lan';
   }
+  if (ip.startsWith('fe80:')) return 'lan';
+  if (ip.startsWith('fc') || ip.startsWith('fd')) return 'lan';
   return 'wan';
+}
+
+// ─── Relay / Leaf determination ───
+
+/** Determine node kind from Core-reported data + address heuristics.
+ *  Priority: role === 'relay' → inboundPeerReachable → WAN address → LEAF. */
+export function determineKind(info: {
+  role?: string;
+  inboundPeerReachable?: boolean;
+  address?: string;
+}): 'RELAY' | 'LEAF' {
+  if (info.role === 'relay') return 'RELAY';
+  if (info.inboundPeerReachable) return 'RELAY';
+  if (info.address && categorizeNetwork(extractHost(info.address)) === 'wan') return 'RELAY';
+  return 'LEAF';
 }
 
 export function networkClass(type?: string) {
@@ -99,10 +116,10 @@ export function latencyLabel(ms?: number): string {
 }
 
 // ─── Link Line ───
-export function LinkLine({ label, muted }: { label: string; muted?: boolean }) {
+export function LinkLine({ label, muted, dashed }: { label: string; muted?: boolean; dashed?: boolean }) {
   return (
-    <div className={`ml-5 -my-1 border-l-2 pl-4 py-2 flex items-center gap-2 ${muted ? 'border-gray-700/50' : 'border-amber-700/30'}`}>
-      <div className={`text-[9px] font-mono ${muted ? 'text-gray-500' : 'text-amber-600/70'}`}>{label}</div>
+    <div className={`ml-5 -my-1 pl-4 py-2 flex items-center gap-2 ${dashed ? 'border-dashed' : 'border-l-2'} ${muted ? 'border-gray-700/50' : dashed ? 'border-gray-600' : 'border-amber-700/30'}`}>
+      <div className={`text-[9px] font-mono ${muted ? 'text-gray-500' : dashed ? 'text-gray-500' : 'text-amber-600/70'}`}>{label}</div>
     </div>
   );
 }
