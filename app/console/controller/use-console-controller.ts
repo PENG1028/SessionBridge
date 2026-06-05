@@ -1030,7 +1030,7 @@ export function useConsoleController({ wsUrl, setWsUrl, token, setToken, onRecon
     // Context menu
     ctxMenu, handleWorkbenchContextMenu, closeContextMenu,
     // Overlays
-    showRemoteOverlay, reachabilityNodeId, overlayStatus, isLocalPage,
+    showRemoteOverlay, reachabilityNodeId, overlayStatus, localNodeId, isLocalPage,
     // Mobile
     mobileOpen, setMobileOpen, mobileRightOpen, setMobileRightOpen,
     // Other

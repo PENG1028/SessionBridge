@@ -321,6 +321,9 @@ export interface NodeInfo {
   version?: string;
   uptime?: string;
   address?: string;
+  displayName?: string;
+  tags?: string[];
+  inboundPeerReachable?: boolean;
   os?: string;
   arch?: string;
   cpu?: string;

@@ -73,7 +73,7 @@ export function ConsoleLayout(props: Record<string, any>) {
     setInputValue, addLog,
     handleEnterNode, handleGoToConsole, setAppState,
     setSettingsOpen, settingsOpen,
-    showRemoteOverlay, reachabilityNodeId, overlayStatus, isLocalPage,
+    showRemoteOverlay, reachabilityNodeId, overlayStatus, localNodeId, isLocalPage,
     setMobileOpen, setMobileRightOpen, mobileOpen, mobileRightOpen,
     focusViewId, focusWhenContext,
     connectionLabel, showStatusBar,
@@ -135,6 +135,7 @@ export function ConsoleLayout(props: Record<string, any>) {
         onToggleRightSidebar={() => dispatch({ type: 'TOGGLE_SIDEBAR', position: 'right' })}
         connectionLabel={connectionLabel}
         onOpenConnectionManager={handleGoToConsole}
+        viewLabel={localNodeId ? `View on Core ${localNodeId.slice(0, 12)}` : undefined}
       />
 
       <DisconnectBanner showBanner={showBanner} connStatus={connStatus} statusColor={statusColor} />

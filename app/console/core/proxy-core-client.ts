@@ -103,8 +103,12 @@ export class ProxyCoreClient implements CoreClient {
   private _updateReachability(event: CoreEvent): void {
     if (event.type === 'node.connected') {
       this._reachableTargets.add(event.nodeId);
+      this._nodeStatuses.set(event.nodeId, 'connected');
+      this._nodeStatusListeners.forEach(fn => { try { fn(); } catch (_e) { /* ignore */ } });
     } else if (event.type === 'node.disconnected') {
       this._reachableTargets.delete(event.nodeId);
+      this._nodeStatuses.set(event.nodeId, 'disconnected');
+      this._nodeStatusListeners.forEach(fn => { try { fn(); } catch (_e) { /* ignore */ } });
     } else {
       return; // no change
     }

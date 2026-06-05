@@ -62,19 +62,19 @@ export function NodeBar({ activeNodeId, onEnterNode, onOpenConnection }: NodeBar
         const lid = identity?.nodeId || '__local__';
         if (!cancelled) setLocalNodeId(lid);
 
-        const nodeList = await core.call<{ nodes: Array<{ nodeId: string; name?: string; displayName?: string; hostname?: string; addresses?: string[]; address?: string; role?: string; networkType?: string; hasPublicAccess?: boolean; status?: string }> }>('node.list');
+        const nodeList = await core.call<{ nodes: Array<{ nodeId: string; name?: string; displayName?: string; address?: string; role?: string; status?: string; tags?: string[]; inboundPeerReachable?: boolean }> }>('node.list');
         if (cancelled || !nodeList?.nodes) return;
 
         const peers = nodeList.nodes
           .filter(n => n.nodeId && n.nodeId !== lid)
           .map(n => ({
             id: n.nodeId,
-            name: n.name || n.displayName || n.hostname || n.nodeId.slice(0, 12),
-            ip: n.addresses?.[0] || n.address,
+            name: n.name || n.displayName || n.nodeId.slice(0, 12),
+            ip: n.address,
             type: 'agent' as const,
             role: (n.role || 'leaf') as 'relay' | 'leaf',
-            networkType: (n.networkType || 'unknown') as 'loopback' | 'lan' | 'wan' | 'unknown',
-            hasPublicAccess: n.hasPublicAccess,
+            networkType: n.address ? (n.address.startsWith('127.') || n.address === 'localhost' ? 'loopback' : n.address.startsWith('192.168.') || n.address.startsWith('10.') ? 'lan' : 'wan') as 'loopback' | 'lan' | 'wan' | 'unknown' : ('unknown' as 'loopback' | 'lan' | 'wan' | 'unknown'),
+            hasPublicAccess: n.inboundPeerReachable || false,
             status: n.status,
           }));
         // Update status cache on ProxyCoreClient so the overlay can distinguish

@@ -81,25 +81,115 @@ export function NodeNetworkView({
     fetchInvites();
   }, [core.isConnected, fetchTopology, fetchMeshPeers, fetchInvites]);
 
-  // ── Derive topology entries ──
+  // ── Build unified node list (topology + trust store merged by nodeId) ──
   const localNode = topoNodes.find(n => n.nodeId === localNodeId);
   const localName = localNode?.name || (isLocalPage ? '本机' : 'Local Core');
   const localAddress = localNode?.address;
   const localHost = extractHost(localAddress);
   const localNetworkType = localAddress ? categorizeNetwork(localHost) : 'loopback';
 
-  const relayNodes = topoNodes.filter(n => n.nodeId !== localNodeId && categorizeNetwork(extractHost(n.address)) === 'wan');
-  const leafNodes = topoNodes.filter(n => n.nodeId !== localNodeId && categorizeNetwork(extractHost(n.address)) !== 'wan');
+  // Build peer map for fast lookup
+  const peerMap = new Map(meshPeers.map(p => [p.nodeId, p]));
 
-  // ── Build alias map from meshPeers ──
-  const peerAliasMap = new Map<string, string>();
-  for (const mp of meshPeers) {
-    if (mp.name && mp.name !== mp.nodeId) {
-      peerAliasMap.set(mp.nodeId, mp.name);
-    }
+  // Unified node type: merge topology runtime data with trust store persistence
+  type UnifiedNode = {
+    nodeId: string;
+    name: string;
+    kind: 'LOCAL' | 'RELAY' | 'LEAF' | 'VIEW';
+    address?: string;
+    networkType: ReturnType<typeof categorizeNetwork>;
+    status: string;
+    fromTopology: boolean;
+    fromTrust: boolean;
+    topo?: typeof topoNodes[number];
+    peer?: typeof meshPeers[number];
+    onEnter?: () => void;
+  };
+
+  const unifiedNodes: UnifiedNode[] = [];
+
+  // Phase 1: local node
+  if (core.isConnected) {
+    unifiedNodes.push({
+      nodeId: localNodeId || '__local__',
+      name: localName,
+      kind: 'LOCAL',
+      address: localAddress,
+      networkType: localNetworkType,
+      status: 'connected',
+      fromTopology: true,
+      fromTrust: false,
+      topo: localNode,
+      onEnter: () => onEnterNode?.(localNodeId || '__local__'),
+    });
   }
 
-  // ── Build topology tree ──
+  // Phase 2: topology nodes (runtime connections)
+  const seenIds = new Set([localNodeId, '__local__']);
+  for (const n of topoNodes) {
+    if (seenIds.has(n.nodeId)) continue;
+    seenIds.add(n.nodeId);
+    const netType = n.address ? categorizeNetwork(extractHost(n.address)) : 'wan';
+    unifiedNodes.push({
+      nodeId: n.nodeId,
+      name: peerMap.get(n.nodeId)?.name || n.displayName || n.name,
+      kind: n.role === 'relay' ? 'RELAY' : 'LEAF',
+      address: n.address,
+      networkType: netType,
+      status: n.status,
+      fromTopology: true,
+      fromTrust: peerMap.has(n.nodeId),
+      topo: n,
+      peer: peerMap.get(n.nodeId),
+      onEnter: () => onEnterNode?.(n.nodeId),
+    });
+  }
+
+  // Phase 3: trust-only nodes (paired but not in topology)
+  for (const mp of meshPeers) {
+    if (seenIds.has(mp.nodeId)) continue;
+    seenIds.add(mp.nodeId);
+    const addr = mp.addresses?.[0];
+    const netType = addr ? categorizeNetwork(extractHost(addr)) : 'wan';
+    unifiedNodes.push({
+      nodeId: mp.nodeId,
+      name: mp.name || mp.nodeId,
+      kind: 'LEAF',
+      address: addr,
+      networkType: netType,
+      status: mp.status === 'revoked' ? 'revoked' : mp.status === 'expired' ? 'expired' : 'offline',
+      fromTopology: false,
+      fromTrust: true,
+      peer: mp,
+      onEnter: () => onEnterNode?.(mp.nodeId),
+    });
+  }
+
+  // Phase 4: View — the browser session (not a Core node)
+  unifiedNodes.push({
+    nodeId: '__view__',
+    name: `View on ${localName}`,
+    kind: 'VIEW' as const,
+    status: 'connected',
+    networkType: localNetworkType,
+    fromTopology: false,
+    fromTrust: false,
+  });
+
+  // Sort: LOCAL first, then RELAY, then LEAF, then VIEW last
+  const kindOrder: Record<string, number> = { LOCAL: 0, RELAY: 1, LEAF: 2, VIEW: 3 };
+  unifiedNodes.sort((a, b) => {
+    if (a.kind !== b.kind) return (kindOrder[a.kind] || 99) - (kindOrder[b.kind] || 99);
+    return a.nodeId.localeCompare(b.nodeId);
+  });
+
+  const relayNodes = unifiedNodes.filter(n => n.kind === 'RELAY');
+  const leafNodes = unifiedNodes.filter(n => n.kind === 'LEAF');
+  const connectedCount = unifiedNodes.filter(n => n.fromTopology && n.status === 'connected').length;
+
+
+
+  // ── Build topology tree from unified list ──
   type TopoEntry = {
     kind: 'node';
     data: { peer: { name: string; address?: string; networkType?: string }; kind: NodeKind; nodeId?: string; onEnter?: () => void; reachable?: boolean };
@@ -121,40 +211,29 @@ export function NodeNetworkView({
     reachable?: boolean,
   ) {
     if (addedIds.has(id)) return;
-    const alias = info.nodeId ? peerAliasMap.get(info.nodeId) : undefined;
-    const displayName = alias || info.name;
     if (linkLabel && topo.length > 0) {
       topo.push({ kind: 'link', label: linkLabel, muted: linkMuted });
     }
-    topo.push({ kind: 'node', data: { peer: { name: displayName, address: info.address, networkType: info.networkType }, kind, nodeId: info.nodeId, onEnter, reachable } });
+    topo.push({ kind: 'node', data: { peer: { name: info.name, address: info.address, networkType: info.networkType }, kind, nodeId: info.nodeId, onEnter, reachable } });
     addedIds.add(id);
   }
 
-  // 1. Local node
-  if (core.isConnected) {
-    addNode('__local__', { name: localName, address: localAddress, networkType: localNetworkType, nodeId: localNodeId || undefined }, 'LOCAL',
-      undefined, false,
-      () => onEnterNode?.(localNodeId || '__local__'));
+  // Build tree from unified list, with appropriate link labels
+  for (const n of unifiedNodes) {
+    if (n.kind === 'LOCAL') {
+      addNode('__local__', { name: n.name, address: n.address, networkType: n.networkType, nodeId: n.nodeId }, 'LOCAL');
+    } else if (n.kind === 'RELAY') {
+      addNode(n.nodeId, { name: n.name, address: n.address, networkType: n.networkType, nodeId: n.nodeId }, 'RELAY',
+        'relay / upstream', false,
+        n.onEnter, reachableNodeIds.has(n.nodeId));
+    } else if (n.kind === 'LEAF') {
+      addNode(n.nodeId, { name: n.name, address: n.address, networkType: n.networkType, nodeId: n.nodeId }, 'LEAF',
+        n.fromTrust ? 'leaf (paired)' : undefined, false,
+        n.onEnter, reachableNodeIds.has(n.nodeId));
+    } else if (n.kind === 'VIEW') {
+      addNode('__view__', { name: n.name, address: undefined, networkType: n.networkType }, 'VIEW');
+    }
   }
-
-  // 2. Leaf nodes
-  for (const leaf of leafNodes) {
-    const leafNet = leaf.address ? categorizeNetwork(extractHost(leaf.address)) : 'wan';
-    addNode(leaf.nodeId, { name: leaf.name, address: leaf.address, networkType: leafNet, nodeId: leaf.nodeId }, 'LEAF',
-      'leaf connected', false,
-      () => onEnterNode?.(leaf.nodeId),
-      reachableNodeIds.has(leaf.nodeId));
-  }
-
-  // 3. Relay nodes
-  for (const relay of relayNodes) {
-    const relayNet = relay.address ? categorizeNetwork(extractHost(relay.address)) : 'wan';
-    addNode(relay.nodeId, { name: relay.name, address: relay.address, networkType: relayNet, nodeId: relay.nodeId }, 'RELAY',
-      'relay / upstream', false,
-      () => onEnterNode?.(relay.nodeId),
-      reachableNodeIds.has(relay.nodeId));
-  }
-
   // ── Render ──
   return (
     <div className="space-y-5 px-1 pb-4">
@@ -183,14 +262,14 @@ export function NodeNetworkView({
         </div>
       )}
 
-      {/* Peers section */}
+      {/* Peers section — just the action bar (nodes are in the unified tree above) */}
       <div className="border-t border-gray-800 pt-3">
         <div className="flex items-center justify-between mb-2 px-1">
           <h3 className="text-[9px] font-bold text-gray-600 tracking-wider uppercase">
             Peers
             {meshPeers.length > 0 && (
               <span className="ml-2 text-emerald-500 font-normal text-[9px]">
-                ● {meshPeers.filter(p => reachableNodeIds.has(p.nodeId)).length} connected
+                ● {connectedCount} connected
               </span>
             )}
           </h3>
@@ -202,46 +281,25 @@ export function NodeNetworkView({
 
         {!core.isConnected ? (
           <div className="px-2.5 py-2 text-[10px] text-gray-600">Core offline — peer list unavailable.</div>
-        ) : meshPeersLoading ? (
-          <div className="px-2.5 py-2 text-[10px] text-gray-600">Loading peers...</div>
         ) : meshPeers.length === 0 && meshInvites.length === 0 ? (
           <div className="px-2.5 py-2 text-[10px] text-gray-600">
             No peers connected. Use <span className="text-purple-400">+ Add Peer</span> to pair with another Core.
           </div>
-        ) : (
-          <div className="space-y-1">
-            {meshPeers.map(peer => (
-              <div key={peer.nodeId} className="flex items-center gap-2 px-2.5 py-1.5 rounded border border-gray-800 bg-[#111]">
-                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                  reachableNodeIds.has(peer.nodeId) ? 'bg-emerald-500' : 'bg-gray-600'
-                }`} />
+        ) : null}
+
+        {/* Active invites */}
+        {meshInvites.filter(inv => inv.expiresAt > Date.now()).length > 0 && (
+          <div className="space-y-1 mt-2">
+            <div className="text-[8px] text-gray-600 font-bold tracking-wider uppercase pt-1 px-1">Active Invites</div>
+            {meshInvites.filter(inv => inv.expiresAt > Date.now()).map(inv => (
+              <div key={inv.inviteId} className="flex items-center gap-2 px-2.5 py-1.5 rounded border border-yellow-800/30 bg-yellow-900/10">
+                <span className="w-2 h-2 rounded-full bg-yellow-500 flex-shrink-0" />
                 <div className="flex-1 min-w-0">
-                  <div className="text-[10px] text-gray-200 font-mono truncate">{peer.name || peer.nodeId}</div>
-                  <div className="text-[8px] text-gray-500 font-mono truncate">{peer.nodeId}</div>
+                  <div className="text-[9px] text-gray-300 font-mono truncate">{inv.inviteId}</div>
+                  <div className="text-[8px] text-gray-500">expires {new Date(inv.expiresAt).toLocaleTimeString()}</div>
                 </div>
-                <span className={`text-[8px] px-1.5 py-0.5 rounded font-mono border shrink-0 ${
-                  reachableNodeIds.has(peer.nodeId) ? 'text-emerald-400 border-emerald-700/30 bg-emerald-900/10' :
-                  'text-gray-500 border-gray-700 bg-gray-800'
-                }`}>
-                  {reachableNodeIds.has(peer.nodeId) ? 'connected' : (peer.status === 'connecting' ? 'connecting' : 'offline')}
-                </span>
               </div>
             ))}
-
-            {meshInvites.filter(inv => inv.expiresAt > Date.now()).length > 0 && (
-              <>
-                <div className="text-[8px] text-gray-600 font-bold tracking-wider uppercase pt-1 px-1">Active Invites</div>
-                {meshInvites.filter(inv => inv.expiresAt > Date.now()).map(inv => (
-                  <div key={inv.inviteId} className="flex items-center gap-2 px-2.5 py-1.5 rounded border border-yellow-800/30 bg-yellow-900/10">
-                    <span className="w-2 h-2 rounded-full bg-yellow-500 flex-shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[9px] text-gray-300 font-mono truncate">{inv.inviteId}</div>
-                      <div className="text-[8px] text-gray-500">expires {new Date(inv.expiresAt).toLocaleTimeString()}</div>
-                    </div>
-                  </div>
-                ))}
-              </>
-            )}
           </div>
         )}
 
@@ -252,7 +310,6 @@ export function NodeNetworkView({
           </button>
         </div>
       </div>
-
       {showAddPeer && (
         <AddPeerDialog onClose={() => { setShowAddPeer(false); fetchMeshPeers(); fetchInvites(); }} core={core} />
       )}

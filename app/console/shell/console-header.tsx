@@ -43,6 +43,8 @@ export interface ConsoleHeaderProps {
   onOpenConnectionManager?: () => void;
   /** Connection is unstable (momentarily lost, within 30s grace window). */
   connectionUnstable?: boolean;
+  /** View identity label (e.g. "View on Core 294d9778c9a1"). */
+  viewLabel?: string;
 }
 
 export function ConsoleHeader({
@@ -76,6 +78,7 @@ export function ConsoleHeader({
   connectionLabel,
   onOpenConnectionManager,
   connectionUnstable,
+  viewLabel,
 }: ConsoleHeaderProps) {
   const policy = chromePolicy || { header: 'full', statusBar: 'auto', commandPalette: true, globalShortcuts: true };
 
@@ -147,6 +150,11 @@ export function ConsoleHeader({
         >
           {connectionLabel || 'Remote Console'}
         </button>
+        {viewLabel && (
+          <span className="hidden sm:inline text-[9px] text-gray-600 font-mono px-1.5 py-0.5 rounded border border-gray-800 bg-gray-900/50 ml-1">
+            {viewLabel}
+          </span>
+        )}
         <button
           onClick={onMobileRightOpen}
           className="text-gray-400 hover:text-gray-200 p-1 -mr-1 text-lg leading-none tracking-wider"
