@@ -13,6 +13,22 @@ import { getLastActiveDir, setLastActiveDir, getRestoreLastPath } from '../../sd
 import { useCore, useCoreStatus } from '../../sdk';
 import { useCoreErrors } from '../../sdk';
 import { classifyCoreError } from '../../sdk';
+import { TerminalInputBuffer, createDebouncedResize } from '../../sdk';
+
+/** Parse OSC 7 data (file://HOST/PATH) into a normalized filesystem path. */
+function parseOsc7(data: string): string | undefined {
+  const prefix = 'file://';
+  if (!data.startsWith(prefix)) return undefined;
+  const rest = data.slice(prefix.length);
+  const slash = rest.indexOf('/');
+  if (slash < 0) return undefined;
+  let path = rest.slice(slash);
+  try { path = decodeURIComponent(path); } catch (_e) { /* malformed, use raw */ }
+  // Strip leading / before Windows drive letter: /C:/... → C:/...
+  if (/^\/[A-Za-z]:/.test(path)) path = path.slice(1);
+  path = path.replace(/\//g, '\\');
+  return path || undefined;
+}
 
 const DEBUG_SURFACE = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debugSurface');
 function debugLog(...args: any[]) { if (DEBUG_SURFACE) console.log('[debugSurface]', ...args); }
@@ -94,6 +110,25 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
         core.call<{ ptyMode?: string }>('run.info', { runId: run.id }).then(info => {
           if (info?.ptyMode) setPtyMode(info.ptyMode);
         }).catch(() => {});
+        // Inject OSC 7 prompt setup into the shell.
+        // PowerShell: $([char]27) emits literal ESC — no backtick ambiguity.
+        // bash/zsh: PROMPT_COMMAND, leading space avoids history.
+        if (sessionId) {
+          const isWin = typeof navigator !== 'undefined' && /Win/i.test(navigator.userAgent);
+          if (isWin) {
+            core.call('stream.write', {
+              sessionId,
+              streamType: 'stdin',
+              data: '\r\nfunction prompt { $e=[char]27; $p=$PWD.Path.Replace(\'\\\',\'/\'); "$e]7;file://$env:COMPUTERNAME/$p$e\\PS $PWD> " }\r\n',
+            }).catch(() => {});
+          } else {
+            core.call('stream.write', {
+              sessionId,
+              streamType: 'stdin',
+              data: ' export PROMPT_COMMAND=\'printf "\\033]7;file://$HOSTNAME$PWD\\033\\\\"\'\r\n',
+            }).catch(() => {});
+          }
+        }
       } else {
         throw new Error(result?.error || 'createInstance failed');
       }
@@ -146,11 +181,21 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
   // Sync cwd when projectCwd changes (node switch) — push into the unified source.
   // Guard: skip '.' as projectCwd since node.info may not return cwd,
   // and '.' would overwrite the real absoluteCwd from env.cwd.
+  //
+  // IMPORTANT: only react to projectCwd changes, NOT absoluteCwd changes.
+  // If we include absoluteCwd in the dep array, then sendCd / OSC 7 updates
+  // trigger this effect, which sees absoluteCwd !== projectCwd and reverts
+  // the user's intentional cwd change back to projectCwd — the "flash then revert" bug.
+  const onCwdChangeRef = useRef(onCwdChange);
+  onCwdChangeRef.current = onCwdChange;
+  const prevProjectCwdRef = useRef(projectCwd);
+
   useEffect(() => {
-    if (projectCwd && absoluteCwd !== projectCwd && projectCwd !== '.') {
-      onCwdChange(projectCwd);
+    if (projectCwd && projectCwd !== '.' && projectCwd !== prevProjectCwdRef.current) {
+      prevProjectCwdRef.current = projectCwd;
+      onCwdChangeRef.current(projectCwd);
     }
-  }, [projectCwd, absoluteCwd, onCwdChange]);
+  }, [projectCwd]);
 
   /** Resolve a relative path (from picker, e.g. "./src/foo") to absolute using project root.
    *  Leaves already-absolute paths untouched so Windows paths (F:/...) aren't
@@ -162,6 +207,103 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
     const r = normalized.replace(/^\.\/?/, '');
     return r ? base + '/' + r : base;
   }, [projectCwd]);
+
+  // ── Core session integration (all via onTerminalReady) ─────
+  // ShellTerminal only provides the xterm instance. Everything below
+  // — stream subscription, OSC 7, stdin buffering, history replay,
+  // resize — is the plugin's responsibility.
+  const inputBufRef = useRef<TerminalInputBuffer | null>(null);
+  const debouncedResizeRef = useRef<ReturnType<typeof createDebouncedResize> | null>(null);
+  const lastOsc7CwdRef = useRef('');
+
+  const onTerminalReady = useCallback((term: any, _fitAddon: any) => {
+    lastOsc7CwdRef.current = '';
+
+    // ── 1. OSC 7 CWD tracking ──
+    const osc7Disp = term.parser.registerOscHandler(7, (data: string) => {
+      const cwd = parseOsc7(data);
+      debugLog('OSC 7', { data, cwd });
+      if (cwd && cwd !== lastOsc7CwdRef.current) {
+        lastOsc7CwdRef.current = cwd;
+        onCwdChange(cwd);
+        setLastActiveDir(cwd);
+        onNavigatePath?.(cwd);
+      }
+      return true;
+    });
+
+    // ── 2. Stream subscription + live output → xterm ──
+    core.call('stream.subscribe', { sessionId: coreSessionId, streamType: 'stdout' }).catch(() => {});
+    core.call('stream.subscribe', { sessionId: coreSessionId, streamType: 'stderr' }).catch(() => {});
+    const chunkHandler = (event: any) => {
+      if (event.sessionId !== coreSessionId) return;
+      if (event.streamType === 'stderr') {
+        term.write('\x1b[91m' + event.data + '\x1b[0m');
+      } else {
+        term.write(event.data);
+      }
+    };
+    core.on('stream.chunk', chunkHandler);
+
+    // ── 3. Stdin buffer (fed by ShellTerminal's onUserInput) ──
+    const buf = new TerminalInputBuffer({
+      write: (data: string) => core.call('stream.write', { sessionId: coreSessionId, streamType: 'stdin', data }).catch(() => {}),
+    });
+    inputBufRef.current = buf;
+
+    // ── 4. Debounced resize → Core ──
+    const dr = createDebouncedResize({
+      delayMs: 80,
+      onResize: (cols: number, rows: number) => {
+        core.call('process.resize', { sessionId: coreSessionId, cols, rows }).catch(() => {});
+      },
+    });
+    debouncedResizeRef.current = dr;
+
+    // ── 5. Connection banner + history replay ──
+    if (sessionFresh) {
+      term.writeln('\x1b[36mConnected to core stream...\x1b[0m');
+      // Replay history
+      core.call<{ events?: Array<{ data: string }> }>('stream.replay', {
+        sessionId: coreSessionId, streamType: 'stdout', fromSeq: 0,
+      }).then(r => {
+        if (r?.events) for (const evt of r.events) {
+          if (evt.data) term.write(evt.data);
+        }
+      }).catch(() => {});
+      core.call<{ events?: Array<{ data: string }> }>('stream.replay', {
+        sessionId: coreSessionId, streamType: 'stderr', fromSeq: 0,
+      }).then(r => {
+        if (r?.events) for (const evt of r.events) {
+          if (evt.data) term.write('\x1b[91m' + evt.data + '\x1b[0m');
+        }
+      }).catch(() => {});
+    } else {
+      term.writeln('\x1b[36mReconnected to existing session\x1b[0m');
+      setTimeout(() => buf.push('\r'), 200);
+    }
+
+    return {
+      dispose: () => {
+        osc7Disp.dispose();
+        core.off('stream.chunk', chunkHandler);
+        buf.dispose();
+        dr.cancel();
+        inputBufRef.current = null;
+        debouncedResizeRef.current = null;
+      },
+    };
+  }, [coreSessionId, core, sessionFresh, onCwdChange, onNavigatePath]);
+
+  // Feed stdin from ShellTerminal's local-echo handler
+  const handleUserInput = useCallback((data: string) => {
+    inputBufRef.current?.push(data);
+  }, []);
+
+  // Feed resize from ShellTerminal's ResizeObserver
+  const handleResize = useCallback((cols: number, rows: number) => {
+    debouncedResizeRef.current?.resize(cols, rows);
+  }, []);
 
   // Send cd command to the terminal shell
   const sendCd = useCallback((path: string) => {
@@ -247,7 +389,7 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
       </TitleBar>
 
       <div className="flex-1 flex flex-col min-h-0">
-        <ShellTerminal core={core} coreSessionId={coreSessionId} fresh={sessionFresh} onOpenDirectoryPicker={handleOpenDirectoryPicker} />
+        <ShellTerminal onTerminalReady={onTerminalReady} onResize={handleResize} onUserInput={handleUserInput} onOpenDirectoryPicker={handleOpenDirectoryPicker} />
       </div>
 
       <DirectoryPicker

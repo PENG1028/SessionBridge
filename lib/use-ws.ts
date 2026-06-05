@@ -11,11 +11,6 @@ function nowTime() {
   return new Date().toISOString().slice(11, 23);
 }
 
-function shellCommandForClient() {
-  // Let Go Core decide the default shell based on its OS.
-  return '';
-}
-
 function mapRunToInstance(run: RunLike): InstanceInfo {
   const id = run.runId || run.sessionId || '';
   return {
@@ -225,7 +220,7 @@ export function useSession(
       return { success: false, error: 'Core is not connected' };
     }
     try {
-      const command = adapterId === 'claude-code' ? 'claude' : shellCommandForClient();
+      const command = adapterId === 'claude-code' ? 'claude' : '';
       const result = await core.call<any>('run.create', {
         kind: adapterId || 'terminal',
         pluginId: adapterId || 'terminal',

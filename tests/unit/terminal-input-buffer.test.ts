@@ -2,7 +2,7 @@
 // Tests the client-side input batching for proxy-mode terminal.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { TerminalInputBuffer, createDebouncedResize } from '../../app/console/core/terminal-input-buffer';
+import { TerminalInputBuffer, createDebouncedResize } from '../../lib/terminal-input-buffer';
 
 describe('TerminalInputBuffer', () => {
   beforeEach(() => {
