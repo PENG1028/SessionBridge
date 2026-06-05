@@ -110,25 +110,9 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
         core.call<{ ptyMode?: string }>('run.info', { runId: run.id }).then(info => {
           if (info?.ptyMode) setPtyMode(info.ptyMode);
         }).catch(() => {});
-        // Inject OSC 7 prompt setup into the shell.
-        // PowerShell: $([char]27) emits literal ESC — no backtick ambiguity.
-        // bash/zsh: PROMPT_COMMAND, leading space avoids history.
-        if (sessionId) {
-          const isWin = typeof navigator !== 'undefined' && /Win/i.test(navigator.userAgent);
-          if (isWin) {
-            core.call('stream.write', {
-              sessionId,
-              streamType: 'stdin',
-              data: '\r\nfunction prompt { $e=[char]27; $p=$PWD.Path.Replace(\'\\\',\'/\'); "$e]7;file://$env:COMPUTERNAME/$p$e\\PS $PWD> " }\r\n',
-            }).catch(() => {});
-          } else {
-            core.call('stream.write', {
-              sessionId,
-              streamType: 'stdin',
-              data: ' export PROMPT_COMMAND=\'printf "\\033]7;file://$HOSTNAME$PWD\\033\\\\"\'\r\n',
-            }).catch(() => {});
-          }
-        }
+        // OSC 7 prompt is now configured by Go Core via shell startup args
+        // (see go-core/internal/executor/run_cmds.go osc7Prompt).
+        // No stdin injection needed — terminal stays clean from the start.
       } else {
         throw new Error(result?.error || 'createInstance failed');
       }
@@ -263,24 +247,31 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
     // ── 5. Connection banner + history replay ──
     if (sessionFresh) {
       term.writeln('\x1b[36mConnected to core stream...\x1b[0m');
-      // Replay history
-      core.call<{ events?: Array<{ data: string }> }>('stream.replay', {
-        sessionId: coreSessionId, streamType: 'stdout', fromSeq: 0,
-      }).then(r => {
-        if (r?.events) for (const evt of r.events) {
-          if (evt.data) term.write(evt.data);
-        }
-      }).catch(() => {});
-      core.call<{ events?: Array<{ data: string }> }>('stream.replay', {
-        sessionId: coreSessionId, streamType: 'stderr', fromSeq: 0,
-      }).then(r => {
-        if (r?.events) for (const evt of r.events) {
-          if (evt.data) term.write('\x1b[91m' + evt.data + '\x1b[0m');
-        }
-      }).catch(() => {});
     } else {
       term.writeln('\x1b[36mReconnected to existing session\x1b[0m');
-      setTimeout(() => buf.push('\r'), 200);
+    }
+    // Always replay history regardless of fresh/restore.
+    // For restored sessions, skip the first 20 events — they contain
+    // terminal init handshake (CSI DA, cursor queries) whose raw bytes
+    // render as garbage in a fresh xterm.js instance.
+    const fromSeq = sessionFresh ? 0 : 20;
+    core.call<{ events?: Array<{ data: string }> }>('stream.replay', {
+      sessionId: coreSessionId, streamType: 'stdout', fromSeq,
+    }).then(r => {
+      if (r?.events) for (const evt of r.events) {
+        if (evt.data) term.write(evt.data);
+      }
+    }).catch(() => {});
+    core.call<{ events?: Array<{ data: string }> }>('stream.replay', {
+      sessionId: coreSessionId, streamType: 'stderr', fromSeq,
+    }).then(r => {
+      if (r?.events) for (const evt of r.events) {
+        if (evt.data) term.write('\x1b[91m' + evt.data + '\x1b[0m');
+      }
+    }).catch(() => {});
+    // On restore, send Enter after replay so the shell prints a fresh prompt
+    if (!sessionFresh) {
+      setTimeout(() => buf.push('\r'), 300);
     }
 
     return {
@@ -389,7 +380,7 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
       </TitleBar>
 
       <div className="flex-1 flex flex-col min-h-0">
-        <ShellTerminal onTerminalReady={onTerminalReady} onResize={handleResize} onUserInput={handleUserInput} onOpenDirectoryPicker={handleOpenDirectoryPicker} />
+        <ShellTerminal key={coreSessionId ?? 'pending'} onTerminalReady={onTerminalReady} onResize={handleResize} onUserInput={handleUserInput} onOpenDirectoryPicker={handleOpenDirectoryPicker} />
       </div>
 
       <DirectoryPicker

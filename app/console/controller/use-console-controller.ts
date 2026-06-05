@@ -406,15 +406,30 @@ export function useConsoleController({ wsUrl, setWsUrl, token, setToken, onRecon
     instancesRestoredRef.current = true;
 
     const saved = loadLayoutsFromStorage();
-    if (saved) {
-      // CoreClient mode: no relay instances to validate against — restore all saved layouts.
+    // Core's actual run list — source of truth. Used to validate saved
+    // tabs and discover runs that exist on Core but aren't in localStorage.
+    const serverIds = instances.map(i => i.id);
+
+    // Restore from Core's state even if localStorage is empty — the user
+    // should always see running processes on reconnect.
+    if (serverIds.length > 0 || saved) {
       const { states, persistentTabs } = restoreInstanceStatesFromStorage(
-        saved.instanceStates, saved.persistentTabs as PaneTab[], []
+        saved?.instanceStates ?? {},
+        (saved?.persistentTabs as PaneTab[]) ?? [],
+        serverIds,
       );
-      const mergedIds = new Set([
-        ...(saved.workbenchInstanceIds || []),
+      const allIds = new Set<string>([
+        ...serverIds,
+        ...(saved?.workbenchInstanceIds || []),
         ...Object.keys(states),
       ]);
+      // Active instance: prefer saved, fall back to local Core node.
+      const localNodeKey = localNodeId || '__local__';
+      const activeId =
+        (saved?.activeInstanceId && states[saved.activeInstanceId])
+          ? saved.activeInstanceId
+          : serverIds.length > 0 ? localNodeKey : null;
+
       setAppState(prev => {
         let next = prev;
         if (persistentTabs.length > 0) {
@@ -425,17 +440,38 @@ export function useConsoleController({ wsUrl, setWsUrl, token, setToken, onRecon
             next = appReducer(next, { type: 'RESTORE_INSTANCE_STATE', instanceId: id, state });
           }
         }
-        if (mergedIds.size > 0) {
-          next = appReducer(next, { type: 'SET_WORKBENCH_INSTANCES', instanceIds: [...mergedIds] });
+        if (allIds.size > 0) {
+          next = appReducer(next, { type: 'SET_WORKBENCH_INSTANCES', instanceIds: [...allIds] });
         }
-        // Restore last active node so terminal/workbench reappears on refresh
-        if (saved.activeInstanceId && next.instanceStates[saved.activeInstanceId]) {
-          next = appReducer(next, { type: 'SET_ACTIVE_INSTANCE', instanceId: saved.activeInstanceId });
+        if (activeId) {
+          // If the restored workbench has no real tabs (e.g. saved layout
+          // was empty or localStorage was cleared), but Core has terminal
+          // runs, create a fresh terminal tab so the user sees their shell
+          // immediately instead of an empty workbench.
+          const ws = next.instanceStates[activeId];
+          const hasRealTabs = ws ? collectAllTabs(ws).length > 0 : false;
+          const hasTerminalRuns = serverIds.some(id => {
+            const inst = instances.find(i => i.id === id);
+            return inst?.adapterId === 'terminal' || inst?.adapterId === 'shell';
+          });
+          if (!ws || (!hasRealTabs && hasTerminalRuns)) {
+            // Bypass RESTORE_INSTANCE_STATE reducer — it refuses to
+            // overwrite an already-existing state, which is exactly
+            // what we need here (replace the saved empty layout).
+            next = {
+              ...next,
+              instanceStates: {
+                ...next.instanceStates,
+                [activeId]: createInitialState(undefined, 'terminal'),
+              },
+            };
+          }
+          next = appReducer(next, { type: 'SET_ACTIVE_INSTANCE', instanceId: activeId });
         }
         return next;
       });
     }
-  }, [connStatus.status]);
+  }, [connStatus.status, pluginsSynced, instances, localNodeId]);
 
   // Restore last node from localStorage on connect — no saved state = console (NodeNetworkView)
   const restoreAttemptedRef = useRef(false);

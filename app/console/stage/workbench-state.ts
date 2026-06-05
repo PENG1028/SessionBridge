@@ -126,13 +126,14 @@ function removeNode(root: LayoutNode, paneId: string): LayoutNode | null {
 
 // ─── Initial state ─────────────────────────────────────────────
 
-export function createInitialState(instanceId?: string, defaultVType?: string): WorkbenchState {
+export function createInitialState(instanceId?: string, viewType?: string): WorkbenchState {
   const tabId = genTabId();
   const paneId = genPaneId();
+  const vtype = viewType || 'empty';
   const tab: PaneTab = {
     id: tabId,
-    title: 'New',
-    viewType: 'empty',
+    title: vtype === 'terminal' ? 'Terminal' : 'New',
+    viewType: vtype as ViewType,
     instanceId: instanceId || undefined,
   };
   return {
