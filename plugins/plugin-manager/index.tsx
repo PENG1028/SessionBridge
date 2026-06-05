@@ -9,11 +9,13 @@ import { RefreshCw, Settings, ChevronRight } from 'lucide-react';
 import { loadApps, isEnabled, setEnabled, getLoadError } from '../../sdk';
 import type { AppSummary } from '../../sdk';
 import { useCoreStatus } from '../../sdk';
+import { PluginDetail } from './plugin-detail';
 
 export function AppManager() {
   const [apps, setApps] = useState<AppSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedApp, setSelectedApp] = useState<string | null>(null);
   const coreStatus = useCoreStatus();
 
   async function refresh() {
@@ -34,6 +36,35 @@ export function AppManager() {
     const currentlyEnabled = isEnabled(appId);
     await setEnabled(appId, !currentlyEnabled);
     refresh(); // re-read from server to get authoritative state
+  }
+
+  // Show detail view when an app is selected
+  if (selectedApp) {
+    const app = apps.find(a => a.id === selectedApp);
+    if (app) {
+      return (
+        <PluginDetail
+          appId={app.id}
+          appName={app.name}
+          appVersion={app.version}
+          appType={app.type}
+          appTrusted={app.trusted}
+          appDescription={app.description}
+          onBack={() => setSelectedApp(null)}
+        />
+      );
+    }
+    // Fallback: selected app not in current list (maybe loading), try rendering with what we have
+    return (
+      <PluginDetail
+        appId={selectedApp}
+        appName={selectedApp}
+        appVersion="?"
+        appType="plugin"
+        appTrusted={false}
+        onBack={() => setSelectedApp(null)}
+      />
+    );
   }
 
   return (
@@ -72,8 +103,11 @@ export function AppManager() {
         {apps.map(app => {
           const enabled = isEnabled(app.id);
           return (
-            <div key={app.id}
-              className="flex items-center gap-3 px-4 py-3 border-b border-gray-800/50 hover:bg-gray-900/50 transition-colors">
+            <div
+              key={app.id}
+              onClick={() => setSelectedApp(app.id)}
+              className="flex items-center gap-3 px-4 py-3 border-b border-gray-800/50 hover:bg-gray-900/50 transition-colors cursor-pointer"
+            >
               {/* Status dot */}
               <span className={`w-2 h-2 rounded-full shrink-0 ${enabled ? 'bg-green-500' : 'bg-gray-600'}`} />
 
@@ -106,7 +140,7 @@ export function AppManager() {
 
               {/* Enable/Disable toggle */}
               <button
-                onClick={() => handleToggle(app.id)}
+                onClick={(e) => { e.stopPropagation(); handleToggle(app.id); }}
                 className={`text-[9px] font-bold px-2 py-1 rounded border transition-colors shrink-0 ${
                   enabled
                     ? 'bg-green-900/30 text-green-400 border-green-700/50 hover:bg-green-800/40'
@@ -116,7 +150,7 @@ export function AppManager() {
                 {enabled ? 'Enabled' : 'Disabled'}
               </button>
 
-              <ChevronRight className="w-3 h-3 text-gray-700" />
+              <ChevronRight className="w-3 h-3 text-gray-700 shrink-0" />
             </div>
           );
         })}

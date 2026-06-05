@@ -10,6 +10,7 @@
 
 import { Box } from 'lucide-react';
 import type { AppManifest, AppSummary, AppSystemUI } from './app-types';
+import { slotRegistry } from '../../../lib/slot-registry';
 import { registerView, unregisterView } from '../../console/main/view-registry';
 import { syncPluginPanels, clearPanels } from '../../console/panels/panel-registry';
 import { syncChromeContributions, clearChromeContributions } from '../../console/chrome/chrome-registry';
@@ -105,6 +106,17 @@ function unregisterApp(appId: string): void {
 
   // Contribution registry
   contributionRegistry.unregisterManifest(appId);
+
+  // Slot registry cleanup
+  slotRegistry.unfill(appId);
+}
+
+/**
+ * Ordering helper for configuration contributions.
+ * System plugins get higher priority (lower number = shown first).
+ */
+function configOrder(type?: string): number {
+  return type === 'system' ? 10 : 20;
 }
 
 /**
@@ -243,4 +255,20 @@ function registerAppContributions(
   }
 
   contributionRegistry.registerManifest(pm);
+
+  // ── Configuration / Settings (slot-registry) ──
+  if (ui.configuration) {
+    slotRegistry.fill({
+      slotId: 'settings.section.plugin-config',
+      fillingId: `${appId}.config`,
+      pluginId: appId,
+      content: {
+        pluginId: appId,
+        pluginName: manifest.name || appId,
+        title: ui.configuration.title,
+        properties: ui.configuration.properties,
+      },
+      order: configOrder(manifest.type),
+    });
+  }
 }

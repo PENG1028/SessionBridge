@@ -34,3 +34,16 @@ adapters:
         entry: ./index
         title: Mesh
         icon: Share2
+    configuration:
+      title: Mesh
+      properties:
+        autoReconnect:
+          type: boolean
+          default: true
+          description: "Automatically reconnect to peers on connection loss"
+        heartbeatInterval:
+          type: integer
+          default: 30
+          minimum: 5
+          maximum: 300
+          description: "Heartbeat interval in seconds"

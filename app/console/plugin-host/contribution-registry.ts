@@ -53,6 +53,11 @@ export class ContributionRegistry {
         this._statusItems.set(status.id, { manifest, status });
       }
     }
+
+    // Configuration lifecycle is managed by plugin-sync + slot-registry,
+    // not by contribution-registry. The slot-registry handles fill/unfill
+    // of 'settings.section.plugin-config' when plugins are enabled/disabled.
+    // No additional work needed here.
   }
 
   unregisterManifest(pluginId: string): void {

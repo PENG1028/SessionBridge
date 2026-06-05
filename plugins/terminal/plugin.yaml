@@ -75,6 +75,24 @@ adapters:
         entry: ./index
         title: Terminal
         icon: terminal
+    configuration:
+      title: Terminal
+      properties:
+        defaultShell:
+          type: string
+          default: "bash"
+          description: "Default shell path used for new terminals"
+          enum: ["bash", "zsh", "pwsh", "cmd", "powershell"]
+        fontSize:
+          type: integer
+          default: 12
+          minimum: 8
+          maximum: 24
+          description: "Terminal font size in pixels"
+        cursorBlink:
+          type: boolean
+          default: true
+          description: "Enable cursor blinking in the terminal"
     panels:
       - id: terminal.sessions
         surface: panel.bottom

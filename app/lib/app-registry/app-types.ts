@@ -78,7 +78,10 @@ export interface AppSystemUI {
   panels?: AppUIPanel[];
   commands?: AppUICommand[];
   status?: AppUIStatus[];
+  /** @deprecated Use configuration instead. Keep for backward compat. */
   settings?: Record<string, unknown>;
+  /** Plugin configuration schema — properties users can configure. */
+  configuration?: AppConfigurationContribution;
 }
 
 export interface AppUIView {
@@ -175,4 +178,20 @@ export interface InstallRecord {
   finishedAt?: number;
   stdout?: string;
   stderr?: string;
+}
+
+// ─── Configuration Contribution ─────────────────────────────────
+
+export interface AppConfigurationContribution {
+  title?: string;
+  properties: Record<string, AppConfigProperty>;
+}
+
+export interface AppConfigProperty {
+  type: 'string' | 'number' | 'integer' | 'boolean' | 'object';
+  default?: unknown;
+  description?: string;
+  enum?: string[];
+  minimum?: number;
+  maximum?: number;
 }
