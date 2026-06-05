@@ -43,6 +43,14 @@ export class ProxyCoreClient implements CoreClient {
   private _nodeStatuses = new Map<string, string>();
   private _nodeStatusListeners = new Set<() => void>();
 
+  // ── Proxy health tracking ──────────────────────────────────
+  // The HTTP proxy (/api/core/call) can fail independently of SSE.
+  // Transient 502/503 during Core restart or Next.js rebuild should
+  // show a subtle indicator, not an error dump.
+  private _proxyErrorCount = 0;
+  private _proxyHealthy = true;
+  private _proxyHealthListeners = new Set<(healthy: boolean) => void>();
+
   constructor(pluginId = 'sessionnode-core') {
     this.pluginId = pluginId;
   }
@@ -59,6 +67,24 @@ export class ProxyCoreClient implements CoreClient {
 
   get connectionStatus(): CoreConnectionStatus {
     return this._connectionStatus;
+  }
+
+  /** True when the HTTP proxy (/api/core/call) is reachable.
+   *  False during transient 502/503 (Core restart, Next.js rebuild). */
+  get proxyHealthy(): boolean {
+    return this._proxyHealthy;
+  }
+
+  /** Subscribe to proxy health changes. Returns unsubscribe function. */
+  onProxyHealthChange(handler: (healthy: boolean) => void): () => void {
+    this._proxyHealthListeners.add(handler);
+    return () => this._proxyHealthListeners.delete(handler);
+  }
+
+  private _setProxyHealthy(healthy: boolean): void {
+    if (this._proxyHealthy === healthy) return;
+    this._proxyHealthy = healthy;
+    this._proxyHealthListeners.forEach(fn => { try { fn(healthy); } catch (_e) { /* ignore */ } });
   }
 
   // ── Status change subscription (for provider integration) ─
@@ -167,12 +193,29 @@ export class ProxyCoreClient implements CoreClient {
       }
       body.params = merged;
     }
-    const res = await fetch('/api/core/call', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify(body),
-    });
+
+    let res: Response;
+    try {
+      res = await fetch('/api/core/call', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(body),
+      });
+    } catch (_e) {
+      // Network error — proxy is down (Next.js restart, etc.)
+      this._setProxyHealthy(false);
+      throw new CoreError('Core proxy unreachable — retrying', 'proxy-down');
+    }
+
+    // 502/503: transient gateway errors during Core restart or Next.js rebuild
+    if (res.status === 502 || res.status === 503) {
+      this._setProxyHealthy(false);
+      throw new CoreError('Core temporarily unavailable', 'proxy-down');
+    }
+
+    // Success — reset proxy health
+    this._setProxyHealthy(true);
 
     if (res.status === 401) {
       this._setStatus('disconnected');

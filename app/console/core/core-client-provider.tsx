@@ -225,3 +225,27 @@ export function useReachableNodeIds(): Set<string> {
 
   return useSyncExternalStore(subscribe, getSnapshot, () => EMPTY_SET);
 }
+
+/**
+ * useProxyHealth — returns true when the HTTP proxy (/api/core/call)
+ * is reachable. False during transient 502/503 (Core restart, rebuild).
+ * Uses useSyncExternalStore so the header can react instantly.
+ */
+export function useProxyHealth(): boolean {
+  const core = useCore();
+
+  const subscribe = useCallback(
+    (onChange: () => void) => {
+      if (!(core instanceof ProxyCoreClient)) return () => {};
+      return core.onProxyHealthChange(() => onChange());
+    },
+    [core],
+  );
+
+  const getSnapshot = useCallback((): boolean => {
+    if (!(core instanceof ProxyCoreClient)) return true;
+    return core.proxyHealthy;
+  }, [core]);
+
+  return useSyncExternalStore(subscribe, getSnapshot, () => true);
+}

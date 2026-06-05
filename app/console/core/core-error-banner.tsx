@@ -17,6 +17,7 @@ function categoryLabel(cat: CoreErrorCategory): string {
     case 'forbidden':         return '权限不足';
     case 'bad-request':       return '请求参数错误';
     case 'not-found':         return '资源不存在';
+    case 'proxy-down':        return '代理暂不可用';
     case 'unknown':           return '未知错误';
   }
 }
@@ -29,6 +30,7 @@ const BANNER_COLORS: Record<CoreErrorCategory, string> = {
   'forbidden':        'bg-red-900/30 border-red-700/50 text-red-300',
   'bad-request':      'bg-gray-800 border-gray-700 text-gray-400',
   'not-found':        'bg-gray-800 border-gray-700 text-gray-400',
+  'proxy-down':       'bg-amber-900/30 border-amber-700/50 text-amber-300',
   'unknown':          'bg-red-900/30 border-red-700/50 text-red-300',
 };
 

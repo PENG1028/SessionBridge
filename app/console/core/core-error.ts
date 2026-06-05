@@ -11,6 +11,7 @@ export type CoreErrorCategory =
   | 'forbidden'         // auth/permission denied
   | 'bad-request'       // invalid method or params
   | 'not-found'         // resource not found
+  | 'proxy-down'        // HTTP proxy /api/core/call unreachable (502/503)
   | 'unknown';          // everything else
 
 export class CoreError extends Error {
@@ -69,6 +70,9 @@ const CODE_TO_CATEGORY: Record<string, CoreErrorCategory> = {
   'PEER_KEY_MISMATCH':        'forbidden',
   'INVITE_INVALID':           'bad-request',
   'INVITE_EXPIRED':           'bad-request',
+
+  // ── Proxy ──
+  'PROXY_DOWN':               'proxy-down',
 };
 
 /** Classify a Core error code string to a category.

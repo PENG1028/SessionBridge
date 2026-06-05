@@ -5,7 +5,7 @@ import { useFocus } from '../workbench/focus-context';
 import { useRuntimePolicy } from '../workbench/runtime-policy-context';
 import { getAdapterMeta, getViewEntry, getAdapterCapabilities, type ChromePolicy } from '../main/view-registry';
 import type { ActionRunContext } from '../actions/action-types';
-import { useCoreStatus } from '../core/core-client-provider';
+import { useCoreStatus, useProxyHealth } from '../core/core-client-provider';
 import { HeaderChrome } from './header-chrome';
 
 export interface ConsoleHeaderProps {
@@ -91,6 +91,7 @@ export function ConsoleHeader({
   const focus = useFocus();
   const { activePolicy } = useRuntimePolicy();
   const coreStatus = useCoreStatus();
+  const proxyHealthy = useProxyHealth();
 
   // Built-in runtime status badge — driven by adapter capability "modes".
   let runtimeBadge: string | null = null;
@@ -201,6 +202,11 @@ export function ConsoleHeader({
         <span className="text-xs text-gray-400 flex items-center gap-2">
           <span className={`w-2 h-2 rounded-full ${statusColor} ${connStatus.status === 'connected' ? 'animate-pulse' : ''}`} />
           {statusText}{connectionUnstable ? <span className="text-yellow-500 animate-pulse">...</span> : null}
+          {!proxyHealthy && coreStatus === 'connected' && (
+            <span className="text-[9px] text-amber-500/80 ml-1 animate-pulse" title="Core proxy degraded — retrying">
+              proxy:retry
+            </span>
+          )}
           {coreStatus !== 'connected' && coreStatus !== 'connecting' && (
             <span className="text-[9px] text-yellow-500/70 ml-1" title={`Core: ${coreStatus}`}>
               core:{coreStatus === 'error' ? 'err' : 'off'}
