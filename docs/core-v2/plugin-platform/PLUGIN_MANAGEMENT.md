@@ -15,27 +15,42 @@
 ### 插件管理是 Core 系统能力
 
 ```
-Core 负责:                           TS/Web 负责:
-  插件列表                              展示 Core 返回的数据
-  启用/禁用                             调用 Core API
-  环境检测                              渲染安装引导
-  依赖检测                              渲染权限管理 UI
-  安装计划生成                          渲染文件/缓存面板
-  安装执行                              插件业务页面
-  安装历史
-  权限校验与存储
-  配置管理
-  文件操作记录
-  缓存清理执行
-  健康状态
+Core 负责:                           TS/Web 负责 (状态参见下表):
+  插件列表                              展示列表/详情/配置 UI
+  启用/禁用                             调用 enable/disable API
+  环境/依赖检测                          渲染检测结果 + Install 按钮
+  安装计划生成                          展示安装计划
+  安装执行                              调用 install API
+  安装历史                              展示历史记录
+  权限校验与存储                          渲染权限管理 UI (PermissionPanel)
+  配置管理                              渲染配置表单 (PluginConfigForm)
+  文件操作记录 (规划中)                    渲染文件面板 (规划中)
+  缓存清理执行 (规划中)                    渲染缓存面板 (规划中)
+  健康状态                              展示状态指示
 ```
 
 ```
 UI/CLI 不直接判断插件是否可用。
-UI/CLI 调用 Core 的 plugin.* API。
+UI/CLI 调用 Core 的 plugin.* API (或通过 Next.js API Routes 中转)。
 Web 设置页只是 Core 的控制面。
 CLI 也是 Core 的控制面，和 Web 调同一套能力。
 ```
+
+#### 当前实现状态
+
+| 功能 | 状态 |
+|------|------|
+| 展示插件列表 | ✅ AppManager 列表页 (`GET /api/apps/list`) |
+| 启用/禁用 | ✅ AppManager toggle (`setEnabled()`) |
+| 环境检测 | ✅ DependencyPanel + `useDependencyCheck()` |
+| 渲染安装引导 | ⚠️ 部分 (DependencyPanel 有 Install 按钮，无正式 InstallPlan 展示) |
+| 渲染权限管理 UI | ✅ PermissionPanel (Allow/Ask/Deny 三级循环切换) |
+| 渲染文件/缓存面板 | ❌ 未实现 |
+| 渲染配置编辑 | ✅ PluginConfigForm + PluginSettingsGroup |
+| 插件业务页面 (PluginDetail) | ✅ 5 tabs: Permissions / Capabilities / Dependencies / Installed / Config |
+| 安装追踪 | ✅ InstalledSoftwarePanel + `GET/PUT /api/apps/[appId]/installed` |
+| Capabilities 展示 | ✅ PluginDetail Capabilities tab |
+| Slot Registry DevTools | ✅ SlotDevTools (development mode only) |
 
 ### 分界
 
@@ -634,28 +649,82 @@ node plugin check claude-code --target vps
 
 ### Settings / Plugins 页面
 
+Settings 面板为右侧 Drawer 布局，不采用左侧嵌套树。
+
 ```
-Settings
-├── General
-├── Nodes
-├── Plugins                          ← 插件管理
-│   ├── [插件列表]                    ← plugin.list 渲染
-│   │   ├── Claude Code
-│   │   │   ├── Status               ← enabled/disabled + 环境状态
-│   │   │   ├── Enable/Disable       ← plugin.enable / plugin.disable
-│   │   │   ├── Check Environment    ← plugin.check
-│   │   │   ├── Install / Repair     ← plugin.install / plugin.repair
-│   │   │   ├── Permissions          ← plugin.permissions.*
-│   │   │   ├── Config               ← plugin.config.*
-│   │   │   ├── Files                ← plugin.files.*
-│   │   │   ├── Cache                ← plugin.cache.*
-│   │   │   ├── History              ← plugin.history
-│   │   │   └── Install Logs         ← plugin.install.logs
-│   │   ├── Shell
-│   │   └── File Explorer
-│   └── [插件权限总览]
-├── Logs
-└── About
+Settings (Drawer 布局)
+├── ═══ UI SETTINGS (always available) ═══
+├── Connection                         ← ConnectionSection: 端口配置 / 扫描 / 重连
+├── About                              ← AboutSection: 版本信息
+├── ═══ CORE SETTINGS (Core connected) ═══
+├── Plugin Settings                    ← PluginSettingsGroup × N，slot registry 驱动
+├── Core Settings                      ← config.list 搜索/编辑
+├── Updates                            ← update.status / update.check
+├── ═══ DEVTOOLS (development only) ═══
+├── Slot Registry DevTools             ← SlotDevTools 调试面板
+```
+
+App 管理为独立页面 (AppManager)，通过 Sidebar "Apps" 入口进入：
+
+```
+Plugins / Apps (独立页面 — AppManager / PluginDetail)
+├── [App 列表]                         ← GET /api/apps/list
+│   ├── App 1 (点击 → PluginDetail)
+│   │   ├── Tabs:
+│   │   │   ├── Permissions Tab        ← PermissionPanel
+│   │   │   │   ├── 分组标题 (perm.id + default mode)
+│   │   │   │   ├── Description
+│   │   │   │   └── 各行 capability + mode 切换 (Allow/Ask/Deny)
+│   │   │   ├── Capabilities Tab       ← 按 permission 分组展示所有 capabilities + default mode
+│   │   │   ├── Dependencies Tab       ← DependencyPanel
+│   │   │   │   ├── Check 按钮
+│   │   │   │   ├── 各依赖行 (found/missing + Install 按钮)
+│   │   │   │   └── 安装完成后自动记录到 Installed
+│   │   │   ├── Installed Tab          ← InstalledSoftwarePanel
+│   │   │   │   ├── 已记录二进制列表 (binary / version / path / installedAt)
+│   │   │   │   ├── Verify 按钮 (重新检测 -> 更新 stale 标记)
+│   │   │   │   └── stale 标记 (二进制已移除或路径失效)
+│   │   │   └── Config Tab             ← PluginConfigForm (从 Core 读取 schema)
+│   │   └── 工具栏: Enable/Disable toggle
+│   ├── App 2
+│   └── ...
+```
+
+### Slot Registry DevTools
+
+Settings 面板底部在 development 模式下显示 **Slot Registry DevTools**：
+
+```
+Slot Registry DevTools
+├── Declarations                       ← 所有 slot 声明 (slotId + declaredBy)
+├── Fillings                           ← 所有 slot 填充 (slotId → fillingId + pluginId)
+├── Unfilled Slots                     ← 已声明但无填充的 slot
+└── Orphaned Fillings                  ← 指向未声明 slot 的填充（警告）
+```
+
+数据源：`lib/slot-registry/slot-registry.ts` 中的 `SlotRegistry` 单例。
+
+### 安装追踪
+
+每次通过 DependencyPanel Install 按钮成功安装后自动记录：
+
+- 调用 `env.which` 检测二进制路径和版本
+- 写入 `PUT /api/apps/[appId]/installed`
+- InstalledSoftwarePanel 展示，每行含 Verify 按钮重新检测
+- 检测失败标记为 stale (黄色警告)
+
+数据结构：
+```typescript
+interface InstalledSoftwareEntry {
+  id: string;
+  checkId: string;
+  name: string;
+  binary: string;
+  version: string;
+  path: string;
+  installedAt: number;  // timestamp
+  stale?: boolean;       // binary no longer found
+}
 ```
 
 ### 安装结果展示
@@ -698,6 +767,21 @@ node plugin history claude-code --install inst_001 --side-effects
 ---
 
 ## 十二、数据流示例
+
+> **实现说明：** 以下示例使用假设的 `GET /api/plugins` 等 REST 端点示意流程。
+> 实际实现中 App UI 通过以下 Next.js API Routes 与 Core 交互：
+>
+> | 用途 | 实际端点 | 说明 |
+> |------|---------|------|
+> | 列表 | `GET /api/apps/list` | 直接扫描 `plugins/*/plugin.yaml`，不依赖 Core |
+> | 详情 | `GET /api/apps/[appId]` | 读取单个 `plugin.yaml` |
+> | 启用/禁用 | `PUT /api/apps/[appId]/state` | SDK `setEnabled()` 封装 |
+> | 依赖检测 | `POST /api/apps/[appId]/check` (或 SDK `useDependencyCheck()`) | 通过 Core WebSocket |
+> | 安装执行 | `POST /api/apps/[appId]/install` | 通过 Core `process.spawn` |
+> | 安装追踪 | `GET/PUT /api/apps/[appId]/installed` | 读写 InstalledSoftwareEntry |
+>
+> 基于 WebSocket 的 `plugin.*` Core API 仍保留，供 CLI 和高级场景使用。
+> Web UI 通过 SDK 层 (`loadApps()` / `getManifest()` / `setEnabled()` / `setGrant()`) 统一封装调用。
 
 ### 场景：用户安装 ClaudeCode
 

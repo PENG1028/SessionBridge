@@ -448,13 +448,14 @@
 
 | 字段 | 值 |
 |------|-----|
-| **Purpose** | 插件完整详情页（8 tab 导航） |
+| **Purpose** | 插件完整详情页（5 tab 导航） |
 | **Surface** | plugin.detail |
-| **Props** | `{ pluginId: string }` |
-| **Core API** | plugin.get, plugin.status, plugin.check |
-| **State ownership** | activeTab → React state（可 localStorage 偏好） |
-| **Failure states** | 整个页加载失败 → ErrorState |
-| **Notes** | 桌面端全屏，移动端 fullscreen |
+| **Props** | `{ appId, appName, appVersion, appType, appTrusted, appDescription?, onBack }` |
+| **Core API** | `getManifest()` (获取 plugin.yaml), `isEnabled()` / `setEnabled()` |
+| **State ownership** | activeTab → React state, manifest → local state |
+| **Failure states** | manifest 加载失败 → 错误提示 + Retry 按钮 |
+| **Notes** | 5 个 tabs: Permissions, Capabilities, Dependencies, Installed, Config。由 plugin-manager 插件的 AppManager 在 app 选中时渲染。 |
+| **Tabs** | `Permissions` — PermissionPanel (循环 Allow/Ask/Deny), `Capabilities` — 按 permission 分组展示 capabilities, `Dependencies` — DependencyPanel (检测 + Install), `Installed` — InstalledSoftwarePanel, `Config` — PluginConfigForm |
 
 ---
 
@@ -612,6 +613,21 @@
 
 ---
 
+### system-ui.InstalledSoftwarePanel
+
+| 字段 | 值 |
+|------|-----|
+| **Purpose** | 已安装软件/二进制追踪面板。记录插件安装的二进制路径、版本、安装时间，支持重新验证 |
+| **Surface** | plugin.detail (Installed tab) |
+| **Props** | `{ appId: string }` |
+| **Core API** | `GET /api/apps/[appId]/installed`, `PUT /api/apps/[appId]/installed`, `core.call('env.which')` |
+| **State ownership** | entries → React state, verifyingIds → React state |
+| **Failure states** | 获取失败 → 错误提示；Core 离线 → 黄色警告 + Verify 禁用 |
+| **Reusable by plugin** | 否 |
+| **Notes** | 每个条目有 Verify 按钮，重新运行 `env.which` 检查二进制是否仍存在。未找到标记 stale。空态显示引导文字 |
+
+---
+
 ## 7. Permissions
 
 ---
@@ -661,17 +677,29 @@
 
 ---
 
+### system-ui.SettingsPanel
+
+| 字段 | 值 |
+|------|-----|
+| **Purpose** | 设置面板：右侧 Drawer 布局，包含 Connection/About + Plugin Settings + Core Settings + Updates |
+| **Surface** | settings.page |
+| **Props** | `{ open: boolean, onClose: () => void, onReconnect: () => void }` |
+| **Core API** | config.list, config.set, config.reset, update.status, update.check |
+| **State ownership** | activeCategory → React state；dirtyMap → React state |
+| **Reusable by plugin** | 否 |
+| **Notes** | 不再使用左侧分类导航/SettingsShell 布局。Plugin Settings 区域通过 slot registry (`settings.section.plugin-config`) 由 PluginSettingsGroup 渲染。Core 未连接时显示 Core not connected 占位。Development 模式下底部显示 SlotDevTools |
+
 ### system-ui.SettingsShell
 
 | 字段 | 值 |
 |------|-----|
-| **Purpose** | 设置页布局：左侧分类导航 + 右侧内容区 |
+| **Purpose** | 设置页布局：左侧分类导航 + 右侧内容区 (legacy — 当前实现使用 SettingsPanel Drawer) |
 | **Surface** | settings.page |
 | **Props** | `{ categories: SettingsCategory[], activeCategory: string, onCategoryChange: (id: string) => void }` |
 | **Core API** | 无 |
 | **State ownership** | activeCategory → React state（可 localStorage） |
 | **Reusable by plugin** | 否 |
-| **Notes** | 移动端变为列表 → 子页导航 |
+| **Notes** | 当前实际实现使用 SettingsPanel (右侧 Drawer)，不再使用左侧导航布局 |
 
 ---
 
@@ -755,6 +783,64 @@
 | **State ownership** | 无 |
 | **Failure states** | 保存失败 → Save 按钮变红 + 错误消息 |
 | **Notes** | 无修改时 Save 禁用 |
+
+---
+
+### system-ui.ConnectionSection
+
+| 字段 | 值 |
+|------|-----|
+| **Purpose** | Core 连接配置：端口输入 + 扫描发现 + 重连 |
+| **Surface** | settings.page (Connection 区域) |
+| **Props** | `{ coreStatus: string, isOffline: boolean, onReconnect: () => void, localPort: string, onLocalPortChange: (port: string) => void }` |
+| **Core API** | `GET /api/core/target`, `POST /api/core/target`, `GET /api/core/discover` |
+| **State ownership** | scanning, scanResults, collapsed → React state |
+| **Reusable by plugin** | 否 |
+| **Notes** | 默认展开。扫描所有常见端口 (9090-9095) 发现运行中的 Core 实例。切换端口后自动触发重连 |
+
+---
+
+### system-ui.AboutSection
+
+| 字段 | 值 |
+|------|-----|
+| **Purpose** | 版本信息展示：UI 版本 + Core 连接状态 + 端口 |
+| **Surface** | settings.page (About 区域) |
+| **Props** | `{ coreStatus: string, localPort: string }` |
+| **Core API** | 无 (纯展示) |
+| **State ownership** | collapsed → React state |
+| **Reusable by plugin** | 否 |
+| **Notes** | 默认折叠。显示 UI 版本 0.6.0 及 Core 连接状态圆点 |
+
+---
+
+### system-ui.PluginSettingsGroup
+
+| 字段 | 值 |
+|------|-----|
+| **Purpose** | 插件配置表单组。根据 slot registry 中 `settings.section.plugin-config` 的 fillings 渲染每个插件的配置属性 |
+| **Surface** | settings.page (Plugin Settings 区域) |
+| **Props** | `{ pluginId: string, pluginName: string, title?: string, properties: Record<string, AppConfigProperty>, values: Record<string, unknown>, onChange: (key, value) => void, onSave: () => Promise<void>, saving?: boolean, error?: string, onRetry?: () => void, loading?: boolean }` |
+| **Core API** | `core.call('plugin.config.get')`, `core.call('plugin.config.set')` |
+| **State ownership** | collapsed, dirtyKeys → React state |
+| **Reusable by plugin** | 否 |
+| **Failure states** | loading → skeleton pulse；error → 红色警告 + retry 按钮；properties 为空 → 不渲染 |
+| **Notes** | 支持 boolean / integer / number / string / enum 类型。脏数据标记修改数量。ConfigField / ConfigSchemaForm 的替代实现 |
+
+---
+
+### system-ui.SlotDevTools
+
+| 字段 | 值 |
+|------|-----|
+| **Purpose** | Slot Registry 状态调试面板。展示所有声明、填充、未填充 slot 和孤立的填充 |
+| **Surface** | settings.page (DevTools 区域, development mode 仅显示) |
+| **Props** | 无 (直接从 slotRegistry 单例读取) |
+| **Core API** | 无 |
+| **State ownership** | refreshKey → React state (触发重新读取) |
+| **Reusable by plugin** | 否 |
+| **Failure states** | 无 |
+| **Notes** | 仅在 `NODE_ENV === 'development'` 时显示。4 个折叠组: Declarations / Fillings / Unfilled Slots / Orphaned Fillings |
 
 ---
 
@@ -1183,6 +1269,11 @@
 | system-ui.ConfigField | Settings | settings.page / plugin.detail | 是 |
 | system-ui.ConfigSchemaForm | Settings | settings.page / plugin.detail | 否 |
 | system-ui.SecretField | Settings | settings.page | 是 |
+| system-ui.ConnectionSection | Settings | settings.page | 否 |
+| system-ui.AboutSection | Settings | settings.page | 否 |
+| system-ui.PluginSettingsGroup | Settings | settings.page | 否 |
+| system-ui.SlotDevTools | Settings | settings.page | 否 |
+| system-ui.InstalledSoftwarePanel | Plugins | plugin.detail | 否 |
 | system-ui.SaveResetBar | Settings | settings.page | 否 |
 | system-ui.LogViewer | Logs | main.editor | 否 |
 | system-ui.LogFilters | Logs | main.editor | 否 |

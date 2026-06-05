@@ -36,17 +36,19 @@ Purpose: inspect, check, enable, disable, configure, and observe plugins.
 
 Required flows:
 
-- list plugins from `plugin.list`
-- load detail from `plugin.get`
-- run dependency/capability checks through `plugin.check`
-- show blockers by category: missing dependency, missing grant, unsupported
-  capability, unknown capability
-- enable/disable through `plugin.enable` and `plugin.disable`
-- grant/revoke through `plugin.permissions.*`
-- show approval state through `approval.list`, `notify.request`, and
-  `notify.respond`
-- show runs through `run.list`, `run.info`, `run.attach`, `run.stop`
-- show logs/history through `logs.query`, `plugin.history`, and stream history
+| 流程 | 实现 | 状态 |
+|------|------|------|
+| list plugins | `loadApps()` from `GET /api/apps/list` (扫描 `plugins/*/plugin.yaml`) | ✅ 已实现 |
+| load detail | `getManifest()` from `GET /api/apps/[appId]` | ✅ 已实现 |
+| dependency/capability checks | `useDependencyCheck()` SDK hook → Core WebSocket `env.which` | ✅ 已实现 |
+| show blockers by category | Dependencies tab 显示 missing/blocked；Permissions tab 显示 grant 状态 | ✅ 已实现 |
+| enable/disable | `setEnabled()` SDK function → `PUT /api/apps/[appId]/state` | ✅ 已实现 |
+| grant/revoke | `setGrant()` SDK function → Core WebSocket | ✅ 已实现 |
+| installed software tracking | `GET/PUT /api/apps/[appId]/installed` + InstalledSoftwarePanel (Verify 按钮) | ✅ 已实现 |
+| plugin detail view with Capabilities tab | PluginDetail (5 tabs) — Capabilities 按 permission 分组展示 | ✅ 已实现 |
+| show approval state | `approval.list`, `notify.request`, `notify.respond` | 📋 设计阶段 |
+| show runs | `run.list`, `run.info`, `run.attach`, `run.stop` | 📋 设计阶段 |
+| show logs/history | `logs.query`, `plugin.history`, stream history | 📋 设计阶段 |
 
 ## Runs And Terminal
 
@@ -71,13 +73,19 @@ stop a run.
 
 Purpose: configure Core-facing behavior.
 
-Required sections:
+Settings use a right-side Drawer layout (not a full page). The panel is organized into sections:
 
-- Core connection and token status
-- update source, policy, status, check, plan, ignore
-- App UI view-session settings
-- public access warnings
-- logs/audit access
+| 区域 | 实现 | 状态 |
+|------|------|------|
+| Core connection and token status | `ConnectionSection` — port input, scan discovery, reconnect button | ✅ 已实现 |
+| Version and connection info | `AboutSection` — UI version, Core status, port | ✅ 已实现 |
+| Plugin configuration | `PluginSettingsGroup` — slot-registry-driven config forms per plugin. Reads schema from Core `plugin.config.get` | ✅ 已实现 |
+| update source, policy, status, check, plan, ignore | Updates section in SettingsPanel | ✅ 已实现 |
+| Core settings | `config.list` search/edit with save/reset | ✅ 已实现 |
+| Slot Registry DevTools | `SlotDevTools` — debug panel (development mode only) | ✅ 已实现 |
+| App UI view-session settings | — | 📋 设计阶段 |
+| public access warnings | — | 📋 设计阶段 |
+| logs/audit access | — | 📋 设计阶段 |
 
 ## Logs And Audit
 

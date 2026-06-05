@@ -239,6 +239,16 @@ adapters:
       - id: my-plugin.status
         label: Ready
         icon: check
+    configuration:
+      title: "Plugin Name"
+      properties:
+        settingKey:
+          type: string | number | integer | boolean
+          default: ...
+          description: "Description of the setting"
+          enum: [...]         # for string type
+          minimum: ...        # for number/integer type
+          maximum: ...        # for number/integer type
 
   cli:
     commands:
@@ -270,11 +280,45 @@ adapters:
 
 ### systemUi Adapter
 
-Views, panels, commands, and status items contributed to the `system-ui` host.
+Views, panels, commands, status, and configuration contributed to the `system-ui` host.
 
 **Entry paths** must be relative (no `/` or `C:\` prefix) and must not contain `..`.
 
 Valid view types: `"custom-react"`, `"host-rendered"`.
+
+#### `configuration` — 插件设置声明 ✅ 已实现
+
+通过 `adapters.systemUi.configuration` 声明插件配置项，这些配置会自动出现在 App UI 的 **SettingsPanel** 中，由 `PluginSettingsGroup` 组件渲染。
+
+```yaml
+configuration:
+  title: "Plugin Name"           # SettingsPanel 中的分组标题
+  properties:
+    key:
+      type: string | number | integer | boolean | object
+      default: ...               # 默认值
+      description: "..."         # 配置项说明
+      enum: [...]                # 枚举值（仅 string 类型）
+      minimum: ...               # 最小值（仅 number/integer 类型）
+      maximum: ...               # 最大值（仅 number/integer 类型）
+```
+
+配置字段说明：
+
+| 字段 | 必填 | 类型 | 说明 |
+|------|------|------|------|
+| `title` | 否 | string | SettingsPanel 中该插件配置分组的标题 |
+| `properties` | 是 | object | 配置项集合，key 为配置项 ID（建议 namespace 化：`<pluginId>.<key>`） |
+| `type` | 是 | string | 配置项类型：`string`, `number`, `integer`, `boolean`, `object` |
+| `default` | 否 | 与 type 一致 | 默认值 |
+| `description` | 否 | string | 配置项说明文字 |
+| `enum` | 否 | string[] | 可选值列表（仅 string 类型） |
+| `minimum` | 否 | number | 最小值（仅 number/integer 类型） |
+| `maximum` | 否 | number | 最大值（仅 number/integer 类型） |
+
+**数据流**：`plugin.yaml` → `plugin-sync` → `slotRegistry.fill()` → `SettingsPanel` 聚合渲染
+
+**存储**：插件配置通过 `plugin.config.set` / `plugin.config.get` 经由 Go Core 持久化。
 
 详细适配器规范参见 [PLUGIN_ADAPTERS.md](./PLUGIN_ADAPTERS.md)。
 
@@ -433,6 +477,24 @@ adapters:
         type: custom-react
         entry: ./web/SessionPanel.tsx
         title: Sessions
+    configuration:
+      title: Terminal
+      properties:
+        defaultShell:
+          type: string
+          default: "bash"
+          description: "Default shell path"
+          enum: ["bash", "zsh", "pwsh", "cmd", "powershell"]
+        fontSize:
+          type: integer
+          default: 12
+          minimum: 8
+          maximum: 24
+          description: "Terminal font size"
+        cursorBlink:
+          type: boolean
+          default: true
+          description: "Enable cursor blinking"
 
   cli:
     commands:

@@ -11,7 +11,7 @@
 | `custom-react` view | 插件声明的 view surface | iframe / 同域 React | 插件自渲染完整 view |
 | `custom-react` panel | 插件声明的 panel surface | iframe / 同域 React | 插件自渲染面板 |
 | `host-rendered` component | 插件声明的 surface | App UI 渲染 | 插件只提供数据，UI 由 host 渲染 |
-| settings section | settings.page | ConfigSchemaForm | 插件声明配置 schema |
+| `configuration` | `settings.panel` | `PluginSettingsGroup` | 插件通过 `adapters.system-ui.configuration` 声明配置 schema，SettingsPanel 通过 slot-registry 聚合渲染 ✅ 已实现 |
 | command | 全局 | CommandPalette / 快捷键 | 注册命令 |
 | menu | 全局 | 菜单栏 / 右键菜单 | 注册菜单项 |
 | status item | StatusBar | app-ui.StatusBar | 状态栏图标/文本 |
@@ -44,20 +44,6 @@
         }
       ]
     },
-    "configuration": {
-      "properties": {
-        "node-monitor.refreshInterval": {
-          "type": "number",
-          "default": 30,
-          "description": "Health check interval (seconds)"
-        },
-        "node-monitor.alertThreshold": {
-          "type": "number",
-          "default": 80,
-          "description": "CPU alert threshold (%)"
-        }
-      }
-    },
     "commands": [
       {
         "id": "node-monitor.open",
@@ -65,6 +51,24 @@
         "shortcut": "Ctrl+Shift+M"
       }
     ]
+  },
+  "adapters": {
+    "system-ui": {
+      "configuration": {
+        "properties": {
+          "node-monitor.refreshInterval": {
+            "type": "number",
+            "default": 30,
+            "description": "Health check interval (seconds)"
+          },
+          "node-monitor.alertThreshold": {
+            "type": "number",
+            "default": 80,
+            "description": "CPU alert threshold (%)"
+          }
+        }
+      }
+    }
   }
 }
 ```
@@ -102,20 +106,6 @@
         }
       ]
     },
-    "configuration": {
-      "properties": {
-        "claude-code.model": {
-          "type": "string",
-          "default": "sonnet-4-7",
-          "description": "Claude model to use"
-        },
-        "claude-code.temperature": {
-          "type": "number",
-          "default": 0.7,
-          "description": "Model temperature"
-        }
-      }
-    },
     "commands": [
       {
         "id": "claude-code.start",
@@ -139,49 +129,69 @@
         "onClick": { "command": "claude-code.start" }
       }
     ]
+  },
+  "adapters": {
+    "system-ui": {
+      "configuration": {
+        "properties": {
+          "claude-code.model": {
+            "type": "string",
+            "default": "sonnet-4-7",
+            "description": "Claude model to use"
+          },
+          "claude-code.temperature": {
+            "type": "number",
+            "default": 0.7,
+            "description": "Model temperature"
+          }
+        }
+      }
+    }
   }
 }
 ```
 
 ### 2.3 Settings 声明
 
-插件配置通过 `contributes.configuration` 声明 JSON Schema：
+插件配置通过 `adapters.system-ui.configuration` 声明 JSON Schema：
 
 ```jsonc
 {
-  "contributes": {
-    "configuration": {
-      "title": "Claude Code",
-      "properties": {
-        "claude-code.model": {
-          "type": "string",
-          "default": "sonnet-4-7",
-          "enum": ["sonnet-4-7", "haiku-4-5", "opus-4-7"],
-          "description": "选择 Claude 模型"
-        },
-        "claude-code.temperature": {
-          "type": "number",
-          "default": 0.7,
-          "minimum": 0,
-          "maximum": 1,
-          "description": "模型温度 (0-1)"
-        },
-        "claude-code.maxTokens": {
-          "type": "integer",
-          "default": 4096,
-          "minimum": 1,
-          "maximum": 128000,
-          "description": "最大输出 token 数"
-        },
-        "claude-code.systemPrompt": {
-          "type": "string",
-          "default": "",
-          "description": "自定义 system prompt"
-        },
-        "claude-code.enableStreaming": {
-          "type": "boolean",
-          "default": true,
-          "description": "启用流式输出"
+  "adapters": {
+    "system-ui": {
+      "configuration": {
+        "title": "Claude Code",
+        "properties": {
+          "claude-code.model": {
+            "type": "string",
+            "default": "sonnet-4-7",
+            "enum": ["sonnet-4-7", "haiku-4-5", "opus-4-7"],
+            "description": "选择 Claude 模型"
+          },
+          "claude-code.temperature": {
+            "type": "number",
+            "default": 0.7,
+            "minimum": 0,
+            "maximum": 1,
+            "description": "模型温度 (0-1)"
+          },
+          "claude-code.maxTokens": {
+            "type": "integer",
+            "default": 4096,
+            "minimum": 1,
+            "maximum": 128000,
+            "description": "最大输出 token 数"
+          },
+          "claude-code.systemPrompt": {
+            "type": "string",
+            "default": "",
+            "description": "自定义 system prompt"
+          },
+          "claude-code.enableStreaming": {
+            "type": "boolean",
+            "default": true,
+            "description": "启用流式输出"
+          }
         }
       }
     }

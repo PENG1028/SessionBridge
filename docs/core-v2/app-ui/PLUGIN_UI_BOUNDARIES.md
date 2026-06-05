@@ -27,7 +27,8 @@
 │
 └── 否 → 这是通用的管理/配置 UI 吗？
     ├── 是 → host-rendered（System UI 提供组件）
-    │   ├── 配置表单 → PluginConfigForm (host-rendered)
+    │   ├── 配置表单 → PluginConfigForm (host-rendered, Plugin Detail 配置编辑 via plugin.config.schema)
+    │   ├── 配置表单(SettingsPanel) → PluginSettingsGroup (host-rendered, SettingsPanel 通过 slot-registry 聚合 manifest 配置) ✅ 已实现
     │   ├── 权限列表 → PluginPermissionPanel (host-rendered)
     │   ├── 缓存表格 → PluginCacheTable (host-rendered)
     │   ├── 文件列表 → PluginFilesTable (host-rendered)
@@ -77,7 +78,8 @@
 
 | 组件 | 用途 | 数据来源 |
 |------|------|---------|
-| PluginConfigForm | 插件配置编辑 | plugin.config.get/set + config.schema |
+| PluginConfigForm | 插件配置编辑（Plugin Detail） | plugin.config.get/set + config.schema |
+| PluginSettingsGroup | 插件配置编辑（SettingsPanel） | slot-registry 聚合 manifest adapters.system-ui.configuration ✅ 已实现 |
 | PluginPermissionPanel | 权限查看/修改 | plugin.permissions.list/grant/revoke |
 | PluginCacheTable | 缓存条目列表 + 清理 | plugin.cache.list/clear |
 | PluginFilesTable | 文件位置 + 访问历史 | plugin.files.list |
@@ -120,6 +122,9 @@ ClaudeCode Plugin 的 UI 由三部分组成:
 │                                                                   │
 │  Plugin Detail → Settings tab                                    │
 │  └── ConfigSchemaForm (model, temperature, maxTokens, ...)       │
+│                                                                   │
+│  Settings Panel                                                  │
+│  └── PluginSettingsGroup (manifest-declared config via slot-registry) ✅ 已实现 │
 │                                                                   │
 │  Plugin Detail → Permissions tab                                 │
 │  └── PluginPermissionPanel (process/fs/env 权限)                 │
@@ -171,15 +176,19 @@ ClaudeCode Plugin 的 UI 由三部分组成:
         "sandbox": "same-origin"
       }]
     },
-    // host-rendered: 管理/配置 UI（无需插件提供组件）
-    // System UI 自动渲染 PluginDetailPage 的 tab
-    "configuration": {
-      "properties": { /* ... */ }
-    },
     // 其他贡献
     "commands": [ /* ... */ ],
     "menus": { /* ... */ },
     "status": [ /* ... */ ]
+  },
+  "adapters": {
+    "system-ui": {
+      // host-rendered: 管理/配置 UI（无需插件提供组件）
+      // SettingsPanel 通过 slot-registry 聚合 manifest 配置
+      "configuration": {
+        "properties": { /* ... */ }
+      }
+    }
   }
 }
 ```
@@ -242,7 +251,7 @@ ClaudeCode Plugin 的 UI 由三部分组成:
 | panel (custom-react) | 插件声明 `panels` 指定 surface | 如 `main.editor.bottom` |
 | panel (host-rendered) | 插件声明 `panels` 指定 surface | 如 `main.editor.bottom` |
 | plugin detail tab | 自动注册到 `plugin.detail` | system-ui.PluginDetailPage 统一管理 |
-| configuration | 自动注册到 `settings.page` | system-ui.ConfigSchemaForm 统一渲染 |
+| configuration | 自动注册到 `settings.panel` | system-ui.PluginSettingsGroup 通过 slot-registry 聚合 manifest 配置 ✅ 已实现 |
 | command | `commandPalette` | system-ui.CommandPalette 统一管理 |
 | menu | 全局 context menu | system-ui.ContextMenu 合并器 |
 | status | `statusBar` | system-ui.StatusBar 渲染 |
