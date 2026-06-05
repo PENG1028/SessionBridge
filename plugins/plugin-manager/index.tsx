@@ -124,3 +124,5 @@ export function AppManager() {
     </div>
   );
 }
+
+export default AppManager;

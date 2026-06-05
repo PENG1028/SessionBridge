@@ -204,3 +204,5 @@ export function ApprovalCenter({ core }: ApprovalCenterProps) {
     </div>
   );
 }
+
+export default ApprovalCenter;

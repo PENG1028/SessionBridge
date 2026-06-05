@@ -523,3 +523,5 @@ function ClaudeChatInner({ instanceId }: { instanceId: string }) {
     </>
   );
 }
+
+export default ClaudeChatView;

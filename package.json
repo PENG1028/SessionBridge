@@ -29,6 +29,8 @@
     "dev:all": "node scripts/dev-all.js",
     "start:core": "node scripts/start-core.js",
     "start:web": "next start",
+    "predev": "node scripts/generate-plugin-registry.mjs",
+    "prebuild": "node scripts/generate-plugin-registry.mjs",
     "check:hardcodes": "node scripts/check-hardcodes.js",
     "build": "npm run build:web && npm run build:core",
     "build:web": "next build --webpack",

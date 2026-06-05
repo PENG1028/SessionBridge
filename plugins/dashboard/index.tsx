@@ -166,3 +166,5 @@ export function DashboardView() {
     </div>
   );
 }
+
+export default DashboardView;

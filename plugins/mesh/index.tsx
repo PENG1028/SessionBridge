@@ -253,3 +253,5 @@ export function NodeNetworkView({
     </div>
   );
 }
+
+export default NodeNetworkView;
