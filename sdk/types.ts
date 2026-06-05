@@ -7,5 +7,5 @@
 export type { HostComponentProps } from '../app/console/plugin-host/host-component-registry';
 export type { CoreEvent, NodeInfo, PeerEntry, NodeInvite, SessionInfo } from '../app/console/core/core-types';
 
-export type { AppSummary, AppManifest, AppSystemUI, AppUIPanel, AppPermissionSpec, CheckResult } from '../app/lib/app-registry/app-types';
+export type { AppSummary, AppManifest, AppSystemUI, AppUIPanel, AppPermissionSpec, CheckResult, InstalledSoftwareEntry } from '../app/lib/app-registry/app-types';
 export type { WhenContext } from '../lib/evaluate-when';

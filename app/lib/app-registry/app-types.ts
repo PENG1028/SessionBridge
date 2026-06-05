@@ -180,6 +180,21 @@ export interface InstallRecord {
   stderr?: string;
 }
 
+// ─── Installed Software Tracking ─────────────────────────────────
+
+export interface InstalledSoftwareEntry {
+  id: string;
+  checkId: string;
+  name: string;
+  binary: string;
+  version: string;
+  path: string;
+  installedAt: number;
+  sizeBytes?: number;
+  /** True if Verify re-check found the binary missing. */
+  stale?: boolean;
+}
+
 // ─── Configuration Contribution ─────────────────────────────────
 
 export interface AppConfigurationContribution {

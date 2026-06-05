@@ -113,6 +113,28 @@ export function DependencyPanel({ appId }: DependencyPanelProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ checkId: check.id, status: 'success' }),
       });
+
+      // Record installed software details for tracking
+      try {
+        const whichResult = await core.call<{ found?: boolean; path?: string; version?: string }>('env.which', {
+          name: check.command || check.id,
+        });
+        await fetch(`/api/apps/${appId}/installed`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            checkId: check.id,
+            name: check.id,
+            binary: check.command || check.id,
+            version: whichResult?.version || '',
+            path: whichResult?.path || '',
+            sizeBytes: null,
+          }),
+        });
+      } catch (_e) {
+        // Non-critical: don't fail the install flow if recording fails
+      }
+
       // Re-check after install
       await runChecks(appId);
     } catch (err) {

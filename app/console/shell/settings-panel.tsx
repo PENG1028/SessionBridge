@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { X, Search, ChevronRight } from 'lucide-react';
+import { X, Search, ChevronRight, Bug } from 'lucide-react';
+import { SlotDevTools } from '../settings/slot-devtools';
 import { useCoreStatus, useCoreClient, useCore } from '../core/core-client-provider';
 import { ConfigField } from './settings-panel/shared';
 import { ConnectionSection, AboutSection, PluginSettingsGroup } from '../settings';
@@ -302,6 +303,9 @@ export function SettingsPanel({ open, onClose, onReconnect }: SettingsPanelProps
       return true;
     });
   }, [coreConfigs, searchQuery, modifiedOnly, dirtyMap]);
+
+  // ── DevTools state ─────────────────────────────────────────────
+  const [showDevTools, setShowDevTools] = useState(false);
 
   // ── Update state ──────────────────────────────────────────────
   const [updateExpanded, setUpdateExpanded] = useState(false);
@@ -621,6 +625,25 @@ export function SettingsPanel({ open, onClose, onReconnect }: SettingsPanelProps
                 Reconnect
               </button>
             </div>
+          )}
+
+          {/* ════════════════════════════════════════════════════════
+              DEVTOOLS (always available in development)
+              ════════════════════════════════════════════════════════ */}
+          {process.env.NODE_ENV === 'development' && (
+            <>
+              <button
+                onClick={() => setShowDevTools((v) => !v)}
+                className="w-full flex items-center gap-2 px-4 py-2 hover:bg-white/[0.02] transition-colors text-left border-t border-gray-800/50"
+              >
+                <Bug className="w-3 h-3 text-gray-600" />
+                <span className="text-[10px] text-gray-600">Slot Registry DevTools</span>
+                <ChevronRight
+                  className={`w-2.5 h-2.5 text-gray-600 ml-auto transition-transform ${showDevTools ? 'rotate-90' : ''}`}
+                />
+              </button>
+              {showDevTools && <SlotDevTools />}
+            </>
           )}
         </div>
       </div>

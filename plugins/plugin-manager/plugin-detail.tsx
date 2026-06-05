@@ -5,16 +5,17 @@
 // permissions, capabilities, dependencies, and configuration.
 
 import { useState, useEffect, useCallback } from 'react';
-import { ArrowLeft, RefreshCw, Shield, Puzzle, Box, Sliders, AlertCircle } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Shield, Puzzle, Box, Sliders, AlertCircle, Package } from 'lucide-react';
 import { useCore, getManifest } from '../../sdk';
 import { isEnabled, setEnabled } from '../../sdk';
 import type { AppManifest } from '../../sdk';
 import { PluginConfigForm } from '../../app/console/plugin-host/host-component-registry';
 import { PermissionPanel } from './permission-panel';
 import { DependencyPanel } from './dependency-panel';
+import { InstalledSoftwarePanel } from './installed-software-panel';
 
 // ─── Tab definitions ───────────────────────────────────────────────
-type TabId = 'permissions' | 'capabilities' | 'dependencies' | 'config';
+type TabId = 'permissions' | 'capabilities' | 'dependencies' | 'installed' | 'config';
 
 interface TabDef {
   id: TabId;
@@ -26,6 +27,7 @@ const TABS: TabDef[] = [
   { id: 'permissions', label: 'Permissions', icon: Shield },
   { id: 'capabilities', label: 'Capabilities', icon: Puzzle },
   { id: 'dependencies', label: 'Dependencies', icon: Box },
+  { id: 'installed', label: 'Installed', icon: Package },
   { id: 'config', label: 'Config', icon: Sliders },
 ];
 
@@ -214,6 +216,9 @@ export function PluginDetail({
 
       case 'dependencies':
         return <DependencyPanel appId={appId} />;
+
+      case 'installed':
+        return <InstalledSoftwarePanel appId={appId} />;
 
       case 'config':
         return (

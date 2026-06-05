@@ -18,4 +18,4 @@ export { ShellTerminal, TitleBar, DirectoryPicker, SystemContextBar, FileExplore
 
 export { getLastActiveDir, setLastActiveDir, getRestoreLastPath, TOOL_SEMANTICS, evaluateWhen, normalizeNodeInfo, listFromResponse, normalizeSessionInfo, loadApps, isEnabled, setEnabled, getLoadError, invalidateCache, getGrant, setGrant, getManifest, registerPanelComponent, TerminalInputBuffer, createDebouncedResize } from './utils';
 
-export type { HostComponentProps, CoreEvent, NodeInfo, PeerEntry, NodeInvite, SessionInfo, AppSummary, AppManifest, AppSystemUI, AppUIPanel, AppPermissionSpec, CheckResult, WhenContext } from './types';
+export type { HostComponentProps, CoreEvent, NodeInfo, PeerEntry, NodeInvite, SessionInfo, AppSummary, AppManifest, AppSystemUI, AppUIPanel, AppPermissionSpec, CheckResult, InstalledSoftwareEntry, WhenContext } from './types';
