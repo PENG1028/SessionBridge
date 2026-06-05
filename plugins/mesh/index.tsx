@@ -165,31 +165,14 @@ export function NodeNetworkView({
     });
   }
 
-  // Phase 4: View — the browser session (not a Core node).
-  // A View has no network address or type; those belong to the Core it connects through.
-  unifiedNodes.push({
-    nodeId: '__view__',
-    name: `View on ${localName}`,
-    kind: 'VIEW' as const,
-    status: 'connected',
-    networkType: undefined as unknown as ReturnType<typeof categorizeNetwork>,
-    address: undefined,
-    fromTopology: false,
-    fromTrust: false,
-  });
-
-  // Sort: LOCAL first, then RELAY, then LEAF, then VIEW last
-  const kindOrder: Record<string, number> = { LOCAL: 0, RELAY: 1, LEAF: 2, VIEW: 3 };
+  // Sort: LOCAL first, then RELAY, then LEAF
+  const kindOrder: Record<string, number> = { LOCAL: 0, RELAY: 1, LEAF: 2 };
   unifiedNodes.sort((a, b) => {
     if (a.kind !== b.kind) return (kindOrder[a.kind] || 99) - (kindOrder[b.kind] || 99);
     return a.nodeId.localeCompare(b.nodeId);
   });
 
-  const relayNodes = unifiedNodes.filter(n => n.kind === 'RELAY');
-  const leafNodes = unifiedNodes.filter(n => n.kind === 'LEAF');
   const connectedCount = unifiedNodes.filter(n => n.fromTopology && n.status === 'connected').length;
-
-
 
   // ── Build topology tree from unified list ──
   type TopoEntry = {
@@ -232,8 +215,6 @@ export function NodeNetworkView({
       addNode(n.nodeId, { name: n.name, address: n.address, networkType: n.networkType, nodeId: n.nodeId }, 'LEAF',
         n.fromTrust ? 'leaf (paired)' : undefined, false,
         n.onEnter, reachableNodeIds.has(n.nodeId));
-    } else if (n.kind === 'VIEW') {
-      addNode('__view__', { name: n.name }, 'VIEW');
     }
   }
   // ── Render ──
