@@ -18,6 +18,7 @@ export function NodeCard({ peer, kind, nodeId, onEnter, reachable }: {
   const [failed, setFailed] = useState(false);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const isRemote = kind !== 'LOCAL';
+  const isView = kind === 'VIEW';
   const host = extractHost(peer.address);
   const port = extractPort(peer.address);
   const addressLine = peer.address || `${host}:${port}`;
@@ -60,13 +61,15 @@ export function NodeCard({ peer, kind, nodeId, onEnter, reachable }: {
         <Icon className={`w-4 h-4 mt-0.5 shrink-0 ${iconColor(kind)}`} />
         <div className="min-w-0 flex-1">
           <div className="text-sm font-semibold text-gray-100 truncate">{peer.name}</div>
-          <div className="text-[11px] text-gray-300 font-mono truncate">{addressLine}</div>
+          {!isView && (
+            <div className="text-[11px] text-gray-300 font-mono truncate">{addressLine}</div>
+          )}
           {nodeId && (
             <div className="text-[9px] text-gray-600 font-mono truncate">{nodeId}</div>
           )}
         </div>
         <div className="flex items-center gap-1.5 shrink-0 mt-0.5">
-          {peer.networkType && (
+          {peer.networkType && kind !== 'VIEW' && (
             <span className={`text-[8px] px-1.5 py-0.5 rounded font-mono border shrink-0 ${networkClass(peer.networkType)}`}>
               {peer.networkType.toUpperCase()}
             </span>

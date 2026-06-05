@@ -133,7 +133,7 @@ export function NodeNetworkView({
     unifiedNodes.push({
       nodeId: n.nodeId,
       name: peerMap.get(n.nodeId)?.name || n.displayName || n.name,
-      kind: n.role === 'relay' ? 'RELAY' : 'LEAF',
+      kind: n.role === 'relay' || n.inboundPeerReachable ? 'RELAY' : 'LEAF',
       address: n.address,
       networkType: netType,
       status: n.status,
@@ -165,13 +165,15 @@ export function NodeNetworkView({
     });
   }
 
-  // Phase 4: View — the browser session (not a Core node)
+  // Phase 4: View — the browser session (not a Core node).
+  // A View has no network address or type; those belong to the Core it connects through.
   unifiedNodes.push({
     nodeId: '__view__',
     name: `View on ${localName}`,
     kind: 'VIEW' as const,
     status: 'connected',
-    networkType: localNetworkType,
+    networkType: undefined as unknown as ReturnType<typeof categorizeNetwork>,
+    address: undefined,
     fromTopology: false,
     fromTrust: false,
   });
@@ -231,7 +233,7 @@ export function NodeNetworkView({
         n.fromTrust ? 'leaf (paired)' : undefined, false,
         n.onEnter, reachableNodeIds.has(n.nodeId));
     } else if (n.kind === 'VIEW') {
-      addNode('__view__', { name: n.name, address: undefined, networkType: n.networkType }, 'VIEW');
+      addNode('__view__', { name: n.name }, 'VIEW');
     }
   }
   // ── Render ──
