@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { Plus, Cpu, Server, X } from 'lucide-react';
 import { useCore, useReachableNodeIds } from '../core/core-client-provider';
+import { ProxyCoreClient } from '../core/proxy-core-client';
 
 interface NodeBarPeer {
   id: string;
@@ -29,6 +30,26 @@ function nodeIcon(peer: NodeBarPeer) {
 function statusColor(isConnected: boolean, status?: string): string {
   if (status === 'rejected') return 'bg-red-500';
   return isConnected ? 'bg-emerald-500' : 'bg-gray-600';
+}
+
+/** Classify an address (with optional port) by network type. */
+function classifyNetwork(addr: string): 'loopback' | 'lan' | 'wan' | 'unknown' {
+  if (!addr) return 'unknown';
+  // Strip port
+  let host = addr;
+  const bracketIdx = host.lastIndexOf(']:');
+  if (bracketIdx > 0) {
+    host = host.slice(1, bracketIdx); // [::1]:9090 → ::1
+  } else {
+    const colonIdx = host.lastIndexOf(':');
+    if (colonIdx > 0) host = host.slice(0, colonIdx);
+  }
+  if (host === 'localhost' || host === '::1' || host.startsWith('127.')) return 'loopback';
+  if (host.startsWith('192.168.') || host.startsWith('10.')) return 'lan';
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return 'lan'; // 172.16/12
+  if (host.startsWith('fe80:')) return 'lan'; // link-local IPv6
+  if (host.startsWith('fc') || host.startsWith('fd')) return 'lan'; // ULA IPv6
+  return 'wan';
 }
 
 export function NodeBar({ activeNodeId, onEnterNode, onOpenConnection }: NodeBarProps) {
@@ -73,16 +94,15 @@ export function NodeBar({ activeNodeId, onEnterNode, onOpenConnection }: NodeBar
             ip: n.address,
             type: 'agent' as const,
             role: (n.role || 'leaf') as 'relay' | 'leaf',
-            networkType: n.address ? (n.address.startsWith('127.') || n.address === 'localhost' ? 'loopback' : n.address.startsWith('192.168.') || n.address.startsWith('10.') ? 'lan' : 'wan') as 'loopback' | 'lan' | 'wan' | 'unknown' : ('unknown' as 'loopback' | 'lan' | 'wan' | 'unknown'),
+            networkType: classifyNetwork(n.address || ''),
             hasPublicAccess: n.inboundPeerReachable || false,
             status: n.status,
           }));
         // Update status cache on ProxyCoreClient so the overlay can distinguish
         // "rejected" from "disconnected".
-        if (peers.length > 0 && typeof (core as any).updateNodeStatus === 'function') {
-          const pcc = core as any;
+        if (peers.length > 0 && core instanceof ProxyCoreClient) {
           for (const p of peers) {
-            pcc.updateNodeStatus(p.id, p.status || 'disconnected');
+            core.updateNodeStatus(p.id, p.status || 'disconnected');
           }
         }
         setRemotePeers(peers);

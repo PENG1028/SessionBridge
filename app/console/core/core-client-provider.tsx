@@ -95,7 +95,7 @@ export function CoreClientProvider({
       clearTimeout(idTimer);
       proxyClient.disconnect();
     };
-  }, [forceOffline, reconnectKey, mockData, mockData]);
+  }, [forceOffline, reconnectKey, mockData]);
 
   const value = useMemo(() => ({ core, status, isOffline, activeNodeId, localNodeId, setActiveNode }), [
     core, status, isOffline, activeNodeId, localNodeId, setActiveNode,
