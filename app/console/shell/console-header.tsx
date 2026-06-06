@@ -324,6 +324,7 @@ export function ConsoleHeader({
             {onOpenSettings && (
               <button
                 onClick={onOpenSettings}
+                onTouchEnd={(e) => { e.preventDefault(); onOpenSettings(); }}
                 className="text-gray-400 hover:text-gray-200 p-1 shrink-0"
                 title="Settings"
               >
