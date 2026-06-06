@@ -9,6 +9,8 @@
 
 'use client';
 
+import { useRef, type ReactNode } from 'react';
+
 /**
  * Check if the user currently has a non-collapsed text selection.
  * Returns true when text is highlighted on screen.
@@ -30,4 +32,26 @@ export function guardClick(handler: () => void) {
     if (isSelecting()) return;
     handler();
   };
+}
+
+// ─── SelectionSafeContainer ─────────────────────────────────────
+// Wraps children and prevents DOM updates while the user has an
+// active text selection. During selection it returns the last known
+// rendered content from a ref, so React bails out and the DOM stays
+// unchanged — preserving the selection.
+//
+// This is the root fix for "selection disappears on re-render":
+// streaming data or parent state changes that cascade down will
+// NOT replace DOM nodes while text is highlighted.
+
+export function SelectionSafeContainer({ children }: { children: ReactNode }) {
+  const cacheRef = useRef<ReactNode>(null);
+
+  // During render: save latest content when NOT selecting
+  if (!isSelecting()) {
+    cacheRef.current = children;
+  }
+
+  // During selection: return frozen content so React skips DOM update
+  return <>{isSelecting() && cacheRef.current !== null ? cacheRef.current : children}</>;
 }

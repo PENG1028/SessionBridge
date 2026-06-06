@@ -3,6 +3,7 @@
 import { useState, useCallback, useRef, useEffect, type ReactNode, type DragEvent } from 'react';
 import { GripVertical, ChevronDown, ChevronRight } from 'lucide-react';
 import { isPanelCollapsed, setPanelCollapsed, applyPanelOrder } from './dock-profile';
+import { SelectionSafeContainer } from '../../../lib/click-guard';
 
 // ── DockPanelFrame ────────────────────────────────────────────
 // Unified sidebar panel frame providing:
@@ -137,7 +138,9 @@ export function DockPanelFrame({ panelId, title, icon, profileKey, actions, chil
           so panels that manage internal state (e.g. InstanceList polling)
           continue to work. */}
       <div className={collapsed ? 'hidden' : 'bg-[#0d0d0d]'} data-copyable="true">
-        {children}
+        <SelectionSafeContainer>
+          {children}
+        </SelectionSafeContainer>
       </div>
     </div>
   );
