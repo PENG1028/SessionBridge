@@ -34,7 +34,7 @@ export function NodeNetworkView({
   const reachableNodeIds = useReachableNodeIds();
 
   const fetchTopology = useCallback(async () => {
-    if (!core.isConnected) { setTopoLoading(false); return; }
+    if (!core.isConnected) { setTopoLoading(false); setTopoNodes([]); setLocalNodeId(null); setTopoError(null); return; }
     setTopoLoading(true);
     setTopoError(null);
     try {
