@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { Cpu, PanelLeft, PanelRight, Settings } from 'lucide-react';
+import { Cpu, Settings } from 'lucide-react';
 import { useFocus } from '../workbench/focus-context';
 import { useRuntimePolicy } from '../workbench/runtime-policy-context';
 import { getAdapterMeta, getViewEntry, getAdapterCapabilities, type ChromePolicy } from '../main/view-registry';
@@ -55,6 +55,29 @@ export interface ConsoleHeaderProps {
   connectionUnstable?: boolean;
   /** View identity label (e.g. "View on Core 294d9778c9a1"). */
   viewLabel?: string;
+}
+
+// ─── SidebarToggleIcon ──────────────────────────────────────────
+// Split-square icon: outer rect + vertical divider + filled half.
+// The filled half lights up when the sidebar is open (fillOpacity 0.4)
+// and dims when closed (fillOpacity 0.1), giving clear visual feedback
+// of which side is active.
+
+function SidebarToggleIcon({ side, open }: { side: 'left' | 'right'; open: boolean }) {
+  const dividerX = side === 'left' ? '9' : '15';
+  const fillRect = side === 'left' ? (
+    <rect x="3" y="3" width="6" height="18" rx="2" fill="currentColor" fillOpacity={open ? 0.45 : 0.08} />
+  ) : (
+    <rect x="15" y="3" width="6" height="18" rx="2" fill="currentColor" fillOpacity={open ? 0.45 : 0.08} />
+  );
+
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+      <rect x="3" y="3" width="18" height="18" rx="2" strokeOpacity="0.5" />
+      <line x1={dividerX} y1="3" x2={dividerX} y2="21" strokeOpacity="0.5" />
+      {fillRect}
+    </svg>
+  );
 }
 
 // ─── MobileHeaderChromeItems ─────────────────────────────────────
@@ -276,7 +299,7 @@ export function ConsoleHeader({
           className="flex items-center justify-center w-10 h-full shrink-0 text-gray-500 hover:text-gray-200 transition-colors"
           title="Open panel"
         >
-          <PanelLeft className={`w-4 h-4 transition-opacity ${mobileOpen ? 'opacity-100' : 'opacity-40'}`} />
+          <SidebarToggleIcon side="left" open={mobileOpen} />
         </button>
 
         <div className="flex-1 flex items-center justify-between px-2 min-w-0">
@@ -316,7 +339,7 @@ export function ConsoleHeader({
           className="flex items-center justify-center w-10 h-full shrink-0 text-gray-500 hover:text-gray-200 transition-colors"
           title="Open panels"
         >
-          <PanelRight className={`w-4 h-4 transition-opacity ${mobileRightOpen ? 'opacity-100' : 'opacity-40'}`} />
+          <SidebarToggleIcon side="right" open={mobileRightOpen} />
         </button>
       </div>
 
@@ -329,7 +352,7 @@ export function ConsoleHeader({
             className="hidden md:flex items-center justify-center w-10 h-full shrink-0 text-gray-500 hover:text-gray-200 transition-colors"
             title={`${leftSidebarOpen ? 'Collapse' : 'Expand'} sidebar (Ctrl+B)`}
           >
-            <PanelLeft className={`w-4 h-4 transition-opacity ${leftSidebarOpen ? 'opacity-100' : 'opacity-40'}`} />
+            <SidebarToggleIcon side="left" open={leftSidebarOpen ?? false} />
           </button>
         )}
 
@@ -412,7 +435,7 @@ export function ConsoleHeader({
             className="hidden lg:flex items-center justify-center w-10 h-full shrink-0 text-gray-500 hover:text-gray-200 transition-colors"
             title={`${rightSidebarOpen ? 'Collapse' : 'Expand'} right sidebar`}
           >
-            <PanelRight className={`w-4 h-4 transition-opacity ${rightSidebarOpen ? 'opacity-100' : 'opacity-40'}`} />
+            <SidebarToggleIcon side="right" open={rightSidebarOpen ?? false} />
           </button>
         )}
       </div>
