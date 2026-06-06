@@ -323,8 +323,12 @@ export function ConsoleHeader({
             />
             {onOpenSettings && (
               <button
-                onClick={onOpenSettings}
-                onTouchEnd={(e) => { e.preventDefault(); onOpenSettings(); }}
+                onClick={(e) => {
+                  e.currentTarget.dataset.debugTapped = '1';
+                  e.currentTarget.style.color = 'red';
+                  setTimeout(() => { e.currentTarget.style.color = ''; }, 2000);
+                  onOpenSettings();
+                }}
                 className="text-gray-400 hover:text-gray-200 p-1 shrink-0"
                 title="Settings"
               >
