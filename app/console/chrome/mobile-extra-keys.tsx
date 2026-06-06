@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useKeyboard } from '../../../lib/use-keyboard';
 
 interface MobileExtraKeysProps {
   enabled: boolean;
@@ -38,46 +39,17 @@ function isTouchDevice(): boolean {
   return navigator.maxTouchPoints > 0 || 'ontouchstart' in window;
 }
 
-function keyboardOverlap(): number {
-  if (typeof window === 'undefined') return 0;
-  const vp = window.visualViewport;
-  if (!vp) return 0;
-  const keyboardTop = vp.offsetTop + vp.height;
-  return Math.max(0, window.innerHeight - keyboardTop);
-}
-
 export function MobileExtraKeys({ enabled, onSend }: MobileExtraKeysProps) {
   const [touchDevice, setTouchDevice] = useState(false);
   const [ctrlOn, setCtrlOn] = useState(false);
   const [altOn, setAltOn] = useState(false);
-  const [bottomOffset, setBottomOffset] = useState(0);
   const ctrlTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const altTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const { keyboardHeight } = useKeyboard();
+
   useEffect(() => {
     setTouchDevice(isTouchDevice());
-  }, []);
-
-  useEffect(() => {
-    const sync = () => setBottomOffset(keyboardOverlap());
-    sync();
-
-    const vp = window.visualViewport;
-    window.addEventListener('resize', sync);
-    window.addEventListener('scroll', sync, { passive: true });
-    window.addEventListener('focusin', sync);
-    window.addEventListener('focusout', sync);
-    vp?.addEventListener('resize', sync);
-    vp?.addEventListener('scroll', sync);
-
-    return () => {
-      window.removeEventListener('resize', sync);
-      window.removeEventListener('scroll', sync);
-      window.removeEventListener('focusin', sync);
-      window.removeEventListener('focusout', sync);
-      vp?.removeEventListener('resize', sync);
-      vp?.removeEventListener('scroll', sync);
-    };
   }, []);
 
   useEffect(() => {
@@ -130,7 +102,7 @@ export function MobileExtraKeys({ enabled, onSend }: MobileExtraKeysProps) {
   if (!touchDevice || !enabled) return null;
 
   const btnBase = 'flex items-center justify-center min-w-11 h-9 px-3 rounded text-xs font-mono border select-none active:scale-95 transition-colors touch-manipulation';
-  const bottom = Math.max(0, bottomOffset);
+  const bottom = Math.max(0, keyboardHeight);
 
   return (
     <div
@@ -140,6 +112,7 @@ export function MobileExtraKeys({ enabled, onSend }: MobileExtraKeysProps) {
         left: 0,
         right: 0,
         bottom: `${bottom}px`,
+        transition: 'bottom 200ms cubic-bezier(0.22, 1, 0.36, 1)',
         paddingBottom: 'calc(0.375rem + env(safe-area-inset-bottom))',
       }}
       onPointerDown={(e) => e.preventDefault()}
