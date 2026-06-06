@@ -296,6 +296,7 @@ export function ConsoleHeader({
         {/* Left sidebar toggle — extreme left */}
         <button
           onClick={onMobileOpen}
+          onTouchStart={(e) => { e.preventDefault(); onMobileOpen?.(); }}
           className="flex items-center justify-center w-10 h-full shrink-0 text-gray-500 hover:text-gray-200 transition-colors"
           title="Open panel"
         >
@@ -323,12 +324,8 @@ export function ConsoleHeader({
             />
             {onOpenSettings && (
               <button
-                onClick={(e) => {
-                  e.currentTarget.dataset.debugTapped = '1';
-                  e.currentTarget.style.color = 'red';
-                  setTimeout(() => { e.currentTarget.style.color = ''; }, 2000);
-                  onOpenSettings();
-                }}
+                onClick={onOpenSettings}
+                onTouchStart={(e) => { e.preventDefault(); onOpenSettings(); }}
                 className="text-gray-400 hover:text-gray-200 p-1 shrink-0"
                 title="Settings"
               >
@@ -341,6 +338,7 @@ export function ConsoleHeader({
         {/* Right sidebar toggle — extreme right */}
         <button
           onClick={onMobileRightOpen}
+          onTouchStart={(e) => { e.preventDefault(); onMobileRightOpen?.(); }}
           className="flex items-center justify-center w-10 h-full shrink-0 text-gray-500 hover:text-gray-200 transition-colors"
           title="Open panels"
         >
