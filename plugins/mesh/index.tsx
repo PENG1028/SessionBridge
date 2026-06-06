@@ -23,7 +23,7 @@ export function NodeNetworkView({
 
   const [localNodeId, setLocalNodeId] = useState<string | null>(null);
   const [topoNodes, setTopoNodes] = useState<NodeInfo[]>([]);
-  const [topoLoading, setTopoLoading] = useState(true);
+  const [topoLoading, setTopoLoading] = useState(() => core?.isConnected ?? false);
   const [topoError, setTopoError] = useState<string | null>(null);
 
   const [meshPeers, setMeshPeers] = useState<PeerEntry[]>([]);
