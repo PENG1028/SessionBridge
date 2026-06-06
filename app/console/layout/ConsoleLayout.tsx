@@ -105,6 +105,8 @@ export function ConsoleLayout(props: Record<string, any>) {
         chromePolicy={chromePolicy}
         onMobileOpen={() => setMobileOpen(true)}
         onMobileRightOpen={() => setMobileRightOpen(true)}
+        mobileOpen={mobileOpen}
+        mobileRightOpen={mobileRightOpen}
         statusColor={statusColor}
         statusText={statusText}
         connStatus={connStatus}

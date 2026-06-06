@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { Cpu, Settings } from 'lucide-react';
+import { Cpu, PanelLeft, PanelRight, Settings } from 'lucide-react';
 import { useFocus } from '../workbench/focus-context';
 import { useRuntimePolicy } from '../workbench/runtime-policy-context';
 import { getAdapterMeta, getViewEntry, getAdapterCapabilities, type ChromePolicy } from '../main/view-registry';
@@ -17,6 +17,10 @@ import type { HeaderChromeContribution } from '../chrome/chrome-registry';
 export interface ConsoleHeaderProps {
   onMobileOpen: () => void;
   onMobileRightOpen?: () => void;
+  /** Whether mobile left drawer is currently open (for icon state). */
+  mobileOpen?: boolean;
+  /** Whether mobile right drawer is currently open (for icon state). */
+  mobileRightOpen?: boolean;
   statusColor: string;
   statusText: string;
   connStatus: { status: string };
@@ -178,6 +182,8 @@ function MobileHeaderChromeItems({
 export function ConsoleHeader({
   onMobileOpen,
   onMobileRightOpen,
+  mobileOpen = false,
+  mobileRightOpen = false,
   statusColor,
   statusText,
   connStatus,
@@ -261,160 +267,154 @@ export function ConsoleHeader({
   };
 
   return (
-    <header className="h-11 px-4 border-b border-gray-800 bg-[#111] shrink-0 relative z-10">
+    <header className="h-11 border-b border-gray-800 bg-[#111] shrink-0 relative z-10">
       {/* ── Mobile layout ── */}
-      <div className="flex md:hidden items-center justify-between h-full overflow-hidden">
-        <button className="text-gray-400 hover:text-gray-200 p-1 -ml-1 shrink-0"
-          onClick={onMobileOpen}
-          title="Menu"
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-          </svg>
-        </button>
+      <div className="flex md:hidden items-center h-full">
+        {/* Left sidebar toggle — extreme left */}
         <button
-          onClick={onOpenConnectionManager}
-          className="text-purple-400 font-bold tracking-widest text-sm hover:text-purple-300 transition-colors truncate mx-1"
-          title="Switch connection"
+          onClick={onMobileOpen}
+          className="flex items-center justify-center w-10 h-full shrink-0 text-gray-500 hover:text-gray-200 transition-colors"
+          title="Open panel"
         >
-          {connectionLabel || 'Remote Console'}
+          <PanelLeft className={`w-4 h-4 transition-opacity ${mobileOpen ? 'opacity-100' : 'opacity-40'}`} />
         </button>
-        {viewLabel && (
-          <span className="hidden sm:inline text-[9px] text-gray-600 font-mono px-1.5 py-0.5 rounded border border-gray-800 bg-gray-900/50 ml-1">
-            {viewLabel}
-          </span>
-        )}
-        <div className="flex items-center gap-1 shrink-0">
-          {/* Plugin chrome items (with overflow detection) */}
-          <MobileHeaderChromeItems
-            whenCtx={focus.whenContext as Record<string, unknown>}
-            actionCtx={actionCtx}
-          />
 
-          {onOpenSettings && (
-            <button
-              onClick={onOpenSettings}
-              className="text-gray-400 hover:text-gray-200 p-1 shrink-0"
-              title="Settings"
-            >
-              <Settings className="w-4 h-4" />
-            </button>
-          )}
+        <div className="flex-1 flex items-center justify-between px-2 min-w-0">
           <button
-            onClick={onMobileRightOpen}
-            className="text-gray-400 hover:text-gray-200 p-1 -mr-1 shrink-0 text-lg leading-none tracking-wider"
-            title="Panels"
+            onClick={onOpenConnectionManager}
+            className="text-purple-400 font-bold tracking-widest text-sm hover:text-purple-300 transition-colors truncate"
+            title="Switch connection"
           >
-            ⋮
+            {connectionLabel || 'Remote Console'}
           </button>
+          {viewLabel && (
+            <span className="hidden sm:inline text-[9px] text-gray-600 font-mono px-1.5 py-0.5 rounded border border-gray-800 bg-gray-900/50 ml-1 shrink-0">
+              {viewLabel}
+            </span>
+          )}
+          <div className="flex items-center gap-1 shrink-0">
+            {/* Plugin chrome items (with overflow detection) */}
+            <MobileHeaderChromeItems
+              whenCtx={focus.whenContext as Record<string, unknown>}
+              actionCtx={actionCtx}
+            />
+            {onOpenSettings && (
+              <button
+                onClick={onOpenSettings}
+                className="text-gray-400 hover:text-gray-200 p-1 shrink-0"
+                title="Settings"
+              >
+                <Settings className="w-4 h-4" />
+              </button>
+            )}
+          </div>
         </div>
+
+        {/* Right sidebar toggle — extreme right */}
+        <button
+          onClick={onMobileRightOpen}
+          className="flex items-center justify-center w-10 h-full shrink-0 text-gray-500 hover:text-gray-200 transition-colors"
+          title="Open panels"
+        >
+          <PanelRight className={`w-4 h-4 transition-opacity ${mobileRightOpen ? 'opacity-100' : 'opacity-40'}`} />
+        </button>
       </div>
 
       {/* ── Desktop layout ── */}
-      <div className="hidden md:flex items-center justify-between h-full">
-        <div className="flex items-center space-x-4">
-        {/* Hamburger for mobile */}
-        <button className="md:hidden text-gray-400 hover:text-gray-200 p-1 -ml-1"
-          onClick={onMobileOpen}
-          title="Menu"
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-          </svg>
-        </button>
-        {/* Left sidebar toggle */}
+      <div className="hidden md:flex items-center h-full">
+        {/* ── Left sidebar toggle — extreme left ── */}
         {onToggleLeftSidebar && (
           <button
             onClick={onToggleLeftSidebar}
-            className="hidden md:flex items-center justify-center w-4 h-full text-gray-600 hover:text-gray-300 transition-colors shrink-0"
+            className="hidden md:flex items-center justify-center w-10 h-full shrink-0 text-gray-500 hover:text-gray-200 transition-colors"
             title={`${leftSidebarOpen ? 'Collapse' : 'Expand'} sidebar (Ctrl+B)`}
           >
-            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                d={leftSidebarOpen ? 'M15 19l-7-7 7-7' : 'M9 5l7 7-7 7'} />
-            </svg>
+            <PanelLeft className={`w-4 h-4 transition-opacity ${leftSidebarOpen ? 'opacity-100' : 'opacity-40'}`} />
           </button>
         )}
-        <Cpu className="w-4 h-4 text-purple-500" />
-        <button
-          onClick={onOpenConnectionManager}
-          className="text-purple-400 font-bold tracking-widest text-sm hover:text-purple-300 transition-colors"
-          title="Switch connection"
-        >
-          {connectionLabel || 'Remote Console'}
-        </button>
-        <span className="text-gray-700">|</span>
-        <span className="text-xs text-gray-400 flex items-center gap-2">
-          <span className={`w-2 h-2 rounded-full ${statusColor} ${connStatus.status === 'connected' ? 'animate-pulse' : ''}`} />
-          {statusText}{connectionUnstable ? <span className="text-yellow-500 animate-pulse">...</span> : null}
-          {!proxyHealthy && coreStatus === 'connected' && (
-            <span className="text-[9px] text-amber-500/80 ml-1 animate-pulse" title="Core proxy degraded — retrying">
-              proxy:retry
-            </span>
-          )}
-          {coreStatus !== 'connected' && coreStatus !== 'connecting' && (
-            <span className="text-[9px] text-yellow-500/70 ml-1" title={`Core: ${coreStatus}`}>
-              core:{coreStatus === 'error' ? 'err' : 'off'}
-            </span>
-          )}
-        </span>
 
-        {/* ── Minimal header: show only brand + connection, no chat-specific items ── */}
-        {!isMinimal && (
-          <>
-            {/* Phase badge */}
-            <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${phaseColor} ${
-              phase === 'idle' ? 'border-gray-700 bg-gray-900/50'
-              : phase === 'running' ? 'border-purple-700 bg-purple-900/20 animate-pulse'
-              : phase === 'done' ? 'border-emerald-700 bg-emerald-900/20'
-              : 'border-red-700 bg-red-900/20'
-            }`}>
-              {phaseLabel}
+        {/* ── Center content ── */}
+        <div className="flex-1 flex items-center justify-between px-4 min-w-0">
+          <div className="flex items-center space-x-4">
+            <Cpu className="w-4 h-4 text-purple-500 shrink-0" />
+            <button
+              onClick={onOpenConnectionManager}
+              className="text-purple-400 font-bold tracking-widest text-sm hover:text-purple-300 transition-colors shrink-0"
+              title="Switch connection"
+            >
+              {connectionLabel || 'Remote Console'}
+            </button>
+            <span className="text-gray-700 shrink-0">|</span>
+            <span className="text-xs text-gray-400 flex items-center gap-2">
+              <span className={`w-2 h-2 rounded-full ${statusColor} ${connStatus.status === 'connected' ? 'animate-pulse' : ''}`} />
+              {statusText}{connectionUnstable ? <span className="text-yellow-500 animate-pulse">...</span> : null}
+              {!proxyHealthy && coreStatus === 'connected' && (
+                <span className="text-[9px] text-amber-500/80 ml-1 animate-pulse" title="Core proxy degraded — retrying">
+                  proxy:retry
+                </span>
+              )}
+              {coreStatus !== 'connected' && coreStatus !== 'connecting' && (
+                <span className="text-[9px] text-yellow-500/70 ml-1" title={`Core: ${coreStatus}`}>
+                  core:{coreStatus === 'error' ? 'err' : 'off'}
+                </span>
+              )}
             </span>
-            {/* Runtime info badge */}
-            {runtimeBadge && (
-              <span className="text-[9px] text-gray-500 bg-gray-900/80 px-1.5 py-0.5 border border-gray-800 font-mono tracking-tight hidden md:inline">
-                {runtimeBadge}
-              </span>
-            )}
-            {/* Current activity */}
-            {currentActivity && phase === 'running' && (
-              <span className="text-[10px] text-purple-400 bg-purple-900/10 px-2 py-0.5 rounded-full border border-purple-800/30 truncate max-w-[200px] hidden sm:inline">
-                {currentActivity}
-              </span>
-            )}
-            {parsed?.model && (
-              <span className="text-[10px] text-gray-500 bg-gray-900 px-2 py-0.5 rounded border border-gray-800 hidden md:inline">
-                {parsed.model}
-              </span>
-            )}
-          </>
-        )}
-      </div>
-      <div className="flex items-center space-x-4 text-xs">
-        {!isMinimal && parsed?.cost && <span className="text-gray-400 hidden sm:inline">TOKENS: <span className="text-gray-200">{parsed.cost}</span></span>}
 
-        {/* Right sidebar toggle — shown in both full and minimal */}
+            {/* ── Minimal header: show only brand + connection, no chat-specific items ── */}
+            {!isMinimal && (
+              <>
+                {/* Phase badge */}
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${phaseColor} ${
+                  phase === 'idle' ? 'border-gray-700 bg-gray-900/50'
+                  : phase === 'running' ? 'border-purple-700 bg-purple-900/20 animate-pulse'
+                  : phase === 'done' ? 'border-emerald-700 bg-emerald-900/20'
+                  : 'border-red-700 bg-red-900/20'
+                }`}>
+                  {phaseLabel}
+                </span>
+                {/* Runtime info badge */}
+                {runtimeBadge && (
+                  <span className="text-[9px] text-gray-500 bg-gray-900/80 px-1.5 py-0.5 border border-gray-800 font-mono tracking-tight hidden md:inline">
+                    {runtimeBadge}
+                  </span>
+                )}
+                {/* Current activity */}
+                {currentActivity && phase === 'running' && (
+                  <span className="text-[10px] text-purple-400 bg-purple-900/10 px-2 py-0.5 rounded-full border border-purple-800/30 truncate max-w-[200px] hidden sm:inline">
+                    {currentActivity}
+                  </span>
+                )}
+                {parsed?.model && (
+                  <span className="text-[10px] text-gray-500 bg-gray-900 px-2 py-0.5 rounded border border-gray-800 hidden md:inline">
+                    {parsed.model}
+                  </span>
+                )}
+              </>
+            )}
+          </div>
+
+          <div className="flex items-center space-x-4 text-xs">
+            {!isMinimal && parsed?.cost && <span className="text-gray-400 hidden sm:inline">TOKENS: <span className="text-gray-200">{parsed.cost}</span></span>}
+
+            {/* Header chrome: actions (registry) + contributions (manifests) */}
+            <HeaderChrome
+              isMinimal={isMinimal}
+              focusCtx={focus.whenContext as Record<string, unknown>}
+              actionCtx={actionCtx}
+            />
+          </div>
+        </div>
+
+        {/* ── Right sidebar toggle — extreme right ── */}
         {onToggleRightSidebar && (
           <button
             onClick={onToggleRightSidebar}
-            className="hidden lg:flex items-center justify-center w-4 h-full text-gray-600 hover:text-gray-300 transition-colors shrink-0"
+            className="hidden lg:flex items-center justify-center w-10 h-full shrink-0 text-gray-500 hover:text-gray-200 transition-colors"
             title={`${rightSidebarOpen ? 'Collapse' : 'Expand'} right sidebar`}
           >
-            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                d={rightSidebarOpen ? 'M9 5l7 7-7 7' : 'M15 19l-7-7 7-7'} />
-            </svg>
+            <PanelRight className={`w-4 h-4 transition-opacity ${rightSidebarOpen ? 'opacity-100' : 'opacity-40'}`} />
           </button>
         )}
-
-        {/* Header chrome: actions (registry) + contributions (manifests) */}
-        <HeaderChrome
-          isMinimal={isMinimal}
-          focusCtx={focus.whenContext as Record<string, unknown>}
-          actionCtx={actionCtx}
-        />
-      </div>
       </div>
     </header>
   );
