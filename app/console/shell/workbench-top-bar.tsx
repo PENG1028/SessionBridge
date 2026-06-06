@@ -16,7 +16,7 @@ export function WorkbenchTopBar() {
   const { activeExternalSession, clearExternalSession } = useWorkbench();
 
   return (
-    <div className="flex items-center justify-between h-7 px-2 border-b border-gray-800 bg-[#0a0a0a] shrink-0">
+    <div className="flex items-center justify-between h-7 px-2 border-b border-gray-800 bg-[#0a0a0a] shrink-0" data-copyable="false">
       <span className="flex items-center gap-2 text-[10px] font-bold text-gray-500 tracking-wider">
         WORKBENCH
         {activeExternalSession && (

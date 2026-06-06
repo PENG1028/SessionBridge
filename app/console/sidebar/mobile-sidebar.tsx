@@ -5,6 +5,7 @@ import { Folder, X } from 'lucide-react';
 import { FileExplorer } from './file-explorer';
 import { getPanels } from '../panels/panel-registry';
 import { useFocus } from '../workbench/focus-context';
+import { isSelecting } from '../../../lib/click-guard';
 
 interface MobileSidebarProps {
   open: boolean;
@@ -39,6 +40,8 @@ export function MobileSidebar({
 
   const onTouchEnd = useCallback((e: React.TouchEvent) => {
     if (touchStart === null) return;
+    // Don't close drawer while user is selecting text
+    if (isSelecting()) { setTouchStart(null); return; }
     const dx = e.changedTouches[0].clientX - touchStart;
     if (dx > 80) onClose();
     setTouchStart(null);
@@ -49,7 +52,7 @@ export function MobileSidebar({
   const hasFocus = activeView && activeView !== 'empty';
 
   return (
-    <div className="md:hidden fixed inset-0 z-50 flex" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+    <div className="md:hidden fixed inset-0 z-50 flex" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} data-copyable="false">
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
       {/* Sheet */}

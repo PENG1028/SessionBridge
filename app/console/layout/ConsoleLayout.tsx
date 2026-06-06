@@ -172,7 +172,7 @@ export function ConsoleLayout(props: Record<string, any>) {
         />
         </SidebarSlot>
 
-        <main className="flex-1 flex flex-col relative bg-black min-w-0 min-h-0">
+        <main className="flex-1 flex flex-col relative bg-black min-w-0 min-h-0" data-copyable="true">
           {showRemoteOverlay && (
             <div className="absolute inset-0 z-50 flex items-center justify-center bg-[#0a0a0a]/80 backdrop-blur-sm">
               <div className="bg-[#111] border border-gray-800 rounded px-6 py-4 text-center max-w-sm">
@@ -284,6 +284,21 @@ export function ConsoleLayout(props: Record<string, any>) {
         .prose-container pre { margin: 4px 0; }
         .prose-container ul, .prose-container ol { margin: 2px 0; }
         .prose-container li { overflow-wrap: break-word; }
+
+        /* ── data-copyable attribute system ─────────────────────── */
+        /* Explicitly allow text selection — overrides all select-none */
+        [data-copyable="true"],
+        [data-copyable="true"] * {
+          user-select: text !important;
+          -webkit-user-select: text !important;
+        }
+        /* Block text selection for UI chrome */
+        [data-copyable="false"],
+        [data-copyable="false"] * {
+          user-select: none !important;
+          -webkit-user-select: none !important;
+          -ms-user-select: none !important;
+        }
       `}</style>
 
     </div>

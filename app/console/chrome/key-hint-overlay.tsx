@@ -32,7 +32,7 @@ export function KeyHintOverlay({ whenContext, onCommand }: KeyHintOverlayProps) 
   if (controls.length === 0) return null;
 
   return (
-    <div className="hidden md:flex fixed bottom-8 right-4 z-30 gap-2 pointer-events-none">
+    <div className="hidden md:flex fixed bottom-8 right-4 z-30 gap-2 pointer-events-none" data-copyable="false">
       {controls.map(ctrl => {
         if (ctrl.kind === 'hint') {
           return (

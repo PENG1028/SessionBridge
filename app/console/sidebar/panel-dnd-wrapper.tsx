@@ -105,6 +105,7 @@ export function DockPanelFrame({ panelId, title, icon, profileKey, actions, chil
         className={`flex items-center h-8 px-2 gap-1.5 border-b border-gray-800 bg-[#0d0d0d] select-none ${
           collapsed ? '' : ''
         }`}
+        data-copyable="false"
       >
         <button
           onClick={toggleCollapse}
@@ -135,7 +136,7 @@ export function DockPanelFrame({ panelId, title, icon, profileKey, actions, chil
       {/* Body — visually clipped when collapsed, but children still mount
           so panels that manage internal state (e.g. InstanceList polling)
           continue to work. */}
-      <div className={collapsed ? 'hidden' : 'bg-[#0d0d0d]'}>
+      <div className={collapsed ? 'hidden' : 'bg-[#0d0d0d]'} data-copyable="true">
         {children}
       </div>
     </div>

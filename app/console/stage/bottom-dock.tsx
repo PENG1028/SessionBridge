@@ -20,7 +20,7 @@ export function BottomDock({
   return (
     <div className="border-t border-gray-700 shrink-0 flex flex-col bg-[#0d0d0d]" style={{ height: pane.minSize || 180 }}>
       {/* Bottom dock tab bar */}
-      <div className="flex items-center h-7 bg-[#0a0a0a] border-b border-gray-800 shrink-0">
+      <div className="flex items-center h-7 bg-[#0a0a0a] border-b border-gray-800 shrink-0" data-copyable="false">
         <div className="flex items-center">
           {pane.tabs.map(tab => {
             const isActive = tab.id === pane.activeTabId;

@@ -4,6 +4,7 @@ import { useMemo, useCallback, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { getPanels } from '../panels/panel-registry';
 import { useFocus } from '../workbench/focus-context';
+import { isSelecting } from '../../../lib/click-guard';
 
 interface MobileRightPanelProps {
   open: boolean;
@@ -52,6 +53,8 @@ export function MobileRightPanel(props: MobileRightPanelProps) {
 
   const onTouchEnd = useCallback((e: React.TouchEvent) => {
     if (touchStart === null) return;
+    // Don't close drawer while user is selecting text
+    if (isSelecting()) { setTouchStart(null); return; }
     const dx = touchStart - e.changedTouches[0].clientX;
     if (dx > 80) onClose();
     setTouchStart(null);
@@ -60,7 +63,7 @@ export function MobileRightPanel(props: MobileRightPanelProps) {
   if (!open) return null;
 
   return (
-    <div className="md:hidden fixed inset-0 z-50 flex" onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}>
+    <div className="md:hidden fixed inset-0 z-50 flex" onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} data-copyable="false">
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
       {/* Sheet — slides in from right */}

@@ -142,7 +142,7 @@ export function NodeBar({ activeNodeId, onEnterNode, onOpenConnection }: NodeBar
   const visible = deduped.filter(p => !dismissed.has(p.id));
 
   return (
-    <div className="flex items-center h-8 px-2 bg-[#0d0d0d] border-b border-gray-800 gap-1 shrink-0 overflow-x-auto">
+    <div className="flex items-center h-8 px-2 bg-[#0d0d0d] border-b border-gray-800 gap-1 shrink-0 overflow-x-auto" data-copyable="false">
       {visible.map(peer => {
         const isActive = peer.id === activeNodeId;
         const Icon = nodeIcon(peer);

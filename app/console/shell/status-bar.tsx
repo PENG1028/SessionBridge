@@ -55,7 +55,7 @@ export function StatusBar({
   }, [focus?.instanceId, core, onNavigatePath]);
 
   return (
-    <div className="h-7 shrink-0 bg-[#0d0d0d] border-t border-gray-800 flex items-center px-3 gap-2 text-[10px] z-30">
+    <div className="h-7 shrink-0 bg-[#0d0d0d] border-t border-gray-800 flex items-center px-3 gap-2 text-[10px] z-30" data-copyable="false">
       <RuntimeControlCenter onSetMode={onSetMode} onSetEffort={onSetEffort} />
 
       {/* Terminal directory picker button */}

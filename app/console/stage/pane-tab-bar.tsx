@@ -88,7 +88,7 @@ export function PaneTabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onAddTa
   const keptIds = persistentTabIds ? new Set(persistentTabIds) : null;
 
   return (
-    <div className="flex items-center h-7 bg-[#0d0d0d] border-b border-gray-800 shrink-0 overflow-visible select-none z-[1]">
+    <div className="flex items-center h-7 bg-[#0d0d0d] border-b border-gray-800 shrink-0 overflow-visible select-none z-[1]" data-copyable="false">
       {/* Tabs + "+" at end */}
       <div className="flex-1 flex items-center overflow-x-auto">
         {tabs.map(tab => {
