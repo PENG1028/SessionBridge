@@ -14,6 +14,7 @@ import { slotRegistry } from '../../../lib/slot-registry';
 import { registerView, unregisterView } from '../../console/main/view-registry';
 import { syncPluginPanels, clearPanels } from '../../console/panels/panel-registry';
 import { syncChromeContributions, clearChromeContributions } from '../../console/chrome/chrome-registry';
+import { syncMobileKeyboardContributions, clearMobileKeyboardContributions } from '../../console/chrome/mobile-keyboard-registry';
 import { registerCommand, unregisterCommand } from '../../console/commands/command-registry';
 import { contributionRegistry } from '../../console/plugin-host/contribution-registry';
 import { PluginManifestViewRenderer } from '../../console/plugin-host/plugin-manifest-view-renderer';
@@ -50,6 +51,7 @@ export async function syncAllPlugins(
   const allLeft: Array<{ id: string; title: string; icon: string; defaultVisible: boolean; componentId?: string; order?: number; pluginId?: string }> = [];
   const allRight: Array<{ id: string; title: string; icon: string; defaultVisible: boolean; componentId?: string; order?: number; pluginId?: string }> = [];
   const allStatusBar: Array<{ id: string; text: string; icon?: string; command?: string; side: 'left' | 'right'; order: number }> = [];
+  const allMobileKeyboard: Array<{ id: string; pluginId: string; label: string; send?: string; toggle?: boolean; toggleKey?: 'ctrl' | 'alt'; row?: number; order?: number }> = [];
 
   // Clean up stale registrations from deleted plugins
   for (const appId of _registeredViewIds.keys()) {
@@ -69,7 +71,7 @@ export async function syncAllPlugins(
       if (!manifest?.adapters?.['system-ui']) continue;
 
       const ui = manifest.adapters['system-ui'] as AppSystemUI;
-      registerAppContributions(app.id, manifest, ui, onExecuteCommand, allLeft, allRight, allStatusBar);
+      registerAppContributions(app.id, manifest, ui, onExecuteCommand, allLeft, allRight, allStatusBar, allMobileKeyboard);
     } catch (err) {
       console.error(`[plugin-sync] Failed to sync plugin "${app.name || app.id}":`, err);
     }
@@ -81,6 +83,7 @@ export async function syncAllPlugins(
     allRight.length > 0 ? allRight : undefined,
   );
   syncChromeContributions(allStatusBar.length > 0 ? { statusBar: allStatusBar as any } : undefined);
+  syncMobileKeyboardContributions(allMobileKeyboard);
   } finally {
     _syncLock = false;
   }
@@ -130,6 +133,7 @@ function registerAppContributions(
   allLeft: Array<{ id: string; title: string; icon: string; defaultVisible: boolean; componentId?: string; order?: number; pluginId?: string }>,
   allRight: Array<{ id: string; title: string; icon: string; defaultVisible: boolean; componentId?: string; order?: number; pluginId?: string }>,
   allStatusBar: Array<{ id: string; text: string; icon?: string; command?: string; side: 'left' | 'right'; order: number }>,
+  allMobileKeyboard: Array<{ id: string; pluginId: string; label: string; send?: string; toggle?: boolean; toggleKey?: 'ctrl' | 'alt'; row?: number; order?: number }>,
 ): void {
   const viewIds: string[] = [];
   const cmdIds: string[] = [];
@@ -207,6 +211,23 @@ function registerAppContributions(
         command: s.command,
         side: 'left',
         order: i,
+      });
+    }
+  }
+
+  // ── Mobile Keyboard ──
+  if (ui.mobileKeyboard) {
+    for (const k of ui.mobileKeyboard) {
+      if (!k.id) continue;
+      allMobileKeyboard.push({
+        id: `${appId}.${k.id}`,
+        pluginId: appId,
+        label: k.label,
+        send: k.send,
+        toggle: k.toggle,
+        toggleKey: k.toggleKey,
+        row: k.row,
+        order: k.order,
       });
     }
   }

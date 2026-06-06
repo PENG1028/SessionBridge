@@ -82,6 +82,26 @@ export interface AppSystemUI {
   settings?: Record<string, unknown>;
   /** Plugin configuration schema — properties users can configure. */
   configuration?: AppConfigurationContribution;
+  /** Mobile keyboard toolbar buttons. Contributed by plugins that
+   *  need quick-access keys when a software keyboard is open. */
+  mobileKeyboard?: AppUIMobileKeyboard[];
+}
+
+export interface AppUIMobileKeyboard {
+  id: string;
+  label: string;
+  /** Characters to send when pressed. Ignored if toggle is true. */
+  send?: string;
+  /** If true, this is a sticky toggle key (Ctrl/Alt modifier). */
+  toggle?: boolean;
+  /** Which modifier this toggle represents. Only meaningful when toggle=true. */
+  toggleKey?: 'ctrl' | 'alt';
+  /** Row group. 0 = first row, 1 = second row, etc. Default 0. */
+  row?: number;
+  /** Sort order within the row. Lower = first. Default 100. */
+  order?: number;
+  /** When-condition for visibility. */
+  when?: string;
 }
 
 export interface AppUIView {

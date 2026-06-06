@@ -124,3 +124,52 @@ adapters:
         componentId: ProcessesPanel
         title: Processes
         icon: cpu
+
+    mobileKeyboard:
+      - id: tab
+        label: Tab
+        send: "\t"
+        row: 0
+        order: 10
+      - id: ctrl
+        label: Ctrl
+        toggle: true
+        toggleKey: ctrl
+        row: 0
+        order: 20
+      - id: alt
+        label: Alt
+        toggle: true
+        toggleKey: alt
+        row: 0
+        order: 30
+      - id: esc
+        label: Esc
+        send: "\x1b"
+        row: 0
+        order: 40
+      - id: slash
+        label: "/"
+        send: "/"
+        row: 0
+        order: 50
+      - id: left
+        label: Left
+        send: "\x1b[D"
+        row: 1
+        order: 10
+      - id: down
+        label: Down
+        send: "\x1b[B"
+        row: 1
+        order: 20
+      - id: up
+        label: Up
+        send: "\x1b[A"
+        row: 1
+        order: 30
+      - id: right
+        label: Right
+        send: "\x1b[C"
+        row: 1
+        order: 40

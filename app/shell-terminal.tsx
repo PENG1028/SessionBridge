@@ -6,7 +6,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import type { IDisposable } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { ContextMenu, type ContextMenuItem } from './console/shell/context-menu';
-import { MobileExtraKeys } from './console/chrome/mobile-extra-keys';
+import { MobileKeyboardSlot } from './console/chrome/mobile-keyboard-slot';
 
 // ─── ShellTerminal — pure xterm.js host ────────────────────────────
 // Owns: xterm init/theme/fit, keyboard shortcuts, context menu, resize observer.
@@ -167,7 +167,7 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
     // ── User input from xterm → plugin ──
     const onDataDisposable = term.onData(handleUserInput);
 
-    // ── Focus tracking (for MobileExtraKeys) ──
+    // ── Focus tracking (for MobileKeyboardSlot) ──
     const focusRoot = containerRef.current;
     const handleFocusIn = () => setTerminalFocused(true);
     const handleFocusOut = () => {
@@ -254,7 +254,7 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
       {ctxMenu && (
         <ContextMenu items={ctxMenu.items} x={ctxMenu.x} y={ctxMenu.y} onClose={() => setCtxMenu(null)} />
       )}
-      <MobileExtraKeys enabled={terminalFocused} onSend={handleUserInput} />
+      <MobileKeyboardSlot enabled={terminalFocused} onSend={handleUserInput} />
     </>
   );
 }

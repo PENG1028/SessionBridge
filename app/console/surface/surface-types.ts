@@ -47,7 +47,8 @@ export type SurfaceType =
 
   // Mobile
   | 'mobile.sheet'
-  | 'mobile.fullscreen';
+  | 'mobile.fullscreen'
+  | 'mobile.keyboard';
 
 // ─── SurfaceRenderContext — injected into every surface component ──
 export interface SurfaceRenderContext {
