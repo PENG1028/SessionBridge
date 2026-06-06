@@ -1,0 +1,19 @@
+{
+  "name": "sessionbridge-desktop",
+  "version": "0.1.0",
+  "description": "SessionBridge Desktop Shell (Electron) — native notifications, tray, single-instance lock",
+  "author": "SessionBridge",
+  "license": "UNLICENSED",
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "tsc && electron . --dev",
+    "build": "tsc && electron-builder",
+    "start": "electron .",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0",
+    "typescript": "^5.8.0"
+  }
+}

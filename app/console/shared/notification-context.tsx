@@ -1,6 +1,7 @@
 'use client';
 
 import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
+import { getNotificationBridge } from './notification-bridge';
 
 export interface AppNotification {
   id: string;
@@ -54,6 +55,8 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     if (dur > 0) {
       setTimeout(() => dismiss(id), dur);
     }
+    // Fire native OS notification if shell supports it (Electron / Capacitor / Web)
+    getNotificationBridge().show({ ...n, id } as AppNotification);
   }, [dismiss]);
 
   return (

@@ -1,0 +1,21 @@
+{
+  "name": "sessionbridge-mobile",
+  "version": "0.1.0",
+  "description": "SessionBridge Mobile Shell (Capacitor) — native notifications on Android/iOS",
+  "author": "SessionBridge",
+  "license": "UNLICENSED",
+  "scripts": {
+    "build": "npx cap sync && npx cap build android",
+    "sync": "npx cap sync",
+    "open": "npx cap open android",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^7.0.0",
+    "@capacitor/cli": "^7.0.0",
+    "@capacitor/core": "^7.0.0",
+    "@capacitor/ios": "^7.0.0",
+    "@capacitor/local-notifications": "^7.0.0",
+    "typescript": "^5.8.0"
+  }
+}

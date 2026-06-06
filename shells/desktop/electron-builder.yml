@@ -1,0 +1,86 @@
+# =============================================================================
+# SessionBridge Desktop Shell — electron-builder packaging config
+# =============================================================================
+# This file is a reference template.
+# Build command:  cd shells/desktop && npm run build   (tsc + electron-builder)
+# Output:         shells/desktop/dist-sb/              (platform installers)
+#
+# When reusing for a new project:
+#   1. Change appId to your own reverse-domain identifier
+#   2. Change productName
+#   3. Replace assets/icon.png with a 512×512 PNG
+#   4. Adjust target platforms as needed
+#
+# Docs: https://www.electron.build/configuration/configuration
+# =============================================================================
+
+# ─── Application identity ──────────────────────────────────────────────────
+
+appId: com.sessionbridge.desktop
+productName: SessionBridge
+
+# ─── File inclusion ────────────────────────────────────────────────────────
+
+files:
+  - dist/**/*
+  - "!dist/tsconfig.json"
+
+# extraResources:
+#   - from: assets/
+#     to: assets/
+#     filter:
+#       - "*.png"
+#       - "*.ico"
+#       - "*.icns"
+
+# ─── Directories ───────────────────────────────────────────────────────────
+
+directories:
+  output: dist-sb          # Installer output
+  buildResources: assets   # Icons: icon.png, icon.ico, icon.icns
+
+# ─── Windows ────────────────────────────────────────────────────────────────
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+        - arm64
+  icon: assets/icon.png
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+
+# ─── macOS ──────────────────────────────────────────────────────────────────
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  icon: assets/icon.png
+  category: public.app-category.developer-tools
+
+dmg:
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+
+# ─── Linux ──────────────────────────────────────────────────────────────────
+
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+        - arm64
+  icon: assets/icon.png
+  category: Development

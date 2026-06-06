@@ -1,0 +1,3 @@
+# icon.png — 512×512 PNG, used as app icon source
+# splash.png — 2732×2732 PNG, used as splash screen (optional)
+# Capacitor auto-generates platform-specific icons from these.
