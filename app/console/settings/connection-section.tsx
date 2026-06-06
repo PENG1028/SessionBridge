@@ -101,6 +101,19 @@ export function ConnectionSection({
     setStartingCore(true);
     setPathMessage(null);
     try {
+      // First save the path so the server knows where Core is
+      const saveRes = await fetch('/api/core/server-state', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ coreBinaryPath: coreBinaryPath.trim() }),
+      });
+      if (!saveRes.ok) {
+        setPathMessage({ ok: false, text: 'Failed to save path before start' });
+        setStartingCore(false);
+        return;
+      }
+
+      // Then start Core
       const res = await fetch('/api/core/start', { method: 'POST' });
       const data = await res.json();
       if (!mountedRef.current) return;

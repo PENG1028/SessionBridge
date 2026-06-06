@@ -67,6 +67,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
+  // ── Accept path override from request body ────────────────────
+  let body: { coreBinaryPath?: string } = {};
+  try { body = await request.json(); } catch { /* body optional */ }
+  if (body.coreBinaryPath) {
+    setCoreBinaryPath(body.coreBinaryPath);
+  }
+
   // ── Resolve binary path ──────────────────────────────────────
   const binPath = resolveBinaryPath();
   if (!binPath) {

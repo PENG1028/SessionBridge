@@ -17,7 +17,7 @@
 // isolation is a future layer — the path structure is ready for it.
 
 import { homedir } from 'os';
-import { join } from 'path';
+import { join, dirname } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 
 /** Root directory: ~/.sessionbridge/. Override via SESSIONBRIDGE_DATA_DIR env. */
@@ -85,8 +85,8 @@ export function ensureUserDir(userId: string = DEFAULT_USER_ID): string {
   return dir;
 }
 
-/** Ensure any parent directory for a given file path exists. */
+/** Ensure any parent directory for a given file path exists (cross-platform). */
 export function ensureParentDir(filePath: string): void {
-  const dir = filePath.substring(0, filePath.lastIndexOf('/'));
+  const dir = dirname(filePath);
   if (dir) ensureDir(dir);
 }
