@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { Radio } from 'lucide-react';
+import { Radio, Play, Save } from 'lucide-react';
 import {
   ConnectionDot,
   connectionStatusLabel,
@@ -32,16 +32,23 @@ export function ConnectionSection({
   const [collapsed, setCollapsed] = useState(false);
   const mountedRef = useRef(true);
 
+  // ── Core binary path state ─────────────────────────────────────
+  const [coreBinaryPath, setCoreBinaryPath] = useState('');
+  const [savingPath, setSavingPath] = useState(false);
+  const [startingCore, setStartingCore] = useState(false);
+  const [pathMessage, setPathMessage] = useState<{ ok: boolean; text: string } | null>(null);
+
   useEffect(() => {
     return () => {
       mountedRef.current = false;
     };
   }, []);
 
-  // Fetch current server-side Core target on mount
+  // ── Fetch current server-side state on mount ───────────────────
   useEffect(() => {
     let ignore = false;
-    setScanResults(null);
+
+    // Fetch Core target port
     fetch('/api/core/target')
       .then((r) => r.json())
       .then((data) => {
@@ -50,16 +57,65 @@ export function ConnectionSection({
           try {
             const port = new URL(data.url).port || '9090';
             onLocalPortChange(port);
-          } catch (_e) {
-            /* URL parse failure — keep default port */
-          }
+          } catch (_e) { /* keep default */ }
         }
       })
       .catch(() => {});
-    return () => {
-      ignore = true;
-    };
+
+    // Fetch persistent server state (Core binary path)
+    fetch('/api/core/server-state')
+      .then((r) => r.json())
+      .then((data) => {
+        if (ignore) return;
+        if (data?.coreBinaryPath) setCoreBinaryPath(data.coreBinaryPath);
+      })
+      .catch(() => {});
+
+    return () => { ignore = true; };
   }, [onLocalPortChange]);
+
+  // ── Save Core binary path ──────────────────────────────────────
+  const handleSavePath = useCallback(async () => {
+    setSavingPath(true);
+    setPathMessage(null);
+    try {
+      const res = await fetch('/api/core/server-state', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ coreBinaryPath: coreBinaryPath.trim() || null }),
+      });
+      if (!res.ok) throw new Error('Save failed');
+      if (!mountedRef.current) return;
+      setPathMessage({ ok: true, text: 'Path saved' });
+    } catch {
+      if (!mountedRef.current) return;
+      setPathMessage({ ok: false, text: 'Failed to save path' });
+    }
+    if (!mountedRef.current) return;
+    setSavingPath(false);
+  }, [coreBinaryPath]);
+
+  // ── Start Core ─────────────────────────────────────────────────
+  const handleStartCore = useCallback(async () => {
+    if (!coreBinaryPath.trim()) return;
+    setStartingCore(true);
+    setPathMessage(null);
+    try {
+      const res = await fetch('/api/core/start', { method: 'POST' });
+      const data = await res.json();
+      if (!mountedRef.current) return;
+      if (res.ok) {
+        setPathMessage({ ok: true, text: data.message || 'Core started' });
+      } else {
+        setPathMessage({ ok: false, text: data.error || 'Failed to start Core' });
+      }
+    } catch {
+      if (!mountedRef.current) return;
+      setPathMessage({ ok: false, text: 'Failed to start Core' });
+    }
+    if (!mountedRef.current) return;
+    setStartingCore(false);
+  }, [coreBinaryPath]);
 
   // ── Port scan handler ─────────────────────────────────────────
   const handleScanPorts = useCallback(async () => {
@@ -93,8 +149,6 @@ export function ConnectionSection({
         });
         if (!mountedRef.current) return;
         onLocalPortChange(cleanPort);
-        // Trigger reconnection after state is settled. Uses rAF so the
-        // reconnect fires after the next paint, picking up the new target.
         requestAnimationFrame(() => {
           if (mountedRef.current) onReconnect();
         });
@@ -141,9 +195,7 @@ export function ConnectionSection({
           <input
             type="text"
             value={localPort}
-            onChange={(e) => {
-              onLocalPortChange(e.target.value);
-            }}
+            onChange={(e) => { onLocalPortChange(e.target.value); }}
             className="flex-1 bg-[#0d0d0d] border border-gray-700 rounded px-2 py-1.5 text-[11px] text-gray-200 outline-none focus:border-purple-500 font-mono"
             placeholder="9090"
           />
@@ -157,6 +209,59 @@ export function ConnectionSection({
         <div className="text-[8px] text-gray-700 mt-0.5">
           Sets the port the server uses to reach Core on localhost
         </div>
+      </div>
+
+      {/* ── Core Binary Path ──────────────────────────────────────── */}
+      <div className="py-2 border-t border-gray-800/50 mt-2 pt-3">
+        <div className="text-[9px] text-gray-600 mb-1">Core Binary Path</div>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={coreBinaryPath}
+            onChange={(e) => { setCoreBinaryPath(e.target.value); setPathMessage(null); }}
+            className="flex-1 bg-[#0d0d0d] border border-gray-700 rounded px-2 py-1.5 text-[11px] text-gray-200 outline-none focus:border-purple-500 font-mono"
+            placeholder="e.g. /usr/local/bin/sessionnode"
+          />
+          <button
+            onClick={handleSavePath}
+            disabled={savingPath}
+            className="px-2.5 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-white text-[10px] rounded border border-gray-600 transition-colors shrink-0 flex items-center gap-1"
+          >
+            <Save className="w-3 h-3" />
+            {savingPath ? '...' : 'Save'}
+          </button>
+        </div>
+        <div className="text-[8px] text-gray-700 mt-0.5">
+          Path to the sessionnode binary. Auto-detected on first start, or set manually.
+        </div>
+
+        {/* Status message */}
+        {pathMessage && (
+          <div className={`mt-1.5 text-[9px] ${pathMessage.ok ? 'text-emerald-400' : 'text-red-400'}`}>
+            {pathMessage.text}
+          </div>
+        )}
+      </div>
+
+      {/* ── Start Core button (always shown; API rejects on VPS) ── */}
+      <div className="py-1">
+        <button
+          onClick={handleStartCore}
+          disabled={startingCore || !coreBinaryPath.trim()}
+          className="flex items-center justify-center gap-1.5 px-2.5 py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-[10px] rounded border border-emerald-600 transition-colors w-full"
+          title={!coreBinaryPath.trim() ? 'Set Core binary path first' : undefined}
+        >
+          {startingCore ? (
+            <>
+              <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              Starting Core...
+            </>
+          ) : (
+            <>
+              <Play className="w-3 h-3" /> Start Core
+            </>
+          )}
+        </button>
       </div>
 
       {/* Scan for Core (always available) */}
