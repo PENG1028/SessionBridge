@@ -15,7 +15,7 @@ export function MainSlot({ viewId, instanceId, _surfaceId }: MainSlotProps) {
 
   const Component = entry.component as ComponentType<{ viewId?: string; instanceId?: string; _surfaceId?: string }>;
   return (
-    <div className="flex-1 flex flex-col min-w-0 min-h-0 animate-fadeIn" data-copyable="true">
+    <div className="flex-1 flex flex-col min-w-0 min-h-0 animate-fadeIn" data-copyable="true" style={{ userSelect: 'text' as any }}>
       <Component viewId={viewId} instanceId={instanceId} _surfaceId={_surfaceId} />
     </div>
   );

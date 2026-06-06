@@ -172,7 +172,7 @@ export function ConsoleLayout(props: Record<string, any>) {
         />
         </SidebarSlot>
 
-        <main className="flex-1 flex flex-col relative bg-black min-w-0 min-h-0" data-copyable="true">
+        <main className="flex-1 flex flex-col relative bg-black min-w-0 min-h-0" data-copyable="true" style={{ userSelect: 'text' as any }}>
           {showRemoteOverlay && (
             <div className="absolute inset-0 z-50 flex items-center justify-center bg-[#0a0a0a]/80 backdrop-blur-sm">
               <div className="bg-[#111] border border-gray-800 rounded px-6 py-4 text-center max-w-sm">

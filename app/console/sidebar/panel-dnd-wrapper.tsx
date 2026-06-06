@@ -137,7 +137,7 @@ export function DockPanelFrame({ panelId, title, icon, profileKey, actions, chil
       {/* Body — visually clipped when collapsed, but children still mount
           so panels that manage internal state (e.g. InstanceList polling)
           continue to work. */}
-      <div className={collapsed ? 'hidden' : 'bg-[#0d0d0d]'} data-copyable="true">
+      <div className={collapsed ? 'hidden' : 'bg-[#0d0d0d]'} data-copyable="true" style={{ userSelect: 'text' as any }}>
         <SelectionSafeContainer>
           {children}
         </SelectionSafeContainer>
