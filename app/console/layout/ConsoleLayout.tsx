@@ -284,21 +284,6 @@ export function ConsoleLayout(props: Record<string, any>) {
         .prose-container pre { margin: 4px 0; }
         .prose-container ul, .prose-container ol { margin: 2px 0; }
         .prose-container li { overflow-wrap: break-word; }
-
-        /* ── data-copyable attribute system ─────────────────────── */
-        /* Explicitly allow text selection — overrides all select-none */
-        [data-copyable="true"],
-        [data-copyable="true"] * {
-          user-select: text !important;
-          -webkit-user-select: text !important;
-        }
-        /* Block text selection for UI chrome */
-        [data-copyable="false"],
-        [data-copyable="false"] * {
-          user-select: none !important;
-          -webkit-user-select: none !important;
-          -ms-user-select: none !important;
-        }
       `}</style>
 
     </div>
