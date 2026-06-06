@@ -48,7 +48,7 @@ export class ProxyCoreClient implements CoreClient {
   // Transient 502/503 during Core restart or Next.js rebuild should
   // show a subtle indicator, not an error dump.
   private _proxyErrorCount = 0;
-  private _proxyHealthy = true;
+  private _proxyHealthy = false;
   private _proxyHealthListeners = new Set<(healthy: boolean) => void>();
 
   constructor(pluginId = 'sessionnode-core') {
