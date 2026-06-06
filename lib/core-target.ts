@@ -9,28 +9,44 @@
 // Core token resolution: SESSIONNODE_TOKEN env → Go Core
 // config file (~/.sessionnode/config.json) → undefined.
 
-import { readFileSync } from 'fs';
+import { readFileSync, writeFileSync, renameSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import { getServerStateFile, ensureBaseDir } from './server-state/paths';
 
 let _customTarget: string | null = null;
 
-// ── Auto-restore last port from persisted server state ─────────
-// Runs at module load: reads ~/.sessionbridge/server-state.json
-// and restores the lastCoreUrl if no env override is active.
-(function restoreFromServerState() {
+/**
+ * Reset in-memory target (testing use only).
+ * Clears both the custom target and any restored state.
+ */
+export function resetCoreTarget(): void {
+  _customTarget = null;
+}
+
+// ── Auto-restore (separated for testability) ────────────────────
+
+/**
+ * Restore _customTarget from persisted server-state.json.
+ * Skips if SESSIONBRIDGE_CORE_WS_URL env is set (env wins).
+ * Exported for testing — IIFE below calls it at module init.
+ */
+export function restoreCoreTargetFromServerState(): void {
+  if (process.env.SESSIONBRIDGE_CORE_WS_URL) return; // env override wins
   try {
-    if (process.env.SESSIONBRIDGE_CORE_WS_URL) return; // env wins
-    const statePath = join(homedir(), '.sessionbridge', 'server-state.json');
+    const statePath = getServerStateFile();
     const raw = readFileSync(statePath, 'utf-8');
     const state = JSON.parse(raw);
     if (state.lastCoreUrl) {
       _customTarget = state.lastCoreUrl;
     }
   } catch {
-    // File missing or corrupt — use defaults
+    // File missing or corrupt — use defaults, leave _customTarget null
   }
-})();
+}
+
+// Run at module init
+restoreCoreTargetFromServerState();
 
 export function getCoreWsUrl(): string {
   return _customTarget || process.env.SESSIONBRIDGE_CORE_WS_URL || 'ws://localhost:9090/ws';
@@ -40,10 +56,8 @@ export function setCoreTargetPort(port: number): void {
   _customTarget = `ws://localhost:${port}/ws`;
   // Persist to server-state so it survives restarts
   try {
-    const { writeFileSync, existsSync, mkdirSync, renameSync } = require('fs');
-    const statePath = join(homedir(), '.sessionbridge', 'server-state.json');
-    const dir = join(homedir(), '.sessionbridge');
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const statePath = getServerStateFile();
+    ensureBaseDir();
     let state: Record<string, unknown> = {};
     try {
       const raw = readFileSync(statePath, 'utf-8');

@@ -20,9 +20,9 @@ import { homedir } from 'os';
 import { join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 
-/** Root directory: ~/.sessionbridge/ */
+/** Root directory: ~/.sessionbridge/. Override via SESSIONBRIDGE_DATA_DIR env. */
 function baseDir(): string {
-  return join(homedir(), '.sessionbridge');
+  return process.env.SESSIONBRIDGE_DATA_DIR || join(homedir(), '.sessionbridge');
 }
 
 /**
