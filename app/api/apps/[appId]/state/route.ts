@@ -1,16 +1,17 @@
 // ─── GET/PUT /api/apps/[appId]/state ──────────────────────────────
 // Reads and writes per-app state (enabled/disabled, grants).
-// Stored server-side in .sessionbridge/app-state.json.
+// Stored server-side in ~/.sessionbridge/users/system/app-state.json
+// (user-level, defaulting to "system" for single-user mode).
 // This replaces the old plugin.enable/plugin.disable Core capabilities.
 
 import { NextRequest, NextResponse } from 'next/server';
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'fs';
-import { join } from 'path';
+import { readFileSync, writeFileSync, existsSync, renameSync } from 'fs';
 import { verifySessionFromCookie } from '../../../../../lib/auth/app-ui-auth';
+import { getAppStateFile, ensureUserDir } from '../../../../../lib/server-state/paths';
 
 export const runtime = 'nodejs';
 
-const STATE_FILE = join(process.cwd(), '.sessionbridge', 'app-state.json');
+const STATE_FILE = getAppStateFile();
 
 interface AppState {
   enabled: boolean;
@@ -33,8 +34,7 @@ function readState(): StateStore {
 }
 
 function writeState(store: StateStore): void {
-  const dir = join(process.cwd(), '.sessionbridge');
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  ensureUserDir();
   // Atomic write: temp file → rename
   const tmp = STATE_FILE + '.tmp';
   writeFileSync(tmp, JSON.stringify(store, null, 2), 'utf-8');

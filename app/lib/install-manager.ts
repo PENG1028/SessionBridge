@@ -1,14 +1,14 @@
 // ─── Install Manager ─────────────────────────────────────────────
 // Manages plugin dependency installation records.
-// Reads/writes .sessionbridge/install-history.json.
+// Reads/writes ~/.sessionbridge/install-history.json.
 // Server-side only.
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
-import { join } from 'path';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { randomBytes } from 'crypto';
 import type { InstallRecord } from './app-registry/app-types';
+import { getInstallHistoryFile, ensureBaseDir } from '../../lib/server-state/paths';
 
-const HISTORY_FILE = join(process.cwd(), '.sessionbridge', 'install-history.json');
+const HISTORY_FILE = getInstallHistoryFile();
 
 function readHistory(): Record<string, InstallRecord[]> {
   try {
@@ -21,8 +21,7 @@ function readHistory(): Record<string, InstallRecord[]> {
 }
 
 function writeHistory(history: Record<string, InstallRecord[]>): void {
-  const dir = join(process.cwd(), '.sessionbridge');
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  ensureBaseDir();
   writeFileSync(HISTORY_FILE, JSON.stringify(history, null, 2), 'utf-8');
 }
 

@@ -120,7 +120,7 @@ Plugin Manager
 | UI 操作 | API | 说明 |
 |---------|-----|------|
 | 加载插件列表 | `GET /api/apps/list` | 服务端扫描 `plugins/*/plugin.yaml`，不依赖 Core |
-| 读取启用状态 | `GET /api/apps/[appId]/state` | 读取 `.sessionbridge/app-state.json` |
+| 读取启用状态 | `GET /api/apps/[appId]/state` | 读取 `~/.sessionbridge/users/system/app-state.json` |
 | 启用/禁用 | `PUT /api/apps/[appId]/state` | 设置 `{ enabled: boolean }` |
 | 同步贡献 | `syncAllPlugins()` | 遍历所有已启用 app，调用 `registerAppContributions()` |
 | 插件配置读取 | `core.call('plugin.config.get', { pluginId })` | 通过 WebSocket 调用 Core |
@@ -679,7 +679,7 @@ interface InstalledSoftwareEntry {
 
 ### 存储位置
 
-`.sessionbridge/installed-apps.json` — 按 appId 分组：
+`~/.sessionbridge/installed-apps.json` — 按 appId 分组：
 
 ```json
 {

@@ -8,7 +8,7 @@
 import { scryptSync, randomBytes, createHmac, timingSafeEqual } from 'crypto';
 import { readFile, writeFile, mkdir, access } from 'fs/promises';
 import { existsSync } from 'fs';
-import { join, dirname } from 'path';
+import { dirname } from 'path';
 
 // ─── Types ─────────────────────────────────────────────────────
 
@@ -39,11 +39,13 @@ export interface SessionError {
 }
 
 // ─── Config Path ───────────────────────────────────────────────
+// Default: ~/.sessionbridge/app-ui-auth.json
+// Override via SESSIONBRIDGE_APP_UI_AUTH_FILE env (used in e2e tests).
 
-const DEFAULT_AUTH_FILE = join(process.cwd(), '.sessionbridge', 'app-ui-auth.json');
+import { getAuthFile } from '../server-state/paths';
 
 function getAuthFilePath(): string {
-  return process.env.SESSIONBRIDGE_APP_UI_AUTH_FILE || DEFAULT_AUTH_FILE;
+  return getAuthFile();
 }
 
 // ─── Helpers ───────────────────────────────────────────────────

@@ -1,17 +1,17 @@
 // ─── GET/PUT /api/apps/[appId]/installed ──────────────────────────
 // Tracks installed software per plugin (name, binary, version, path).
-// Stored server-side in .sessionbridge/installed-apps.json.
+// Stored server-side in ~/.sessionbridge/installed-apps.json.
 // Dedup by checkId within each appId.
 
 import { NextRequest, NextResponse } from 'next/server';
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'fs';
-import { join } from 'path';
+import { readFileSync, writeFileSync, existsSync, renameSync } from 'fs';
 import { randomBytes } from 'crypto';
 import { verifySessionFromCookie } from '../../../../../lib/auth/app-ui-auth';
+import { getInstalledAppsFile, ensureBaseDir } from '../../../../../lib/server-state/paths';
 
 export const runtime = 'nodejs';
 
-const INSTALLED_FILE = join(process.cwd(), '.sessionbridge', 'installed-apps.json');
+const INSTALLED_FILE = getInstalledAppsFile();
 
 interface InstalledSoftwareEntry {
   id: string;
@@ -40,8 +40,7 @@ function readStore(): InstalledStore {
 }
 
 function writeStore(store: InstalledStore): void {
-  const dir = join(process.cwd(), '.sessionbridge');
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  ensureBaseDir();
   const tmp = INSTALLED_FILE + '.tmp';
   writeFileSync(tmp, JSON.stringify(store, null, 2), 'utf-8');
   renameSync(tmp, INSTALLED_FILE);

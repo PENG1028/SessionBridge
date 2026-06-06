@@ -13,6 +13,7 @@ memory/
 .core/
 .env
 .env.local
+# Legacy — .sessionbridge/ now lives in ~/.sessionbridge/ (user home dir)
 .sessionbridge/
 *.stackdump
 next-env.d.ts
