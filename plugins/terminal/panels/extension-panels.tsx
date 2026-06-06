@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useCore, useActiveNodeId } from '../../../sdk';
+import { isSelecting } from '../../../lib/click-guard';
 
 // ── Logs Panel ──────────────────────────────────────────────
 
@@ -15,6 +16,7 @@ export function LogsPanel(props: { logs?: string[]; msgLog?: any[] }) {
     if (!core?.isConnected || !activeNodeId) return;
     core.call<{ entries?: Array<{ message: string }> }>('logs.tail', { source: 'core', lines: 50 })
       .then(data => {
+        if (isSelecting()) return; // don't clobber DOM during selection
         const entries = data?.entries ?? [];
         setCoreLogs(entries.map((e: { message: string }) => e.message));
       })
@@ -55,6 +57,9 @@ export function TerminalPanel(props: { msgLog?: any[] }) {
     setStreamEntries([]); // clear on target switch
     const handler = (event: any) => {
       if (event.type !== 'stream.chunk') return;
+      // Don't update DOM while user is selecting text — re-render
+      // would replace the text node and clear the selection.
+      if (isSelecting()) return;
       const now = new Date();
       const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
       setStreamEntries(prev => {
