@@ -77,8 +77,12 @@ async function ensureCapPlugin(): Promise<any> {
   if (_capInit) return _capPlugin;
   _capInit = true;
   try {
-    const { LocalNotifications } = await import('@capacitor/local-notifications');
-    _capPlugin = LocalNotifications;
+    // Dynamic string concatenation prevents Turbopack from resolving
+    // @capacitor/local-notifications at build time when the package is
+    // not installed. The import only runs at runtime inside a try/catch,
+    // so it's safe even if the package doesn't exist.
+    const mod = await import('@capacitor' + '/local-notifications');
+    _capPlugin = mod.LocalNotifications;
   } catch {
     /* plugin not registered — noop */
   }

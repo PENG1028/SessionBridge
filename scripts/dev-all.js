@@ -86,8 +86,8 @@ if (!existsSync(nextBinPlatform)) {
   process.exit(1);
 }
 
-console.log('[dev-all] Starting Next.js dev on 3000...');
-const next = spawn(nextBinPlatform, ['dev'], {
+console.log('[dev-all] Starting Next.js dev on 0.0.0.0:3000 (LAN accessible)...');
+const next = spawn(nextBinPlatform, ['dev', '-H', '0.0.0.0'], {
   cwd: projectRoot,
   env: {
     ...process.env,
@@ -96,6 +96,7 @@ const next = spawn(nextBinPlatform, ['dev'], {
   },
   stdio: 'inherit',
   windowsHide: true,
+  shell: process.platform === 'win32',
 });
 
 // ── Cleanup ─────────────────────────────────────────────

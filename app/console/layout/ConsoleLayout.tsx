@@ -2,7 +2,7 @@
 // Proper typing will be added in a follow-up as the hook is further split.
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { ConsoleHeader } from '../shell/console-header';
 import { LeftSidebar } from '../sidebar/left-sidebar';
 import { RightSidebar } from '../sidebar/right-sidebar';
@@ -286,6 +286,11 @@ export function ConsoleLayout(props: Record<string, any>) {
         .prose-container li { overflow-wrap: break-word; }
       `}</style>
 
+      {/* Hydration indicator — shows whether React successfully mounted.
+           Green = hydrated, Red/gray = React failed to hydrate (common on mobile via LAN IP in dev mode).
+           Only visible when ?hydrate-debug is in the URL or on mobile (<768px). */}
+      <HydrateIndicator />
+
     </div>
 
       <ConsoleOverlays
@@ -362,5 +367,33 @@ export function ConsoleLayout(props: Record<string, any>) {
       />
       </RuntimePolicyProvider>
     </FocusProvider>
+  );
+}
+
+// ─── HydrateIndicator ─────────────────────────────────────────
+// Tiny visual dot showing React hydration status.
+// - Green: React hydrated (page should be interactive)
+// - Red: React NOT hydrated (page is dead SSR — dev mode LAN issue)
+// Only shows in dev mode (?hydrate-debug or on mobile viewport).
+function HydrateIndicator() {
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => setHydrated(true), []);
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    // Show on mobile or when ?hydrate-debug is present
+    if (typeof window === 'undefined') return;
+    setShow(
+      window.innerWidth < 768 ||
+      new URL(window.location.href).searchParams.has('hydrate-debug')
+    );
+  }, []);
+  if (!show) return null;
+  return (
+    <div
+      title={hydrated ? 'React hydrated — interactive' : 'React NOT hydrated — page may be dead'}
+      className={`fixed bottom-1 right-1 w-2 h-2 rounded-full z-[9999] border border-gray-800 transition-colors ${
+        hydrated ? 'bg-green-500' : 'bg-red-500 animate-pulse'
+      }`}
+    />
   );
 }
