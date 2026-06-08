@@ -14,6 +14,7 @@ import { useCore, useCoreStatus } from '../../sdk';
 import { useCoreErrors } from '../../sdk';
 import { classifyCoreError } from '../../sdk';
 import { TerminalInputBuffer, createDebouncedResize } from '../../sdk';
+import { setInputHandler } from '../../lib/input-router';
 // Counter for generating distinguishable terminal labels
 let _termLabelCounter = 0;
 function nextTermLabel(baseCwd: string): string {

@@ -13,6 +13,8 @@ import { WorkbenchTopBar } from '../shell/workbench-top-bar';
 import { NodeBar } from '../stage/node-bar';
 import { NodeNetworkView } from '../../../plugins/mesh';
 import { KeyHintOverlay } from '../chrome/key-hint-overlay';
+import { MobileKeyboardSlot } from '../chrome/mobile-keyboard-slot';
+import { routeInput } from '../../../lib/input-router';
 import { MobileSidebar } from '../sidebar/mobile-sidebar';
 import { MobileRightPanel } from '../sidebar/mobile-right-panel';
 import { CoreErrorBanner } from '../core/core-error-banner';
@@ -326,6 +328,11 @@ export function ConsoleLayout(props: Record<string, any>) {
       />
 
       <KeyHintOverlay whenContext={focusWhenContext} onCommand={handlePaletteSelect} />
+
+      <MobileKeyboardSlot
+        enabled={true}
+        onSend={routeInput}
+      />
 
       <MobileSidebar
         open={mobileOpen}
