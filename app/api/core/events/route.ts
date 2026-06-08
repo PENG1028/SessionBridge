@@ -26,6 +26,9 @@ export const runtime = 'nodejs';
 /** 15-second timeout for the initial WebSocket connection to Core. */
 const CONNECT_TIMEOUT = 15_000;
 
+/** 2-second timeout for the pre-connect health probe. */
+const HEALTH_PROBE_TIMEOUT = 2_000;
+
 // ─── GET ─────────────────────────────────────────────────────
 
 export async function GET(request: NextRequest) {
@@ -51,7 +54,7 @@ export async function GET(request: NextRequest) {
   let connectTimer: ReturnType<typeof setTimeout> | null = null;
 
   const stream = new ReadableStream({
-    start(controller) {
+    async start(controller) {
       // Handle client disconnect — Next.js aborts the request signal
       // before the ReadableStream cancel() callback fires.
       request.signal.addEventListener('abort', () => {
@@ -65,6 +68,33 @@ export async function GET(request: NextRequest) {
           }
         }
       });
+
+      // ── Pre-connect health probe ──────────────────────────────
+      // Probe Core HTTP health before attempting WS connection.
+      // If Core is offline, return immediately with a core.offline event
+      // instead of hanging for CONNECT_TIMEOUT (15s).
+      // The client can use this event to implement reconnect backoff.
+      let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+      const wsPort = new URL(wsUrl).port || '9090';
+      const healthUrl = `http://127.0.0.1:${wsPort}/health`;
+      try {
+        const healthRes = await fetch(healthUrl, {
+          signal: AbortSignal.timeout(HEALTH_PROBE_TIMEOUT),
+        }).catch(() => null);
+
+        if (!healthRes?.ok) {
+          // Core is not responding — send offline event and close
+          controller.enqueue(new TextEncoder().encode(
+            `event: core\ndata: ${JSON.stringify({ type: 'core.offline', port: parseInt(wsPort) })}\n\n`
+          ));
+          try { controller.close(); } catch (_e) { /* controller may already be closed */ }
+          cleanup = true;
+          return;
+        }
+      } catch {
+        // Health probe failed — fall through to WS connect attempt anyway
+        // (the probe itself might be wrong if Core only listens on WS).
+      }
 
       coreWs = new WsWebSocket(connectUrl);
 
@@ -83,7 +113,6 @@ export async function GET(request: NextRequest) {
 
       // Heartbeat: send SSE comment every 25s to keep proxies alive.
       // Most proxies (nginx, Cloudflare) timeout idle connections at 60-120s.
-      let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
       coreWs.on('open', () => {
         if (cleanup) return;
