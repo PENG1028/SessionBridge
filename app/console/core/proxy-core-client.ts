@@ -34,6 +34,18 @@ export class ProxyCoreClient implements CoreClient {
   private _lastError: string | null = null;
   private _disconnected = false;
 
+  // ── Reconnect backoff ─────────────────────────────────────
+  // When Core is offline, the server emits 'core.offline' events.
+  // Instead of letting EventSource fast-reconnect (which creates a new
+  // SSE stream → WS connection attempt → 15s timeout cycle), we close
+  // the EventSource and schedule reconnection with exponential backoff.
+  private _reconnectAttempts = 0;
+  private _maxReconnectDelay = 30_000; // 30s cap
+  private _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Set when backoff reconnect is already scheduled (to prevent double-scheduling
+   *  from both 'core.offline' event handler and EventSource onerror firing). */
+  private _backoffScheduled = false;
+
   // ── Reachability tracking (which remote nodes are connected) ──
   private _reachableTargets = new Set<string>();
   private _reachabilityListeners = new Set<() => void>();
@@ -283,6 +295,7 @@ export class ProxyCoreClient implements CoreClient {
 
   disconnect(): void {
     this._disconnected = true;
+    this._clearBackoffReconnect();
     this._closeSSE();
     this._connectionStatus = 'disconnected';
     this._eventListeners.clear();
@@ -313,9 +326,27 @@ export class ProxyCoreClient implements CoreClient {
           if (msg.type === 'connected') {
             this._clearProbe();
             this._lastError = null;
+            // Connected successfully — reset backoff counter
+            this._reconnectAttempts = 0;
             this._setStatus('connected');
             debug('sse:proxy', 'bridge connected');
             this._emit('connected', msg);
+            return;
+          }
+
+          // 'core.offline' means the server probed Core HTTP health and
+          // it's not responding. Close the EventSource and schedule
+          // reconnect with backoff instead of letting EventSource
+          // fast-reconnect (which creates a 15s hang per cycle).
+          if (msg.type === 'core.offline') {
+            this._clearProbe();
+            this._lastError = `Core offline (port ${msg.port ?? '?'})`;
+            this._setStatus('disconnected');
+            // Close EventSource to prevent native auto-reconnect
+            this._closeSSE();
+            // Schedule reconnect with backoff
+            this._backoffScheduled = true;
+            this._scheduleBackoffReconnect();
             return;
           }
 
@@ -345,6 +376,23 @@ export class ProxyCoreClient implements CoreClient {
       es.onerror = () => {
         // EventSource auto-reconnects on network loss.
         // Mark disconnected so UI can show the transient state.
+        this._clearProbe();
+        // If backoff was already scheduled by 'core.offline' event handler,
+        // don't double-schedule here.
+        if (this._backoffScheduled) {
+          this._backoffScheduled = false;
+          return;
+        }
+        // If we've been reconnecting repeatedly without success, switch to
+        // backoff mode (close EventSource and schedule manual reconnect).
+        // This prevents the 15s hang × infinite loop when Core is offline.
+        if (this._reconnectAttempts > 0) {
+          this._lastError = 'Core unavailable — backing off';
+          this._setStatus('disconnected');
+          this._closeSSE();
+          this._scheduleBackoffReconnect();
+          return;
+        }
         this._lastError = 'SSE connection lost — auto-reconnecting';
         this._setStatus('disconnected');
         debugWarn('sse:proxy', 'EventSource error — auto-reconnecting');
@@ -385,6 +433,35 @@ export class ProxyCoreClient implements CoreClient {
       clearTimeout(this._probeTimer);
       this._probeTimer = null;
     }
+  }
+
+  // ── Reconnect backoff ──────────────────────────────────────
+  // When Core is consistently offline, exponential backoff prevents
+  // rapid reconnect cycles that would show constant "connecting" state.
+
+  private _clearBackoffReconnect(): void {
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+    }
+  }
+
+  private _scheduleBackoffReconnect(): void {
+    this._clearBackoffReconnect();
+    const delay = Math.min(
+      1000 * Math.pow(2, this._reconnectAttempts),
+      this._maxReconnectDelay,
+    );
+    this._reconnectAttempts++;
+    debugWarn('sse:proxy', `scheduling reconnect in ${delay}ms (attempt ${this._reconnectAttempts})`);
+
+    this._reconnectTimer = setTimeout(() => {
+      if (this._disconnected) return; // don't reconnect if user explicitly disconnected
+      if (this._eventSource && this._eventSource.readyState !== EventSource.CLOSED) {
+        return; // already connected
+      }
+      this._connectSSE();
+    }, delay);
   }
 
   // ── Status notification ───────────────────────────────────
