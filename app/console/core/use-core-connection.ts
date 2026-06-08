@@ -19,11 +19,12 @@ export interface CoreConnectionConfig {
 }
 
 export function useCoreConnection(): CoreConnectionConfig {
-  // ── Default URL ──
+  // ── Default URL (vestigial — not used for actual connections) ──
+  // This is kept for state tracking keys (file trees, node identity).
+  // All real Core communication uses ProxyCoreClient (relative URLs).
+  // Using the current host avoids the outdated ws://localhost hardcode.
   const defaultUrl = typeof window !== 'undefined'
-    ? location.port === '3000'
-      ? 'ws://localhost:9090/ws'
-      : `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}`
+    ? `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}`
     : 'ws://localhost:9090/ws';
 
   // ── Parse URL params ──

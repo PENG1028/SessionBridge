@@ -33,6 +33,16 @@ export function NodeNetworkView({
 
   const reachableNodeIds = useReachableNodeIds();
 
+  // ── Loading timeout hint ───────────────────────────────────────
+  // If topology fetch takes >8s, show a "still trying" message
+  // so the user doesn't stare at blank "loading topology..." forever.
+  const [stalled, setStalled] = useState(false);
+  useEffect(() => {
+    if (!topoLoading) { setStalled(false); return; }
+    const t = setTimeout(() => setStalled(true), 8000);
+    return () => clearTimeout(t);
+  }, [topoLoading]);
+
   const fetchTopology = useCallback(async () => {
     if (!core.isConnected) { setTopoLoading(false); setTopoNodes([]); setLocalNodeId(null); setTopoError(null); return; }
     setTopoLoading(true);
@@ -176,7 +186,11 @@ export function NodeNetworkView({
     <div className="space-y-5 px-1 pb-4">
       {topoLoading ? (
         <div className="border rounded-lg border-gray-700/60 bg-gray-800/20 px-3.5 py-4 text-sm text-gray-500">
-          loading topology...
+          {stalled ? (
+            <span className="text-yellow-500 animate-pulse">Core connected but topology still loading (retrying)...</span>
+          ) : (
+            'loading topology...'
+          )}
         </div>
       ) : topoError ? (
         <div className="border rounded-lg border-red-800/40 bg-red-900/10 px-3.5 py-3 text-[10px] text-red-400">
