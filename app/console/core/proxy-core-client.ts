@@ -375,7 +375,6 @@ export class ProxyCoreClient implements CoreClient {
 
       es.onerror = () => {
         // EventSource auto-reconnects on network loss.
-        // Mark disconnected so UI can show the transient state.
         this._clearProbe();
         // If backoff was already scheduled by 'core.offline' event handler,
         // don't double-schedule here.
@@ -383,19 +382,22 @@ export class ProxyCoreClient implements CoreClient {
           this._backoffScheduled = false;
           return;
         }
-        // If we've been reconnecting repeatedly without success, switch to
-        // backoff mode (close EventSource and schedule manual reconnect).
-        // This prevents the 15s hang × infinite loop when Core is offline.
-        if (this._reconnectAttempts > 0) {
-          this._lastError = 'Core unavailable — backing off';
-          this._setStatus('disconnected');
-          this._closeSSE();
-          this._scheduleBackoffReconnect();
-          return;
-        }
-        this._lastError = 'SSE connection lost — auto-reconnecting';
+        // Close the EventSource to free the connection slot, then
+        // probe Core via HTTP before creating a new EventSource.
+        // This prevents EventSource from holding a persistent connection
+        // that would consume a limited browser connection slot.
+        this._closeSSE();
+        this._lastError = 'SSE connection lost — probing Core';
         this._setStatus('disconnected');
-        debugWarn('sse:proxy', 'EventSource error — auto-reconnecting');
+        if (this._reconnectAttempts > 0) {
+          // Already retrying — use backoff
+          debugWarn('sse:proxy', 'EventSource error — backing off');
+          this._scheduleBackoffReconnect();
+        } else {
+          // First error — probe Core immediately then reconnect
+          debugWarn('sse:proxy', 'EventSource error — probing Core');
+          this._probeCoreAndConnect();
+        }
       };
 
       // ── Internal connectivity probe ──────────────────────────
@@ -456,12 +458,53 @@ export class ProxyCoreClient implements CoreClient {
     debugWarn('sse:proxy', `scheduling reconnect in ${delay}ms (attempt ${this._reconnectAttempts})`);
 
     this._reconnectTimer = setTimeout(() => {
-      if (this._disconnected) return; // don't reconnect if user explicitly disconnected
+      if (this._disconnected) return;
       if (this._eventSource && this._eventSource.readyState !== EventSource.CLOSED) {
-        return; // already connected
+        return;
       }
-      this._connectSSE();
+
+      // ── HTTP health probe before creating EventSource ─────────
+      // When Core is offline, EventSource creates a persistent HTTP
+      // connection that holds a connection slot. On mobile browsers
+      // with limited concurrent connections (typically 4-6 per origin),
+      // repeated EventSource reconnections can consume all slots and
+      // starve other fetch() calls (scan, start, config load).
+      //
+      // Instead of creating an EventSource directly, first probe Core
+      // via a short-lived HTTP GET (/api/core/health). Only create
+      // the EventSource when Core responds, so we don't waste a
+      // persistent connection slot on a dead Core.
+      this._probeCoreAndConnect();
     }, delay);
+  }
+
+  /** Probe Core HTTP health, then create EventSource if alive. */
+  private async _probeCoreAndConnect(): Promise<void> {
+    if (this._disconnected) return; // don't reconnect after explicit disconnect
+    try {
+      const res = await fetch('/api/core/health', {
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!res.ok) {
+        debugWarn('sse:proxy', 'Core health probe failed — continuing backoff');
+        this._scheduleBackoffReconnect();
+        return;
+      }
+      // Don't create EventSource if it was already connected by another path
+      if (this._eventSource && this._eventSource.readyState !== EventSource.CLOSED) {
+        return;
+      }
+      if (this._disconnected) return;
+      debug('sse:proxy', 'Core health probe OK — creating EventSource');
+      this._connectSSE();
+    } catch {
+        debugWarn('sse:proxy', 'Core health probe failed — continuing backoff');
+        this._scheduleBackoffReconnect();
+      }
+    } catch {
+      debugWarn('sse:proxy', 'Core health probe error — continuing backoff');
+      this._scheduleBackoffReconnect();
+    }
   }
 
   // ── Status notification ───────────────────────────────────
