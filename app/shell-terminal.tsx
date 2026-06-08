@@ -7,6 +7,7 @@ import type { IDisposable } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { ContextMenu, type ContextMenuItem } from './console/shell/context-menu';
 import { MobileKeyboardSlot } from './console/chrome/mobile-keyboard-slot';
+import { useKeyboard } from '../lib/use-keyboard';
 
 // ─── ShellTerminal — pure xterm.js host ────────────────────────────
 // Owns: xterm init/theme/fit, keyboard shortcuts, context menu, resize observer.
@@ -36,6 +37,7 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
   const fitRef = useRef<FitAddon | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
   const [terminalFocused, setTerminalFocused] = useState(false);
+  const { keyboardHeight } = useKeyboard();
 
   // Stable refs so callbacks don't cause unnecessary re-registration
   const onTerminalReadyRef = useRef(onTerminalReady);
@@ -176,6 +178,10 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
     // doesn't scroll to x=-9999em when focusing it for keyboard input.
     // Place it at the container bottom so the browser scrolls recent
     // terminal output into view (above the keyboard), not the top-left.
+    //
+    // Also set touch-action: pan-y as inline style on the xterm element.
+    // This lets the browser handle vertical touch-drags as native scroll
+    // gestures on the .xterm-viewport, without JS interference.
     if (isTouchDevice()) {
       const ta = term.element?.querySelector('.xterm-helper-textarea') as HTMLElement;
       if (ta) {
@@ -186,11 +192,23 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
         ta.style.height = '1px';
         ta.style.pointerEvents = 'none';
       }
+      // Inline touch-action ensures it takes effect regardless of CSS order
+      if (term.element) {
+        term.element.style.touchAction = 'pan-y';
+      }
+      const vp = term.element?.querySelector('.xterm-viewport') as HTMLElement;
+      if (vp) {
+        vp.style.touchAction = 'pan-y';
+      }
     }
 
     // ── Resize observer (fit only; onResize goes to plugin) ──
     const ro = new ResizeObserver(() => {
       fitAddon.fit();
+      // After resize (keyboard open/close, pane split), keep the
+      // input line visible. Without this, the viewport stays at its
+      // previous scroll offset and the bottom gets clipped.
+      term.scrollToBottom();
       const dims = fitAddon.proposeDimensions();
       if (dims) onResizeRef.current?.(dims.cols, dims.rows);
     });
@@ -223,6 +241,101 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
     };
   }, []); // one-shot — session changes go through onTerminalReady cleanup
 
+  // ── Touch-to-scroll for mobile ─────────────────────────────
+  // xterm v6 has its own gesture system that intercepts touch events
+  // and calls preventDefault(), which blocks native browser scrolling.
+  // We use capture-phase listeners to intercept touch events BEFORE
+  // xterm's gesture handler, and manually scroll the terminal buffer.
+  //
+  // Design decisions:
+  //   - Capture phase (not bubble): fires before xterm's document-level
+  //     listeners, so preventDefault() stops xterm's gesture handling.
+  //   - Single-finger only: multi-touch (pinch-zoom, two-finger scroll)
+  //     passes through to the browser.
+  //   - 5px dead zone: allows tap-to-focus without accidental scroll.
+  //   - Pixel → line accumulation: smooth scrolling at terminal line
+  //     granularity (≈cell height px per line).
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || !isTouchDevice()) return;
+
+    let startY = 0;
+    let lastY = 0;
+    let scrolling = false;
+    let accDelta = 0;
+
+    const getLineHeight = (): number => {
+      // Use xterm's actual cell height if available; fall back to 14px
+      try {
+        const dims = (termRef.current as any)?._core?._renderService?.dimensions;
+        if (dims?.css?.cell?.height) return dims.css.cell.height;
+      } catch { /* best-effort */ }
+      try {
+        const dims = fitRef.current?.proposeDimensions();
+        if (dims) {
+          const vpEl = container.querySelector('.xterm-viewport') as HTMLElement;
+          if (vpEl && dims.rows > 0) return vpEl.clientHeight / dims.rows;
+        }
+      } catch { /* fall through */ }
+      return 14; // default font size
+    };
+
+    const handleTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 1) {
+        startY = e.touches[0].clientY;
+        lastY = startY;
+        scrolling = false;
+        accDelta = 0;
+      }
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      if (e.touches.length !== 1) return;
+      const currentY = e.touches[0].clientY;
+      const delta = lastY - currentY; // + = finger up → scroll down
+
+      if (!scrolling && Math.abs(currentY - startY) > 5) {
+        scrolling = true;
+        accDelta = (currentY - startY > 0 ? -1 : 1) * Math.abs(currentY - startY);
+      }
+
+      if (scrolling) {
+        accDelta += delta;
+        const lineH = getLineHeight();
+        const term = termRef.current;
+        if (term && lineH > 0) {
+          while (accDelta >= lineH) {
+            term.scrollLines(1);
+            accDelta -= lineH;
+          }
+          while (accDelta <= -lineH) {
+            term.scrollLines(-1);
+            accDelta += lineH;
+          }
+        }
+        // Prevent xterm's gesture system from also handling this touch
+        e.preventDefault();
+      }
+      lastY = currentY;
+    };
+
+    const handleTouchEnd = () => {
+      scrolling = false;
+      accDelta = 0;
+    };
+
+    // Capture phase: fires before xterm's bubble-phase listeners on document
+    container.addEventListener('touchstart', handleTouchStart, { capture: true, passive: true });
+    container.addEventListener('touchmove', handleTouchMove, { capture: true, passive: false });
+    container.addEventListener('touchend', handleTouchEnd, { capture: true, passive: true });
+
+    return () => {
+      container.removeEventListener('touchstart', handleTouchStart, { capture: true });
+      container.removeEventListener('touchmove', handleTouchMove, { capture: true });
+      container.removeEventListener('touchend', handleTouchEnd, { capture: true });
+    };
+  }, []);
+
   // Focus terminal on mount so keyboard shortcuts work immediately.
   // On mobile, skip auto-focus — the user taps to focus, which is the
   // expected mobile pattern (no unexpected keyboard pop).
@@ -230,12 +343,17 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
     termRef.current?.focus();
   }, []);
 
+  // ── Container style (keyboard-aware padding) ────────────────
+  // When the mobile keyboard is open, the fixed toolbar sits above
+  // the keyboard and covers the terminal's bottom ~90px. Add padding
+  // so xterm renders its last rows above the toolbar.
   const containerStyle = useMemo(() => ({
     background: '#0a0a0a' as const,
     overflow: 'hidden' as const,
     fontFeatureSettings: 'normal' as const,
     fontVariantLigatures: 'none' as const,
-  }), []);
+    paddingBottom: keyboardHeight > 0 ? 90 : 0,
+  }), [keyboardHeight]);
 
   // ── Context menu ────────────────────────────────────────────
   const handleContextMenu = useCallback((e: React.MouseEvent) => {

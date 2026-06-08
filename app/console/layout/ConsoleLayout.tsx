@@ -13,8 +13,9 @@ import { WorkbenchTopBar } from '../shell/workbench-top-bar';
 import { NodeBar } from '../stage/node-bar';
 import { NodeNetworkView } from '../../../plugins/mesh';
 import { KeyHintOverlay } from '../chrome/key-hint-overlay';
-import { MobileKeyboardSlot } from '../chrome/mobile-keyboard-slot';
-import { routeInput } from '../../../lib/input-router';
+// MobileKeyboardSlot is rendered inside ShellTerminal, not here.
+// The global routeInput is unused since ShellTerminal passes handleUserInput directly.
+import { MobileDebug } from '../chrome/mobile-debug-dashboard';
 import { MobileSidebar } from '../sidebar/mobile-sidebar';
 import { MobileRightPanel } from '../sidebar/mobile-right-panel';
 import { CoreErrorBanner } from '../core/core-error-banner';
@@ -285,14 +286,6 @@ export function ConsoleLayout(props: Record<string, any>) {
         /* Prevent pull-to-refresh and overscroll on mobile, which
          * conflicts with terminal scroll and keyboard positioning. */
         body { overscroll-behavior: none; }
-        /* On mobile, make the global scrollbar slightly wider than
-           desktop (8px vs 6px) for easier touch targeting. */
-        ::-webkit-scrollbar { width: 8px; height: 6px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
-        ::-webkit-scrollbar-thumb:hover { background: #666; }
-        ::-webkit-scrollbar-corner { background: transparent; }
-}
         .prose-container p { margin: 0; overflow-wrap: break-word; line-height: 1.55; }
         .prose-container code { font-size: 11px; }
         .prose-container pre { margin: 4px 0; }
@@ -341,11 +334,6 @@ export function ConsoleLayout(props: Record<string, any>) {
 
       <KeyHintOverlay whenContext={focusWhenContext} onCommand={handlePaletteSelect} />
 
-      <MobileKeyboardSlot
-        enabled={true}
-        onSend={routeInput}
-      />
-
       <MobileSidebar
         open={mobileOpen}
         onClose={() => setMobileOpen(false)}
@@ -384,6 +372,7 @@ export function ConsoleLayout(props: Record<string, any>) {
         onTerminalTabChange={setTerminalTab}
         logsEndRef={logsEndRef}
       />
+      <MobileDebug />
       </RuntimePolicyProvider>
     </FocusProvider>
   );

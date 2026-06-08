@@ -11,19 +11,10 @@
 // Toggle keys (Ctrl/Alt) use sticky-on semantics with a 5s auto-reset
 // timer. When a toggle is active and a regular key is pressed, the
 // character is composed (Ctrl+X → ASCII control char, Alt+X → ESC+X).
-//
-// Bugfix notes for mobile interaction:
-//   - Removed CSS transition on `bottom` — was causing 200ms visual lag
-//     on keyboard follow. The toolbar now uses `display: none` toggle
-//     instead, which is instant and avoids the "toolbar stays visible
-//     after keyboard dismiss" issue.
-//   - Uses `keyboardHeight > 30` instead of `enabled` as visibility gate,
-//     so the toolbar hides immediately when the OS keyboard dismisses
-//     even before blur events propagate.
 
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useKeyboard } from '../../../lib/use-keyboard';
 import { setCtrlActive } from '../../../lib/input-router';
 import { getMobileKeyboardContributions } from './mobile-keyboard-registry';
@@ -46,7 +37,15 @@ function isTouchDevice(): boolean {
 }
 
 export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps) {
-  const [touchDevice, setTouchDevice] = useState(false);
+  // Use lazy initializer (runs once) + useLayoutEffect (fires before paint)
+  // to minimize the window where the toolbar DOM doesn't exist yet.
+  // This is critical: if the toolbar div isn't in the DOM when keyboardHeight
+  // first becomes > 0, the positioning effect won't be able to access
+  // toolbarRef.current and the toolbar will stay hidden permanently.
+  const [touchDevice, setTouchDevice] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return isTouchDevice();
+  });
   const [ctrlOn, setCtrlOn] = useState(false);
   const [altOn, setAltOn] = useState(false);
   const ctrlTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -58,61 +57,81 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
 
   const { keyboardHeight } = useKeyboard();
 
+  // Ensure touchDevice is set before the first paint. useEffect fires
+  // after paint, which is too late — the toolbar DOM must exist before
+  // keyboard detection fires. useLayoutEffect fires synchronously after
+  // DOM mutations but before the browser paints.
+  useLayoutEffect(() => {
+    if (!touchDevice && isTouchDevice()) {
+      setTouchDevice(true);
+    }
+  }, [touchDevice]);
+
   // Sync keyboardHeight to both the ref (for direct DOM updates)
   // and trigger re-render (for visibility toggle).
   keyboardHeightRef.current = keyboardHeight;
   ctrlOnRef.current = ctrlOn;
   altOnRef.current = altOn;
 
-  // Direct DOM update for the toolbar position — bypasses React render
-  // cycle. Toolbar is positioned at the bottom of the VISUAL viewport
-  // using `top`, not `bottom`, because iOS Safari's `position: fixed`
-  // with `bottom` does not track visualViewport changes correctly when
-  // the keyboard is open (the element gets stuck at the layout viewport
-  // bottom). Using `top` = vp.offsetTop + vp.height - toolbarHeight
-  // keeps the toolbar firmly attached to the keyboard regardless of
-  // scroll position, because vp.offsetTop changes with scroll and
-  // the formula always computes the visual viewport bottom.
+  // Direct DOM update for toolbar position — bypasses React render cycle.
+  // Uses `top` (not `bottom`) because iOS Safari's position:fixed with
+  // `bottom` doesn't track visualViewport changes when the keyboard opens.
+  // Formula: position toolbar just above the keyboard, at the bottom of
+  // the visual viewport.
+  // Listens to BOTH keyboardHeight changes AND scroll events, because
+  // after input the terminal auto-scrolls to bottom, which may shift the
+  // visual viewport without changing keyboard height.
   useEffect(() => {
     const el = toolbarRef.current;
     if (!el) return;
-    const h = keyboardHeightRef.current;
-    if (h > 0) {
-      el.style.display = 'flex';
-      // Position at visual viewport bottom — this is the ONLY reliable
-      // way to keep the toolbar attached to the keyboard on iOS Safari.
-      const vp = window.visualViewport;
-      if (vp) {
-        // Measure actual toolbar height (changes based on rows/padding).
-        // Fallback to 90px (2 rows × 36px + 12px padding + gaps).
-        const th = el.offsetHeight || 90;
-        el.style.top = `${vp.offsetTop + vp.height - th}px`;
-        el.style.left = '0';
-        el.style.right = '0';
+
+    const reposition = () => {
+      const h = keyboardHeightRef.current;
+      if (h > 0) {
+        el.style.display = 'flex';
+        const vp = window.visualViewport;
+        if (vp) {
+          const th = el.offsetHeight || 90;
+          el.style.top = `${vp.offsetTop + vp.height - th}px`;
+          el.style.left = '0';
+          el.style.right = '0';
+        }
+      } else {
+        el.style.display = 'none';
+        el.style.top = '';
+        el.style.left = '';
+        el.style.right = '';
       }
-    } else {
-      el.style.display = 'none';
-      el.style.top = '';
-      el.style.left = '';
-      el.style.right = '';
-    }
+    };
+
+    reposition();
+
+    // Reposition on any viewport change, not just height changes
+    window.visualViewport?.addEventListener('scroll', reposition, { passive: true });
+    window.visualViewport?.addEventListener('resize', reposition, { passive: true });
+    window.addEventListener('scroll', reposition, { passive: true });
+
+    return () => {
+      window.visualViewport?.removeEventListener('scroll', reposition);
+      window.visualViewport?.removeEventListener('resize', reposition);
+      window.removeEventListener('scroll', reposition);
+    };
   }, [keyboardHeight]);
 
   // Read contributed items from registry
-  const items = getMobileKeyboardContributions();
+  const items = useMemo(() => getMobileKeyboardContributions(), []);
 
   // Group by row for rendering
-  const rows = items.reduce<Record<number, typeof items>>((acc, item) => {
-    const r = item.row ?? 0;
-    if (!acc[r]) acc[r] = [];
-    acc[r].push(item);
+  const rows = useMemo(() => {
+    const acc: Record<number, typeof items> = {};
+    for (const item of items) {
+      const r = item.row ?? 0;
+      if (!acc[r]) acc[r] = [];
+      acc[r].push(item);
+    }
     return acc;
-  }, {});
-  const rowKeys = Object.keys(rows).map(Number).sort((a, b) => a - b);
-
-  useEffect(() => {
-    setTouchDevice(isTouchDevice());
-  }, []);
+  }, [items]);
+  const rowKeys = useMemo(() => Object.keys(rows).map(Number).sort((a, b) => a - b), [rows]);
 
   useEffect(() => {
     if (!enabled) {
@@ -156,20 +175,51 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
       return;
     }
 
+    // Use refs for immediate modifier state (avoids stale closure issue
+    // when Ctrl is toggled and a letter key is pressed in the same frame)
     let data = item.send ?? '';
-    if (ctrlOn && data.length === 1) {
+    if (ctrlOnRef.current && data.length === 1) {
       data = ctrlSeq(data);
       setCtrlOn(false);
+      setCtrlActive(false);
     }
-    if (altOn) {
+    if (altOnRef.current) {
       data = '\x1b' + data;
       setAltOn(false);
     }
     onSend(data);
-  }, [altOn, ctrlOn, onSend]);
+  }, [onSend]);
 
-  // On non-touch devices, never render
-  if (!touchDevice) return null;
+  // Always render the outer div so toolbarRef is attached even before
+  // touchDevice is confirmed. On non-touch devices, the inner buttons
+  // are never rendered, and the div stays display:none permanently.
+  // This eliminates the race condition where keyboardHeight fires before
+  // touchDevice state updates, causing the toolbar to stay hidden.
+  if (!touchDevice && typeof window !== 'undefined') {
+    // After hydration, we can determine touch device status immediately.
+    // Return the bare container so the ref is in the DOM.
+    return (
+      <div
+        ref={toolbarRef}
+        className="md:hidden"
+        style={{ position: 'fixed', display: 'none' }}
+      />
+    );
+  }
+
+  // During SSR or before hydration, render nothing (or the bare container).
+  // On touch devices, render the full toolbar.
+  // On non-touch post-hydration, the early return above catches it.
+  if (!touchDevice) {
+    // SSR path: render bare container so ref is available after hydration
+    return (
+      <div
+        ref={toolbarRef}
+        className="md:hidden"
+        style={{ position: 'fixed', display: 'none' }}
+      />
+    );
+  }
 
   return (
     <div
@@ -177,8 +227,6 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
       className="md:hidden flex flex-col gap-1 px-2 py-1.5 bg-[#0d0d0d]/98 border-t border-gray-800 z-40 shadow-[0_-8px_24px_rgba(0,0,0,0.35)]"
       style={{
         position: 'fixed',
-        // top/left/right are set dynamically in useEffect to track
-        // visualViewport. Only default display is set here.
         display: 'none',
         paddingBottom: 'calc(0.375rem + env(safe-area-inset-bottom))',
       }}

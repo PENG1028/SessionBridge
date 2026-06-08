@@ -1,32 +1,28 @@
 // ─── useKeyboard — detect virtual keyboard on mobile ──────────────
 //
-// Strategy (auto-detected):
-//   1. Capacitor native  → @capacitor/keyboard (window.Capacitor.plugins.Keyboard)
-//   2. Web fallback       → window.visualViewport + debounce
-//   3. Unsupported        → isSupported: false
+// Strategy:
+//   1. Capacitor native (window.Capacitor.plugins.Keyboard)
+//   2. Web: track max window.innerHeight vs visualViewport.height
+//      with BOTH event listeners AND polling fallback (Android Edge
+//      doesn't reliably fire visualViewport.resize).
 //
-// The hook only reports the OS-level keyboard state. Consumer
-// components decide whether to act on it (e.g. only when terminal is
-// focused).
-//
-// Capacitor detection is zero-dep: it reads the global that the
-// Capacitor runtime injects — no import needed.
+// Cross-platform logic:
+//   Track the largest window.innerHeight ever seen (full-screen when
+//   no keyboard is open). keyboardHeight = maxInnerHeight - vp.height.
+//   Works on both iOS (innerHeight fixed) and Android (both shrink).
 
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
 
 export interface KeyboardState {
-  /** Height of the keyboard in pixels. 0 when hidden. */
   keyboardHeight: number;
-  /** Whether the keyboard is currently visible. Uses a threshold to
-   *  ignore sub-30px fluctuations (address bar, toolbar adjustments). */
   isVisible: boolean;
-  /** Whether keyboard detection is supported in this environment. */
   isSupported: boolean;
 }
 
 const KEYBOARD_THRESHOLD = 30;
+const POLL_INTERVAL = 300;
 
 export function useKeyboard(): KeyboardState {
   const [state, setState] = useState<KeyboardState>({
@@ -37,7 +33,11 @@ export function useKeyboard(): KeyboardState {
 
   const stateRef = useRef(state);
   stateRef.current = state;
-  const rafRef = useRef<number | null>(null);
+  // Track the minimum (screen.height - visualViewport.height) as the
+  // "browser chrome only" baseline. Keyboard causes a large spike above
+  // this baseline. Works on both iOS and Android regardless of whether
+  // the layout viewport resizes.
+  const baselineKbHRef = useRef<number>(9999);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -67,48 +67,52 @@ export function useKeyboard(): KeyboardState {
           } catch { /* cleanup best-effort */ }
         };
       } catch {
-        // Fall through to visualViewport
+        // Fall through to web fallback
       }
     }
 
-    // ── 2. Web fallback: visualViewport + rAF ────────────────
+    // ── 2. Web fallback: max innerHeight vs visualViewport ────
     if (!('visualViewport' in window) || !window.visualViewport) {
-      return; // no detection possible
+      setState(prev => ({ ...prev, isSupported: true }));
+      return;
     }
 
     const vp = window.visualViewport!;
-    setState(prev => ({ ...prev, isSupported: true }));
+    // Use screen.height (physical, constant) minus visualViewport.height.
+    // This is the total space taken by browser chrome + keyboard.
+    // Track the minimum as "browser chrome only" baseline.
+    baselineKbHRef.current = window.screen.height - vp.height;
 
-    const getOverlap = (): number =>
-      Math.max(0, window.innerHeight - (vp.offsetTop + vp.height));
-
-    // Use requestAnimationFrame to sync with the browser's render
-    // loop, avoiding both setTimeout drift and redundant React renders.
-    // The rAF fires right before the next paint, so the keyboard height
-    // update reaches the DOM in the same frame as the viewport change.
-    const sync = () => {
-      if (rafRef.current !== null) return; // already scheduled
-      rafRef.current = requestAnimationFrame(() => {
-        rafRef.current = null;
-        const h = getOverlap();
-        const visible = h > KEYBOARD_THRESHOLD;
-
-        // Only call setState when values actually change — avoids
-        // unnecessary React re-renders that cause toolbar jank.
-        const prev = stateRef.current;
-        if (prev.keyboardHeight === h && prev.isVisible === visible) return;
-        setState({ keyboardHeight: h, isVisible: visible, isSupported: true });
-      });
+    const getKeyboardHeight = (): number => {
+      const raw = window.screen.height - vp.height;
+      // Update baseline with smaller values (browser chrome, no keyboard)
+      if (raw < baselineKbHRef.current) {
+        baselineKbHRef.current = raw;
+      }
+      return Math.max(0, raw - baselineKbHRef.current);
     };
 
-    // Sync immediately
+    const sync = () => {
+      const h = getKeyboardHeight();
+      const visible = h > KEYBOARD_THRESHOLD;
+      const prev = stateRef.current;
+      if (prev.keyboardHeight === h && prev.isVisible === visible) return;
+      setState({ keyboardHeight: h, isVisible: visible, isSupported: true });
+    };
+
+    // Initial check
     sync();
 
+    // Event-driven updates
     vp.addEventListener('resize', sync, { passive: true });
     window.addEventListener('resize', sync, { passive: true });
 
+    // Polling fallback — some Android browsers (Edge) don't reliably
+    // fire visualViewport.resize when the keyboard opens/closes.
+    const pollId = setInterval(sync, POLL_INTERVAL);
+
     return () => {
-      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+      clearInterval(pollId);
       vp.removeEventListener('resize', sync);
       window.removeEventListener('resize', sync);
     };
