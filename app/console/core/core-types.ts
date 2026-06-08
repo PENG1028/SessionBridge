@@ -60,6 +60,38 @@ export type ProcessResizeParams = { sessionId: string; cols: number; rows: numbe
 export type ProcessSignalParams = { sessionId: string; signal: string; tree?: boolean };
 export type ProcessListParams = { pluginId?: string; kind?: string; sessionId?: string };
 
+/** One entry returned by process.list. Includes optional cross-reference
+ *  to RunStore (runId/runLabel/runKind/runState) when the process was
+ *  created via run.create. Processes spawned directly via process.spawn
+ *  will have empty runId. */
+export interface ProcessEntry {
+  sessionId: string;
+  processId: string;
+  parentSessionId: string;
+  rootSessionId: string;
+  pluginId: string;
+  kind: string;
+  pid: number;
+  state: string;
+  exitCode: number;
+  command: string;
+  createdAt: number;
+
+  /** RunStore runId if this process was created via run.create.
+   *  Empty string for process.spawn-only processes. */
+  runId: string;
+  /** Attached run metadata (present only when runId is non-empty). */
+  runLabel?: string;
+  runKind?: string;
+  runState?: string;
+  runPluginId?: string;
+}
+
+export interface ProcessListResult {
+  processes: ProcessEntry[];
+  total: number;
+}
+
 // ─── fs ───────────────────────────────────────────────────────────
 export interface FsEntry {
   name: string;
