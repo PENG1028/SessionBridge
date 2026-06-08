@@ -52,12 +52,16 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
   const altTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
   const keyboardHeightRef = useRef(0);
+  const ctrlOnRef = useRef(false);
+  const altOnRef = useRef(false);
 
   const { keyboardHeight } = useKeyboard();
 
   // Sync keyboardHeight to both the ref (for direct DOM updates)
   // and trigger re-render (for visibility toggle).
   keyboardHeightRef.current = keyboardHeight;
+  ctrlOnRef.current = ctrlOn;
+  altOnRef.current = altOn;
 
   // Direct DOM update for the toolbar position — bypasses React render
   // cycle. Using transform instead of bottom avoids layout thrashing
@@ -177,7 +181,11 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
                     : 'bg-gray-800/80 text-gray-300 border-gray-700'
                 }`}
               >
-                {item.label}
+                {(ctrlOn && item.id !== 'ctrl' && item.send?.length === 1)
+                  ? `^${item.label.toUpperCase()}`
+                  : (altOn && item.id !== 'alt')
+                  ? `M-${item.label}`
+                  : item.label}
               </button>
             );
           })}
