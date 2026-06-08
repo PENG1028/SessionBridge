@@ -14,6 +14,16 @@ import { useCore, useCoreStatus } from '../../sdk';
 import { useCoreErrors } from '../../sdk';
 import { classifyCoreError } from '../../sdk';
 import { TerminalInputBuffer, createDebouncedResize } from '../../sdk';
+// Counter for generating distinguishable terminal labels
+let _termLabelCounter = 0;
+function nextTermLabel(baseCwd: string): string {
+  _termLabelCounter++;
+  // Extract the last directory name from CWD for context
+  const dir = baseCwd.replace(/\\/g, '/').split('/').filter(Boolean).pop() || '';
+  const suffix = dir ? ` (${dir})` : '';
+  return `Terminal #${_termLabelCounter}${suffix}`;
+}
+
 
 /** Parse OSC 7 data (file://HOST/PATH) into a normalized filesystem path. */
 function parseOsc7(data: string): string | undefined {
@@ -109,7 +119,8 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
     setSessionFresh(true);
     setError(null);
     try {
-      const result = await createInstance(cwdRef.current, 'Terminal', 'shell');
+      const label = nextTermLabel(cwdRef.current);
+	      const result = await createInstance(cwdRef.current, label, 'shell');
       if (result?.success && result?.instance) {
         const run = result.instance;
         const sessionId = result.sessionId;
