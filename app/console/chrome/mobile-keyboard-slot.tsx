@@ -41,7 +41,7 @@ function ctrlSeq(key: string): string {
 
 function isTouchDevice(): boolean {
   if (typeof window === 'undefined') return false;
-  return navigator.maxTouchPoints > 0 || 'ontouchstart' in window;
+  return navigator.maxTouchPoints > 0 || 'ontouchstart' in window || window.matchMedia('(pointer: coarse)').matches;
 }
 
 export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps) {
