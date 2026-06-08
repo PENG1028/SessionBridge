@@ -101,7 +101,7 @@ export function ConsoleLayout(props: Record<string, any>) {
   return (
     <FocusProvider instances={instances} activeInstanceId={activeInstanceId} activeViewId={state.activeViewId} sessionKey={sessionKey} paneFocus={paneFocus}>
       <RuntimePolicyProvider>
-    <div className="flex flex-col h-screen bg-[#0a0a0a] text-gray-300 font-mono text-sm overflow-hidden selection:bg-purple-900 selection:text-white relative" onContextMenu={handleWorkbenchContextMenu}>
+    <div className="flex flex-col h-screen dvh-screen bg-[#0a0a0a] text-gray-300 font-mono text-sm overflow-hidden selection:bg-purple-900 selection:text-white relative" onContextMenu={handleWorkbenchContextMenu}>
       <CoreErrorBanner />
       <ConsoleHeader
         chromePolicy={chromePolicy}
@@ -276,6 +276,15 @@ export function ConsoleLayout(props: Record<string, any>) {
       )}
 
       <style>{`
+        /* On mobile with keyboard open, use dynamic viewport height so
+         * the layout exactly matches the visible area. Without this,
+         * 100vh stays at the layout viewport height (unchanged), and
+         * content gets pushed above the visual viewport, causing scroll
+         * conflicts with the keyboard toolbar and bad auto-scroll. */
+        .dvh-screen { height: 100vh; height: 100dvh; }
+        /* Prevent pull-to-refresh and overscroll on mobile, which
+         * conflicts with terminal scroll and keyboard positioning. */
+        body { overscroll-behavior: none; }
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
