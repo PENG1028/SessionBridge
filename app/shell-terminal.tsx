@@ -195,6 +195,24 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
     focusRoot?.addEventListener('focusin', handleFocusIn);
     focusRoot?.addEventListener('focusout', handleFocusOut);
 
+    // ── Mobile tap-to-focus ──
+    // The xterm helper textarea has pointer-events:none to allow the
+    // viewport to scroll freely. This blocks tapping to focus the
+    // terminal. We detect taps (<10px movement) vs scrolls on
+    // touchstart/touchend and focus term on tap.
+    let _tapY = 0;
+    const _onTouchStart = (e: TouchEvent) => { _tapY = e.touches[0].clientY; };
+    const _onTouchEnd = (e: TouchEvent) => {
+      if (Math.abs(e.changedTouches[0].clientY - _tapY) < 10) {
+        e.preventDefault();
+        termRef.current?.focus();
+      }
+    };
+    if (isTouchDevice()) {
+      focusRoot?.addEventListener('touchstart', _onTouchStart, { passive: true });
+      focusRoot?.addEventListener('touchend', _onTouchEnd, { passive: false });
+    }
+
     return () => {
       console.error = origConsoleError;
       onDataDisposable.dispose();

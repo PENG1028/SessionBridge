@@ -305,6 +305,10 @@ export function ConsoleLayout(props: Record<string, any>) {
            are easier to drag without precision tapping. */
         @media (pointer: coarse) {
           .xterm-viewport::-webkit-scrollbar { width: 16px; }
+        /* On mobile, xterm's hidden textarea covers the viewport and steals
+           touch events, making the terminal unscrollable. Disabling pointer
+           events on it lets touches reach the viewport for scrolling. */
+        .xterm-helper-textarea { pointer-events: none !important; }
           .xterm-viewport::-webkit-scrollbar-thumb {
             background: #555;
             border-radius: 8px;
