@@ -65,20 +65,36 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
   altOnRef.current = altOn;
 
   // Direct DOM update for the toolbar position — bypasses React render
-  // cycle. Using transform instead of bottom avoids layout thrashing
-  // and enables GPU compositing for smooth 60fps keyboard follow.
+  // cycle. Toolbar is positioned at the bottom of the VISUAL viewport
+  // using `top`, not `bottom`, because iOS Safari's `position: fixed`
+  // with `bottom` does not track visualViewport changes correctly when
+  // the keyboard is open (the element gets stuck at the layout viewport
+  // bottom). Using `top` = vp.offsetTop + vp.height - toolbarHeight
+  // keeps the toolbar firmly attached to the keyboard regardless of
+  // scroll position, because vp.offsetTop changes with scroll and
+  // the formula always computes the visual viewport bottom.
   useEffect(() => {
     const el = toolbarRef.current;
     if (!el) return;
     const h = keyboardHeightRef.current;
     if (h > 0) {
       el.style.display = 'flex';
-      el.style.transform = `translateY(-${h}px)`;
-      el.style.willChange = 'transform';
+      // Position at visual viewport bottom — this is the ONLY reliable
+      // way to keep the toolbar attached to the keyboard on iOS Safari.
+      const vp = window.visualViewport;
+      if (vp) {
+        // Measure actual toolbar height (changes based on rows/padding).
+        // Fallback to 90px (2 rows × 36px + 12px padding + gaps).
+        const th = el.offsetHeight || 90;
+        el.style.top = `${vp.offsetTop + vp.height - th}px`;
+        el.style.left = '0';
+        el.style.right = '0';
+      }
     } else {
       el.style.display = 'none';
-      el.style.transform = '';
-      el.style.willChange = '';
+      el.style.top = '';
+      el.style.left = '';
+      el.style.right = '';
     }
   }, [keyboardHeight]);
 
@@ -161,10 +177,9 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
       className="md:hidden flex flex-col gap-1 px-2 py-1.5 bg-[#0d0d0d]/98 border-t border-gray-800 z-40 shadow-[0_-8px_24px_rgba(0,0,0,0.35)]"
       style={{
         position: 'fixed',
-        left: 0,
-        right: 0,
-        bottom: 0,
-        display: 'none', // shown/hidden via ref in useEffect
+        // top/left/right are set dynamically in useEffect to track
+        // visualViewport. Only default display is set here.
+        display: 'none',
         paddingBottom: 'calc(0.375rem + env(safe-area-inset-bottom))',
       }}
       onPointerDown={(e) => e.preventDefault()}
