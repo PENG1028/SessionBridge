@@ -497,11 +497,7 @@ export class ProxyCoreClient implements CoreClient {
       if (this._disconnected) return;
       debug('sse:proxy', 'Core health probe OK — creating EventSource');
       this._connectSSE();
-    } catch {
-        debugWarn('sse:proxy', 'Core health probe failed — continuing backoff');
-        this._scheduleBackoffReconnect();
-      }
-    } catch {
+    } catch (_e) {
       debugWarn('sse:proxy', 'Core health probe error — continuing backoff');
       this._scheduleBackoffReconnect();
     }
