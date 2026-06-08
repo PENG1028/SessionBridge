@@ -150,6 +150,11 @@ export function ConnectionSection({
     setScanning(true);
     setScanResults(null);
     let aborted = false;
+    // Client-side timeout: if the server doesn't respond in 10s, give up.
+    // Combined with the user AbortController so both can abort the fetch.
+    const timeoutSignal = AbortSignal.timeout(10_000);
+    const onTimeoutAbort = () => abortController.abort();
+    timeoutSignal.addEventListener('abort', onTimeoutAbort);
     try {
       const res = await fetch('/api/core/discover', {
         signal: abortController.signal,
@@ -160,14 +165,22 @@ export function ConnectionSection({
       if (!mountedRef.current) return;
       setScanResults(data.results);
     } catch (_e) {
-      // AbortError = intentional cancellation (unmount or re-scan), skip state update
       if (_e instanceof Error && _e.name === 'AbortError') {
-        aborted = true;
-        return;
+        if (timeoutSignal.aborted) {
+          // Timeout — not user cancellation. Show empty results.
+          if (!mountedRef.current) return;
+          setScanResults([]);
+        } else {
+          // User-initiated abort (re-scan or unmount) — skip state update
+          aborted = true;
+          return;
+        }
+      } else {
+        if (!mountedRef.current) return;
+        setScanResults([]);
       }
-      if (!mountedRef.current) return;
-      setScanResults([]);
     } finally {
+      timeoutSignal.removeEventListener('abort', onTimeoutAbort);
       if (mountedRef.current && !aborted) {
         setScanning(false);
       }
