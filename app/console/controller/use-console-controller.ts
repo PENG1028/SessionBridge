@@ -899,6 +899,20 @@ export function useConsoleController({ wsUrl, setWsUrl, token, setToken, onRecon
       _surfaceId: surface?.surfaceId,
     });
   }, [activeWorkbenchDispatch]);
+	const handleSetTabTitle = useCallback((title: string) => {
+		const state = workbenchStateRef.current;
+		const activePane = findPaneInTree(state.root, state.activePaneId);
+		if (!activePane) return;
+		const activeTab = activePane.tabs.find(t => t.id === activePane.activeTabId);
+		if (!activeTab) return;
+		activeWorkbenchDispatch({
+			type: 'SET_TAB_TITLE',
+			paneId: activePane.id,
+			tabId: activeTab.id,
+			title,
+		});
+	}, [activeWorkbenchDispatch]);
+
 
   // ── Close tab: detach from UI, leave run alive for later re-attach ──
   const handleCloseTab = useCallback((_paneId: string, _tabId: string, tab: PaneTab) => {
@@ -983,6 +997,8 @@ export function useConsoleController({ wsUrl, setWsUrl, token, setToken, onRecon
     createInstance: createNodeInstance,
     instances,
     bindCurrentTabInstance: handleBindCurrentTabInstance,
+	    setTabTitle: handleSetTabTitle,
+	    handleSetTabTitle,
     activeInstanceId,
     projectCwd: activeNodeProjectInfo?.cwd || '.',
     activeNodeWsUrl,

@@ -255,6 +255,22 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       };
     }
 
+    case 'SET_TAB_TITLE': {
+      const pane = findPane(state.root, action.paneId) || state.bottom;
+      if (!pane || pane.kind !== 'pane') return state;
+      const newTabs = pane.tabs.map(t => {
+        if (t.id !== action.tabId) return t;
+        return { ...t, title: action.title };
+      });
+      const updatedPane: PaneState = { ...pane, tabs: newTabs };
+      if (pane.zone === 'bottom') {
+        return { ...state, bottom: updatedPane };
+      }
+      return {
+        ...state,
+        root: replaceNode(state.root, action.paneId, updatedPane),
+      };
+    }
     case 'SET_TAB_VIEW': {
       const pane = findPane(state.root, action.paneId) || state.bottom;
       if (!pane || pane.kind !== 'pane') return state;

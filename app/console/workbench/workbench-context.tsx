@@ -17,6 +17,10 @@ export interface WorkbenchContextValue {
   instances: InstanceInfo[];
   createInstance: (dir: string, label?: string, adapterId?: string) => Promise<{ success: boolean; instance?: InstanceInfo; runId?: string; sessionId?: string; error?: string }>;
   bindCurrentTabInstance: (instanceId: string, surface?: string) => void;
+  /** Set the title of the currently active tab. Used by plugins to
+   *  respond to inner program title changes (e.g. OSC 0 from claude
+   *  CLI changing the terminal tab header to "Claude CLI"). */
+  setTabTitle: (title: string) => void;
   activeInstanceId: string | null;
   projectCwd: string;
   activeNodeWsUrl: string;

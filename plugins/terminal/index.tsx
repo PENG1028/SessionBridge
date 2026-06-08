@@ -54,7 +54,7 @@ function middleTruncate(path: string, maxLen: number): string {
  * - Surface mode (replay terminal) – see _surfaceId
  */
 export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }: { _surfaceId?: string } & Record<string, unknown>) {
-  const { token, bindCurrentTabInstance, createInstance, projectCwd, onNavigatePath, absoluteCwd, onCwdChange } = useWorkbench();
+  const { token, bindCurrentTabInstance, createInstance, projectCwd, onNavigatePath, absoluteCwd, onCwdChange, setTabTitle } = useWorkbench();
   const focus = useFocus();
   const core = useCore();
   const coreStatus = useCoreStatus();
@@ -258,6 +258,29 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
       return true;
     });
 
+
+        // ── 1b. OSC 0 / OSC 2 tab title change ──
+        // Programs like claude CLI send OSC 0 to set the terminal tab
+        // title (e.g. "]0;Claude CLI"). We forward this to the
+        // workbench state so the tab header updates in real time.
+        const oscTitleDisp = term.parser.registerOscHandler(0, (data: string) => {
+          if (data && setTabTitle) {
+            // Strip icon sequence if present: OSC 0 can be "icon?;title?"
+            const parts = data.split(';');
+            const title = parts[parts.length - 1] || parts[0];
+            const clean = title.replace(/[]/g, '').trim();
+            if (clean) setTabTitle(clean);
+          }
+          return true;
+        });
+        // OSC 2 is title-only (no icon component)
+        const oscTitleDisp2 = term.parser.registerOscHandler(2, (data: string) => {
+          if (data && setTabTitle) {
+            const clean = data.replace(/[]/g, '').trim();
+            if (clean) setTabTitle(clean);
+          }
+          return true;
+        });
     // ── 2. Stream subscription + live output → xterm ──
     core.call('stream.subscribe', { sessionId: coreSessionId, streamType: 'stdout' }).catch(() => {});
     core.call('stream.subscribe', { sessionId: coreSessionId, streamType: 'stderr' }).catch(() => {});
@@ -326,7 +349,7 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
         debouncedResizeRef.current = null;
       },
     };
-  }, [coreSessionId, core, sessionFresh, onCwdChange, onNavigatePath]);
+  }, [coreSessionId, core, sessionFresh, onCwdChange, onNavigatePath, setTabTitle]);
 
   // Feed stdin from ShellTerminal's local-echo handler
   const handleUserInput = useCallback((data: string) => {

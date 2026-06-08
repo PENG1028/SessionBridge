@@ -56,6 +56,7 @@ export type WorkbenchAction =
   | { type: 'ADD_TAB'; paneId: string; tab: PaneTab; activate?: boolean }
   | { type: 'SET_ACTIVE_TAB'; paneId: string; tabId: string }
   | { type: 'SET_TAB_VIEW'; paneId: string; tabId: string; viewType: ViewType; title: string; instanceId?: string; _surfaceId?: string }
+  | { type: 'SET_TAB_TITLE'; paneId: string; tabId: string; title: string }
   | { type: 'ADD_EMPTY_PANE' }
   | { type: 'ADD_BOTTOM_PANE'; tab?: PaneTab }
   | { type: 'SET_BOTTOM_HEIGHT'; height: number }
