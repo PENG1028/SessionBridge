@@ -14,7 +14,7 @@ import { useCore, useCoreStatus } from '../../sdk';
 import { useCoreErrors } from '../../sdk';
 import { classifyCoreError } from '../../sdk';
 import { TerminalInputBuffer, createDebouncedResize } from '../../sdk';
-import { setInputHandler } from '../../lib/input-router';
+import { setInputHandler, isCtrlActive, ctrlSeq as routerCtrlSeq, setCtrlActive } from '../../lib/input-router';
 // Counter for generating distinguishable terminal labels
 let _termLabelCounter = 0;
 function nextTermLabel(baseCwd: string): string {
@@ -365,6 +365,13 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
 
   // Feed stdin from ShellTerminal's local-echo handler
   const handleUserInput = useCallback((data: string) => {
+    // When the toolbar's Ctrl toggle is active, intercept physical
+    // keyboard input and compose Ctrl+letter sequences. The user taps
+    // Ctrl on the toolbar, then types "c" on their phone keyboard → Ctrl+C.
+    if (isCtrlActive() && data.length === 1 && data >= ' ') {
+      data = routerCtrlSeq(data);
+      setCtrlActive(false);
+    }
     inputBufRef.current?.push(data);
   }, []);
 

@@ -153,11 +153,6 @@ adapters:
         send: "/"
         row: 0
         order: 50
-      - id: c
-        label: C
-        send: "c"
-        row: 0
-        order: 60
       - id: left
         label: "←"
         send: "\x1b[D"
