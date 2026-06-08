@@ -50,8 +50,32 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
   const [altOn, setAltOn] = useState(false);
   const ctrlTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const altTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const keyboardHeightRef = useRef(0);
 
   const { keyboardHeight } = useKeyboard();
+
+  // Sync keyboardHeight to both the ref (for direct DOM updates)
+  // and trigger re-render (for visibility toggle).
+  keyboardHeightRef.current = keyboardHeight;
+
+  // Direct DOM update for the toolbar position — bypasses React render
+  // cycle. Using transform instead of bottom avoids layout thrashing
+  // and enables GPU compositing for smooth 60fps keyboard follow.
+  useEffect(() => {
+    const el = toolbarRef.current;
+    if (!el) return;
+    const h = keyboardHeightRef.current;
+    if (h > 0) {
+      el.style.display = 'flex';
+      el.style.transform = `translateY(-${h}px)`;
+      el.style.willChange = 'transform';
+    } else {
+      el.style.display = 'none';
+      el.style.transform = '';
+      el.style.willChange = '';
+    }
+  }, [keyboardHeight]);
 
   // Read contributed items from registry
   const items = getMobileKeyboardContributions();
@@ -121,23 +145,16 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
   // On non-touch devices, never render
   if (!touchDevice) return null;
 
-  // Show toolbar whenever the OS keyboard is detected, regardless of
-  // focus state. Mobile focus tracking (focusin/focusout) is unreliable
-  // — the keyboard being visible is the only reliable signal.
-  const visible = keyboardHeight > 30;
-
   return (
     <div
+      ref={toolbarRef}
       className="md:hidden flex flex-col gap-1 px-2 py-1.5 bg-[#0d0d0d]/98 border-t border-gray-800 z-40 shadow-[0_-8px_24px_rgba(0,0,0,0.35)]"
       style={{
         position: 'fixed',
         left: 0,
         right: 0,
-        bottom: `${keyboardHeight}px`,
-        // Use display toggle instead of CSS transition for bottom —
-        // CSS transitions on position cause visible lag and the toolbar
-        // "ghosts" behind when the keyboard dismisses.
-        display: visible ? 'flex' : 'none',
+        bottom: 0,
+        display: 'none', // shown/hidden via ref in useEffect
         paddingBottom: 'calc(0.375rem + env(safe-area-inset-bottom))',
       }}
       onPointerDown={(e) => e.preventDefault()}
