@@ -24,7 +24,7 @@
   "scripts": {
     "start": "node bin/bridge.js",
     "dev": "node scripts/dev-all.js",
-    "dev:web": "next dev -H 0.0.0.0",
+    "dev:web": "next dev --webpack -H 0.0.0.0",
     "dev:lan": "next dev --webpack -H 0.0.0.0 -p 3000",
     "dev:core": "node scripts/start-core.js --dev",
     "dev:all": "node scripts/dev-all.js",

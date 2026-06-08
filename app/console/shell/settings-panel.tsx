@@ -193,33 +193,17 @@ export function SettingsPanel({ open, onClose, onReconnect }: SettingsPanelProps
     setLoading(true);
     setError('');
 
-    // Safety timeout: stop loading after 12s — if the user sees
-    // "loading" without error they at least get a non-spinning panel
-    let finished = false;
-    const safetyTimer = setTimeout(() => {
-      if (!mountedRef.current) return;
-      if (!finished) {
-        finished = true;
-        setLoading(false);
-        setError('');
-      }
-    }, 12_000);
-
     try {
       const result = (await core.call('config.list')) as
         | { configs: CoreConfigEntry[] }
         | undefined;
-      clearTimeout(safetyTimer);
-      if (finished || !mountedRef.current) return;
-      finished = true;
+      if (!mountedRef.current) return;
       const entries: CoreConfigEntry[] = result?.configs ?? [];
       setCoreConfigs(entries);
       setDirtyMap(new Map());
       setValidationErrors({});
     } catch (err) {
-      clearTimeout(safetyTimer);
-      if (finished || !mountedRef.current) return;
-      finished = true;
+      if (!mountedRef.current) return;
       setError((err as Error).message || 'Failed to load config');
     }
     if (mountedRef.current) setLoading(false);

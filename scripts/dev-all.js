@@ -87,7 +87,7 @@ if (!existsSync(nextBinPlatform)) {
 }
 
 console.log('[dev-all] Starting Next.js dev on 0.0.0.0:3000 (LAN accessible)...');
-const next = spawn(nextBinPlatform, ['dev', '-H', '0.0.0.0'], {
+const next = spawn(nextBinPlatform, ['dev', '--webpack', '-H', '0.0.0.0'], {
   cwd: projectRoot,
   env: {
     ...process.env,

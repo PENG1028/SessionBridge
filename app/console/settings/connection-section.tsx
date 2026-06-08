@@ -101,26 +101,13 @@ export function ConnectionSection({
     setStartingCore(true);
     setPathMessage(null);
 
-    // Safety timeout: force-stop after 15s regardless of fetch state
-    let finished = false;
-    const safetyTimer = setTimeout(() => {
-      if (mountedRef.current && !finished) {
-        finished = true;
-        setPathMessage({ ok: false, text: 'Request timed out — Core may not be reachable' });
-        setStartingCore(false);
-      }
-    }, 15_000);
-
     try {
-      // First save the path so the server knows where Core is
       const saveRes = await fetch('/api/core/server-state', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ coreBinaryPath: coreBinaryPath.trim() }),
       });
-      if (finished) return;
       if (!saveRes.ok) {
-        clearTimeout(safetyTimer);
         if (mountedRef.current) {
           setPathMessage({ ok: false, text: 'Failed to save path before start' });
           setStartingCore(false);
@@ -128,24 +115,18 @@ export function ConnectionSection({
         return;
       }
 
-      // Then start Core
       const res = await fetch('/api/core/start', { method: 'POST' });
-      if (finished) return;
-      clearTimeout(safetyTimer);
       const data = await res.json();
       if (!mountedRef.current) return;
       if (res.ok) {
         setPathMessage({ ok: true, text: data.message || 'Core started' });
-        // Trigger SSE reconnection so the UI picks up the newly running Core
-        // without waiting for the 15s connection timeout cycle.
         onReconnect();
       } else {
         setPathMessage({ ok: false, text: data.error || 'Failed to start Core' });
       }
       if (mountedRef.current) setStartingCore(false);
     } catch (_e) {
-      clearTimeout(safetyTimer);
-      if (!finished && mountedRef.current) {
+      if (mountedRef.current) {
         setPathMessage({ ok: false, text: 'Failed to start Core' });
         setStartingCore(false);
       }
@@ -157,27 +138,15 @@ export function ConnectionSection({
     setScanning(true);
     setScanResults(null);
 
-    let finished = false;
-    const safetyTimer = setTimeout(() => {
-      if (!mountedRef.current) return;
-      finished = true;
-      setScanResults([]);
-      setScanning(false);
-    }, 10_000);
-
     try {
       const res = await fetch('/api/core/discover');
-      clearTimeout(safetyTimer);
-      if (finished || !mountedRef.current) return;
-      finished = true;
       const text = await res.text();
       const data = JSON.parse(text);
+      if (!mountedRef.current) return;
       setScanResults(data.results || []);
       setScanning(false);
     } catch (_e) {
-      clearTimeout(safetyTimer);
-      if (finished || !mountedRef.current) return;
-      finished = true;
+      if (!mountedRef.current) return;
       setScanResults([]);
       setScanning(false);
     }
