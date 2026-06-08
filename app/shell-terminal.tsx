@@ -247,25 +247,28 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
   // We use capture-phase listeners to intercept touch events BEFORE
   // xterm's gesture handler, and manually scroll the terminal buffer.
   //
-  // Design decisions:
-  //   - Capture phase (not bubble): fires before xterm's document-level
-  //     listeners, so preventDefault() stops xterm's gesture handling.
-  //   - Single-finger only: multi-touch (pinch-zoom, two-finger scroll)
-  //     passes through to the browser.
+  // Approach: absolute positioning via scrollToLine.
+  // On touchstart, capture the current buffer viewport position (baseY).
+  // On touchmove, convert total pixel delta to line delta and set
+  // baseY + lineDelta as the target line. This avoids accumulation
+  // drift and direction-reversal bugs that plagued the delta-based
+  // approach.
+  //
+  //   - Capture phase: fires before xterm's document-level listeners,
+  //     so preventDefault() stops xterm's gesture handling.
+  //   - Single-finger only: multi-touch passes through to browser.
   //   - 5px dead zone: allows tap-to-focus without accidental scroll.
-  //   - Pixel → line accumulation: smooth scrolling at terminal line
-  //     granularity (≈cell height px per line).
   useEffect(() => {
     const container = containerRef.current;
     if (!container || !isTouchDevice()) return;
 
     let startY = 0;
-    let lastY = 0;
+    let startBaseY = 0;    // buffer baseY at touchstart
+    let startViewY = 0;    // buffer viewportY at touchstart
     let scrolling = false;
-    let accDelta = 0;
+    let lastTargetLine = -1;
 
     const getLineHeight = (): number => {
-      // Use xterm's actual cell height if available; fall back to 14px
       try {
         const dims = (termRef.current as any)?._core?._renderService?.dimensions;
         if (dims?.css?.cell?.height) return dims.css.cell.height;
@@ -277,54 +280,54 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
           if (vpEl && dims.rows > 0) return vpEl.clientHeight / dims.rows;
         }
       } catch { /* fall through */ }
-      return 14; // default font size
+      return 14;
+    };
+
+    const getBaseY = (): number => {
+      try {
+        return (termRef.current as any)?._core?.bufferService?.buffer?.baseY
+          ?? termRef.current?.buffer?.active?.baseY
+          ?? 0;
+      } catch { return 0; }
     };
 
     const handleTouchStart = (e: TouchEvent) => {
       if (e.touches.length === 1) {
         startY = e.touches[0].clientY;
-        lastY = startY;
+        startBaseY = getBaseY();
+        startViewY = termRef.current?.buffer?.active?.viewportY ?? 0;
         scrolling = false;
-        accDelta = 0;
+        lastTargetLine = -1;
       }
     };
 
     const handleTouchMove = (e: TouchEvent) => {
       if (e.touches.length !== 1) return;
       const currentY = e.touches[0].clientY;
-      const delta = lastY - currentY; // + = finger up → scroll down
+      const totalPxDelta = startY - currentY; // + = finger up → scroll down
 
-      if (!scrolling && Math.abs(currentY - startY) > 5) {
+      if (!scrolling && Math.abs(totalPxDelta) > 5) {
         scrolling = true;
-        accDelta = (currentY - startY > 0 ? -1 : 1) * Math.abs(currentY - startY);
       }
 
       if (scrolling) {
-        accDelta += delta;
         const lineH = getLineHeight();
-        const term = termRef.current;
-        if (term && lineH > 0) {
-          while (accDelta >= lineH) {
-            term.scrollLines(1);
-            accDelta -= lineH;
-          }
-          while (accDelta <= -lineH) {
-            term.scrollLines(-1);
-            accDelta += lineH;
-          }
+        const lineDelta = Math.round(totalPxDelta / lineH);
+        const targetLine = startBaseY + lineDelta + startViewY;
+        if (targetLine !== lastTargetLine) {
+          lastTargetLine = targetLine;
+          termRef.current?.scrollToLine(Math.max(0, targetLine));
         }
         // Prevent xterm's gesture system from also handling this touch
         e.preventDefault();
       }
-      lastY = currentY;
     };
 
     const handleTouchEnd = () => {
       scrolling = false;
-      accDelta = 0;
+      lastTargetLine = -1;
     };
 
-    // Capture phase: fires before xterm's bubble-phase listeners on document
     container.addEventListener('touchstart', handleTouchStart, { capture: true, passive: true });
     container.addEventListener('touchmove', handleTouchMove, { capture: true, passive: false });
     container.addEventListener('touchend', handleTouchEnd, { capture: true, passive: true });
@@ -345,15 +348,25 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
 
   // ── Container style (keyboard-aware padding) ────────────────
   // When the mobile keyboard is open, the fixed toolbar sits above
-  // the keyboard and covers the terminal's bottom ~90px. Add padding
-  // so xterm renders its last rows above the toolbar.
-  const containerStyle = useMemo(() => ({
-    background: '#0a0a0a' as const,
-    overflow: 'hidden' as const,
-    fontFeatureSettings: 'normal' as const,
-    fontVariantLigatures: 'none' as const,
-    paddingBottom: keyboardHeight > 0 ? 90 : 0,
-  }), [keyboardHeight]);
+  // the keyboard and covers the terminal's bottom portion. Read the
+  // toolbar's actual rendered height from the DOM so the padding
+  // exactly matches. Fallback: 100px (typical 2-row toolbar).
+  const containerStyle = useMemo(() => {
+    let toolbarH = 0;
+    if (keyboardHeight > 0 && typeof document !== 'undefined') {
+      const bar = document.querySelector('[data-mobile-keyboard-toolbar]') as HTMLElement | null;
+      if (bar) {
+        toolbarH = bar.offsetHeight;
+      }
+    }
+    return {
+      background: '#0a0a0a' as const,
+      overflow: 'hidden' as const,
+      fontFeatureSettings: 'normal' as const,
+      fontVariantLigatures: 'none' as const,
+      paddingBottom: keyboardHeight > 0 ? (toolbarH || 100) : 0,
+    };
+  }, [keyboardHeight]);
 
   // ── Context menu ────────────────────────────────────────────
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
