@@ -105,6 +105,17 @@ export function ConnectionSection({
     if (!coreBinaryPath.trim()) return;
     setStartingCore(true);
     setPathMessage(null);
+
+    // Safety timeout: force-stop after 15s regardless of fetch state
+    let finished = false;
+    const safetyTimer = setTimeout(() => {
+      if (mountedRef.current && !finished) {
+        finished = true;
+        setPathMessage({ ok: false, text: 'Request timed out — Core may not be reachable' });
+        setStartingCore(false);
+      }
+    }, 15_000);
+
     try {
       // First save the path so the server knows where Core is
       const saveRes = await fetch('/api/core/server-state', {
@@ -112,14 +123,20 @@ export function ConnectionSection({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ coreBinaryPath: coreBinaryPath.trim() }),
       });
+      if (finished) return;
       if (!saveRes.ok) {
-        setPathMessage({ ok: false, text: 'Failed to save path before start' });
-        setStartingCore(false);
+        clearTimeout(safetyTimer);
+        if (mountedRef.current) {
+          setPathMessage({ ok: false, text: 'Failed to save path before start' });
+          setStartingCore(false);
+        }
         return;
       }
 
       // Then start Core
       const res = await fetch('/api/core/start', { method: 'POST' });
+      if (finished) return;
+      clearTimeout(safetyTimer);
       const data = await res.json();
       if (!mountedRef.current) return;
       if (res.ok) {
@@ -130,12 +147,14 @@ export function ConnectionSection({
       } else {
         setPathMessage({ ok: false, text: data.error || 'Failed to start Core' });
       }
+      if (mountedRef.current) setStartingCore(false);
     } catch {
-      if (!mountedRef.current) return;
-      setPathMessage({ ok: false, text: 'Failed to start Core' });
+      clearTimeout(safetyTimer);
+      if (!finished && mountedRef.current) {
+        setPathMessage({ ok: false, text: 'Failed to start Core' });
+        setStartingCore(false);
+      }
     }
-    if (!mountedRef.current) return;
-    setStartingCore(false);
   }, [coreBinaryPath, onReconnect]);
 
   // ── Port scan handler ─────────────────────────────────────────
@@ -149,41 +168,38 @@ export function ConnectionSection({
 
     setScanning(true);
     setScanResults(null);
-    let aborted = false;
-    // Client-side timeout: if the server doesn't respond in 10s, give up.
-    // Combined with the user AbortController so both can abort the fetch.
-    const timeoutSignal = AbortSignal.timeout(10_000);
-    const onTimeoutAbort = () => abortController.abort();
-    timeoutSignal.addEventListener('abort', onTimeoutAbort);
+
+    // Safety timeout: force-stop scanning after 10s regardless of fetch
+    // state. Uses plain setTimeout (not AbortSignal.timeout) to support
+    // all mobile browsers including older Safari (< 15).
+    let finished = false;
+    const safetyTimer = setTimeout(() => {
+      if (mountedRef.current && !finished) {
+        finished = true;
+        setScanResults([]);
+        setScanning(false);
+      }
+    }, 10_000);
+
     try {
       const res = await fetch('/api/core/discover', {
         signal: abortController.signal,
       });
+      clearTimeout(safetyTimer);
+      if (finished || !mountedRef.current) return;
+      finished = true;
       const data = (await res.json()) as {
         results: Array<{ port: number; status: string; info?: unknown }>;
       };
-      if (!mountedRef.current) return;
       setScanResults(data.results);
+      setScanning(false);
     } catch (_e) {
-      if (_e instanceof Error && _e.name === 'AbortError') {
-        if (timeoutSignal.aborted) {
-          // Timeout — not user cancellation. Show empty results.
-          if (!mountedRef.current) return;
-          setScanResults([]);
-        } else {
-          // User-initiated abort (re-scan or unmount) — skip state update
-          aborted = true;
-          return;
-        }
-      } else {
-        if (!mountedRef.current) return;
-        setScanResults([]);
-      }
-    } finally {
-      timeoutSignal.removeEventListener('abort', onTimeoutAbort);
-      if (mountedRef.current && !aborted) {
-        setScanning(false);
-      }
+      clearTimeout(safetyTimer);
+      if (finished) return; // safety timer already handled it
+      if (!mountedRef.current) return;
+      finished = true;
+      setScanResults([]);
+      setScanning(false);
     }
   }, []);
 
