@@ -157,9 +157,8 @@ export function ConnectionSection({
     setScanning(true);
     setScanResults(null);
 
-    // Safety timeout: force-stop scanning after 10s regardless of fetch
-    // state. Uses plain setTimeout (not AbortSignal.timeout) to support
-    // all mobile browsers including older Safari (< 15).
+    // Safety timeout: force-stop scanning after 10s regardless of XHR
+    // state. Uses plain setTimeout for universal browser compatibility.
     let finished = false;
     const safetyTimer = setTimeout(() => {
       if (!mountedRef.current) return;
@@ -169,14 +168,26 @@ export function ConnectionSection({
     }, 10_000);
 
     try {
-      const res = await fetch('/api/core/discover');
+      // Use XHR instead of fetch — some mobile browsers (Edge on LAN)
+      // have issues with fetch() to LAN IPs while XHR works fine.
+      const data = await new Promise<{ results: Array<{ port: number; status: string }> }>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', '/api/core/discover', true);
+        xhr.responseType = 'json';
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve(xhr.response);
+          } else {
+            reject(new Error(`HTTP ${xhr.status}`));
+          }
+        };
+        xhr.onerror = () => reject(new Error('Network error'));
+        xhr.send();
+      });
       clearTimeout(safetyTimer);
       if (finished || !mountedRef.current) return;
       finished = true;
-      const data = (await res.json()) as {
-        results: Array<{ port: number; status: string; info?: unknown }>;
-      };
-      setScanResults(data.results);
+      setScanResults(data.results || []);
       setScanning(false);
     } catch (_e) {
       clearTimeout(safetyTimer);
