@@ -31,7 +31,6 @@ export function ConnectionSection({
   const [scanResults, setScanResults] = useState<Array<{ port: number; status: string }> | null>(null);
   const [collapsed, setCollapsed] = useState(false);
   const mountedRef = useRef(true);
-  const scanAbortRef = useRef<AbortController | null>(null);
 
   // ── Core binary path state ─────────────────────────────────────
   const [coreBinaryPath, setCoreBinaryPath] = useState('');
@@ -42,10 +41,6 @@ export function ConnectionSection({
   useEffect(() => {
     return () => {
       mountedRef.current = false;
-      // Cancel in-flight scan fetch so state updates don't leak
-      if (scanAbortRef.current) {
-        scanAbortRef.current.abort();
-      }
     };
   }, []);
 
@@ -159,13 +154,6 @@ export function ConnectionSection({
 
   // ── Port scan handler ─────────────────────────────────────────
   const handleScanPorts = useCallback(async () => {
-    // Cancel any in-flight scan before starting a new one
-    if (scanAbortRef.current) {
-      scanAbortRef.current.abort();
-    }
-    const abortController = new AbortController();
-    scanAbortRef.current = abortController;
-
     setScanning(true);
     setScanResults(null);
 
@@ -174,17 +162,14 @@ export function ConnectionSection({
     // all mobile browsers including older Safari (< 15).
     let finished = false;
     const safetyTimer = setTimeout(() => {
-      if (mountedRef.current && !finished) {
-        finished = true;
-        setScanResults([]);
-        setScanning(false);
-      }
+      if (!mountedRef.current) return;
+      finished = true;
+      setScanResults([]);
+      setScanning(false);
     }, 10_000);
 
     try {
-      const res = await fetch('/api/core/discover', {
-        signal: abortController.signal,
-      });
+      const res = await fetch('/api/core/discover');
       clearTimeout(safetyTimer);
       if (finished || !mountedRef.current) return;
       finished = true;
@@ -195,8 +180,7 @@ export function ConnectionSection({
       setScanning(false);
     } catch (_e) {
       clearTimeout(safetyTimer);
-      if (finished) return; // safety timer already handled it
-      if (!mountedRef.current) return;
+      if (finished || !mountedRef.current) return;
       finished = true;
       setScanResults([]);
       setScanning(false);
