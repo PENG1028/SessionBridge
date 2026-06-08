@@ -172,6 +172,22 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
     // events (Ctrl+C etc.) and cursor positioning to work properly.
     term.focus();
 
+    // On mobile, reposition xterm's hidden textarea so Android
+    // doesn't scroll to x=-9999em when focusing it for keyboard input.
+    // Place it at the container bottom so the browser scrolls recent
+    // terminal output into view (above the keyboard), not the top-left.
+    if (isTouchDevice()) {
+      const ta = term.element?.querySelector('.xterm-helper-textarea') as HTMLElement;
+      if (ta) {
+        ta.style.left = '0';
+        ta.style.top = 'auto';
+        ta.style.bottom = '0';
+        ta.style.width = '1px';
+        ta.style.height = '1px';
+        ta.style.pointerEvents = 'none';
+      }
+    }
+
     // ── Resize observer (fit only; onResize goes to plugin) ──
     const ro = new ResizeObserver(() => {
       fitAddon.fit();
