@@ -295,8 +295,11 @@ export function ConsoleHeader({
       <div className="flex md:hidden items-center h-full">
         {/* Left sidebar toggle — extreme left */}
         <button
-          onClick={onMobileOpen}
-          onPointerDown={(e) => { e.preventDefault(); onMobileOpen?.(); }}
+          onPointerDown={(e) => {
+            e.preventDefault();
+            if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+            onMobileOpen?.();
+          }}
           className="flex items-center justify-center w-10 h-full shrink-0 text-gray-500 hover:text-gray-200 transition-colors"
           title="Open panel"
         >
@@ -324,8 +327,11 @@ export function ConsoleHeader({
             />
             {onOpenSettings && (
               <button
-                onClick={onOpenSettings}
-                onPointerDown={(e) => { e.preventDefault(); onOpenSettings(); }}
+                onPointerDown={(e) => {
+                e.preventDefault();
+                if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+                onOpenSettings?.();
+              }}
                 className="text-gray-400 hover:text-gray-200 p-1 shrink-0"
                 title="Settings"
               >
@@ -337,8 +343,11 @@ export function ConsoleHeader({
 
         {/* Right sidebar toggle — extreme right */}
         <button
-          onClick={onMobileRightOpen}
-          onPointerDown={(e) => { e.preventDefault(); onMobileRightOpen?.(); }}
+          onPointerDown={(e) => {
+            e.preventDefault();
+            if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+            onMobileRightOpen?.();
+          }}
           className="flex items-center justify-center w-10 h-full shrink-0 text-gray-500 hover:text-gray-200 transition-colors"
           title="Open panels"
         >
