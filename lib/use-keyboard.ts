@@ -27,7 +27,6 @@ export interface KeyboardState {
 }
 
 const KEYBOARD_THRESHOLD = 30;
-const DEBOUNCE_MS = 16; // ~1 frame at 60fps — instant enough for toolbar follow
 
 export function useKeyboard(): KeyboardState {
   const [state, setState] = useState<KeyboardState>({
@@ -38,14 +37,12 @@ export function useKeyboard(): KeyboardState {
 
   const stateRef = useRef(state);
   stateRef.current = state;
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rafRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
     // ── 1. Capacitor native ──────────────────────────────────
-    // window.Capacitor is injected by the Capacitor runtime in
-    // native WebViews. No build-time dependency needed.
     const cap = (window as any).Capacitor;
     const capKeyboard = cap?.plugins?.Keyboard;
 
@@ -74,7 +71,7 @@ export function useKeyboard(): KeyboardState {
       }
     }
 
-    // ── 2. Web fallback: visualViewport ──────────────────────
+    // ── 2. Web fallback: visualViewport + rAF ────────────────
     if (!('visualViewport' in window) || !window.visualViewport) {
       return; // no detection possible
     }
@@ -85,41 +82,35 @@ export function useKeyboard(): KeyboardState {
     const getOverlap = (): number =>
       Math.max(0, window.innerHeight - (vp.offsetTop + vp.height));
 
+    // Use requestAnimationFrame to sync with the browser's render
+    // loop, avoiding both setTimeout drift and redundant React renders.
+    // The rAF fires right before the next paint, so the keyboard height
+    // update reaches the DOM in the same frame as the viewport change.
     const sync = () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(() => {
+      if (rafRef.current !== null) return; // already scheduled
+      rafRef.current = requestAnimationFrame(() => {
+        rafRef.current = null;
         const h = getOverlap();
         const visible = h > KEYBOARD_THRESHOLD;
 
-        // Avoid noise: skip update if height within threshold
-        // of the last reported value and visibility unchanged.
+        // Only call setState when values actually change — avoids
+        // unnecessary React re-renders that cause toolbar jank.
         const prev = stateRef.current;
-        if (
-          Math.abs(prev.keyboardHeight - h) <= KEYBOARD_THRESHOLD &&
-          prev.isVisible === visible
-        ) {
-          // Still update keyboardHeight if it's the same ballpark.
-          // This keeps the toolbar smooth for small adjustments
-          // without treating every 5px change as a new event.
-          if (prev.keyboardHeight === h) return;
-        }
-
+        if (prev.keyboardHeight === h && prev.isVisible === visible) return;
         setState({ keyboardHeight: h, isVisible: visible, isSupported: true });
-      }, DEBOUNCE_MS);
+      });
     };
 
     // Sync immediately
     sync();
 
-    vp.addEventListener('resize', sync);
-    vp.addEventListener('scroll', sync, { passive: true });
-    window.addEventListener('resize', sync);
+    vp.addEventListener('resize', sync, { passive: true });
+    window.addEventListener('resize', sync, { passive: true });
 
     return () => {
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
       vp.removeEventListener('resize', sync);
-      vp.removeEventListener('scroll', sync);
       window.removeEventListener('resize', sync);
-      if (timerRef.current) clearTimeout(timerRef.current);
     };
   }, []);
 
