@@ -8,6 +8,26 @@ import {
   CollapsibleSection,
 } from '../shell/settings-panel/shared';
 
+// XHR-based fetch replacement — some mobile browsers on LAN have issues
+// with fetch() while XHR works fine.
+function xhrFetch(url: string, options?: { method?: string; body?: string }): Promise<{ ok: boolean; status: number; json(): Promise<any> }> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(options?.method || 'GET', url, true);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.responseType = 'json';
+    xhr.onload = () => {
+      resolve({
+        ok: xhr.status >= 200 && xhr.status < 300,
+        status: xhr.status,
+        json: async () => xhr.response,
+      });
+    };
+    xhr.onerror = () => reject(new Error('Network error'));
+    xhr.send(options?.body || undefined);
+  });
+}
+
 // ── Types ──────────────────────────────────────────────────────
 
 interface ConnectionSectionProps {
@@ -113,9 +133,8 @@ export function ConnectionSection({
 
     try {
       // First save the path so the server knows where Core is
-      const saveRes = await fetch('/api/core/server-state', {
+      const saveRes = await xhrFetch('/api/core/server-state', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ coreBinaryPath: coreBinaryPath.trim() }),
       });
       if (finished) return;
@@ -129,7 +148,7 @@ export function ConnectionSection({
       }
 
       // Then start Core
-      const res = await fetch('/api/core/start', { method: 'POST' });
+      const res = await xhrFetch('/api/core/start', { method: 'POST' });
       if (finished) return;
       clearTimeout(safetyTimer);
       const data = await res.json();
@@ -143,7 +162,7 @@ export function ConnectionSection({
         setPathMessage({ ok: false, text: data.error || 'Failed to start Core' });
       }
       if (mountedRef.current) setStartingCore(false);
-    } catch {
+    } catch (_e) {
       clearTimeout(safetyTimer);
       if (!finished && mountedRef.current) {
         setPathMessage({ ok: false, text: 'Failed to start Core' });
