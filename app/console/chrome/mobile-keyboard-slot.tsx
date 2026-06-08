@@ -11,6 +11,15 @@
 // Toggle keys (Ctrl/Alt) use sticky-on semantics with a 5s auto-reset
 // timer. When a toggle is active and a regular key is pressed, the
 // character is composed (Ctrl+X → ASCII control char, Alt+X → ESC+X).
+//
+// Bugfix notes for mobile interaction:
+//   - Removed CSS transition on `bottom` — was causing 200ms visual lag
+//     on keyboard follow. The toolbar now uses `display: none` toggle
+//     instead, which is instant and avoids the "toolbar stays visible
+//     after keyboard dismiss" issue.
+//   - Uses `keyboardHeight > 30` instead of `enabled` as visibility gate,
+//     so the toolbar hides immediately when the OS keyboard dismisses
+//     even before blur events propagate.
 
 'use client';
 
@@ -109,9 +118,13 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
     onSend(data);
   }, [altOn, ctrlOn, onSend]);
 
-  if (!touchDevice || !enabled) return null;
+  // On non-touch devices, never render
+  if (!touchDevice) return null;
 
-  const bottom = Math.max(0, keyboardHeight);
+  // Visibility gate: keyboard must be visible AND the slot must be enabled.
+  // Using keyboardHeight directly (not just `enabled`) ensures the toolbar
+  // hides as soon as the OS keyboard dismisses, regardless of focus event lag.
+  const visible = enabled && keyboardHeight > 30;
 
   return (
     <div
@@ -120,8 +133,11 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
         position: 'fixed',
         left: 0,
         right: 0,
-        bottom: `${bottom}px`,
-        transition: 'bottom 200ms cubic-bezier(0.22, 1, 0.36, 1)',
+        bottom: `${keyboardHeight}px`,
+        // Use display toggle instead of CSS transition for bottom —
+        // CSS transitions on position cause visible lag and the toolbar
+        // "ghosts" behind when the keyboard dismisses.
+        display: visible ? 'flex' : 'none',
         paddingBottom: 'calc(0.375rem + env(safe-area-inset-bottom))',
       }}
       onPointerDown={(e) => e.preventDefault()}

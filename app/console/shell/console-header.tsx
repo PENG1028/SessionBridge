@@ -290,7 +290,7 @@ export function ConsoleHeader({
   };
 
   return (
-    <header className="h-11 border-b border-gray-800 bg-[#111] shrink-0 relative z-10" data-copyable="false">
+    <header className="h-11 border-b border-gray-800 bg-[#111] shrink-0 md:relative sticky top-0 z-20" data-copyable="false">
       {/* ── Mobile layout ── */}
       <div className="flex md:hidden items-center h-full">
         {/* Left sidebar toggle — extreme left */}

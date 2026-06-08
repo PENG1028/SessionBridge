@@ -27,7 +27,7 @@ export interface KeyboardState {
 }
 
 const KEYBOARD_THRESHOLD = 30;
-const DEBOUNCE_MS = 80;
+const DEBOUNCE_MS = 16; // ~1 frame at 60fps — instant enough for toolbar follow
 
 export function useKeyboard(): KeyboardState {
   const [state, setState] = useState<KeyboardState>({

@@ -207,10 +207,13 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
     };
   }, []); // one-shot — session changes go through onTerminalReady cleanup
 
-  // Ensure xterm textarea is focused after mount (including mobile)
+  // Focus terminal on mount so keyboard shortcuts work immediately.
+  // On mobile, skip auto-focus — the user taps to focus, which is the
+  // expected mobile pattern (no unexpected keyboard pop).
   useLayoutEffect(() => {
+    if (isTouchDevice()) return;
     termRef.current?.focus();
-  });
+  }, []);
 
   const containerStyle = useMemo(() => ({
     background: '#0a0a0a' as const,
