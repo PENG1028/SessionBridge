@@ -121,10 +121,10 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
   // On non-touch devices, never render
   if (!touchDevice) return null;
 
-  // Visibility gate: keyboard must be visible AND the slot must be enabled.
-  // Using keyboardHeight directly (not just `enabled`) ensures the toolbar
-  // hides as soon as the OS keyboard dismisses, regardless of focus event lag.
-  const visible = enabled && keyboardHeight > 30;
+  // Show toolbar whenever the OS keyboard is detected, regardless of
+  // focus state. Mobile focus tracking (focusin/focusout) is unreliable
+  // — the keyboard being visible is the only reliable signal.
+  const visible = keyboardHeight > 30;
 
   return (
     <div

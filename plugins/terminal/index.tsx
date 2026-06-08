@@ -415,23 +415,35 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
             <span className="text-[10px] text-gray-500 font-bold tracking-wider">EXISTING SESSIONS</span>
             <div className="w-full max-w-sm space-y-1.5">
               {availableSessions.map(s => (
-                <button
-                  key={s.runId}
-                  onClick={() => {
-                    setAvailableSessions(null);
-                    restoreSession(s.runId);
-                  }}
-                  className="w-full flex items-center gap-3 px-3 py-2 rounded bg-[#151515] border border-gray-700 hover:border-purple-500/50 hover:bg-[#1a1a1a] transition-colors text-left"
-                >
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-[11px] text-gray-200 truncate font-medium">{s.label}</div>
-                    <div className="text-[9px] text-gray-600 font-mono truncate">{s.cwd}</div>
-                  </div>
-                  <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 font-mono">
-                    {s.runId.slice(0, 8)}
-                  </span>
-                </button>
+                <div key={s.runId} className="flex items-center gap-1">
+                  <button
+                    onClick={() => {
+                      setAvailableSessions(null);
+                      restoreSession(s.runId);
+                    }}
+                    className="flex-1 flex items-center gap-3 px-3 py-2 rounded bg-[#151515] border border-gray-700 hover:border-purple-500/50 hover:bg-[#1a1a1a] transition-colors text-left"
+                  >
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[11px] text-gray-200 truncate font-medium">{s.label}</div>
+                      <div className="text-[9px] text-gray-600 font-mono truncate">{s.cwd}</div>
+                    </div>
+                    <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 font-mono">
+                      {s.runId.slice(0, 8)}
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      core.call('run.stop', { runId: s.runId, signal: 'SIGTERM', tree: true }).then(() => {
+                        setAvailableSessions(prev => prev?.filter(x => x.runId !== s.runId) ?? null);
+                      }).catch(() => {});
+                    }}
+                    className="shrink-0 px-2 py-2 rounded bg-red-900/20 border border-red-800/30 text-red-400 hover:bg-red-800/40 hover:text-red-300 transition-colors text-[9px] font-mono"
+                    title={`Stop ${s.runId.slice(0, 8)}`}
+                  >
+                    Stop
+                  </button>
+                </div>
               ))}
             </div>
             <button
