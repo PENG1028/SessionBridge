@@ -285,11 +285,33 @@ export function ConsoleLayout(props: Record<string, any>) {
         /* Prevent pull-to-refresh and overscroll on mobile, which
          * conflicts with terminal scroll and keyboard positioning. */
         body { overscroll-behavior: none; }
-        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        /* On mobile, make the global scrollbar slightly wider than
+           desktop (8px vs 6px) for easier touch targeting. */
+        ::-webkit-scrollbar { width: 8px; height: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
-        ::-webkit-scrollbar-thumb:hover { background: #555; }
+        ::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #666; }
         ::-webkit-scrollbar-corner { background: transparent; }
+        /* xterm.js viewport — ensure smooth touch scrolling and a
+           grab-able scrollbar on mobile. The viewport is the actual
+           scrollable area inside the terminal. */
+        .xterm-viewport {
+          touch-action: pan-y !important;
+          -webkit-overflow-scrolling: touch !important;
+          overscroll-behavior: contain !important;
+          scroll-behavior: auto !important;
+        }
+        /* Make xterm scrollbar wider on mobile (<768px) so thumbs
+           are easier to drag without precision tapping. */
+        @media (pointer: coarse) {
+          .xterm-viewport::-webkit-scrollbar { width: 16px; }
+          .xterm-viewport::-webkit-scrollbar-thumb {
+            background: #555;
+            border-radius: 8px;
+            border: 3px solid transparent;
+            background-clip: content-box;
+          }
+        }
         .prose-container p { margin: 0; overflow-wrap: break-word; line-height: 1.55; }
         .prose-container code { font-size: 11px; }
         .prose-container pre { margin: 4px 0; }
