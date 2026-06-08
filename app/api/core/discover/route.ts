@@ -22,31 +22,36 @@ const COMMON_PORTS = [9090, 8080, 9091, 14400];
 export async function GET() {
   const results: ScanResult[] = [];
 
-  for (const port of COMMON_PORTS) {
-    try {
-      const res = await fetch(`http://127.0.0.1:${port}/health`, {
-        signal: AbortSignal.timeout(2000),
-      });
-
-      if (res.ok) {
-        const data = await res.json().catch(() => ({}));
-        results.push({
-          port,
-          status: 'running',
-          info: {
-            status: data.status,
-            nodeId: data.nodeId,
-            fingerprint: data.fingerprint,
-          },
+  // Scan all ports in parallel — each probe has its own 2s timeout.
+  // Serial scan would take up to 8s (4 × 2s); parallel finishes in ~2s.
+  const probeResults = await Promise.all(
+    COMMON_PORTS.map(async (port) => {
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/health`, {
+          signal: AbortSignal.timeout(2000),
         });
-      } else {
-        results.push({ port, status: 'unexpected', error: `HTTP ${res.status}` });
+
+        if (res.ok) {
+          const data = await res.json().catch(() => ({}));
+          return {
+            port,
+            status: 'running' as const,
+            info: {
+              status: data.status,
+              nodeId: data.nodeId,
+              fingerprint: data.fingerprint,
+            },
+          };
+        } else {
+          return { port, status: 'unexpected' as const, error: `HTTP ${res.status}` };
+        }
+      } catch {
+        return { port, status: 'not_found' as const };
       }
-    } catch (err) {
-      // Timeout or connection refused = not found
-      results.push({ port, status: 'not_found' });
-    }
-  }
+    }),
+  );
+
+  results.push(...probeResults);
 
   // Sort: running first (ordered by port), then not_found
   results.sort((a, b) => {
