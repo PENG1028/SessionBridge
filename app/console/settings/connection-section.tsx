@@ -8,26 +8,6 @@ import {
   CollapsibleSection,
 } from '../shell/settings-panel/shared';
 
-// XHR-based fetch replacement — some mobile browsers on LAN have issues
-// with fetch() while XHR works fine.
-function xhrFetch(url: string, options?: { method?: string; body?: string }): Promise<{ ok: boolean; status: number; json(): Promise<any> }> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open(options?.method || 'GET', url, true);
-    xhr.setRequestHeader('Content-Type', 'application/json');
-    xhr.responseType = 'json';
-    xhr.onload = () => {
-      resolve({
-        ok: xhr.status >= 200 && xhr.status < 300,
-        status: xhr.status,
-        json: async () => xhr.response,
-      });
-    };
-    xhr.onerror = () => reject(new Error('Network error'));
-    xhr.send(options?.body || undefined);
-  });
-}
-
 // ── Types ──────────────────────────────────────────────────────
 
 interface ConnectionSectionProps {
@@ -133,8 +113,9 @@ export function ConnectionSection({
 
     try {
       // First save the path so the server knows where Core is
-      const saveRes = await xhrFetch('/api/core/server-state', {
+      const saveRes = await fetch('/api/core/server-state', {
         method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ coreBinaryPath: coreBinaryPath.trim() }),
       });
       if (finished) return;
@@ -148,7 +129,7 @@ export function ConnectionSection({
       }
 
       // Then start Core
-      const res = await xhrFetch('/api/core/start', { method: 'POST' });
+      const res = await fetch('/api/core/start', { method: 'POST' });
       if (finished) return;
       clearTimeout(safetyTimer);
       const data = await res.json();
@@ -176,8 +157,6 @@ export function ConnectionSection({
     setScanning(true);
     setScanResults(null);
 
-    // Safety timeout: force-stop scanning after 10s regardless of XHR
-    // state. Uses plain setTimeout for universal browser compatibility.
     let finished = false;
     const safetyTimer = setTimeout(() => {
       if (!mountedRef.current) return;
@@ -187,25 +166,12 @@ export function ConnectionSection({
     }, 10_000);
 
     try {
-      // Use XHR instead of fetch — some mobile browsers (Edge on LAN)
-      // have issues with fetch() to LAN IPs while XHR works fine.
-      const data = await new Promise<{ results: Array<{ port: number; status: string }> }>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open('GET', '/api/core/discover', true);
-        xhr.responseType = 'json';
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            resolve(xhr.response);
-          } else {
-            reject(new Error(`HTTP ${xhr.status}`));
-          }
-        };
-        xhr.onerror = () => reject(new Error('Network error'));
-        xhr.send();
-      });
+      const res = await fetch('/api/core/discover');
       clearTimeout(safetyTimer);
       if (finished || !mountedRef.current) return;
       finished = true;
+      const text = await res.text();
+      const data = JSON.parse(text);
       setScanResults(data.results || []);
       setScanning(false);
     } catch (_e) {
