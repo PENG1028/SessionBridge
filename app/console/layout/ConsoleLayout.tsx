@@ -292,30 +292,7 @@ export function ConsoleLayout(props: Record<string, any>) {
         ::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
         ::-webkit-scrollbar-thumb:hover { background: #666; }
         ::-webkit-scrollbar-corner { background: transparent; }
-        /* xterm.js viewport — ensure smooth touch scrolling and a
-           grab-able scrollbar on mobile. The viewport is the actual
-           scrollable area inside the terminal. */
-        .xterm-viewport {
-          touch-action: pan-y !important;
-          -webkit-overflow-scrolling: touch !important;
-          overscroll-behavior: contain !important;
-          scroll-behavior: auto !important;
-        }
-        /* Make xterm scrollbar wider on mobile (<768px) so thumbs
-           are easier to drag without precision tapping. */
-        @media (pointer: coarse) {
-          .xterm-viewport::-webkit-scrollbar { width: 16px; }
-        /* On mobile, xterm's hidden textarea covers the viewport and steals
-           touch events, making the terminal unscrollable. Disabling pointer
-           events on it lets touches reach the viewport for scrolling. */
-        .xterm-helper-textarea { pointer-events: none !important; }
-          .xterm-viewport::-webkit-scrollbar-thumb {
-            background: #555;
-            border-radius: 8px;
-            border: 3px solid transparent;
-            background-clip: content-box;
-          }
-        }
+}
         .prose-container p { margin: 0; overflow-wrap: break-word; line-height: 1.55; }
         .prose-container code { font-size: 11px; }
         .prose-container pre { margin: 4px 0; }

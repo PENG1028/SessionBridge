@@ -195,44 +195,6 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
     focusRoot?.addEventListener('focusin', handleFocusIn);
     focusRoot?.addEventListener('focusout', handleFocusOut);
 
-    // ── Mobile touch handling ──
-    // iOS does not route touch events to .xterm-viewport when the
-    // textarea is focused. We manually capture touches here and:
-    //   - Tap (<10px): focus terminal (open keyboard)
-    //   - Drag (>=10px): programmatically scroll the viewport
-    let _touchStartY = 0;
-    let _touchMoved = false;
-    let _scrollEl: HTMLElement | null = null;
-    const getViewport = (): HTMLElement | null =>
-      term.element?.querySelector('.xterm-viewport') as HTMLElement;
-
-    const _onTouchStart = (e: TouchEvent) => {
-      _touchStartY = e.touches[0].clientY;
-      _touchMoved = false;
-      _scrollEl = getViewport();
-    };
-    const _onTouchMove = (e: TouchEvent) => {
-      const dy = _touchStartY - e.touches[0].clientY;
-      if (Math.abs(dy) > 10) {
-        _touchMoved = true;
-        if (_scrollEl) {
-          _scrollEl.scrollTop += dy;
-          _touchStartY = e.touches[0].clientY;
-        }
-      }
-    };
-    const _onTouchEnd = (e: TouchEvent) => {
-      if (!_touchMoved) {
-        e.preventDefault();
-        termRef.current?.focus();
-      }
-    };
-    if (isTouchDevice()) {
-      const root = focusRoot!;
-      root.addEventListener('touchstart', _onTouchStart, { passive: true });
-      root.addEventListener('touchmove', _onTouchMove, { passive: true });
-      root.addEventListener('touchend', _onTouchEnd, { passive: false });
-    }
     return () => {
       console.error = origConsoleError;
       onDataDisposable.dispose();
@@ -249,7 +211,6 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
   // On mobile, skip auto-focus — the user taps to focus, which is the
   // expected mobile pattern (no unexpected keyboard pop).
   useLayoutEffect(() => {
-    if (isTouchDevice()) return;
     termRef.current?.focus();
   }, []);
 
