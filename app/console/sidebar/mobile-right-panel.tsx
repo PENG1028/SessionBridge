@@ -65,7 +65,7 @@ export function MobileRightPanel(props: MobileRightPanelProps) {
   return (
     <div className="md:hidden fixed inset-0 z-50 flex" onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} data-copyable="false">
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/60" onPointerDown={(e) => { e.stopPropagation(); onClose(); }} />
       {/* Sheet — slides in from right */}
       <div className="relative w-80 max-w-[85vw] ml-auto bg-[#0d0d0d] border-l border-gray-800 flex flex-col overflow-hidden animate-slide-in-right">
         {/* Header */}

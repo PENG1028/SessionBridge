@@ -54,7 +54,7 @@ export function MobileSidebar({
   return (
     <div className="md:hidden fixed inset-0 z-50 flex" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} data-copyable="false">
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/60" onPointerDown={(e) => { e.stopPropagation(); onClose(); }} />
       {/* Sheet */}
       <div ref={sheetRef} className="relative w-72 max-w-[85vw] bg-[#0d0d0d] border-r border-gray-800 flex flex-col overflow-hidden animate-slide-in">
         {/* Header */}
