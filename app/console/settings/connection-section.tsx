@@ -31,6 +31,7 @@ export function ConnectionSection({
   const [scanResults, setScanResults] = useState<Array<{ port: number; status: string }> | null>(null);
   const [collapsed, setCollapsed] = useState(false);
   const mountedRef = useRef(true);
+  const scanAbortRef = useRef<AbortController | null>(null);
 
   // ── Core binary path state ─────────────────────────────────────
   const [coreBinaryPath, setCoreBinaryPath] = useState('');
@@ -41,6 +42,10 @@ export function ConnectionSection({
   useEffect(() => {
     return () => {
       mountedRef.current = false;
+      // Cancel in-flight scan fetch so state updates don't leak
+      if (scanAbortRef.current) {
+        scanAbortRef.current.abort();
+      }
     };
   }, []);
 
@@ -119,6 +124,9 @@ export function ConnectionSection({
       if (!mountedRef.current) return;
       if (res.ok) {
         setPathMessage({ ok: true, text: data.message || 'Core started' });
+        // Trigger SSE reconnection so the UI picks up the newly running Core
+        // without waiting for the 15s connection timeout cycle.
+        onReconnect();
       } else {
         setPathMessage({ ok: false, text: data.error || 'Failed to start Core' });
       }
@@ -128,20 +136,31 @@ export function ConnectionSection({
     }
     if (!mountedRef.current) return;
     setStartingCore(false);
-  }, [coreBinaryPath]);
+  }, [coreBinaryPath, onReconnect]);
 
   // ── Port scan handler ─────────────────────────────────────────
   const handleScanPorts = useCallback(async () => {
+    // Cancel any in-flight scan before starting a new one
+    if (scanAbortRef.current) {
+      scanAbortRef.current.abort();
+    }
+    const abortController = new AbortController();
+    scanAbortRef.current = abortController;
+
     setScanning(true);
     setScanResults(null);
     try {
-      const res = await fetch('/api/core/discover');
+      const res = await fetch('/api/core/discover', {
+        signal: abortController.signal,
+      });
       const data = (await res.json()) as {
         results: Array<{ port: number; status: string; info?: unknown }>;
       };
       if (!mountedRef.current) return;
       setScanResults(data.results);
     } catch (_e) {
+      // AbortError = intentional cancellation (unmount or re-scan), skip state update
+      if (_e instanceof DOMException && _e.name === 'AbortError') return;
       if (!mountedRef.current) return;
       setScanResults([]);
     }
