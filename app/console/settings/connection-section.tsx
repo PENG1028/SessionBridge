@@ -149,6 +149,7 @@ export function ConnectionSection({
 
     setScanning(true);
     setScanResults(null);
+    let aborted = false;
     try {
       const res = await fetch('/api/core/discover', {
         signal: abortController.signal,
@@ -160,12 +161,17 @@ export function ConnectionSection({
       setScanResults(data.results);
     } catch (_e) {
       // AbortError = intentional cancellation (unmount or re-scan), skip state update
-      if (_e instanceof DOMException && _e.name === 'AbortError') return;
+      if (_e instanceof Error && _e.name === 'AbortError') {
+        aborted = true;
+        return;
+      }
       if (!mountedRef.current) return;
       setScanResults([]);
+    } finally {
+      if (mountedRef.current && !aborted) {
+        setScanning(false);
+      }
     }
-    if (!mountedRef.current) return;
-    setScanning(false);
   }, []);
 
   // ── Apply port via server API ─────────────────────────────────
