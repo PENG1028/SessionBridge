@@ -68,6 +68,18 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
   const prevInstanceId = useRef<string | undefined>(undefined);
   const [pickerOpen, setPickerOpen] = useState(false);
 
+  // ── Multi-device session attach ──────────────────────────────
+  // When no instanceId is bound (new browser, new page), we query
+  // Core for existing terminal sessions and let the user pick one,
+  // instead of always creating a brand-new session.
+  const [availableSessions, setAvailableSessions] = useState<Array<{
+    runId: string;
+    label: string;
+    cwd: string;
+    status: string;
+  }> | null>(null);
+  const [sessionPickerLoading, setSessionPickerLoading] = useState(false);
+
   // instanceId from focus context — reacts to tab/pane selection changes
   const instanceId = focus?.instanceId ?? undefined;
   const _surfaceId = _surfaceIdProp;
@@ -158,7 +170,37 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
         createSession();
       });
     } else {
-      createSession();
+      // Multi-device: query existing terminal sessions instead of
+      // always creating a new one. This lets a second browser attach
+      // to the same shell session already running on Core.
+      debugLog('TerminalView no instanceId — checking for existing sessions');
+      setSessionPickerLoading(true);
+      core.call<{ runs?: any[]; entries?: any[] } | any[]>('run.list', {}).then(result => {
+        const runs = Array.isArray(result) ? result : (result?.runs || result?.entries || []);
+        const terminalRuns = runs.filter((r: any) =>
+          (r.state === 'running' || r.state === 'restorable') &&
+          ((r as any).pluginId === 'shell' || (r as any).pluginId === 'terminal' ||
+           (r as any).kind === 'shell' || (r as any).kind === 'terminal')
+        );
+        if (terminalRuns.length > 0) {
+          debugLog('TerminalView found existing sessions', terminalRuns.map((r: any) => r.runId));
+          setAvailableSessions(terminalRuns.map((r: any) => ({
+            runId: r.runId || r.sessionId || '',
+            label: r.label || r.kind || r.runId?.slice(0, 12) || 'Terminal',
+            cwd: r.metadata?.cwd || '.',
+            status: r.state || 'unknown',
+          })));
+        } else {
+          setAvailableSessions([]);
+          debugLog('TerminalView no existing sessions, creating new');
+          createSession();
+        }
+        setSessionPickerLoading(false);
+      }).catch(() => {
+        debugLog('TerminalView run.list failed, creating new');
+        setSessionPickerLoading(false);
+        createSession();
+      });
     }
   }, [instanceId, core, coreSessionId, bindCurrentTabInstance, coreStatus, restoreSession, createSession]);
 
@@ -320,6 +362,64 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
   }, []);
 
   if (!coreSessionId) {
+    // ── Session picker: show existing terminal sessions to attach ──
+    if (availableSessions && availableSessions.length > 0) {
+      return (
+        <div className="flex-1 flex flex-col min-h-0">
+          <TitleBar title="TERMINAL">
+            <button
+              onClick={() => setPickerOpen(true)}
+              className="flex items-center gap-1.5 px-2 py-0.5 rounded text-gray-300 hover:text-white bg-gray-800/60 hover:bg-gray-700/80 shrink-0 transition-colors border border-gray-700"
+              title="Browse directories"
+            >
+              <Folder className="w-3.5 h-3.5" />
+              <span className="text-[11px] font-mono max-w-[160px] truncate" title={absoluteCwd}>{middleTruncate(absoluteCwd || '.', 32)}</span>
+            </button>
+          </TitleBar>
+          <div className="flex-1 flex flex-col items-center justify-center bg-[#0a0a0a] min-h-0 gap-4 px-6">
+            <Terminal className="w-8 h-8 text-gray-700 shrink-0" />
+            <span className="text-[10px] text-gray-500 font-bold tracking-wider">EXISTING SESSIONS</span>
+            <div className="w-full max-w-sm space-y-1.5">
+              {availableSessions.map(s => (
+                <button
+                  key={s.runId}
+                  onClick={() => {
+                    setAvailableSessions(null);
+                    restoreSession(s.runId);
+                  }}
+                  className="w-full flex items-center gap-3 px-3 py-2 rounded bg-[#151515] border border-gray-700 hover:border-purple-500/50 hover:bg-[#1a1a1a] transition-colors text-left"
+                >
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[11px] text-gray-200 truncate font-medium">{s.label}</div>
+                    <div className="text-[9px] text-gray-600 font-mono truncate">{s.cwd}</div>
+                  </div>
+                  <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 font-mono">
+                    {s.runId.slice(0, 8)}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => { setAvailableSessions(null); createSession(); }}
+              className="text-[10px] text-gray-600 hover:text-gray-400 transition-colors underline underline-offset-2"
+            >
+              Start new terminal instead
+            </button>
+          </div>
+
+          <DirectoryPicker
+            open={pickerOpen}
+            onClose={() => setPickerOpen(false)}
+            onSelect={handleSelectDir}
+            absoluteCwd={absoluteCwd}
+            initialPath="."
+            title="Directory Browser"
+          />
+        </div>
+      );
+    }
+
     return (
       <div className="flex-1 flex flex-col min-h-0">
         <TitleBar title="TERMINAL">
@@ -337,7 +437,9 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
           {error ? (
             <span className="text-[10px] text-red-400 px-4 text-center">{error}</span>
           ) : (
-            <span className="text-[10px] text-gray-600">{creating ? 'Creating terminal...' : 'Starting...'}</span>
+            <span className="text-[10px] text-gray-600">
+              {sessionPickerLoading ? 'Looking for existing sessions...' : (creating ? 'Creating terminal...' : 'Starting...')}
+            </span>
           )}
         </div>
 

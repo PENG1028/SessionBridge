@@ -50,11 +50,17 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
     const term = termRef.current;
     // Echo printable characters locally for immediate feedback.
     // Escape sequences (arrow keys) are not echoed — the shell handles those.
-    if (term && !data.startsWith('\x1b')) {
-      let echo = data;
-      echo = echo.replace(/\r/g, '\n');       // Enter → new line
-      echo = echo.replace(/\x03/g, '^C\r\n');  // Ctrl+C
-      if (echo) term.write(echo);
+    // Tab (\t) is also skipped: shell tab-completion echoes it properly,
+    // and local-echo of Tab causes cursor position desync on mobile.
+    if (term && !data.startsWith('\x1b') && data !== '\t') {
+      try {
+        let echo = data;
+        echo = echo.replace(/\r/g, '\n');       // Enter → new line
+        echo = echo.replace(/\x03/g, '^C\r\n');  // Ctrl+C
+        if (echo) term.write(echo);
+      } catch (_e) {
+        // Local echo is best-effort; shell echo will cover it
+      }
     }
     onUserInputRef.current?.(data);
   }, []);
@@ -154,7 +160,17 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
     termRef.current = term;
     fitRef.current = fitAddon;
 
-    if (!isTouchDevice()) term.focus();
+    // Suppress xterm.js parser warnings (they're harmless — just noise from
+    // shell-generated escape sequences that the internal VT parser can't handle)
+    const origConsoleError = console.error;
+    console.error = (...args: any[]) => {
+      if (args[0] && typeof args[0] === 'string' && args[0].startsWith('xterm.js: Parsing error')) return;
+      origConsoleError.apply(console, args);
+    };
+
+    // Always focus the terminal — mobile needs it for physical keyboard
+    // events (Ctrl+C etc.) and cursor positioning to work properly.
+    term.focus();
 
     // ── Resize observer (fit only; onResize goes to plugin) ──
     const ro = new ResizeObserver(() => {
@@ -180,6 +196,7 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
     focusRoot?.addEventListener('focusout', handleFocusOut);
 
     return () => {
+      console.error = origConsoleError;
       onDataDisposable.dispose();
       pluginCleanup?.dispose?.();
       focusRoot?.removeEventListener('focusin', handleFocusIn);
@@ -190,11 +207,9 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
     };
   }, []); // one-shot — session changes go through onTerminalReady cleanup
 
-  // Ensure xterm textarea is focused after mount
+  // Ensure xterm textarea is focused after mount (including mobile)
   useLayoutEffect(() => {
-    if (!isTouchDevice()) {
-      termRef.current?.focus();
-    }
+    termRef.current?.focus();
   });
 
   const containerStyle = useMemo(() => ({

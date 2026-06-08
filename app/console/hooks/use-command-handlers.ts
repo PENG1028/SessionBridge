@@ -96,6 +96,19 @@ export function useCommandHandlers(
     if (e.key === 'ArrowUp' && !e.shiftKey && !showFileSuggest) {
       e.preventDefault();
     }
+    // Tab: prevent focus-away, insert 2 spaces (standard terminal behavior)
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const input = e.currentTarget as HTMLInputElement;
+      const start = input.selectionStart ?? input.value.length;
+      const end = input.selectionEnd ?? start;
+      setInputValue(prev => prev.slice(0, start) + '  ' + prev.slice(end));
+      // Restore cursor position via rAF — React state update resets it
+      requestAnimationFrame(() => {
+        input.selectionStart = input.selectionEnd = start + 2;
+      });
+      return;
+    }
     if (e.key === 'Escape') setShowFileSuggest(false);
   }, [handleSubmit, showFileSuggest, fileSuggestions, atPos, phase, handleInterrupt]);
 
