@@ -67,6 +67,7 @@ export function useMobileTerminal(
     let startBaseY = 0;
     let scrolling = false;
     let startedOnScrollbar = false;
+    let anyTouchMove = false;
     const justScrolled = { value: false };
 
     const getViewport = (): HTMLElement | null =>
@@ -131,26 +132,24 @@ export function useMobileTerminal(
         startY = e.touches[0].clientY;
         startBaseY = termRef.current?.buffer?.active?.baseY ?? 0;
         scrolling = false;
+        anyTouchMove = false;
       }
     };
 
     const handleTouchMove = (e: TouchEvent) => {
       if (startedOnScrollbar) return;
-      if (e.touches.length !== 1) {
-        if (scrolling) {
-          const vp = getViewport();
-          if (vp) vp.style.pointerEvents = '';
-          scrolling = false;
-        }
-        return;
-      }
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (e.touches.length === 0) return;   // Android ghost event
+      if (e.touches.length > 1) { scrolling = false; return; }
+
+      anyTouchMove = true;
       const currentY = e.touches[0].clientY;
       const totalPxDelta = startY - currentY;
 
       if (!scrolling && Math.abs(totalPxDelta) > 5) {
         scrolling = true;
-        const vp = getViewport();
-        if (vp) vp.style.pointerEvents = 'none';
       }
 
       if (scrolling) {
@@ -160,19 +159,21 @@ export function useMobileTerminal(
         const lineDelta = Math.round(totalPxDelta / lineH);
         const targetLine = Math.max(0, startBaseY + lineDelta);
         termRef.current?.scrollToLine(targetLine);
-        e.preventDefault();
-        e.stopPropagation();
       }
     };
 
-    const handleTouchEnd = () => {
-      if (scrolling) {
-        const vp = getViewport();
-        if (vp) vp.style.pointerEvents = '';
+    const handleTouchEnd = (e: TouchEvent) => {
+      if (anyTouchMove) {
+        // Finger moved → not a tap. Block touchend from xterm so
+        // it can't interpret touchstart+touchend as a tap → focus
+        // textarea → scrollToBottom.
+        e.preventDefault();
+        e.stopPropagation();
       }
       touchScrollingRef.current = false;
       scrolling = false;
       startedOnScrollbar = false;
+      anyTouchMove = false;
       setTimeout(() => { justScrolled.value = false; }, 150);
     };
 
@@ -186,12 +187,10 @@ export function useMobileTerminal(
     container.addEventListener('click', guardClick, { capture: true });
     container.addEventListener('touchstart', handleTouchStart, { capture: true, passive: true });
     container.addEventListener('touchmove', handleTouchMove, { capture: true, passive: false });
-    container.addEventListener('touchend', handleTouchEnd, { capture: true, passive: true });
+    container.addEventListener('touchend', handleTouchEnd, { capture: true, passive: false });
 
     return () => {
       cancelAnimationFrame(raf);
-      const vp = getViewport();
-      if (vp) vp.style.pointerEvents = '';
       container.removeEventListener('pointerdown', handlePointerDown, { capture: true });
       container.removeEventListener('click', guardClick, { capture: true });
       container.removeEventListener('touchstart', handleTouchStart, { capture: true });
