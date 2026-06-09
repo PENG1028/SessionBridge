@@ -7,19 +7,28 @@ import type { IDisposable } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { ContextMenu, type ContextMenuItem } from './console/shell/context-menu';
 import { MobileKeyboardSlot } from './console/chrome/mobile-keyboard-slot';
-import { useMobileTerminal } from './console/chrome/use-mobile-terminal';
+import { useKeyboard } from '../lib/use-keyboard';
 
 // ─── ShellTerminal — pure xterm.js host ────────────────────────────
 // Owns: xterm init/theme/fit, keyboard shortcuts, context menu, resize observer.
-// Mobile touch/scroll/padding → useMobileTerminal hook.
 // Does NOT know about Core, streams, stdin buffering, or OSC protocols.
 // All Core integration goes through onTerminalReady / onUserInput / onResize.
 
 export interface ShellTerminalProps {
+  /** Called once after xterm is created and opened. Plugin registers
+   *  OSC handlers, stream subscriptions, stdin pipes, etc. here.
+   *  Return a cleanup disposable (disposed on unmount or session change). */
   onTerminalReady: (term: Terminal, fitAddon: FitAddon) => IDisposable | void;
+  /** Called on every ResizeObserver tick with the new cols/rows. */
   onResize?: (cols: number, rows: number) => void;
+  /** Called when the user types or pastes data. Plugin feeds into stdin buffer. */
   onUserInput?: (data: string) => void;
   onOpenDirectoryPicker?: () => void;
+}
+
+function isTouchDevice(): boolean {
+  if (typeof window === 'undefined') return false;
+  return navigator.maxTouchPoints > 0 || 'ontouchstart' in window;
 }
 
 export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, onOpenDirectoryPicker }: ShellTerminalProps) {
@@ -28,9 +37,7 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
   const fitRef = useRef<FitAddon | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
   const [terminalFocused, setTerminalFocused] = useState(false);
-
-  // ── Mobile: touch scroll, keyboard padding, textarea ──────────
-  const { touchScrollingRef } = useMobileTerminal(containerRef, termRef, fitRef);
+  const { keyboardHeight } = useKeyboard();
 
   // Stable refs so callbacks don't cause unnecessary re-registration
   const onTerminalReadyRef = useRef(onTerminalReady);
@@ -43,11 +50,15 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
   // ── Local echo + user-input bridge ──────────────────────────
   const handleUserInput = useCallback((data: string) => {
     const term = termRef.current;
+    // Echo printable characters locally for immediate feedback.
+    // Escape sequences (arrow keys) are not echoed — the shell handles those.
+    // Tab (\t) is also skipped: shell tab-completion echoes it properly,
+    // and local-echo of Tab causes cursor position desync on mobile.
     if (term && !data.startsWith('\x1b') && data !== '\t') {
       try {
         let echo = data;
-        echo = echo.replace(/\r/g, '\n');
-        echo = echo.replace(/\x03/g, '^C\r\n');
+        echo = echo.replace(/\r/g, '\n');       // Enter → new line
+        echo = echo.replace(/\x03/g, '^C\r\n');  // Ctrl+C
         if (echo) term.write(echo);
       } catch (_e) {
         // Local echo is best-effort; shell echo will cover it
@@ -60,6 +71,7 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
   useEffect(() => {
     if (!containerRef.current) return;
 
+    // Clear stale DOM from Strict Mode double-mount or previous instances
     (containerRef.current as HTMLElement).innerHTML = '';
 
     const term = new Terminal({
@@ -150,21 +162,53 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
     termRef.current = term;
     fitRef.current = fitAddon;
 
-    // Suppress xterm.js parser warnings
+    // Suppress xterm.js parser warnings (they're harmless — just noise from
+    // shell-generated escape sequences that the internal VT parser can't handle)
     const origConsoleError = console.error;
     console.error = (...args: any[]) => {
       if (args[0] && typeof args[0] === 'string' && args[0].startsWith('xterm.js: Parsing error')) return;
       origConsoleError.apply(console, args);
     };
 
+    // Always focus the terminal — mobile needs it for physical keyboard
+    // events (Ctrl+C etc.) and cursor positioning to work properly.
     term.focus();
 
-    // ── Resize observer ──
+    // On mobile, reposition xterm's hidden textarea so Android
+    // doesn't scroll to x=-9999em when focusing it for keyboard input.
+    // Place it at the container bottom so the browser scrolls recent
+    // terminal output into view (above the keyboard), not the top-left.
+    //
+    // Also set touch-action: pan-y as inline style on the xterm element.
+    // This lets the browser handle vertical touch-drags as native scroll
+    // gestures on the .xterm-viewport, without JS interference.
+    if (isTouchDevice()) {
+      const ta = term.element?.querySelector('.xterm-helper-textarea') as HTMLElement;
+      if (ta) {
+        ta.style.left = '0';
+        ta.style.top = 'auto';
+        ta.style.bottom = '0';
+        ta.style.width = '1px';
+        ta.style.height = '1px';
+        ta.style.pointerEvents = 'none';
+      }
+      // Inline touch-action ensures it takes effect regardless of CSS order
+      if (term.element) {
+        term.element.style.touchAction = 'pan-y';
+      }
+      const vp = term.element?.querySelector('.xterm-viewport') as HTMLElement;
+      if (vp) {
+        vp.style.touchAction = 'pan-y';
+      }
+    }
+
+    // ── Resize observer (fit only; onResize goes to plugin) ──
     const ro = new ResizeObserver(() => {
       fitAddon.fit();
-      if (!touchScrollingRef.current) {
-        term.scrollToBottom();
-      }
+      // After resize (keyboard open/close, pane split), keep the
+      // input line visible. Without this, the viewport stays at its
+      // previous scroll offset and the bottom gets clipped.
+      term.scrollToBottom();
       const dims = fitAddon.proposeDimensions();
       if (dims) onResizeRef.current?.(dims.cols, dims.rows);
     });
@@ -195,19 +239,121 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
       term.dispose();
       termRef.current = null;
     };
+  }, []); // one-shot — session changes go through onTerminalReady cleanup
+
+  // ── Touch-to-scroll for mobile ─────────────────────────────
+  // xterm v6 has its own gesture system that intercepts touch events
+  // and calls preventDefault(), which blocks native browser scrolling.
+  // We use capture-phase listeners to intercept touch events BEFORE
+  // xterm's gesture handler, and manually scroll the terminal buffer.
+  //
+  // Design decisions:
+  //   - Capture phase (not bubble): fires before xterm's document-level
+  //     listeners, so preventDefault() stops xterm's gesture handling.
+  //   - Single-finger only: multi-touch (pinch-zoom, two-finger scroll)
+  //     passes through to the browser.
+  //   - 5px dead zone: allows tap-to-focus without accidental scroll.
+  //   - Pixel → line accumulation: smooth scrolling at terminal line
+  //     granularity (≈cell height px per line).
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || !isTouchDevice()) return;
+
+    let startY = 0;
+    let lastY = 0;
+    let scrolling = false;
+    let accDelta = 0;
+
+    const getLineHeight = (): number => {
+      // Use xterm's actual cell height if available; fall back to 14px
+      try {
+        const dims = (termRef.current as any)?._core?._renderService?.dimensions;
+        if (dims?.css?.cell?.height) return dims.css.cell.height;
+      } catch { /* best-effort */ }
+      try {
+        const dims = fitRef.current?.proposeDimensions();
+        if (dims) {
+          const vpEl = container.querySelector('.xterm-viewport') as HTMLElement;
+          if (vpEl && dims.rows > 0) return vpEl.clientHeight / dims.rows;
+        }
+      } catch { /* fall through */ }
+      return 14; // default font size
+    };
+
+    const handleTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 1) {
+        startY = e.touches[0].clientY;
+        lastY = startY;
+        scrolling = false;
+        accDelta = 0;
+      }
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      if (e.touches.length !== 1) return;
+      const currentY = e.touches[0].clientY;
+      const delta = lastY - currentY; // + = finger up → scroll down
+
+      if (!scrolling && Math.abs(currentY - startY) > 5) {
+        scrolling = true;
+        accDelta = (currentY - startY > 0 ? -1 : 1) * Math.abs(currentY - startY);
+      }
+
+      if (scrolling) {
+        accDelta += delta;
+        const lineH = getLineHeight();
+        const term = termRef.current;
+        if (term && lineH > 0) {
+          while (accDelta >= lineH) {
+            term.scrollLines(1);
+            accDelta -= lineH;
+          }
+          while (accDelta <= -lineH) {
+            term.scrollLines(-1);
+            accDelta += lineH;
+          }
+        }
+        // Prevent xterm's gesture system from also handling this touch
+        e.preventDefault();
+      }
+      lastY = currentY;
+    };
+
+    const handleTouchEnd = () => {
+      scrolling = false;
+      accDelta = 0;
+    };
+
+    // Capture phase: fires before xterm's bubble-phase listeners on document
+    container.addEventListener('touchstart', handleTouchStart, { capture: true, passive: true });
+    container.addEventListener('touchmove', handleTouchMove, { capture: true, passive: false });
+    container.addEventListener('touchend', handleTouchEnd, { capture: true, passive: true });
+
+    return () => {
+      container.removeEventListener('touchstart', handleTouchStart, { capture: true });
+      container.removeEventListener('touchmove', handleTouchMove, { capture: true });
+      container.removeEventListener('touchend', handleTouchEnd, { capture: true });
+    };
   }, []);
 
-  // Focus terminal on mount
+  // Focus terminal on mount so keyboard shortcuts work immediately.
+  // On mobile, skip auto-focus — the user taps to focus, which is the
+  // expected mobile pattern (no unexpected keyboard pop).
   useLayoutEffect(() => {
     termRef.current?.focus();
   }, []);
 
+  // ── Container style (keyboard-aware padding) ────────────────
+  // When the mobile keyboard is open, the fixed toolbar sits above
+  // the keyboard and covers the terminal's bottom ~90px. Add padding
+  // so xterm renders its last rows above the toolbar.
   const containerStyle = useMemo(() => ({
     background: '#0a0a0a' as const,
     overflow: 'hidden' as const,
     fontFeatureSettings: 'normal' as const,
     fontVariantLigatures: 'none' as const,
-  }), []);
+    paddingBottom: keyboardHeight > 0 ? 90 : 0,
+  }), [keyboardHeight]);
 
   // ── Context menu ────────────────────────────────────────────
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
@@ -253,13 +399,7 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
         ref={containerRef}
         className="flex-1 w-full min-h-0"
         style={containerStyle}
-        onClick={() => {
-          // On mobile, xterm manages its own focus; calling focus()
-          // here triggers a scroll-to-bottom that jumps the viewport.
-          if (typeof navigator !== 'undefined' && navigator.maxTouchPoints === 0 && !('ontouchstart' in window)) {
-            termRef.current?.focus();
-          }
-        }}
+        onClick={() => { termRef.current?.focus(); }}
         onContextMenu={handleContextMenu}
       />
       {ctxMenu && (

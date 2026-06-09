@@ -55,7 +55,7 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
   const ctrlOnRef = useRef(false);
   const altOnRef = useRef(false);
 
-  const { keyboardHeight, isVisible: keyboardVisible } = useKeyboard();
+  const { keyboardHeight } = useKeyboard();
 
   // Ensure touchDevice is set before the first paint. useEffect fires
   // after paint, which is too late — the toolbar DOM must exist before
@@ -67,19 +67,17 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
     }
   }, [touchDevice]);
 
-  // Sync to refs for direct DOM updates (bypasses React render cycle)
+  // Sync keyboardHeight to both the ref (for direct DOM updates)
+  // and trigger re-render (for visibility toggle).
   keyboardHeightRef.current = keyboardHeight;
-  const keyboardVisibleRef = useRef(false);
-  keyboardVisibleRef.current = keyboardVisible;
-  // Baseline: min (screen.height - visualViewport.height). Used by
-  // reposition() for direct detection without React state delay.
-  const baselineRef = useRef(9999);
   ctrlOnRef.current = ctrlOn;
   altOnRef.current = altOn;
 
   // Direct DOM update for toolbar position — bypasses React render cycle.
   // Uses `top` (not `bottom`) because iOS Safari's position:fixed with
   // `bottom` doesn't track visualViewport changes when the keyboard opens.
+  // Formula: position toolbar just above the keyboard, at the bottom of
+  // the visual viewport.
   // Listens to BOTH keyboardHeight changes AND scroll events, because
   // after input the terminal auto-scrolls to bottom, which may shift the
   // visual viewport without changing keyboard height.
@@ -88,13 +86,8 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
     if (!el) return;
 
     const reposition = () => {
-      // Direct measurement — bypasses React state delay. When
-      // scroll/resize events fire before the next poll/react-render,
-      // keyboardVisibleRef may still hold the old value.
-      const raw = window.screen.height - (window.visualViewport?.height ?? window.innerHeight);
-      if (raw < baselineRef.current) baselineRef.current = raw;
-      const kbNow = Math.max(0, raw - baselineRef.current);
-      if (kbNow > 60) {
+      const h = keyboardHeightRef.current;
+      if (h > 0) {
         el.style.display = 'flex';
         const vp = window.visualViewport;
         if (vp) {
@@ -232,7 +225,6 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
     <div
       ref={toolbarRef}
       className="md:hidden flex flex-col gap-1 px-2 py-1.5 bg-[#0d0d0d]/98 border-t border-gray-800 z-40 shadow-[0_-8px_24px_rgba(0,0,0,0.35)]"
-      data-mobile-keyboard-toolbar
       style={{
         position: 'fixed',
         display: 'none',
