@@ -315,6 +315,7 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
           termRef.current?.scrollLines(delta);
         }
         e.preventDefault();
+        e.stopPropagation(); // block xterm's own gesture handler (bubble, on document)
       }
     };
 
