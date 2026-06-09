@@ -113,13 +113,6 @@ export function useMobileTerminal(
           scrolling = false;
           return;
         }
-        // Immediately suppress pointer events on the viewport.
-        // xterm's pointerdown handler fires on the same touch and
-        // focuses the textarea → scrollToBottom. Setting pointer-events
-        // to none here blocks that initial pointerdown from reaching
-        // xterm. For pure taps, we restore it on touchend and manually
-        // focus the textarea to pop the keyboard.
-        if (vp) vp.style.pointerEvents = 'none';
         startY = e.touches[0].clientY;
         startBaseY = termRef.current?.buffer?.active?.baseY ?? 0;
         scrolling = false;
@@ -138,6 +131,8 @@ export function useMobileTerminal(
       if (e.touches.length === 0) return;
       if (e.touches.length > 1) {
         if (scrolling) {
+          const vp = getViewport();
+          if (vp) vp.style.pointerEvents = '';
           scrolling = false;
         }
         return;
@@ -148,6 +143,8 @@ export function useMobileTerminal(
 
       if (!scrolling && Math.abs(totalPxDelta) > 5) {
         scrolling = true;
+        const vp = getViewport();
+        if (vp) vp.style.pointerEvents = 'none';
       }
 
       if (scrolling) {
@@ -161,22 +158,18 @@ export function useMobileTerminal(
     };
 
     const handleTouchEnd = (e: TouchEvent) => {
-      const vp = getViewport();
       if (anyTouchMove) {
-        // Scroll gesture: block xterm from seeing touchend.
-        // Restore pointer-events now that the gesture is done.
+        // Any finger movement = NOT a tap. Block xterm from seeing
+        // the touchend so it can't interpret touchstart+touchend
+        // as a tap → focus → scrollToBottom.
         e.preventDefault();
         e.stopPropagation();
+      }
+      // Only a pure tap (touchstart, no touchmove, touchend) passes
+      // through to xterm → keyboard + scroll-to-cursor.
+      if (scrolling) {
+        const vp = getViewport();
         if (vp) vp.style.pointerEvents = '';
-      } else {
-        // Pure tap: restore pointer-events so xterm's pointer
-        // handlers can work again. Manually focus the textarea
-        // since our touchstart suppression blocked the natural
-        // pointerdown → focus path. Then let touchend through
-        // so xterm can scroll to cursor position.
-        if (vp) vp.style.pointerEvents = '';
-        const ta = container.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null;
-        if (ta) ta.focus();
       }
       touchScrollingRef.current = false;
       scrolling = false;
