@@ -1,21 +1,13 @@
 // ─── useMobileTerminal — mobile touch/scroll for xterm.js ──────
 //
-// Self-contained hook. Handles ALL mobile-specific terminal behavior:
-//   - textarea repositioning (Android keyboard focus)
-//   - touch-action: none on container (prevents browser preemption)
-//   - touch-to-scroll via scrollToLine (position-based, no accumulation)
-//   - exclusive gesture capture (content vs scrollbar)
-//   - keyboard-aware bottom padding (avoids toolbar overlap)
+// Self-contained hook. Handles ALL mobile-specific terminal behavior.
+// Exposes touchScrollingRef for ResizeObserver coordination.
 //
-// Exposes touchScrollingRef so the ResizeObserver can suppress
-// scrollToBottom during active touch gestures.
-//
-// NOTE: the touch-to-scroll effect uses [] deps and must run AFTER
-// xterm.open() creates the .xterm element. React runs sibling effects
-// in declaration order (top-down), and this hook is called BEFORE the
-// xterm init useEffect in ShellTerminal. Term-dependent setup (textarea
-// reposition) is deferred via requestAnimationFrame to wait for the
-// xterm init effect to complete.
+// Key design decision: intercept pointerdown via JS (capture phase)
+// instead of CSS pointer-events:none. JS interception is more targeted
+// — it blocks exactly one event type on one element, without the
+// broad side effects of CSS (textarea blur, delayed pointer events
+// firing after restore, etc.).
 
 'use client';
 
@@ -29,6 +21,28 @@ function isTouchDevice(): boolean {
   return navigator.maxTouchPoints > 0 || 'ontouchstart' in window;
 }
 
+function isScrollbarTarget(
+  clientX: number,
+  clientY: number,
+  vp: HTMLElement | null,
+  container: HTMLElement,
+): boolean {
+  if (!vp) return false;
+  const target = document.elementFromPoint(clientX, clientY);
+  if (target) {
+    let el: Element | null = target;
+    while (el && el !== vp && el !== container) {
+      if (el.getAttribute('role') === 'presentation' &&
+          (el.parentElement as HTMLElement)?.classList?.contains('xterm-viewport')) {
+        return true;
+      }
+      el = el.parentElement;
+    }
+  }
+  const vpRect = vp.getBoundingClientRect();
+  return clientX > vpRect.right - 24;
+}
+
 export function useMobileTerminal(
   containerRef: React.RefObject<HTMLDivElement | null>,
   termRef: React.RefObject<Terminal | null>,
@@ -37,19 +51,15 @@ export function useMobileTerminal(
   const touchScrollingRef = useRef(false);
   const { keyboardHeight } = useKeyboard();
 
-  // ── Touch-to-scroll + initial setup (single effect, [] deps) ──
-  // Term-dependent setup (textarea reposition) is deferred via rAF
-  // because the xterm init useEffect (which creates the .xterm element)
-  // runs AFTER this hook's effects (React declaration order).
   useEffect(() => {
     const container = containerRef.current;
     if (!container || !isTouchDevice()) return;
 
-    // Immediate: prevent browser from consuming touch events
+    // Prevent browser from consuming touch events for native scroll
     container.style.touchAction = 'none';
 
-    // Deferred: xterm element isn't created until sibling useEffect runs,
-    // which is after this callback but before the next paint.
+    // Deferred: xterm element isn't created until the sibling xterm-init
+    // useEffect runs (same tick, but after this callback).
     const raf = requestAnimationFrame(() => {
       const ta = container.querySelector('.xterm-helper-textarea') as HTMLElement;
       if (ta) {
@@ -62,12 +72,11 @@ export function useMobileTerminal(
       }
     });
 
-    // ── Touch scroll state ──
+    // ── State ────────────────────────────────────────────────
     let startY = 0;
     let startBaseY = 0;
     let scrolling = false;
-    let startedOnScrollbar = false;
-    let anyTouchMove = false; // true if ANY touchmove fired (even <5px)
+    let anyTouchMove = false;
     const justScrolled = { value: false };
 
     const getViewport = (): HTMLElement | null =>
@@ -88,63 +97,49 @@ export function useMobileTerminal(
       return 14;
     };
 
-    const isScrollbarTouch = (touch: Touch, vp: HTMLElement | null): boolean => {
-      if (!vp) return false;
-      const target = document.elementFromPoint(touch.clientX, touch.clientY);
-      if (target) {
-        let el: Element | null = target;
-        while (el && el !== vp && el !== container) {
-          if (el.getAttribute('role') === 'presentation' &&
-              (el.parentElement as HTMLElement)?.classList?.contains('xterm-viewport')) {
-            return true;
-          }
-          el = el.parentElement;
-        }
-      }
-      const vpRect = vp.getBoundingClientRect();
-      return touch.clientX > vpRect.right - 24;
+    // ── pointerdown interception ─────────────────────────────
+    // This is THE key fix. Browser fires pointerdown on first touch
+    // contact. Xterm's handler focuses the textarea → scrollToBottom.
+    // By blocking pointerdown in capture phase, xterm never sees it.
+    // No CSS pointer-events manipulation needed → no side effects.
+    const handlePointerDown = (e: PointerEvent) => {
+      const vp = getViewport();
+      if (isScrollbarTarget(e.clientX, e.clientY, vp, container)) return;
+      e.preventDefault();
+      e.stopPropagation();
     };
+    container.addEventListener('pointerdown', handlePointerDown, { capture: true });
 
+    // ── touch handlers ───────────────────────────────────────
     const handleTouchStart = (e: TouchEvent) => {
-      if (e.touches.length === 1) {
-        const vp = getViewport();
-        startedOnScrollbar = isScrollbarTouch(e.touches[0], vp);
-        if (startedOnScrollbar) {
-          scrolling = false;
-          return;
-        }
-        // Immediately suppress pointer events on the viewport.
-        // xterm's pointerdown handler fires on the same touch and
-        // focuses the textarea → scrollToBottom. Setting pointer-events
-        // to none here blocks that initial pointerdown from reaching
-        // xterm. For pure taps, we restore it on touchend and manually
-        // focus the textarea to pop the keyboard.
-        if (vp) vp.style.pointerEvents = 'none';
-        startY = e.touches[0].clientY;
-        startBaseY = termRef.current?.buffer?.active?.baseY ?? 0;
+      if (e.touches.length !== 1) return;
+
+      const vp = getViewport();
+      if (isScrollbarTarget(e.touches[0].clientX, e.touches[0].clientY, vp, container)) {
         scrolling = false;
-        anyTouchMove = false;
+        return;
       }
+
+      startY = e.touches[0].clientY;
+      startBaseY = termRef.current?.buffer?.active?.baseY ?? 0;
+      scrolling = false;
+      anyTouchMove = false;
     };
 
     const handleTouchMove = (e: TouchEvent) => {
-      if (startedOnScrollbar) return;
+      // Block ALL touchmove from reaching xterm
       e.preventDefault();
       e.stopPropagation();
 
-      // Ghost events with 0 touches (Android quirk): ignore completely.
-      // Multi-touch (>1): release pointer-events suppression but keep
-      // anyTouchMove true so touchend still blocks the "fake tap".
-      if (e.touches.length === 0) return;
-      if (e.touches.length > 1) {
-        if (scrolling) {
-          scrolling = false;
-        }
+      if (e.touches.length === 0) return;  // Android ghost event
+      if (e.touches.length > 1) {           // multi-touch → release scrolling
+        scrolling = false;
         return;
       }
+
       anyTouchMove = true;
       const currentY = e.touches[0].clientY;
-      const totalPxDelta = startY - currentY;
+      const totalPxDelta = startY - currentY; // + = finger up → scroll down
 
       if (!scrolling && Math.abs(totalPxDelta) > 5) {
         scrolling = true;
@@ -161,30 +156,26 @@ export function useMobileTerminal(
     };
 
     const handleTouchEnd = (e: TouchEvent) => {
-      const vp = getViewport();
       if (anyTouchMove) {
         // Scroll gesture: block xterm from seeing touchend.
-        // Restore pointer-events now that the gesture is done.
+        // Xterm only saw touchstart (no touchmove, no touchend).
+        // With no touchend, xterm can't classify it as a tap.
         e.preventDefault();
         e.stopPropagation();
-        if (vp) vp.style.pointerEvents = '';
       } else {
-        // Pure tap: restore pointer-events so xterm's pointer
-        // handlers can work again. Manually focus the textarea
-        // since our touchstart suppression blocked the natural
-        // pointerdown → focus path. Then let touchend through
-        // so xterm can scroll to cursor position.
-        if (vp) vp.style.pointerEvents = '';
+        // Pure tap: xterm saw touchstart but not pointerdown.
+        // Manually focus the textarea so the keyboard appears,
+        // then let touchend through so xterm scrolls to cursor.
         const ta = container.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null;
         if (ta) ta.focus();
       }
       touchScrollingRef.current = false;
       scrolling = false;
-      startedOnScrollbar = false;
       anyTouchMove = false;
       setTimeout(() => { justScrolled.value = false; }, 150);
     };
 
+    // Suppress click→focus after scroll gesture
     const guardClick = (e: Event) => {
       if (justScrolled.value) {
         e.stopImmediatePropagation();
@@ -199,8 +190,7 @@ export function useMobileTerminal(
 
     return () => {
       cancelAnimationFrame(raf);
-      const vp = getViewport();
-      if (vp) vp.style.pointerEvents = '';
+      container.removeEventListener('pointerdown', handlePointerDown, { capture: true });
       container.removeEventListener('click', guardClick, { capture: true });
       container.removeEventListener('touchstart', handleTouchStart, { capture: true });
       container.removeEventListener('touchmove', handleTouchMove, { capture: true });
