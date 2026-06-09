@@ -242,24 +242,23 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
   }, [keyboardHeight]);
 
   // ── Touch-to-scroll for mobile ─────────────────────────────
-  // xterm v6 viewport has no native overflow (screen is absolute-
-  // positioned, scrollHeight === clientHeight). touch-action: none
-  // lets touch events through to JS without browser preemption.
   //
-  // Position-based (not delta accumulation):
-  //   On touchstart, record the finger Y and buffer baseY.
-  //   On touchmove, compute the absolute target line from the
-  //   TOTAL pixel offset since touchstart. Compute the delta
-  //   between target and current buffer position, and call
-  //   scrollLines(delta) once per frame.
+  // EXCLUSIVE CAPTURE RULE:
+  //   Where the finger LANDS determines who handles the ENTIRE gesture.
+  //   - Lands on content → we handle scrolling, scrollbar is suppressed
+  //     (via pointer-events:none on viewport) until finger lifts.
+  //   - Lands on scrollbar → we stay out of the way, xterm's pointer-
+  //     event handler on the scrollbar runs the whole gesture.
   //
-  //   Unlike delta accumulation, there is no "debt" to pay back
-  //   when reversing direction or hitting buffer boundaries.
-  //   The target is recomputed from scratch each frame against
-  //   the starting position. Slow, fast, reversing — all work.
+  // Why this matters: xterm v6's custom scrollbar uses POINTER events
+  // (pointerdown/pointermove/pointerup), NOT touch events. Our touch
+  // interception alone doesn't stop the scrollbar from also responding.
+  // Setting pointer-events:none on the viewport during a content-area
+  // gesture silences the scrollbar completely.
   //
-  // Post-scroll guard: suppress onClick→focus for 150ms after
-  // a scroll gesture to prevent xterm from scrolling to bottom.
+  // Scrolling algorithm: position-based (no accumulation debt).
+  //   targetBaseY = startBaseY + round(pixelDelta / lineHeight)
+  //   scrollLines(targetBaseY - currentBaseY) once per frame.
   useEffect(() => {
     const container = containerRef.current;
     if (!container || !isTouchDevice()) return;
@@ -267,7 +266,11 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
     let startY = 0;
     let startBaseY = 0;
     let scrolling = false;
+    let startedOnScrollbar = false;
     const justScrolled = { value: false };
+
+    const getViewport = (): HTMLElement | null =>
+      container.querySelector('.xterm-viewport') as HTMLElement | null;
 
     const getLineHeight = (): number => {
       try {
@@ -277,15 +280,44 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
       try {
         const dims = fitRef.current?.proposeDimensions();
         if (dims) {
-          const vpEl = container.querySelector('.xterm-viewport') as HTMLElement;
+          const vpEl = getViewport();
           if (vpEl && dims.rows > 0) return vpEl.clientHeight / dims.rows;
         }
       } catch { /* fall through */ }
       return 14;
     };
 
+    // Detect if touch landed on xterm's custom scrollbar (right edge).
+    // xterm v6 scrollbar has role="presentation" and is a child of
+    // the viewport. Also check horizontal position as fallback.
+    const isScrollbarTouch = (touch: Touch, vp: HTMLElement | null): boolean => {
+      if (!vp) return false;
+      const target = document.elementFromPoint(touch.clientX, touch.clientY);
+      if (target) {
+        // Walk up to see if target is inside the scrollbar
+        let el: Element | null = target;
+        while (el && el !== vp && el !== container) {
+          if (el.getAttribute('role') === 'presentation' &&
+              el.parentElement?.classList?.contains('xterm-viewport')) {
+            return true;
+          }
+          el = el.parentElement;
+        }
+      }
+      // Fallback: rightmost 24px of the viewport = scrollbar zone
+      const vpRect = vp.getBoundingClientRect();
+      return touch.clientX > vpRect.right - 24;
+    };
+
     const handleTouchStart = (e: TouchEvent) => {
       if (e.touches.length === 1) {
+        const vp = getViewport();
+        startedOnScrollbar = isScrollbarTouch(e.touches[0], vp);
+        if (startedOnScrollbar) {
+          // Let xterm's scrollbar handle the entire gesture
+          scrolling = false;
+          return;
+        }
         startY = e.touches[0].clientY;
         startBaseY = termRef.current?.buffer?.active?.baseY ?? 0;
         scrolling = false;
@@ -293,12 +325,25 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
     };
 
     const handleTouchMove = (e: TouchEvent) => {
-      if (e.touches.length !== 1) return;
+      if (startedOnScrollbar) return; // xterm's scrollbar owns this gesture
+      if (e.touches.length !== 1) {
+        // Multi-touch: release pointer-events suppression
+        if (scrolling) {
+          const vp = getViewport();
+          if (vp) vp.style.pointerEvents = '';
+          scrolling = false;
+        }
+        return;
+      }
       const currentY = e.touches[0].clientY;
-      const totalPxDelta = startY - currentY; // + = finger up → scroll down
+      const totalPxDelta = startY - currentY;
 
       if (!scrolling && Math.abs(totalPxDelta) > 5) {
         scrolling = true;
+        // Suppress pointer events on the viewport so xterm's scrollbar
+        // doesn't respond to parallel pointer events during our gesture
+        const vp = getViewport();
+        if (vp) vp.style.pointerEvents = 'none';
       }
 
       if (scrolling) {
@@ -312,16 +357,20 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
           termRef.current?.scrollLines(delta);
         }
         e.preventDefault();
-        e.stopPropagation(); // block xterm's own gesture handler (bubble, on document)
+        e.stopPropagation();
       }
     };
 
     const handleTouchEnd = () => {
+      if (scrolling) {
+        const vp = getViewport();
+        if (vp) vp.style.pointerEvents = '';
+      }
       scrolling = false;
+      startedOnScrollbar = false;
       setTimeout(() => { justScrolled.value = false; }, 150);
     };
 
-    // Prevent onClick → focus from scrolling to bottom after a gesture
     const guardClick = (e: Event) => {
       if (justScrolled.value) {
         e.stopImmediatePropagation();
@@ -335,6 +384,8 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
     container.addEventListener('touchend', handleTouchEnd, { capture: true, passive: true });
 
     return () => {
+      const vp = getViewport();
+      if (vp) vp.style.pointerEvents = '';
       container.removeEventListener('click', guardClick, { capture: true });
       container.removeEventListener('touchstart', handleTouchStart, { capture: true });
       container.removeEventListener('touchmove', handleTouchMove, { capture: true });
