@@ -43,22 +43,8 @@ export function useMobileTerminal(
     const container = containerRef.current;
     if (!container || !isTouchDevice()) return;
 
-    // Immediate: prevent browser from consuming touch events
+    // Prevent browser from consuming touch events natively
     container.style.touchAction = 'none';
-
-    // Deferred: xterm element isn't created until sibling useEffect runs,
-    // which is after this callback but before the next paint.
-    const raf = requestAnimationFrame(() => {
-      const ta = container.querySelector('.xterm-helper-textarea') as HTMLElement;
-      if (ta) {
-        ta.style.left = '0';
-        ta.style.top = 'auto';
-        ta.style.bottom = '0';
-        ta.style.width = '1px';
-        ta.style.height = '1px';
-        ta.style.pointerEvents = 'none';
-      }
-    });
 
     // ── Touch scroll state ──
     let startY = 0;
@@ -190,7 +176,6 @@ export function useMobileTerminal(
     container.addEventListener('touchend', handleTouchEnd, { capture: true, passive: false });
 
     return () => {
-      cancelAnimationFrame(raf);
       const vp = getViewport();
       if (vp) vp.style.pointerEvents = '';
       container.removeEventListener('click', guardClick, { capture: true });
