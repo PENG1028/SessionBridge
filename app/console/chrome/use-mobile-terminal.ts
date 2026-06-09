@@ -178,10 +178,8 @@ export function useMobileTerminal(
         e.stopPropagation();
       }
       if (anyTouchMove) {
-        // Scroll gesture: keep s2b suppressed for 500ms to catch
-        // any delayed events (click, pointerup, etc.) that might
-        // trigger xterm's internal scrollToBottom/focus.
-        setTimeout(() => { (window as any).__touchActive = false; }, 500);
+        // Scroll gesture: keep suppressed for 3s to catch all delayed events
+        setTimeout(() => { (window as any).__touchActive = false; }, 3000);
       } else {
         // Pure tap: immediately allow s2b + focus
         (window as any).__touchActive = false;
