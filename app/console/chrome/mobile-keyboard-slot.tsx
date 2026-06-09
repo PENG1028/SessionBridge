@@ -95,12 +95,17 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
           el.style.top = `${vp.offsetTop + vp.height - th}px`;
           el.style.left = '0';
           el.style.right = '0';
+          // Expose toolbar height so ShellTerminal can add matching
+          // bottom padding — no timing issue because this runs in the
+          // same microtask as the display change.
+          document.documentElement.style.setProperty('--kb-toolbar-h', `${th}px`);
         }
       } else {
         el.style.display = 'none';
         el.style.top = '';
         el.style.left = '';
         el.style.right = '';
+        document.documentElement.style.setProperty('--kb-toolbar-h', '0px');
       }
     };
 

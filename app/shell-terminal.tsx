@@ -38,6 +38,9 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
   const [terminalFocused, setTerminalFocused] = useState(false);
   const { keyboardHeight } = useKeyboard();
+  // True when the user has manually scrolled away from the live output
+  // (e.g. via touch drag). Suppresses ResizeObserver's scrollToBottom.
+  const userScrolledUpRef = useRef(false);
 
   // Stable refs so callbacks don't cause unnecessary re-registration
   const onTerminalReadyRef = useRef(onTerminalReady);
@@ -156,6 +159,16 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
     term.open(containerRef.current);
     fitAddon.fit();
 
+    // Monkey-patch scrollToBottom to reset userScrolledUpRef.
+    // The plugin calls scrollToBottom on new output and history replay;
+    // those should clear the "user scrolled away" flag so that the
+    // ResizeObserver can resume auto-scrolling on resize.
+    const origScrollToBottom = term.scrollToBottom.bind(term);
+    term.scrollToBottom = () => {
+      userScrolledUpRef.current = false;
+      origScrollToBottom();
+    };
+
     // Plugin setup hook
     const pluginCleanup = onTerminalReadyRef.current(term, fitAddon);
 
@@ -203,12 +216,13 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
     }
 
     // ── Resize observer (fit only; onResize goes to plugin) ──
+    // On resize (keyboard open/close, pane split), refit the terminal.
+    // Only scroll to bottom if the user hasn't manually scrolled away.
     const ro = new ResizeObserver(() => {
       fitAddon.fit();
-      // After resize (keyboard open/close, pane split), keep the
-      // input line visible. Without this, the viewport stays at its
-      // previous scroll offset and the bottom gets clipped.
-      term.scrollToBottom();
+      if (!userScrolledUpRef.current) {
+        term.scrollToBottom();
+      }
       const dims = fitAddon.proposeDimensions();
       if (dims) onResizeRef.current?.(dims.cols, dims.rows);
     });
@@ -243,66 +257,109 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
 
   // ── Touch-to-scroll for mobile ─────────────────────────────
   // xterm v6 intercepts touch events and calls preventDefault(),
-  // blocking native scrolling. CSS touch-action has no effect.
+  // blocking native scrolling. We use capture-phase listeners to
+  // intercept BEFORE xterm and call term.scrollLines().
   //
-  // We use capture-phase listeners to intercept BEFORE xterm, and
-  // directly manipulate the viewport's scrollTop. Direct DOM avoids
-  // xterm API calls (scrollToLine/scrollLines) which can trigger
-  // internal resize/scroll-to-bottom side effects.
+  // Delta accumulation: accDelta tracks fractional-line pixel deltas.
+  // FrameDelta = lastY - currentY (+ = finger up → scroll down).
+  // When accDelta crosses ±lineHeight, scrollLines(±1) fires and the
+  // line height is subtracted/added. Direction reversal is natural
+  // because accDelta smoothly transitions positive ↔ negative.
   //
-  //   - Capture phase: fires before xterm's document-level listeners.
-  //   - Direct scrollTop: no xterm API interaction, no side effects.
-  //   - Single-finger only: multi-touch passes through to browser.
-  //   - 5px dead zone: allows tap-to-focus without accidental scroll.
+  // userScrolledUpRef: set true when the user scrolls away from the
+  // live output (scrollLines(-1) fires). Suppresses ResizeObserver's
+  // scrollToBottom so keyboard open/close doesn't yank the user back.
+  // Reset to false when scrollToBottom() is explicitly called.
+  //
+  // Post-scroll click suppression: after a scroll gesture, the browser
+  // fires a click event on touchend. We suppress it for 100ms to prevent
+  // term.focus() from triggering xterm's auto-scroll-to-bottom.
   useEffect(() => {
     const container = containerRef.current;
     if (!container || !isTouchDevice()) return;
 
     let startY = 0;
-    let startScrollTop = 0;
+    let lastY = 0;
     let scrolling = false;
+    let accDelta = 0;
+    const wasScrollingRef = { current: false };
 
-    const getViewport = (): HTMLElement | null =>
-      container.querySelector('.xterm-viewport') as HTMLElement | null;
+    const getLineHeight = (): number => {
+      try {
+        const dims = (termRef.current as any)?._core?._renderService?.dimensions;
+        if (dims?.css?.cell?.height) return dims.css.cell.height;
+      } catch { /* best-effort */ }
+      try {
+        const dims = fitRef.current?.proposeDimensions();
+        if (dims) {
+          const vpEl = container.querySelector('.xterm-viewport') as HTMLElement;
+          if (vpEl && dims.rows > 0) return vpEl.clientHeight / dims.rows;
+        }
+      } catch { /* fall through */ }
+      return 14;
+    };
 
     const handleTouchStart = (e: TouchEvent) => {
       if (e.touches.length === 1) {
         startY = e.touches[0].clientY;
-        const vp = getViewport();
-        startScrollTop = vp?.scrollTop ?? 0;
+        lastY = startY;
         scrolling = false;
+        accDelta = 0;
       }
     };
 
     const handleTouchMove = (e: TouchEvent) => {
       if (e.touches.length !== 1) return;
       const currentY = e.touches[0].clientY;
-      const totalPxDelta = startY - currentY; // + = finger up → scroll down
+      const frameDelta = lastY - currentY; // + = finger up → scroll down
 
-      if (!scrolling && Math.abs(totalPxDelta) > 5) {
+      if (!scrolling && Math.abs(currentY - startY) > 5) {
         scrolling = true;
+        wasScrollingRef.current = true;
       }
 
       if (scrolling) {
-        const vp = getViewport();
-        if (vp) {
-          const maxScroll = Math.max(0, vp.scrollHeight - vp.clientHeight);
-          vp.scrollTop = Math.max(0, Math.min(startScrollTop + totalPxDelta, maxScroll));
+        accDelta += frameDelta;
+        const lineH = getLineHeight();
+        const term = termRef.current;
+        if (term && lineH > 0) {
+          while (accDelta >= lineH) {
+            term.scrollLines(1);
+            accDelta -= lineH;
+          }
+          while (accDelta <= -lineH) {
+            term.scrollLines(-1);
+            accDelta += lineH;
+            // Scrolling away from live output → suppress auto-scroll
+            userScrolledUpRef.current = true;
+          }
         }
-        // Prevent xterm's gesture system from also handling this touch
         e.preventDefault();
       }
+      lastY = currentY;
     };
 
     const handleTouchEnd = () => {
       scrolling = false;
+      accDelta = 0;
+      // Suppress post-scroll click → focus for 100ms
+      setTimeout(() => { wasScrollingRef.current = false; }, 100);
     };
+
+    const suppressClick = (e: Event) => {
+      if (wasScrollingRef.current) {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+      }
+    };
+    container.addEventListener('click', suppressClick, { capture: true });
 
     container.addEventListener('touchstart', handleTouchStart, { capture: true, passive: true });
     container.addEventListener('touchmove', handleTouchMove, { capture: true, passive: false });
     container.addEventListener('touchend', handleTouchEnd, { capture: true, passive: true });
 
     return () => {
+      container.removeEventListener('click', suppressClick, { capture: true });
       container.removeEventListener('touchstart', handleTouchStart, { capture: true });
       container.removeEventListener('touchmove', handleTouchMove, { capture: true });
       container.removeEventListener('touchend', handleTouchEnd, { capture: true });
@@ -324,32 +381,37 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
     fontVariantLigatures: 'none' as const,
   }), []);
 
-  // ── Keyboard-aware bottom padding (direct DOM) ──────────────
-  // Must be a useEffect (not useMemo) because the toolbar element
-  // may still be display:none during React render. The reposition
-  // effect in MobileKeyboardSlot runs after paint and sets display:flex.
-  // We query the toolbar height after layout to get the real value.
+  // ── Keyboard-aware bottom padding ───────────────────────────
+  // The toolbar writes --kb-toolbar-h on <html> when it repositions.
+  // We read it here and apply matching bottom padding so the terminal's
+  // last rows render above the toolbar. Using a CSS custom property
+  // avoids timing issues between React render cycles and DOM layout.
   useEffect(() => {
     const container = containerRef.current;
     if (!container || !isTouchDevice()) return;
 
-    // Poll toolbar height when keyboard is visible — the toolbar
-    // sets display:flex after paint, so we delay by one microtask.
-    let rafId = 0;
     const update = () => {
-      if (keyboardHeight > 0) {
-        const bar = document.querySelector('[data-mobile-keyboard-toolbar]') as HTMLElement | null;
-        const h = bar?.offsetHeight || 100;
+      const h = parseFloat(
+        getComputedStyle(document.documentElement).getPropertyValue('--kb-toolbar-h')
+      ) || 0;
+      if (h > 0) {
         container.style.paddingBottom = `${h}px`;
       } else {
         container.style.paddingBottom = '';
       }
     };
-    // Defer to let toolbar's reposition effect run first
-    rafId = requestAnimationFrame(update);
+
+    // Defer so the toolbar's reposition effect has set display:flex
+    // and the browser has completed layout (offsetHeight is accurate).
+    const rafId = requestAnimationFrame(update);
+
+    // Also listen for the toolbar writing a new value later
+    const observer = new MutationObserver(update);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
 
     return () => {
       cancelAnimationFrame(rafId);
+      observer.disconnect();
       container.style.paddingBottom = '';
     };
   }, [keyboardHeight]);
