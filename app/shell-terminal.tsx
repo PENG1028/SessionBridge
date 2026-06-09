@@ -244,6 +244,110 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
     container.style.paddingBottom = keyboardHeight > 0 ? '100px' : '';
   }, [keyboardHeight]);
 
+  // ── Touch-to-scroll for mobile ─────────────────────────────
+  // xterm v6 renders content on an absolutely-positioned .xterm-screen
+  // inside .xterm-viewport, so the viewport has no native overflow
+  // (scrollHeight === clientHeight). touch-action: none lets touch
+  // events through to JS; we convert finger drags to scrollLines().
+  //
+  // Delta accumulation: frame-by-frame pixel deltas are accumulated
+  // and converted to line scrolls when the accumulation crosses the
+  // terminal cell height. Direction reversal is natural because the
+  // accDelta can go positive or negative.
+  //
+  // Post-scroll guard: after a scroll gesture, the browser fires a
+  // click event. We suppress term.focus() for 150ms to prevent xterm
+  // from scrolling to the cursor position (bottom).
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || !isTouchDevice()) return;
+
+    let startY = 0;
+    let lastY = 0;
+    let scrolling = false;
+    let accDelta = 0;
+    const justScrolled = { value: false };
+
+    const getLineHeight = (): number => {
+      try {
+        const dims = (termRef.current as any)?._core?._renderService?.dimensions;
+        if (dims?.css?.cell?.height) return dims.css.cell.height;
+      } catch { /* best-effort */ }
+      try {
+        const dims = fitRef.current?.proposeDimensions();
+        if (dims) {
+          const vpEl = container.querySelector('.xterm-viewport') as HTMLElement;
+          if (vpEl && dims.rows > 0) return vpEl.clientHeight / dims.rows;
+        }
+      } catch { /* fall through */ }
+      return 14;
+    };
+
+    const handleTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 1) {
+        startY = e.touches[0].clientY;
+        lastY = startY;
+        scrolling = false;
+        accDelta = 0;
+      }
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      if (e.touches.length !== 1) return;
+      const currentY = e.touches[0].clientY;
+      const frameDelta = lastY - currentY; // + = finger up → scroll down
+
+      if (!scrolling && Math.abs(currentY - startY) > 5) {
+        scrolling = true;
+      }
+
+      if (scrolling) {
+        justScrolled.value = true;
+        accDelta += frameDelta;
+        const lineH = getLineHeight();
+        const term = termRef.current;
+        if (term && lineH > 0) {
+          while (accDelta >= lineH) {
+            term.scrollLines(1);
+            accDelta -= lineH;
+          }
+          while (accDelta <= -lineH) {
+            term.scrollLines(-1);
+            accDelta += lineH;
+          }
+        }
+        e.preventDefault();
+      }
+      lastY = currentY;
+    };
+
+    const handleTouchEnd = () => {
+      scrolling = false;
+      accDelta = 0;
+      setTimeout(() => { justScrolled.value = false; }, 150);
+    };
+
+    // Prevent onClick → focus from scrolling to bottom after a gesture
+    const guardClick = (e: Event) => {
+      if (justScrolled.value) {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+      }
+    };
+
+    container.addEventListener('click', guardClick, { capture: true });
+    container.addEventListener('touchstart', handleTouchStart, { capture: true, passive: true });
+    container.addEventListener('touchmove', handleTouchMove, { capture: true, passive: false });
+    container.addEventListener('touchend', handleTouchEnd, { capture: true, passive: true });
+
+    return () => {
+      container.removeEventListener('click', guardClick, { capture: true });
+      container.removeEventListener('touchstart', handleTouchStart, { capture: true });
+      container.removeEventListener('touchmove', handleTouchMove, { capture: true });
+      container.removeEventListener('touchend', handleTouchEnd, { capture: true });
+    };
+  }, []);
+
   // ── Context menu ────────────────────────────────────────────
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
