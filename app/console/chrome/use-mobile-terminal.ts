@@ -49,9 +49,6 @@ export function useMobileTerminal(
     let anyTouchMove = false;
     let lastAppliedDelta = 0;
 
-    const getViewport = (): HTMLElement | null =>
-      container.querySelector('.xterm-viewport') as HTMLElement | null;
-
     const getLineHeight = (): number => {
       try {
         const dims = (termRef.current as any)?._core?._renderService?.dimensions;
@@ -59,35 +56,23 @@ export function useMobileTerminal(
       } catch { /* best-effort */ }
       try {
         const dims = fitRef.current?.proposeDimensions();
-        if (dims) {
-          const vpEl = getViewport();
-          if (vpEl && dims.rows > 0) return vpEl.clientHeight / dims.rows;
+        if (dims && dims.rows > 0) {
+          const vp = container.querySelector('.xterm-viewport') as HTMLElement | null;
+          if (vp) return vp.clientHeight / dims.rows;
         }
       } catch { /* fall through */ }
       return 14;
     };
 
-    const isScrollbarTouch = (touch: Touch, vp: HTMLElement | null): boolean => {
-      if (!vp) return false;
+    const isScrollbarTouch = (touch: Touch): boolean => {
       const target = document.elementFromPoint(touch.clientX, touch.clientY);
-      if (target) {
-        let el: Element | null = target;
-        while (el && el !== vp && el !== container) {
-          if (el.getAttribute('role') === 'presentation' &&
-              (el.parentElement as HTMLElement)?.classList?.contains('xterm-viewport')) {
-            return true;
-          }
-          el = el.parentElement;
-        }
-      }
-      const vpRect = vp.getBoundingClientRect();
-      return touch.clientX > vpRect.right - 24;
+      // xterm v6 scrollbar: .xterm-scrollable-element > .scrollbar > .scra
+      return !!(target && (target as HTMLElement).closest('.scrollbar'));
     };
 
     const handleTouchStart = (e: TouchEvent) => {
       if (e.touches.length === 1) {
-        const vp = getViewport();
-        startedOnScrollbar = isScrollbarTouch(e.touches[0], vp);
+        startedOnScrollbar = isScrollbarTouch(e.touches[0]);
         if (startedOnScrollbar) {
           scrolling = false;
           return;
