@@ -145,7 +145,18 @@ export function useMobileTerminal(
   useEffect(() => {
     const container = containerRef.current;
     if (!container || !isTouchDevice()) return;
-    container.style.paddingBottom = keyboardHeight > 0 ? '100px' : '';
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    if (keyboardHeight > 0) {
+      const bar = document.querySelector('[data-mobile-keyboard-toolbar]') as HTMLElement | null;
+      const barH = bar?.offsetHeight || 90;
+      container.style.paddingBottom = `${keyboardHeight + barH}px`;
+      timer = setTimeout(() => {
+        termRef.current?.scrollToBottom();
+      }, 350);
+    } else {
+      container.style.paddingBottom = '';
+    }
+    return () => { if (timer) clearTimeout(timer); };
   }, [keyboardHeight]);
 
   return { touchScrollingRef };
