@@ -157,7 +157,10 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
       origConsoleError.apply(console, args);
     };
 
-    term.focus();
+    // Focus on desktop only — mobile keyboard is triggered by user tap
+    if (typeof navigator !== 'undefined' && navigator.maxTouchPoints === 0) {
+      term.focus();
+    }
 
     // ── Resize observer ──
     const ro = new ResizeObserver(() => {
@@ -197,9 +200,11 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
     };
   }, []);
 
-  // Focus terminal on mount
+  // Focus terminal on mount — desktop only
   useLayoutEffect(() => {
-    termRef.current?.focus();
+    if (typeof navigator !== 'undefined' && navigator.maxTouchPoints === 0) {
+      termRef.current?.focus();
+    }
   }, []);
 
   const containerStyle = useMemo(() => ({

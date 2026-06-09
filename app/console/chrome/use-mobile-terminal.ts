@@ -149,7 +149,9 @@ export function useMobileTerminal(
     if (keyboardHeight > 0) {
       const bar = document.querySelector('[data-mobile-keyboard-toolbar]') as HTMLElement | null;
       const barH = bar?.offsetHeight || 90;
-      container.style.paddingBottom = `${keyboardHeight + barH}px`;
+      // Only add toolbar height as padding — keyboard is outside
+      // visualViewport so the viewport already shrunk to accommodate it
+      container.style.paddingBottom = `${barH}px`;
       timer = setTimeout(() => {
         termRef.current?.scrollToBottom();
       }, 350);
