@@ -177,10 +177,14 @@ export function useMobileTerminal(
         e.preventDefault();
         e.stopPropagation();
       }
-      (window as any).__touchActive = false;
-      if (!anyTouchMove) {
-        // Pure tap: scrollToBottom + focus textarea. Must be AFTER
-        // __touchActive is cleared so the monkey-patch lets it through.
+      if (anyTouchMove) {
+        // Scroll gesture: keep s2b suppressed for 500ms to catch
+        // any delayed events (click, pointerup, etc.) that might
+        // trigger xterm's internal scrollToBottom/focus.
+        setTimeout(() => { (window as any).__touchActive = false; }, 500);
+      } else {
+        // Pure tap: immediately allow s2b + focus
+        (window as any).__touchActive = false;
         termRef.current?.scrollToBottom();
         const ta = container.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null;
         if (ta) ta.focus();
