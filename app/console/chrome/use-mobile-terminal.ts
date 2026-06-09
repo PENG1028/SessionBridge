@@ -1,21 +1,19 @@
-// ─── useMobileTerminal — mobile touch/scroll for xterm.js ──────
+// ─── useMobileTerminal — mobile touch/scroll for xterm.js v6 ──
 //
-// Self-contained hook. Handles ALL mobile-specific terminal behavior:
-//   - textarea repositioning (Android keyboard focus)
-//   - touch-action: none on container (prevents browser preemption)
-//   - touch-to-scroll via scrollToLine (position-based, no accumulation)
-//   - exclusive gesture capture (content vs scrollbar)
-//   - keyboard-aware bottom padding (avoids toolbar overlap)
+// Handles touch-to-scroll via `scrollLines()` (relative, frame-delta
+// tracked). Uses `scrollLines` instead of `scrollToLine` because the
+// latter triggers xterm's internal "ensure cursor visible" logic
+// which silently resets the viewport to the bottom.
 //
-// Exposes touchScrollingRef so the ResizeObserver can suppress
-// scrollToBottom during active touch gestures.
+// Scroll gesture flow:
+//   touchstart  → record startY, reset lastAppliedDelta
+//   touchmove   → after 5px deadzone: scrollLines(frameDelta),
+//                 preventDefault + stopPropagation
+//   touchend    → if moved: blur textarea (prevent keyboard popup)
+//                 if tap:   focus textarea (show keyboard)
 //
-// NOTE: the touch-to-scroll effect uses [] deps and must run AFTER
-// xterm.open() creates the .xterm element. React runs sibling effects
-// in declaration order (top-down), and this hook is called BEFORE the
-// xterm init useEffect in ShellTerminal. Term-dependent setup (textarea
-// reposition) is deferred via requestAnimationFrame to wait for the
-// xterm init effect to complete.
+// Also: keyboard-aware bottom padding, scrollbar zone detection
+// (pass-through to xterm), guardClick after scroll.
 
 'use client';
 
@@ -64,10 +62,10 @@ export function useMobileTerminal(
 
     // ── Touch scroll state ──
     let startY = 0;
-    let startBaseY = 0;
     let scrolling = false;
     let startedOnScrollbar = false;
     let anyTouchMove = false;
+    let lastAppliedDelta = 0;
     const justScrolled = { value: false };
 
     const getViewport = (): HTMLElement | null =>
@@ -114,7 +112,7 @@ export function useMobileTerminal(
           return;
         }
         startY = e.touches[0].clientY;
-        startBaseY = termRef.current?.buffer?.active?.baseY ?? 0;
+        lastAppliedDelta = 0;
         scrolling = false;
         anyTouchMove = false;
       }
@@ -144,9 +142,12 @@ export function useMobileTerminal(
         justScrolled.value = true;
         touchScrollingRef.current = true;
         const lineH = getLineHeight();
-        const lineDelta = Math.round(totalPxDelta / lineH);
-        const targetLine = Math.max(0, startBaseY + lineDelta);
-        termRef.current?.scrollToLine(targetLine);
+        const totalDelta = Math.round(totalPxDelta / lineH);
+        const frameDelta = totalDelta - lastAppliedDelta;
+        if (frameDelta !== 0) {
+          termRef.current?.scrollLines(frameDelta);
+          lastAppliedDelta = totalDelta;
+        }
         e.preventDefault();
         e.stopPropagation();
       }
@@ -154,9 +155,16 @@ export function useMobileTerminal(
 
     const handleTouchEnd = (e: TouchEvent) => {
       if (anyTouchMove) {
-        // Finger moved → not a tap. Block touchend from xterm.
+        // Finger moved → scroll gesture. Block touchend + blur textarea
+        // to prevent keyboard from popping up after scroll.
         e.preventDefault();
         e.stopPropagation();
+        const ta = container.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null;
+        if (ta) ta.blur();
+      } else {
+        // Pure tap (no movement). Focus textarea to show keyboard.
+        const ta = container.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null;
+        if (ta) ta.focus();
       }
       if (scrolling) {
         const vp = getViewport();
