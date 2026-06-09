@@ -67,6 +67,7 @@ export function useMobileTerminal(
     let startBaseY = 0;
     let scrolling = false;
     let startedOnScrollbar = false;
+    let anyTouchMove = false; // true if ANY touchmove fired (even <5px)
     const justScrolled = { value: false };
 
     const getViewport = (): HTMLElement | null =>
@@ -115,18 +116,20 @@ export function useMobileTerminal(
         startY = e.touches[0].clientY;
         startBaseY = termRef.current?.buffer?.active?.baseY ?? 0;
         scrolling = false;
+        anyTouchMove = false;
       }
     };
 
     const handleTouchMove = (e: TouchEvent) => {
       if (startedOnScrollbar) return;
-      // Block xterm from receiving ANY touchmove — otherwise its
-      // gesture handler starts a competing gesture on the first few
-      // pixels (before our 5px threshold) and triggers scrollToBottom.
       e.preventDefault();
       e.stopPropagation();
 
-      if (e.touches.length !== 1) {
+      // Ghost events with 0 touches (Android quirk): ignore completely.
+      // Multi-touch (>1): release pointer-events suppression but keep
+      // anyTouchMove true so touchend still blocks the "fake tap".
+      if (e.touches.length === 0) return;
+      if (e.touches.length > 1) {
         if (scrolling) {
           const vp = getViewport();
           if (vp) vp.style.pointerEvents = '';
@@ -134,6 +137,7 @@ export function useMobileTerminal(
         }
         return;
       }
+      anyTouchMove = true;
       const currentY = e.touches[0].clientY;
       const totalPxDelta = startY - currentY;
 
@@ -154,21 +158,23 @@ export function useMobileTerminal(
     };
 
     const handleTouchEnd = (e: TouchEvent) => {
-      if (scrolling) {
-        // This was a scroll gesture — block xterm from seeing the
-        // touchend. Otherwise xterm interprets touchstart+touchend
-        // (with no touchmove in between) as a TAP → focus textarea
-        // → scrollToBottom → next gesture starts from the bottom.
+      if (anyTouchMove) {
+        // Any finger movement = NOT a tap. Block xterm from seeing
+        // the touchend so it can't interpret touchstart+touchend
+        // as a tap → focus → scrollToBottom.
         e.preventDefault();
         e.stopPropagation();
+      }
+      // Only a pure tap (touchstart, no touchmove, touchend) passes
+      // through to xterm → keyboard + scroll-to-cursor.
+      if (scrolling) {
         const vp = getViewport();
         if (vp) vp.style.pointerEvents = '';
       }
-      // If !scrolling, this was a pure tap — let xterm handle it
-      // normally (focus, keyboard, scroll-to-cursor).
       touchScrollingRef.current = false;
       scrolling = false;
       startedOnScrollbar = false;
+      anyTouchMove = false;
       setTimeout(() => { justScrolled.value = false; }, 150);
     };
 
