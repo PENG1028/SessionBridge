@@ -109,17 +109,8 @@ export function MobileDebug() {
     let lastBaseY = -1;
 
     const poll = () => {
-      const xtermEl = document.querySelector('.xterm') as HTMLElement | null;
-
-      let xBaseY = 0, xBufLen = 0;
-      try {
-        const anyEl = xtermEl as any;
-        if (anyEl?.__terminal) {
-          const t = anyEl.__terminal;
-          xBaseY = t.buffer?.active?.baseY ?? 0;
-          xBufLen = t.buffer?.active?.length ?? 0;
-        }
-      } catch { /* best-effort */ }
+      const xBaseY = (window as any).__baseY ?? 0;
+      const xBufLen = (window as any).__bufLen ?? 0;
       const s2bCount = (window as any).__s2b || 0;
 
       const dxBaseY = lastBaseY >= 0 ? xBaseY - lastBaseY : 0;

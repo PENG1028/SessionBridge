@@ -131,6 +131,8 @@ export function useMobileTerminal(
         }
         startY = e.touches[0].clientY;
         startBaseY = termRef.current?.buffer?.active?.baseY ?? 0;
+        (window as any).__baseY = startBaseY;
+        (window as any).__bufLen = termRef.current?.buffer?.active?.length ?? 0;
         scrolling = false;
         anyTouchMove = false;
       }
@@ -159,6 +161,9 @@ export function useMobileTerminal(
         const lineDelta = Math.round(totalPxDelta / lineH);
         const targetLine = Math.max(0, startBaseY + lineDelta);
         termRef.current?.scrollToLine(targetLine);
+        // Expose for debug dashboard
+        (window as any).__baseY = targetLine;
+        (window as any).__bufLen = termRef.current?.buffer?.active?.length ?? 0;
       }
     };
 
@@ -171,6 +176,8 @@ export function useMobileTerminal(
         e.stopPropagation();
       }
       touchScrollingRef.current = false;
+      (window as any).__baseY = termRef.current?.buffer?.active?.baseY ?? 0;
+      (window as any).__bufLen = termRef.current?.buffer?.active?.length ?? 0;
       scrolling = false;
       startedOnScrollbar = false;
       anyTouchMove = false;
