@@ -253,13 +253,7 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
         ref={containerRef}
         className="flex-1 w-full min-h-0"
         style={containerStyle}
-        onClick={() => {
-          // On mobile, xterm manages its own focus; calling focus()
-          // here triggers a scroll-to-bottom that jumps the viewport.
-          if (typeof navigator !== 'undefined' && navigator.maxTouchPoints === 0 && !('ontouchstart' in window)) {
-            termRef.current?.focus();
-          }
-        }}
+        onClick={() => termRef.current?.focus()}
         onContextMenu={handleContextMenu}
       />
       {ctxMenu && (
