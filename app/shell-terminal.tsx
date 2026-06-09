@@ -315,6 +315,12 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
             term.scrollLines(-1);
             accDelta += lineH;
           }
+          // Cap accumulated delta so a direction reversal near
+          // buffer boundaries doesn't need to "pay back" a large
+          // debt before scrolling resumes. Without this, fast
+          // scrolls work fine (delta crosses threshold quickly)
+          // but slow scrolls at buffer edges get stuck.
+          accDelta = Math.max(-3 * lineH, Math.min(3 * lineH, accDelta));
         }
         e.preventDefault();
       }
