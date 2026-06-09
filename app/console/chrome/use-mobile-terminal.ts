@@ -1,21 +1,10 @@
 // ─── useMobileTerminal — mobile touch/scroll for xterm.js ──────
 //
-// Self-contained hook. Handles ALL mobile-specific terminal behavior:
-//   - textarea repositioning (Android keyboard focus)
-//   - touch-action: none on container (prevents browser preemption)
-//   - touch-to-scroll via scrollToLine (position-based, no accumulation)
-//   - exclusive gesture capture (content vs scrollbar)
-//   - keyboard-aware bottom padding (avoids toolbar overlap)
+// Self-contained hook. ONE principle:
+//   Xterm receives ZERO touch/pointer events. We handle everything.
 //
-// Exposes touchScrollingRef so the ResizeObserver can suppress
-// scrollToBottom during active touch gestures.
-//
-// NOTE: the touch-to-scroll effect uses [] deps and must run AFTER
-// xterm.open() creates the .xterm element. React runs sibling effects
-// in declaration order (top-down), and this hook is called BEFORE the
-// xterm init useEffect in ShellTerminal. Term-dependent setup (textarea
-// reposition) is deferred via requestAnimationFrame to wait for the
-// xterm init effect to complete.
+// No monkey-patches. No __touchActive. No delayed timeouts.
+// No fighting between two systems — only one system runs.
 
 'use client';
 
@@ -29,6 +18,14 @@ function isTouchDevice(): boolean {
   return navigator.maxTouchPoints > 0 || 'ontouchstart' in window;
 }
 
+function isScrollbarZone(
+  clientX: number,
+  vp: HTMLElement | null,
+): boolean {
+  if (!vp) return false;
+  return clientX > vp.getBoundingClientRect().right - 30;
+}
+
 export function useMobileTerminal(
   containerRef: React.RefObject<HTMLDivElement | null>,
   termRef: React.RefObject<Terminal | null>,
@@ -37,19 +34,12 @@ export function useMobileTerminal(
   const touchScrollingRef = useRef(false);
   const { keyboardHeight } = useKeyboard();
 
-  // ── Touch-to-scroll + initial setup (single effect, [] deps) ──
-  // Term-dependent setup (textarea reposition) is deferred via rAF
-  // because the xterm init useEffect (which creates the .xterm element)
-  // runs AFTER this hook's effects (React declaration order).
   useEffect(() => {
     const container = containerRef.current;
     if (!container || !isTouchDevice()) return;
 
-    // Immediate: prevent browser from consuming touch events
     container.style.touchAction = 'none';
 
-    // Deferred: xterm element isn't created until sibling useEffect runs,
-    // which is after this callback but before the next paint.
     const raf = requestAnimationFrame(() => {
       const ta = container.querySelector('.xterm-helper-textarea') as HTMLElement;
       if (ta) {
@@ -58,18 +48,13 @@ export function useMobileTerminal(
         ta.style.bottom = '0';
         ta.style.width = '1px';
         ta.style.height = '1px';
-        ta.style.pointerEvents = 'none';
       }
     });
 
-    // ── Touch scroll state ──
+    // ── State ────────────────────────────────────────────────
     let startY = 0;
     let startBaseY = 0;
-    let scrolling = false;
-    let startedOnScrollbar = false;
-    let anyTouchMove = false;
-    const justScrolled = { value: false };
-
+    let moved = false;
     const getViewport = (): HTMLElement | null =>
       container.querySelector('.xterm-viewport') as HTMLElement | null;
 
@@ -81,137 +66,75 @@ export function useMobileTerminal(
       try {
         const dims = fitRef.current?.proposeDimensions();
         if (dims) {
-          const vpEl = getViewport();
-          if (vpEl && dims.rows > 0) return vpEl.clientHeight / dims.rows;
+          const vp = getViewport();
+          if (vp && dims.rows > 0) return vp.clientHeight / dims.rows;
         }
       } catch { /* fall through */ }
       return 14;
     };
 
-    const isScrollbarTouch = (touch: Touch, vp: HTMLElement | null): boolean => {
-      if (!vp) return false;
-      const target = document.elementFromPoint(touch.clientX, touch.clientY);
-      if (target) {
-        let el: Element | null = target;
-        while (el && el !== vp && el !== container) {
-          if (el.getAttribute('role') === 'presentation' &&
-              (el.parentElement as HTMLElement)?.classList?.contains('xterm-viewport')) {
-            return true;
-          }
-          el = el.parentElement;
-        }
-      }
-      const vpRect = vp.getBoundingClientRect();
-      return touch.clientX > vpRect.right - 24;
-    };
-
-    // ── pointerdown interception ───────────────────────────────
-    // Xterm's pointerdown handler focuses the textarea → scrollToBottom.
-    // Block pointerdown on content area. Rightmost 30px of viewport
-    // passes through so xterm's custom scrollbar works.
-    const isScrollbarZone = (clientX: number): boolean => {
+    // ── Block ALL pointer events ──────────────────────────────
+    const block = (e: Event) => {
       const vp = getViewport();
-      if (!vp) return false;
-      return clientX > vp.getBoundingClientRect().right - 30;
-    };
-    const handlePointerDown = (e: PointerEvent) => {
-      if (isScrollbarZone(e.clientX)) return;
+      if (e instanceof PointerEvent && isScrollbarZone(e.clientX, vp)) return;
       e.preventDefault();
       e.stopPropagation();
     };
-    container.addEventListener('pointerdown', handlePointerDown, { capture: true });
+    container.addEventListener('pointerdown', block, { capture: true });
+    container.addEventListener('pointerup', block, { capture: true });
+    container.addEventListener('pointermove', block, { capture: true });
+    container.addEventListener('pointercancel', block, { capture: true });
 
+    // ── Touch handlers ────────────────────────────────────────
     const handleTouchStart = (e: TouchEvent) => {
-      if (e.touches.length === 1) {
-        const vp = getViewport();
-        startedOnScrollbar = isScrollbarTouch(e.touches[0], vp);
-        if (startedOnScrollbar) {
-          scrolling = false;
-          return;
-        }
-        // Suppress scrollToBottom during the entire gesture.
-        // Xterm internally calls scrollToBottom on touchstart
-        // (via textarea focus) — we catch it in the monkey-patch.
-        (window as any).__touchActive = true;
-        startY = e.touches[0].clientY;
-        startBaseY = termRef.current?.buffer?.active?.baseY ?? 0;
-        (window as any).__baseY = startBaseY;
-        (window as any).__bufLen = termRef.current?.buffer?.active?.length ?? 0;
-        scrolling = false;
-        anyTouchMove = false;
-      }
+      if (e.touches.length !== 1) return;
+      const vp = getViewport();
+      if (isScrollbarZone(e.touches[0].clientX, vp)) return; // scrollbar
+      e.preventDefault();
+      e.stopPropagation();
+      startY = e.touches[0].clientY;
+      startBaseY = termRef.current?.buffer?.active?.baseY ?? 0;
+      moved = false;
     };
 
     const handleTouchMove = (e: TouchEvent) => {
-      if (startedOnScrollbar) return;
       e.preventDefault();
       e.stopPropagation();
-
-      if (e.touches.length === 0) return;   // Android ghost event
-      if (e.touches.length > 1) { scrolling = false; return; }
-
-      anyTouchMove = true;
-      const currentY = e.touches[0].clientY;
-      const totalPxDelta = startY - currentY;
-
-      if (!scrolling && Math.abs(totalPxDelta) > 5) {
-        scrolling = true;
-      }
-
-      if (scrolling) {
-        justScrolled.value = true;
-        touchScrollingRef.current = true;
-        const lineH = getLineHeight();
-        const lineDelta = Math.round(totalPxDelta / lineH);
-        const targetLine = Math.max(0, startBaseY + lineDelta);
-        termRef.current?.scrollToLine(targetLine);
-        // Expose for debug dashboard
-        (window as any).__baseY = targetLine;
-        (window as any).__bufLen = termRef.current?.buffer?.active?.length ?? 0;
-      }
+      if (e.touches.length !== 1) return;
+      moved = true;
+      const totalPxDelta = startY - e.touches[0].clientY;
+      if (Math.abs(totalPxDelta) < 3) return;
+      touchScrollingRef.current = true;
+      const lineH = getLineHeight();
+      const lineDelta = Math.round(totalPxDelta / lineH);
+      termRef.current?.scrollToLine(Math.max(0, startBaseY + lineDelta));
     };
 
     const handleTouchEnd = (e: TouchEvent) => {
-      if (anyTouchMove) {
-        // Scroll gesture: block xterm from seeing touchend.
-        e.preventDefault();
-        e.stopPropagation();
-      }
-      if (anyTouchMove) {
-        // Scroll gesture: keep suppressed for 3s to catch all delayed events
-        setTimeout(() => { (window as any).__touchActive = false; }, 3000);
-      } else {
-        // Pure tap: immediately allow s2b + focus
-        (window as any).__touchActive = false;
-        termRef.current?.scrollToBottom();
-        const ta = container.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null;
-        if (ta) ta.focus();
-      }
+      e.preventDefault();
+      e.stopPropagation();
       touchScrollingRef.current = false;
-      (window as any).__baseY = termRef.current?.buffer?.active?.baseY ?? 0;
-      (window as any).__bufLen = termRef.current?.buffer?.active?.length ?? 0;
-      scrolling = false;
-      startedOnScrollbar = false;
-      anyTouchMove = false;
-      setTimeout(() => { justScrolled.value = false; }, 150);
-    };
 
-    const guardClick = (e: Event) => {
-      if (justScrolled.value) {
-        e.stopImmediatePropagation();
-        e.preventDefault();
+      if (!moved) {
+        // Pure tap → focus textarea + scroll to cursor
+        const ta = container.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null;
+        if (ta) {
+          ta.focus();
+          termRef.current?.scrollToBottom();
+        }
       }
     };
 
-    container.addEventListener('click', guardClick, { capture: true });
-    container.addEventListener('touchstart', handleTouchStart, { capture: true, passive: true });
+    container.addEventListener('touchstart', handleTouchStart, { capture: true, passive: false });
     container.addEventListener('touchmove', handleTouchMove, { capture: true, passive: false });
     container.addEventListener('touchend', handleTouchEnd, { capture: true, passive: false });
 
     return () => {
       cancelAnimationFrame(raf);
-      container.removeEventListener('pointerdown', handlePointerDown, { capture: true });
-      container.removeEventListener('click', guardClick, { capture: true });
+      container.removeEventListener('pointerdown', block, { capture: true });
+      container.removeEventListener('pointerup', block, { capture: true });
+      container.removeEventListener('pointermove', block, { capture: true });
+      container.removeEventListener('pointercancel', block, { capture: true });
       container.removeEventListener('touchstart', handleTouchStart, { capture: true });
       container.removeEventListener('touchmove', handleTouchMove, { capture: true });
       container.removeEventListener('touchend', handleTouchEnd, { capture: true });

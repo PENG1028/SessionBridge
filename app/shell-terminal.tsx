@@ -144,34 +144,6 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
     term.open(containerRef.current);
     fitAddon.fit();
 
-    // Debug: count + suppress scrollToBottom/focus during touch gestures
-    if (typeof window !== 'undefined') {
-      const origS2B = term.scrollToBottom.bind(term);
-      term.scrollToBottom = () => {
-        (window as any).__s2b = ((window as any).__s2b || 0) + 1;
-        if ((window as any).__touchActive) return;
-        origS2B();
-        (window as any).__baseY = term.buffer?.active?.baseY ?? 0;
-        (window as any).__bufLen = term.buffer?.active?.length ?? 0;
-      };
-      const origFocus = term.focus.bind(term);
-      term.focus = () => {
-        if ((window as any).__touchActive) return;
-        origFocus();
-      };
-      // Also suppress direct textarea focus (xterm may bypass term.focus())
-      const ta = term.element?.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null;
-      if (ta) {
-        const origTaFocus = ta.focus.bind(ta);
-        ta.focus = () => {
-          if ((window as any).__touchActive) return;
-          origTaFocus();
-        };
-      }
-      (window as any).__baseY = term.buffer?.active?.baseY ?? 0;
-      (window as any).__bufLen = term.buffer?.active?.length ?? 0;
-    }
-
     // Plugin setup hook
     const pluginCleanup = onTerminalReadyRef.current(term, fitAddon);
 
@@ -190,9 +162,7 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
     // ── Resize observer ──
     const ro = new ResizeObserver(() => {
       fitAddon.fit();
-      if (!touchScrollingRef.current) {
-        term.scrollToBottom();
-      }
+      term.scrollToBottom();
       const dims = fitAddon.proposeDimensions();
       if (dims) onResizeRef.current?.(dims.cols, dims.rows);
     });
