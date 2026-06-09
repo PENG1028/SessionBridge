@@ -104,6 +104,22 @@ export function useMobileTerminal(
       return touch.clientX > vpRect.right - 24;
     };
 
+    // ── pointerdown interception ───────────────────────────────
+    // Xterm's pointerdown handler focuses the textarea → scrollToBottom.
+    // Block pointerdown on content area. Rightmost 30px of viewport
+    // passes through so xterm's custom scrollbar works.
+    const isScrollbarZone = (clientX: number): boolean => {
+      const vp = getViewport();
+      if (!vp) return false;
+      return clientX > vp.getBoundingClientRect().right - 30;
+    };
+    const handlePointerDown = (e: PointerEvent) => {
+      if (isScrollbarZone(e.clientX)) return;
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    container.addEventListener('pointerdown', handlePointerDown, { capture: true });
+
     const handleTouchStart = (e: TouchEvent) => {
       if (e.touches.length === 1) {
         const vp = getViewport();
@@ -176,6 +192,7 @@ export function useMobileTerminal(
       cancelAnimationFrame(raf);
       const vp = getViewport();
       if (vp) vp.style.pointerEvents = '';
+      container.removeEventListener('pointerdown', handlePointerDown, { capture: true });
       container.removeEventListener('click', guardClick, { capture: true });
       container.removeEventListener('touchstart', handleTouchStart, { capture: true });
       container.removeEventListener('touchmove', handleTouchMove, { capture: true });
