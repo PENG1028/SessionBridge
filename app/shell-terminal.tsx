@@ -176,9 +176,13 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
     // ── Resize observer ──
     const ro = new ResizeObserver(() => {
       fitAddon.fit();
-      if (!touchScrollingRef.current) {
-        term.scrollToBottom();
-      }
+      // DISABLED for testing: scrollToBottom was dragging baseY back
+      // to bottom after every user scroll gesture because touchScrollingRef
+      // is reset on touchend, and any layout change (keyboard polling,
+      // xterm re-render) fires ResizeObserver → scrollToBottom.
+      // if (!touchScrollingRef.current) {
+      //   term.scrollToBottom();
+      // }
       const dims = fitAddon.proposeDimensions();
       if (dims) onResizeRef.current?.(dims.cols, dims.rows);
     });
