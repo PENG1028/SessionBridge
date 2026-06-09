@@ -71,6 +71,9 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
   keyboardHeightRef.current = keyboardHeight;
   const keyboardVisibleRef = useRef(false);
   keyboardVisibleRef.current = keyboardVisible;
+  // Baseline: min (screen.height - visualViewport.height). Used by
+  // reposition() for direct detection without React state delay.
+  const baselineRef = useRef(9999);
   ctrlOnRef.current = ctrlOn;
   altOnRef.current = altOn;
 
@@ -85,7 +88,13 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
     if (!el) return;
 
     const reposition = () => {
-      if (keyboardVisibleRef.current) {
+      // Direct measurement — bypasses React state delay. When
+      // scroll/resize events fire before the next poll/react-render,
+      // keyboardVisibleRef may still hold the old value.
+      const raw = window.screen.height - (window.visualViewport?.height ?? window.innerHeight);
+      if (raw < baselineRef.current) baselineRef.current = raw;
+      const kbNow = Math.max(0, raw - baselineRef.current);
+      if (kbNow > 60) {
         el.style.display = 'flex';
         const vp = window.visualViewport;
         if (vp) {
