@@ -1,12 +1,13 @@
 // ─── useKeyboard — detect virtual keyboard on mobile ──────────────
 //
-// Compares visualViewport.height against the initial innerHeight
-// (recorded on first measurement when no keyboard should be open).
-// When visual viewport is significantly shorter, the keyboard is open.
+// Uses screen.height (constant) minus visualViewport.height minus a
+// one-time baseline (browser chrome). Baseline is captured ONCE on
+// first measurement and never lowered — this fixes the false positive
+// when browser chrome (address bar) hides/shows.
 //
-// Previous approach used screen.height - visualViewport.height minus
-// a moving baseline. That failed because browser chrome (address bar)
-// show/hide changes the baseline, causing false keyboard detections.
+// Previous approach kept lowering the baseline (min tracking), causing
+// chrome hide→baseline→0 → chrome show→looks like keyboard. Fixed by
+// never lowering baseline after initial capture.
 
 'use client';
 
@@ -30,9 +31,11 @@ export function useKeyboard(): KeyboardState {
 
   const stateRef = useRef(state);
   stateRef.current = state;
-  // Reference layout viewport height (when no keyboard is open).
-  // Set once on first measurement and never updated.
-  const refHeightRef = useRef<number>(0);
+  // Baseline: screen.height - visualViewport.height when NO keyboard is open.
+  // Set once on first measurement, never lowered. This tracks browser chrome
+  // height (address bar, navigation) which is the minimum raw value.
+  const baselineRef = useRef<number>(0);
+  const initializedRef = useRef(false);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -68,14 +71,16 @@ export function useKeyboard(): KeyboardState {
     const vp = window.visualViewport!;
 
     const sync = () => {
-      // Record the full viewport height on first call (no keyboard should be open).
-      // innerHeight stays stable on iOS and most Android browsers when keyboard opens;
-      // visualViewport.height shrinks.
-      if (refHeightRef.current === 0) {
-        refHeightRef.current = window.innerHeight;
+      // screen.height is physical, never changes. vp.height shrinks when
+      // keyboard opens. Their difference minus baseline (browser chrome)
+      // gives keyboard height.
+      const raw = window.screen.height - vp.height;
+      if (!initializedRef.current) {
+        // First measurement: assume no keyboard, raw = browser chrome only
+        baselineRef.current = raw;
+        initializedRef.current = true;
       }
-      const refH = refHeightRef.current || window.innerHeight;
-      const h = Math.max(0, refH - vp.height);
+      const h = Math.max(0, raw - baselineRef.current);
       const visible = h > KEYBOARD_THRESHOLD;
       const prev = stateRef.current;
       if (prev.keyboardHeight === h && prev.isVisible === visible) return;
@@ -84,11 +89,9 @@ export function useKeyboard(): KeyboardState {
 
     sync();
 
-    // Event-driven
     vp.addEventListener('resize', sync, { passive: true });
     window.addEventListener('resize', sync, { passive: true });
 
-    // Polling fallback (Android Edge doesn't reliably fire visualViewport.resize)
     const pollId = setInterval(sync, POLL_INTERVAL);
 
     return () => {

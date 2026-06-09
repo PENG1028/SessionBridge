@@ -141,24 +141,30 @@ export function useMobileTerminal(
     };
   }, []);
 
-  // ── Keyboard-aware bottom padding ──────────────────────────
+  // ── Keyboard-aware layout ──────────────────────────────────
+  //
+  // Simply pad the container bottom when keyboard opens so the
+  // xterm viewport doesn't extend behind the toolbar. No translate,
+  // no scrollToBottom — xterm stays in its natural position.
   useEffect(() => {
     const container = containerRef.current;
     if (!container || !isTouchDevice()) return;
-    let timer: ReturnType<typeof setTimeout> | null = null;
+
     if (keyboardHeight > 0) {
-      const bar = document.querySelector('[data-mobile-keyboard-toolbar]') as HTMLElement | null;
-      const barH = bar?.offsetHeight || 90;
-      // Only add toolbar height as padding — keyboard is outside
-      // visualViewport so the viewport already shrunk to accommodate it
-      container.style.paddingBottom = `${barH}px`;
-      timer = setTimeout(() => {
+      // Defer one frame so toolbar DOM is laid out before measuring
+      requestAnimationFrame(() => {
+        const bar = document.querySelector('[data-mobile-keyboard-toolbar]') as HTMLElement | null;
+        if (!bar) return;
+        const barTop = bar.getBoundingClientRect().top;
+        const cTop = container.getBoundingClientRect().top;
+        container.style.maxHeight = `${barTop - cTop}px`;
+        fitRef.current?.fit();
         termRef.current?.scrollToBottom();
-      }, 350);
+      });
     } else {
-      container.style.paddingBottom = '';
+      container.style.maxHeight = '';
+      fitRef.current?.fit();
     }
-    return () => { if (timer) clearTimeout(timer); };
   }, [keyboardHeight]);
 
   return { touchScrollingRef };
