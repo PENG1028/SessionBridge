@@ -7,8 +7,15 @@
 //   - exclusive gesture capture (content vs scrollbar)
 //   - keyboard-aware bottom padding (avoids toolbar overlap)
 //
-// Exposes touchScrollingRef so the ResizeObserver in shell-terminal
-// can suppress scrollToBottom during active touch gestures.
+// Exposes touchScrollingRef so the ResizeObserver can suppress
+// scrollToBottom during active touch gestures.
+//
+// NOTE: the touch-to-scroll effect uses [] deps and must run AFTER
+// xterm.open() creates the .xterm element. React runs sibling effects
+// in declaration order (top-down), and this hook is called BEFORE the
+// xterm init useEffect in ShellTerminal. Term-dependent setup (textarea
+// reposition) is deferred via requestAnimationFrame to wait for the
+// xterm init effect to complete.
 
 'use client';
 
@@ -30,41 +37,32 @@ export function useMobileTerminal(
   const touchScrollingRef = useRef(false);
   const { keyboardHeight } = useKeyboard();
 
-  // ── Initial mobile setup (runs once after xterm.open) ──────
+  // ── Touch-to-scroll + initial setup (single effect, [] deps) ──
+  // Term-dependent setup (textarea reposition) is deferred via rAF
+  // because the xterm init useEffect (which creates the .xterm element)
+  // runs AFTER this hook's effects (React declaration order).
   useEffect(() => {
     const container = containerRef.current;
-    const term = termRef.current;
-    if (!container || !term || !isTouchDevice()) return;
+    if (!container || !isTouchDevice()) return;
 
-    // Reposition hidden textarea so Android doesn't scroll to
-    // x=-9999em when focusing for keyboard input.
-    const ta = term.element?.querySelector('.xterm-helper-textarea') as HTMLElement;
-    if (ta) {
-      ta.style.left = '0';
-      ta.style.top = 'auto';
-      ta.style.bottom = '0';
-      ta.style.width = '1px';
-      ta.style.height = '1px';
-      ta.style.pointerEvents = 'none';
-    }
-
-    // Prevent browser from consuming touch events for native scroll.
-    // Set on the container so edge zones are also covered.
+    // Immediate: prevent browser from consuming touch events
     container.style.touchAction = 'none';
-  }, []); // one-shot: fires after xterm.open() sets termRef
 
-  // ── Keyboard-aware bottom padding ──────────────────────────
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container || !isTouchDevice()) return;
-    container.style.paddingBottom = keyboardHeight > 0 ? '100px' : '';
-  }, [keyboardHeight]);
+    // Deferred: xterm element isn't created until sibling useEffect runs,
+    // which is after this callback but before the next paint.
+    const raf = requestAnimationFrame(() => {
+      const ta = container.querySelector('.xterm-helper-textarea') as HTMLElement;
+      if (ta) {
+        ta.style.left = '0';
+        ta.style.top = 'auto';
+        ta.style.bottom = '0';
+        ta.style.width = '1px';
+        ta.style.height = '1px';
+        ta.style.pointerEvents = 'none';
+      }
+    });
 
-  // ── Touch-to-scroll ────────────────────────────────────────
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container || !isTouchDevice()) return;
-
+    // ── Touch scroll state ──
     let startY = 0;
     let startBaseY = 0;
     let scrolling = false;
@@ -175,6 +173,7 @@ export function useMobileTerminal(
     container.addEventListener('touchend', handleTouchEnd, { capture: true, passive: true });
 
     return () => {
+      cancelAnimationFrame(raf);
       const vp = getViewport();
       if (vp) vp.style.pointerEvents = '';
       container.removeEventListener('click', guardClick, { capture: true });
@@ -183,6 +182,13 @@ export function useMobileTerminal(
       container.removeEventListener('touchend', handleTouchEnd, { capture: true });
     };
   }, []);
+
+  // ── Keyboard-aware bottom padding ──────────────────────────
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || !isTouchDevice()) return;
+    container.style.paddingBottom = keyboardHeight > 0 ? '100px' : '';
+  }, [keyboardHeight]);
 
   return { touchScrollingRef };
 }
