@@ -41,6 +41,9 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
   onResizeRef.current = onResize;
   const onUserInputRef = useRef(onUserInput);
   onUserInputRef.current = onUserInput;
+  // True during a touch-scroll gesture. ResizeObserver suppresses
+  // scrollToBottom while this is set to avoid fighting the user.
+  const touchScrollingRef = useRef(false);
 
   // ── Local echo + user-input bridge ──────────────────────────
   const handleUserInput = useCallback((data: string) => {
@@ -184,7 +187,9 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
     // ── Resize observer ──
     const ro = new ResizeObserver(() => {
       fitAddon.fit();
-      term.scrollToBottom();
+      if (!touchScrollingRef.current) {
+        term.scrollToBottom();
+      }
       const dims = fitAddon.proposeDimensions();
       if (dims) onResizeRef.current?.(dims.cols, dims.rows);
     });
@@ -348,14 +353,11 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
 
       if (scrolling) {
         justScrolled.value = true;
+        touchScrollingRef.current = true;
         const lineH = getLineHeight();
         const lineDelta = Math.round(totalPxDelta / lineH);
-        const targetBaseY = Math.max(0, startBaseY + lineDelta);
-        const currentBaseY = termRef.current?.buffer?.active?.baseY ?? 0;
-        const delta = targetBaseY - currentBaseY;
-        if (delta !== 0) {
-          termRef.current?.scrollLines(delta);
-        }
+        const targetLine = Math.max(0, startBaseY + lineDelta);
+        termRef.current?.scrollToLine(targetLine);
         e.preventDefault();
         e.stopPropagation();
       }
@@ -366,6 +368,7 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
         const vp = getViewport();
         if (vp) vp.style.pointerEvents = '';
       }
+      touchScrollingRef.current = false;
       scrolling = false;
       startedOnScrollbar = false;
       setTimeout(() => { justScrolled.value = false; }, 150);
