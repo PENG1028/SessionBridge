@@ -51,7 +51,6 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
   const ctrlTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const altTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
-  const keyboardHeightRef = useRef(0);
   const ctrlOnRef = useRef(false);
   const altOnRef = useRef(false);
 
@@ -67,34 +66,19 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
     }
   }, [touchDevice]);
 
-  // Sync to refs for direct DOM updates (bypasses React render cycle)
-  keyboardHeightRef.current = keyboardHeight;
-  const keyboardVisibleRef = useRef(false);
-  keyboardVisibleRef.current = keyboardVisible;
-  // Baseline: min (screen.height - visualViewport.height). Used by
-  // reposition() for direct detection without React state delay.
-  const baselineRef = useRef(9999);
   ctrlOnRef.current = ctrlOn;
   altOnRef.current = altOn;
 
-  // Direct DOM update for toolbar position — bypasses React render cycle.
-  // Uses `top` (not `bottom`) because iOS Safari's position:fixed with
-  // `bottom` doesn't track visualViewport changes when the keyboard opens.
-  // Listens to BOTH keyboardHeight changes AND scroll events, because
-  // after input the terminal auto-scrolls to bottom, which may shift the
-  // visual viewport without changing keyboard height.
+  // Direct DOM update for toolbar position.
+  // Uses keyboardVisible from useKeyboard() — the hook now uses stable
+  // innerHeight reference instead of a moving baseline, fixing false
+  // positives when browser chrome (address bar) shows/hides.
   useEffect(() => {
     const el = toolbarRef.current;
     if (!el) return;
 
     const reposition = () => {
-      // Direct measurement — bypasses React state delay. When
-      // scroll/resize events fire before the next poll/react-render,
-      // keyboardVisibleRef may still hold the old value.
-      const raw = window.screen.height - (window.visualViewport?.height ?? window.innerHeight);
-      if (raw < baselineRef.current) baselineRef.current = raw;
-      const kbNow = Math.max(0, raw - baselineRef.current);
-      if (kbNow > 60) {
+      if (keyboardVisible) {
         el.style.display = 'flex';
         const vp = window.visualViewport;
         if (vp) {
@@ -105,15 +89,11 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
         }
       } else {
         el.style.display = 'none';
-        el.style.top = '';
-        el.style.left = '';
-        el.style.right = '';
       }
     };
 
     reposition();
 
-    // Reposition on any viewport change, not just height changes
     window.visualViewport?.addEventListener('scroll', reposition, { passive: true });
     window.visualViewport?.addEventListener('resize', reposition, { passive: true });
     window.addEventListener('scroll', reposition, { passive: true });
@@ -123,7 +103,7 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
       window.visualViewport?.removeEventListener('resize', reposition);
       window.removeEventListener('scroll', reposition);
     };
-  }, [keyboardHeight]);
+  }, [keyboardVisible, keyboardHeight]);
 
   // Read contributed items from registry
   const items = useMemo(() => getMobileKeyboardContributions(), []);
