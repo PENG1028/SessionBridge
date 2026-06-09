@@ -153,11 +153,19 @@ export function useMobileTerminal(
       }
     };
 
-    const handleTouchEnd = () => {
+    const handleTouchEnd = (e: TouchEvent) => {
       if (scrolling) {
+        // This was a scroll gesture — block xterm from seeing the
+        // touchend. Otherwise xterm interprets touchstart+touchend
+        // (with no touchmove in between) as a TAP → focus textarea
+        // → scrollToBottom → next gesture starts from the bottom.
+        e.preventDefault();
+        e.stopPropagation();
         const vp = getViewport();
         if (vp) vp.style.pointerEvents = '';
       }
+      // If !scrolling, this was a pure tap — let xterm handle it
+      // normally (focus, keyboard, scroll-to-cursor).
       touchScrollingRef.current = false;
       scrolling = false;
       startedOnScrollbar = false;
@@ -174,7 +182,7 @@ export function useMobileTerminal(
     container.addEventListener('click', guardClick, { capture: true });
     container.addEventListener('touchstart', handleTouchStart, { capture: true, passive: true });
     container.addEventListener('touchmove', handleTouchMove, { capture: true, passive: false });
-    container.addEventListener('touchend', handleTouchEnd, { capture: true, passive: true });
+    container.addEventListener('touchend', handleTouchEnd, { capture: true, passive: false });
 
     return () => {
       cancelAnimationFrame(raf);
