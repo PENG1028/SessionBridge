@@ -120,6 +120,12 @@ export function useMobileTerminal(
 
     const handleTouchMove = (e: TouchEvent) => {
       if (startedOnScrollbar) return;
+      // Block xterm from receiving ANY touchmove — otherwise its
+      // gesture handler starts a competing gesture on the first few
+      // pixels (before our 5px threshold) and triggers scrollToBottom.
+      e.preventDefault();
+      e.stopPropagation();
+
       if (e.touches.length !== 1) {
         if (scrolling) {
           const vp = getViewport();
@@ -144,8 +150,6 @@ export function useMobileTerminal(
         const lineDelta = Math.round(totalPxDelta / lineH);
         const targetLine = Math.max(0, startBaseY + lineDelta);
         termRef.current?.scrollToLine(targetLine);
-        e.preventDefault();
-        e.stopPropagation();
       }
     };
 
