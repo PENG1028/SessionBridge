@@ -144,13 +144,18 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
     term.open(containerRef.current);
     fitAddon.fit();
 
-    // Debug: count scrollToBottom calls so MobileDebug can display who triggered the jump
+    // Debug: count scrollToBottom calls + expose buffer pos for MobileDebug
     if (typeof window !== 'undefined') {
       const origS2B = term.scrollToBottom.bind(term);
       term.scrollToBottom = () => {
         (window as any).__s2b = ((window as any).__s2b || 0) + 1;
         origS2B();
+        (window as any).__baseY = term.buffer?.active?.baseY ?? 0;
+        (window as any).__bufLen = term.buffer?.active?.length ?? 0;
       };
+      // Initial exposure
+      (window as any).__baseY = term.buffer?.active?.baseY ?? 0;
+      (window as any).__bufLen = term.buffer?.active?.length ?? 0;
     }
 
     // Plugin setup hook
