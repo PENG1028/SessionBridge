@@ -129,6 +129,10 @@ export function useMobileTerminal(
           scrolling = false;
           return;
         }
+        // Suppress scrollToBottom during the entire gesture.
+        // Xterm internally calls scrollToBottom on touchstart
+        // (via textarea focus) — we catch it in the monkey-patch.
+        (window as any).__touchActive = true;
         startY = e.touches[0].clientY;
         startBaseY = termRef.current?.buffer?.active?.baseY ?? 0;
         (window as any).__baseY = startBaseY;
@@ -169,11 +173,17 @@ export function useMobileTerminal(
 
     const handleTouchEnd = (e: TouchEvent) => {
       if (anyTouchMove) {
-        // Finger moved → not a tap. Block touchend from xterm so
-        // it can't interpret touchstart+touchend as a tap → focus
-        // textarea → scrollToBottom.
+        // Scroll gesture: block xterm from seeing touchend.
         e.preventDefault();
         e.stopPropagation();
+      }
+      (window as any).__touchActive = false;
+      if (!anyTouchMove) {
+        // Pure tap: scrollToBottom + focus textarea. Must be AFTER
+        // __touchActive is cleared so the monkey-patch lets it through.
+        termRef.current?.scrollToBottom();
+        const ta = container.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null;
+        if (ta) ta.focus();
       }
       touchScrollingRef.current = false;
       (window as any).__baseY = termRef.current?.buffer?.active?.baseY ?? 0;
