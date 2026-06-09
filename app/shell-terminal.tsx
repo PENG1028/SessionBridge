@@ -245,27 +245,31 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
   }, [keyboardHeight]);
 
   // ── Touch-to-scroll for mobile ─────────────────────────────
-  // xterm v6 renders content on an absolutely-positioned .xterm-screen
-  // inside .xterm-viewport, so the viewport has no native overflow
-  // (scrollHeight === clientHeight). touch-action: none lets touch
-  // events through to JS; we convert finger drags to scrollLines().
+  // xterm v6 viewport has no native overflow (screen is absolute-
+  // positioned, scrollHeight === clientHeight). touch-action: none
+  // lets touch events through to JS without browser preemption.
   //
-  // Delta accumulation: frame-by-frame pixel deltas are accumulated
-  // and converted to line scrolls when the accumulation crosses the
-  // terminal cell height. Direction reversal is natural because the
-  // accDelta can go positive or negative.
+  // Position-based (not delta accumulation):
+  //   On touchstart, record the finger Y and buffer baseY.
+  //   On touchmove, compute the absolute target line from the
+  //   TOTAL pixel offset since touchstart. Compute the delta
+  //   between target and current buffer position, and call
+  //   scrollLines(delta) once per frame.
   //
-  // Post-scroll guard: after a scroll gesture, the browser fires a
-  // click event. We suppress term.focus() for 150ms to prevent xterm
-  // from scrolling to the cursor position (bottom).
+  //   Unlike delta accumulation, there is no "debt" to pay back
+  //   when reversing direction or hitting buffer boundaries.
+  //   The target is recomputed from scratch each frame against
+  //   the starting position. Slow, fast, reversing — all work.
+  //
+  // Post-scroll guard: suppress onClick→focus for 150ms after
+  // a scroll gesture to prevent xterm from scrolling to bottom.
   useEffect(() => {
     const container = containerRef.current;
     if (!container || !isTouchDevice()) return;
 
     let startY = 0;
-    let lastY = 0;
+    let startBaseY = 0;
     let scrolling = false;
-    let accDelta = 0;
     const justScrolled = { value: false };
 
     const getLineHeight = (): number => {
@@ -286,50 +290,36 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
     const handleTouchStart = (e: TouchEvent) => {
       if (e.touches.length === 1) {
         startY = e.touches[0].clientY;
-        lastY = startY;
+        startBaseY = termRef.current?.buffer?.active?.baseY ?? 0;
         scrolling = false;
-        accDelta = 0;
       }
     };
 
     const handleTouchMove = (e: TouchEvent) => {
       if (e.touches.length !== 1) return;
       const currentY = e.touches[0].clientY;
-      const frameDelta = lastY - currentY; // + = finger up → scroll down
+      const totalPxDelta = startY - currentY; // + = finger up → scroll down
 
-      if (!scrolling && Math.abs(currentY - startY) > 5) {
+      if (!scrolling && Math.abs(totalPxDelta) > 5) {
         scrolling = true;
       }
 
       if (scrolling) {
         justScrolled.value = true;
-        accDelta += frameDelta;
         const lineH = getLineHeight();
-        const term = termRef.current;
-        if (term && lineH > 0) {
-          while (accDelta >= lineH) {
-            term.scrollLines(1);
-            accDelta -= lineH;
-          }
-          while (accDelta <= -lineH) {
-            term.scrollLines(-1);
-            accDelta += lineH;
-          }
-          // Cap accumulated delta so a direction reversal near
-          // buffer boundaries doesn't need to "pay back" a large
-          // debt before scrolling resumes. Without this, fast
-          // scrolls work fine (delta crosses threshold quickly)
-          // but slow scrolls at buffer edges get stuck.
-          accDelta = Math.max(-3 * lineH, Math.min(3 * lineH, accDelta));
+        const lineDelta = Math.round(totalPxDelta / lineH);
+        const targetBaseY = Math.max(0, startBaseY + lineDelta);
+        const currentBaseY = termRef.current?.buffer?.active?.baseY ?? 0;
+        const delta = targetBaseY - currentBaseY;
+        if (delta !== 0) {
+          termRef.current?.scrollLines(delta);
         }
         e.preventDefault();
       }
-      lastY = currentY;
     };
 
     const handleTouchEnd = () => {
       scrolling = false;
-      accDelta = 0;
       setTimeout(() => { justScrolled.value = false; }, 150);
     };
 
