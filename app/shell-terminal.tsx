@@ -175,13 +175,10 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
         ta.style.height = '1px';
         ta.style.pointerEvents = 'none';
       }
-      // Set touch-action: none on the xterm element so the browser
-      // doesn't consume touch events for native scroll — xterm v6
-      // has its own gesture system that handles touch scrolling
-      // internally via the custom scrollbar.
-      if (term.element) {
-        term.element.style.touchAction = 'none';
-      }
+      // Set touch-action: none on the CONTAINER (not just .xterm) so
+      // the entire terminal area — including edge zones where .xterm
+      // might not perfectly cover — is protected from browser preemption.
+      (containerRef.current as HTMLElement).style.touchAction = 'none';
     }
 
     // ── Resize observer ──

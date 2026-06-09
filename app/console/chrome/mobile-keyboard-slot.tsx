@@ -55,7 +55,7 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
   const ctrlOnRef = useRef(false);
   const altOnRef = useRef(false);
 
-  const { keyboardHeight } = useKeyboard();
+  const { keyboardHeight, isVisible: keyboardVisible } = useKeyboard();
 
   // Ensure touchDevice is set before the first paint. useEffect fires
   // after paint, which is too late — the toolbar DOM must exist before
@@ -67,17 +67,16 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
     }
   }, [touchDevice]);
 
-  // Sync keyboardHeight to both the ref (for direct DOM updates)
-  // and trigger re-render (for visibility toggle).
+  // Sync to refs for direct DOM updates (bypasses React render cycle)
   keyboardHeightRef.current = keyboardHeight;
+  const keyboardVisibleRef = useRef(false);
+  keyboardVisibleRef.current = keyboardVisible;
   ctrlOnRef.current = ctrlOn;
   altOnRef.current = altOn;
 
   // Direct DOM update for toolbar position — bypasses React render cycle.
   // Uses `top` (not `bottom`) because iOS Safari's position:fixed with
   // `bottom` doesn't track visualViewport changes when the keyboard opens.
-  // Formula: position toolbar just above the keyboard, at the bottom of
-  // the visual viewport.
   // Listens to BOTH keyboardHeight changes AND scroll events, because
   // after input the terminal auto-scrolls to bottom, which may shift the
   // visual viewport without changing keyboard height.
@@ -86,8 +85,7 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
     if (!el) return;
 
     const reposition = () => {
-      const h = keyboardHeightRef.current;
-      if (h > 0) {
+      if (keyboardVisibleRef.current) {
         el.style.display = 'flex';
         const vp = window.visualViewport;
         if (vp) {

@@ -21,7 +21,7 @@ export interface KeyboardState {
   isSupported: boolean;
 }
 
-const KEYBOARD_THRESHOLD = 30;
+const KEYBOARD_THRESHOLD = 60;
 const POLL_INTERVAL = 300;
 
 export function useKeyboard(): KeyboardState {
