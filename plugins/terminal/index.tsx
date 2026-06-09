@@ -303,10 +303,9 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
       } else {
         term.write(event.data);
       }
-      // Auto-scroll to follow live output. xterm.js only auto-scrolls
-      // on write() when the viewport is already at the bottom; after a
-      // resize (keyboard, pane split) it might not be, so force it.
-      term.scrollToBottom();
+      // Let xterm.js handle auto-scroll: it only scrolls on write()
+      // when the viewport is already at the bottom. If the user scrolled
+      // up to read history, we must NOT force them back down.
     };
     core.on('stream.chunk', chunkHandler);
 
@@ -342,7 +341,6 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
       if (r?.events) for (const evt of r.events) {
         if (evt.data) term.write(evt.data);
       }
-      term.scrollToBottom();
     }).catch(() => {});
     core.call<{ events?: Array<{ data: string }> }>('stream.replay', {
       sessionId: coreSessionId, streamType: 'stderr', fromSeq,
@@ -350,7 +348,6 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
       if (r?.events) for (const evt of r.events) {
         if (evt.data) term.write('\x1b[91m' + evt.data + '\x1b[0m');
       }
-      term.scrollToBottom();
     }).catch(() => {});
     // On restore, send Enter after replay so the shell prints a fresh prompt
     if (!sessionFresh) {
