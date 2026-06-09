@@ -12,8 +12,7 @@
 //   touchend    → if moved: blur textarea (prevent keyboard popup)
 //                 if tap:   focus textarea (show keyboard)
 //
-// Also: keyboard-aware bottom padding, scrollbar zone detection
-// (pass-through to xterm), guardClick after scroll.
+// Also: keyboard-aware bottom padding, scrollbar passthrough.
 
 'use client';
 
@@ -35,10 +34,7 @@ export function useMobileTerminal(
   const touchScrollingRef = useRef(false);
   const { keyboardHeight } = useKeyboard();
 
-  // ── Touch-to-scroll + initial setup (single effect, [] deps) ──
-  // Term-dependent setup (textarea reposition) is deferred via rAF
-  // because the xterm init useEffect (which creates the .xterm element)
-  // runs AFTER this hook's effects (React declaration order).
+  // ── Touch-to-scroll ────────────────────────────────────────
   useEffect(() => {
     const container = containerRef.current;
     if (!container || !isTouchDevice()) return;
@@ -52,7 +48,6 @@ export function useMobileTerminal(
     let startedOnScrollbar = false;
     let anyTouchMove = false;
     let lastAppliedDelta = 0;
-    const justScrolled = { value: false };
 
     const getViewport = (): HTMLElement | null =>
       container.querySelector('.xterm-viewport') as HTMLElement | null;
@@ -108,11 +103,7 @@ export function useMobileTerminal(
       if (startedOnScrollbar) return;
       anyTouchMove = true;
       if (e.touches.length !== 1) {
-        if (scrolling) {
-          const vp = getViewport();
-          if (vp) vp.style.pointerEvents = '';
-          scrolling = false;
-        }
+        scrolling = false;
         return;
       }
       const currentY = e.touches[0].clientY;
@@ -120,12 +111,9 @@ export function useMobileTerminal(
 
       if (!scrolling && Math.abs(totalPxDelta) > 5) {
         scrolling = true;
-        const vp = getViewport();
-        if (vp) vp.style.pointerEvents = 'none';
       }
 
       if (scrolling) {
-        justScrolled.value = true;
         touchScrollingRef.current = true;
         const lineH = getLineHeight();
         const totalDelta = Math.round(totalPxDelta / lineH);
@@ -152,33 +140,16 @@ export function useMobileTerminal(
         const ta = container.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null;
         if (ta) ta.focus();
       }
-      if (scrolling) {
-        const vp = getViewport();
-        if (vp) vp.style.pointerEvents = '';
-      }
       touchScrollingRef.current = false;
       scrolling = false;
       startedOnScrollbar = false;
       anyTouchMove = false;
-      setTimeout(() => { justScrolled.value = false; }, 150);
     };
-
-    const guardClick = (e: Event) => {
-      if (justScrolled.value) {
-        e.stopImmediatePropagation();
-        e.preventDefault();
-      }
-    };
-
-    container.addEventListener('click', guardClick, { capture: true });
     container.addEventListener('touchstart', handleTouchStart, { capture: true, passive: true });
     container.addEventListener('touchmove', handleTouchMove, { capture: true, passive: false });
     container.addEventListener('touchend', handleTouchEnd, { capture: true, passive: false });
 
     return () => {
-      const vp = getViewport();
-      if (vp) vp.style.pointerEvents = '';
-      container.removeEventListener('click', guardClick, { capture: true });
       container.removeEventListener('touchstart', handleTouchStart, { capture: true });
       container.removeEventListener('touchmove', handleTouchMove, { capture: true });
       container.removeEventListener('touchend', handleTouchEnd, { capture: true });
