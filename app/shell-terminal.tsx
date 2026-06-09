@@ -159,6 +159,15 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
         if ((window as any).__touchActive) return;
         origFocus();
       };
+      // Also suppress direct textarea focus (xterm may bypass term.focus())
+      const ta = term.element?.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null;
+      if (ta) {
+        const origTaFocus = ta.focus.bind(ta);
+        ta.focus = () => {
+          if ((window as any).__touchActive) return;
+          origTaFocus();
+        };
+      }
       (window as any).__baseY = term.buffer?.active?.baseY ?? 0;
       (window as any).__bufLen = term.buffer?.active?.length ?? 0;
     }
