@@ -7,10 +7,11 @@ import type { IDisposable } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { ContextMenu, type ContextMenuItem } from './console/shell/context-menu';
 import { MobileKeyboardSlot } from './console/chrome/mobile-keyboard-slot';
-import { useKeyboard } from '../lib/use-keyboard';
+import { useMobileTerminal } from './console/chrome/use-mobile-terminal';
 
 // ─── ShellTerminal — pure xterm.js host ────────────────────────────
 // Owns: xterm init/theme/fit, keyboard shortcuts, context menu, resize observer.
+// Mobile touch/scroll/padding → useMobileTerminal hook.
 // Does NOT know about Core, streams, stdin buffering, or OSC protocols.
 // All Core integration goes through onTerminalReady / onUserInput / onResize.
 
@@ -21,18 +22,15 @@ export interface ShellTerminalProps {
   onOpenDirectoryPicker?: () => void;
 }
 
-function isTouchDevice(): boolean {
-  if (typeof window === 'undefined') return false;
-  return navigator.maxTouchPoints > 0 || 'ontouchstart' in window;
-}
-
 export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, onOpenDirectoryPicker }: ShellTerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
   const [terminalFocused, setTerminalFocused] = useState(false);
-  const { keyboardHeight } = useKeyboard();
+
+  // ── Mobile: touch scroll, keyboard padding, textarea ──────────
+  const { touchScrollingRef } = useMobileTerminal(containerRef, termRef, fitRef);
 
   // Stable refs so callbacks don't cause unnecessary re-registration
   const onTerminalReadyRef = useRef(onTerminalReady);
@@ -41,9 +39,6 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
   onResizeRef.current = onResize;
   const onUserInputRef = useRef(onUserInput);
   onUserInputRef.current = onUserInput;
-  // True during a touch-scroll gesture. ResizeObserver suppresses
-  // scrollToBottom while this is set to avoid fighting the user.
-  const touchScrollingRef = useRef(false);
 
   // ── Local echo + user-input bridge ──────────────────────────
   const handleUserInput = useCallback((data: string) => {
@@ -164,26 +159,6 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
 
     term.focus();
 
-    // On mobile, reposition xterm's hidden textarea so the browser
-    // scrolls recent terminal output into view when focusing for
-    // keyboard input, rather than scrolling to the top-left corner
-    // where xterm places it by default (x=-9999em).
-    if (isTouchDevice()) {
-      const ta = term.element?.querySelector('.xterm-helper-textarea') as HTMLElement;
-      if (ta) {
-        ta.style.left = '0';
-        ta.style.top = 'auto';
-        ta.style.bottom = '0';
-        ta.style.width = '1px';
-        ta.style.height = '1px';
-        ta.style.pointerEvents = 'none';
-      }
-      // Set touch-action: none on the CONTAINER (not just .xterm) so
-      // the entire terminal area — including edge zones where .xterm
-      // might not perfectly cover — is protected from browser preemption.
-      (containerRef.current as HTMLElement).style.touchAction = 'none';
-    }
-
     // ── Resize observer ──
     const ro = new ResizeObserver(() => {
       fitAddon.fit();
@@ -233,168 +208,6 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
     fontFeatureSettings: 'normal' as const,
     fontVariantLigatures: 'none' as const,
   }), []);
-
-  // ── Keyboard-aware bottom padding ───────────────────────────
-  // When the mobile keyboard is open, the fixed toolbar sits above
-  // it and overlaps the terminal's bottom. Add padding so xterm
-  // renders its last rows above the toolbar.
-  // The toolbar is py-1.5 (12px) + 2 rows of h-9 (72px) + gap-1
-  // (4px) + safe-area (~16px) ≈ 104px. Use 100px for a clean value.
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container || !isTouchDevice()) return;
-    container.style.paddingBottom = keyboardHeight > 0 ? '100px' : '';
-  }, [keyboardHeight]);
-
-  // ── Touch-to-scroll for mobile ─────────────────────────────
-  //
-  // EXCLUSIVE CAPTURE RULE:
-  //   Where the finger LANDS determines who handles the ENTIRE gesture.
-  //   - Lands on content → we handle scrolling, scrollbar is suppressed
-  //     (via pointer-events:none on viewport) until finger lifts.
-  //   - Lands on scrollbar → we stay out of the way, xterm's pointer-
-  //     event handler on the scrollbar runs the whole gesture.
-  //
-  // Why this matters: xterm v6's custom scrollbar uses POINTER events
-  // (pointerdown/pointermove/pointerup), NOT touch events. Our touch
-  // interception alone doesn't stop the scrollbar from also responding.
-  // Setting pointer-events:none on the viewport during a content-area
-  // gesture silences the scrollbar completely.
-  //
-  // Scrolling algorithm: position-based (no accumulation debt).
-  //   targetBaseY = startBaseY + round(pixelDelta / lineHeight)
-  //   scrollLines(targetBaseY - currentBaseY) once per frame.
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container || !isTouchDevice()) return;
-
-    let startY = 0;
-    let startBaseY = 0;
-    let scrolling = false;
-    let startedOnScrollbar = false;
-    const justScrolled = { value: false };
-
-    const getViewport = (): HTMLElement | null =>
-      container.querySelector('.xterm-viewport') as HTMLElement | null;
-
-    const getLineHeight = (): number => {
-      try {
-        const dims = (termRef.current as any)?._core?._renderService?.dimensions;
-        if (dims?.css?.cell?.height) return dims.css.cell.height;
-      } catch { /* best-effort */ }
-      try {
-        const dims = fitRef.current?.proposeDimensions();
-        if (dims) {
-          const vpEl = getViewport();
-          if (vpEl && dims.rows > 0) return vpEl.clientHeight / dims.rows;
-        }
-      } catch { /* fall through */ }
-      return 14;
-    };
-
-    // Detect if touch landed on xterm's custom scrollbar (right edge).
-    // xterm v6 scrollbar has role="presentation" and is a child of
-    // the viewport. Also check horizontal position as fallback.
-    const isScrollbarTouch = (touch: Touch, vp: HTMLElement | null): boolean => {
-      if (!vp) return false;
-      const target = document.elementFromPoint(touch.clientX, touch.clientY);
-      if (target) {
-        // Walk up to see if target is inside the scrollbar
-        let el: Element | null = target;
-        while (el && el !== vp && el !== container) {
-          if (el.getAttribute('role') === 'presentation' &&
-              el.parentElement?.classList?.contains('xterm-viewport')) {
-            return true;
-          }
-          el = el.parentElement;
-        }
-      }
-      // Fallback: rightmost 24px of the viewport = scrollbar zone
-      const vpRect = vp.getBoundingClientRect();
-      return touch.clientX > vpRect.right - 24;
-    };
-
-    const handleTouchStart = (e: TouchEvent) => {
-      if (e.touches.length === 1) {
-        const vp = getViewport();
-        startedOnScrollbar = isScrollbarTouch(e.touches[0], vp);
-        if (startedOnScrollbar) {
-          // Let xterm's scrollbar handle the entire gesture
-          scrolling = false;
-          return;
-        }
-        startY = e.touches[0].clientY;
-        startBaseY = termRef.current?.buffer?.active?.baseY ?? 0;
-        scrolling = false;
-      }
-    };
-
-    const handleTouchMove = (e: TouchEvent) => {
-      if (startedOnScrollbar) return; // xterm's scrollbar owns this gesture
-      if (e.touches.length !== 1) {
-        // Multi-touch: release pointer-events suppression
-        if (scrolling) {
-          const vp = getViewport();
-          if (vp) vp.style.pointerEvents = '';
-          scrolling = false;
-        }
-        return;
-      }
-      const currentY = e.touches[0].clientY;
-      const totalPxDelta = startY - currentY;
-
-      if (!scrolling && Math.abs(totalPxDelta) > 5) {
-        scrolling = true;
-        // Suppress pointer events on the viewport so xterm's scrollbar
-        // doesn't respond to parallel pointer events during our gesture
-        const vp = getViewport();
-        if (vp) vp.style.pointerEvents = 'none';
-      }
-
-      if (scrolling) {
-        justScrolled.value = true;
-        touchScrollingRef.current = true;
-        const lineH = getLineHeight();
-        const lineDelta = Math.round(totalPxDelta / lineH);
-        const targetLine = Math.max(0, startBaseY + lineDelta);
-        termRef.current?.scrollToLine(targetLine);
-        e.preventDefault();
-        e.stopPropagation();
-      }
-    };
-
-    const handleTouchEnd = () => {
-      if (scrolling) {
-        const vp = getViewport();
-        if (vp) vp.style.pointerEvents = '';
-      }
-      touchScrollingRef.current = false;
-      scrolling = false;
-      startedOnScrollbar = false;
-      setTimeout(() => { justScrolled.value = false; }, 150);
-    };
-
-    const guardClick = (e: Event) => {
-      if (justScrolled.value) {
-        e.stopImmediatePropagation();
-        e.preventDefault();
-      }
-    };
-
-    container.addEventListener('click', guardClick, { capture: true });
-    container.addEventListener('touchstart', handleTouchStart, { capture: true, passive: true });
-    container.addEventListener('touchmove', handleTouchMove, { capture: true, passive: false });
-    container.addEventListener('touchend', handleTouchEnd, { capture: true, passive: true });
-
-    return () => {
-      const vp = getViewport();
-      if (vp) vp.style.pointerEvents = '';
-      container.removeEventListener('click', guardClick, { capture: true });
-      container.removeEventListener('touchstart', handleTouchStart, { capture: true });
-      container.removeEventListener('touchmove', handleTouchMove, { capture: true });
-      container.removeEventListener('touchend', handleTouchEnd, { capture: true });
-    };
-  }, []);
 
   // ── Context menu ────────────────────────────────────────────
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
