@@ -162,7 +162,9 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
     // ── Resize observer ──
     const ro = new ResizeObserver(() => {
       fitAddon.fit();
-      term.scrollToBottom();
+      if (!touchScrollingRef.current) {
+        term.scrollToBottom();
+      }
       const dims = fitAddon.proposeDimensions();
       if (dims) onResizeRef.current?.(dims.cols, dims.rows);
     });
