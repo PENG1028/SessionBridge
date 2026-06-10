@@ -13,6 +13,7 @@
 //   - No .xterm-scroll-area in v6 — scrollHeight from rendered content
 
 import { useEffect, useRef, useState } from 'react';
+import { getInputDiagEvents, type InputDiagEvent } from '../../../lib/input-diag';
 
 function isTouch(): boolean {
   if (typeof window === 'undefined') return false;
@@ -46,6 +47,8 @@ interface Snap {
   kbH: number; vpT: number;
   // Toolbar
   barDisp: string;
+  // Input diag
+  inputEvents: InputDiagEvent[];
 }
 
 const INIT: Snap = {
@@ -59,6 +62,7 @@ const INIT: Snap = {
   tMove: 0,
   kbH: 0, vpT: 0,
   barDisp: '-',
+  inputEvents: [],
 };
 
 export function MobileDebug() {
@@ -150,6 +154,9 @@ export function MobileDebug() {
       const bar = document.querySelector('[data-mobile-keyboard-toolbar]') as HTMLElement | null;
       if (bar) barDisp = bar.style.display || getComputedStyle(bar).display;
 
+      // Input diagnostic events (last 10)
+      const inputEvents = getInputDiagEvents().slice(-10) as InputDiagEvent[];
+
       setSnap({
         xBaseY, dxBaseY, xBufLen,
         s2bCount, daHits, filterHits,
@@ -174,6 +181,7 @@ export function MobileDebug() {
         kbH,
         vpT: Math.round(window.visualViewport?.offsetTop ?? 0),
         barDisp,
+        inputEvents,
       });
 
       rafId = requestAnimationFrame(poll);
@@ -230,6 +238,25 @@ export function MobileDebug() {
         <L n="vpT" v={snap.vpT} />
         <L n="bar" v={snap.barDisp} c={snap.barDisp === 'flex' ? 'text-green-400' : 'text-gray-500'} />
       </div>
+      {/* ── Input diag row: composition/onData events ── */}
+      {snap.inputEvents.length > 0 && (
+        <div className="flex flex-wrap items-center gap-x-1 gap-y-0.5 mt-0.5 border-t border-gray-800/50 pt-0.5">
+          <span className="text-[8px] text-cyan-600 font-bold">INP</span>
+          {snap.inputEvents.map((ev, i) => {
+            const isComp = ev.type === 'cS' || ev.type === 'cU' || ev.type === 'cE';
+            const isOnD = ev.type === 'onD';
+            const color = isComp ? 'text-yellow-400' : isOnD ? 'text-green-400' : 'text-cyan-400';
+            const label = ev.data
+              ? `${ev.type}:${ev.data.replace(/\x1b/g,'␛').replace(/\t/g,'␉').replace(/\r/g,'␍').replace(/\n/g,'␊')}`
+              : ev.type;
+            return (
+              <span key={i} className={`text-[9px] font-mono ${color}`}>
+                [{label}]
+              </span>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

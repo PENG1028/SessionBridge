@@ -8,6 +8,7 @@ import '@xterm/xterm/css/xterm.css';
 import { ContextMenu, type ContextMenuItem } from './console/shell/context-menu';
 import { MobileKeyboardSlot, consumeMobileModifiers } from './console/chrome/mobile-keyboard-slot';
 import { useMobileTerminal } from './console/chrome/use-mobile-terminal';
+import { pushInputDiagEvent } from '../lib/input-diag';
 
 // ─── ShellTerminal — pure xterm.js host ────────────────────────────
 // Owns: xterm init/theme/fit, keyboard shortcuts, context menu, resize observer.
@@ -43,6 +44,10 @@ export default function ShellTerminal({ onTerminalReady, onUserInput, onOpenDire
   // proper ANSI formatting. Dual echo (local + shell) causes
   // ghost text and cursor position drift on mobile.
   const handleUserInput = useCallback((data: string) => {
+    // ── Input diagnostic (mobile only) ──
+    if (typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0) {
+      pushInputDiagEvent('onD', data);
+    }
     onUserInputRef.current?.(consumeMobileModifiers(data));
   }, []);
 
@@ -134,6 +139,36 @@ export default function ShellTerminal({ onTerminalReady, onUserInput, onOpenDire
     term.open(containerRef.current);
     fitAddon.fit();
 
+    // ── Input safety net + diagnostic on mobile ──
+    // xterm.js v6 on mobile processes text input via a hidden textarea.
+    // Some characters (e.g. ") hit a code path where xterm.js fails to
+    // consume textarea.value, leaving leftovers that corrupt subsequent
+    // input (they get concatenated with the next typed character).
+    //
+    // This safety net monitors the textarea input event. After giving
+    // xterm.js one rAF to process, if text is still in the textarea
+    // (and we're not in an IME composition), flush it directly.
+    const ta = containerRef.current.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null;
+    let _inComposition = false;
+    const diagOnCS = () => { _inComposition = true; pushInputDiagEvent('cS', ''); };
+    const diagOnCU = (e: CompositionEvent) => pushInputDiagEvent('cU', e.data || '');
+    const diagOnCE = () => { _inComposition = false; pushInputDiagEvent('cE', ''); };
+    const diagOnInp = (e: Event) => {
+      const t = e.target as HTMLTextAreaElement;
+      pushInputDiagEvent('inp', t?.value?.slice(-40) || '');
+      if (!t || !t.value || _inComposition) return;
+      requestAnimationFrame(() => {
+        if (!t.value || _inComposition) return;
+        pushInputDiagEvent('onD', '[flush]' + t.value.slice(0, 30));
+        handleUserInput(t.value);
+        t.value = '';
+      });
+    };
+    ta?.addEventListener('compositionstart', diagOnCS);
+    ta?.addEventListener('compositionupdate', diagOnCU);
+    ta?.addEventListener('compositionend', diagOnCE);
+    ta?.addEventListener('input', diagOnInp);
+
     // ══════ Xterm styles — moved from globals.css ══════
     const xtermStyle = document.createElement('style');
     xtermStyle.dataset.sbXterm = '1';
@@ -169,11 +204,12 @@ export default function ShellTerminal({ onTerminalReady, onUserInput, onOpenDire
     }
 
     // ── Resize observer ──
-    // fit() adjusts column/row count to the container. xterm.js
-    // internally preserves the viewport position — users scrolled
-    // up stay scrolled up, users at bottom stay at bottom.
-    // PTY dimensions are fixed at session creation time; fit() only
-    // updates the local xterm viewport — it does NOT notify the shell.
+    // fit() adjusts the terminal to match the container. This is a
+    // purely local operation — it does NOT resize the shared PTY.
+    // The PTY (120×40) is fixed and never changes. On small viewports
+    // xterm clamps CUP positions to its own rows, and the scrollbar
+    // provides access to all content. Use the font size ± controls
+    // in the header to zoom in/out.
     const ro = new ResizeObserver(() => {
       fitAddon.fit();
     });
@@ -201,6 +237,10 @@ export default function ShellTerminal({ onTerminalReady, onUserInput, onOpenDire
       pluginCleanup?.dispose?.();
       focusRoot?.removeEventListener('focusin', handleFocusIn);
       focusRoot?.removeEventListener('focusout', handleFocusOut);
+      ta?.removeEventListener('compositionstart', diagOnCS);
+      ta?.removeEventListener('compositionupdate', diagOnCU);
+      ta?.removeEventListener('compositionend', diagOnCE);
+      ta?.removeEventListener('input', diagOnInp);
       ro.disconnect();
       term.dispose();
       termRef.current = null;
