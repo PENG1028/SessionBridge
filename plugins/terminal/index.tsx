@@ -256,6 +256,13 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
   const onTerminalReady = useCallback((term: any, _fitAddon: any) => {
     lastOsc7CwdRef.current = '';
 
+    // ── 0. Filter bare Device Attributes CSI (ESC stripped by PTY) ──
+    const origWrite = term.write.bind(term);
+    term.write = (data: string) => {
+      const clean = data.replace(/(?<!\x1b)\[\?1?;2c/g, '');
+      if (clean) origWrite(clean);
+    };
+
     // ── 1. OSC 7 CWD tracking ──
     const osc7Disp = term.parser.registerOscHandler(7, (data: string) => {
       const cwd = parseOsc7(data);
@@ -297,14 +304,10 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
     core.call('stream.subscribe', { sessionId: coreSessionId, streamType: 'stderr' }).catch(() => {});
     const chunkHandler = (event: any) => {
       if (event.sessionId !== coreSessionId) return;
-      let data = event.data;
-      // Filter bare Device Attributes responses (ESC stripped by PTY)
-      data = data.replace(/(?<!\x1b)\[\?1?;2c/g, '');
-      if (!data) return;
       if (event.streamType === 'stderr') {
-        term.write('\x1b[91m' + data + '\x1b[0m');
+        term.write('\x1b[91m' + event.data + '\x1b[0m');
       } else {
-        term.write(data);
+        term.write(event.data);
       }
       // Let xterm.js handle auto-scroll: it only scrolls on write()
       // when the viewport is already at the bottom. If the user scrolled
