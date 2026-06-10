@@ -33,7 +33,7 @@
     "predev": "node scripts/generate-plugin-registry.mjs",
     "prebuild": "node scripts/generate-plugin-registry.mjs",
     "check:hardcodes": "node scripts/check-hardcodes.js",
-    "build": "npm run build:web && npm run build:core",
+    "build": "npm run build:web",
     "build:web": "next build --webpack",
     "build:core": "node scripts/build-core.js",
     "update": "node scripts/update.js",

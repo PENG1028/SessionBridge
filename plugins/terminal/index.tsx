@@ -9,12 +9,13 @@ import { useFocus } from '../../sdk';
 import { ShellTerminal } from '../../sdk';
 import { DirectoryPicker } from '../../sdk';
 import { TitleBar } from '../../sdk';
-import { getLastActiveDir, setLastActiveDir, getRestoreLastPath } from '../../sdk';
+import { setLastActiveDir } from '../../sdk';
 import { useCore, useCoreStatus } from '../../sdk';
 import { useCoreErrors } from '../../sdk';
 import { classifyCoreError } from '../../sdk';
 import { TerminalInputBuffer } from '../../sdk';
 import type { FitAddon } from '@xterm/addon-fit';
+import { createTerminalSession } from './terminal-session';
 // Counter for generating distinguishable terminal labels
 let _termLabelCounter = 0;
 function nextTermLabel(baseCwd: string): string {
@@ -25,21 +26,6 @@ function nextTermLabel(baseCwd: string): string {
   return `Terminal #${_termLabelCounter}${suffix}`;
 }
 
-
-/** Parse OSC 7 data (file://HOST/PATH) into a normalized filesystem path. */
-function parseOsc7(data: string): string | undefined {
-  const prefix = 'file://';
-  if (!data.startsWith(prefix)) return undefined;
-  const rest = data.slice(prefix.length);
-  const slash = rest.indexOf('/');
-  if (slash < 0) return undefined;
-  let path = rest.slice(slash);
-  try { path = decodeURIComponent(path); } catch (_e) { /* malformed, use raw */ }
-  // Strip leading / before Windows drive letter: /C:/... → C:/...
-  if (/^\/[A-Za-z]:/.test(path)) path = path.slice(1);
-  path = path.replace(/\//g, '\\');
-  return path || undefined;
-}
 
 const DEBUG_SURFACE = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debugSurface');
 function debugLog(...args: any[]) { if (DEBUG_SURFACE) console.log('[debugSurface]', ...args); }
@@ -124,12 +110,13 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
     setError(null);
     try {
       const label = nextTermLabel(cwdRef.current);
-      const dims = fitAddonRef.current?.proposeDimensions();
-      // PTY size is fixed at a reasonable default (120×40) so all clients
-      // share the same terminal viewport size. Adjust font size locally
-      // via the ± controls to match your screen.
-      const cols = 120;
-      const rows = 40;
+      // PTY starts at 80×24.  80 columns is the terminal standard —
+      // most shells and CLI tools format output for it, avoiding text
+      // corruption and wrapping mismatches on narrow viewports.
+      // Rows are synced to xterm's actual fit() dimensions immediately
+      // after the terminal is ready (Phase 5b in terminal-session.ts).
+      const cols = 80;
+      const rows = 24;
       const result = await createInstance({ dir: cwdRef.current, label, adapterId: 'shell', cols, rows });
       if (result?.success && result?.instance) {
         const run = result.instance;
@@ -137,8 +124,9 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
         debugLog('TerminalView createInstance SUCCESS', { runId: run.id, sessionId, cols, rows });
         setCoreSessionId(sessionId ?? null);
         bindCurrentTabInstance(run.id, undefined);
-        // PTY dimensions are set by run.create (cols/rows passed above).
-        // No subsequent resize — the PTY size is fixed for the session lifetime.
+        // PTY dimensions are set by run.create (cols/rows passed above),
+        // then synced to xterm's actual fit() dimensions by
+        // terminal-session.ts Phase 5b via process.resize.
         // Fetch ptyMode from run.info (createInstance doesn't return it)
         core.call<{ ptyMode?: string }>('run.info', { runId: run.id }).then(info => {
           if (info?.ptyMode) setPtyMode(info.ptyMode);
@@ -262,182 +250,22 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
   // PTY dimensions are fixed (120×40) so all clients share the same
   // terminal viewport. Adjust local font size via the ± controls.
   const inputBufRef = useRef<TerminalInputBuffer | null>(null);
-  const lastOsc7CwdRef = useRef('');
   const fitAddonRef = useRef<FitAddon | null>(null);
 
   const onTerminalReady = useCallback((term: any, fitAddon: any) => {
-    lastOsc7CwdRef.current = '';
-    fitAddonRef.current = fitAddon;
-    termRef.current = term;
-
-    // ── 0. Clear xterm Device Attributes response ──
-    // term.reset() wipes any rendering artifacts from term.open().
-    term.reset();
-
-    // ── 0b. Intercept DA (Device Attributes) responses at parser level ──
-    const __daHits = { count: 0 };
-    (window as any).__daHits = __daHits;
-
-    // Handler 1: CSI ? ... c  (primary DA response)
-    const daHandler1 = term.parser.registerCsiHandler(
-      { prefix: '?', final: 'c' },
-      (_params: (number | number[])[]) => {
-        __daHits.count++;
-        return true;
-      },
-    );
-    // Handler 2: CSI > ... c  (secondary DA response)
-    const daHandler2 = term.parser.registerCsiHandler(
-      { prefix: '>', final: 'c' },
-      (_params: (number | number[])[]) => {
-        __daHits.count++;
-        return true;
-      },
-    );
-    // Handler 3: CSI 0 c / CSI c  (DA request — don't display)
-    const daHandler3 = term.parser.registerCsiHandler(
-      { final: 'c' },
-      (params: (number | number[])[]) => {
-        // Only consume bare CSI c / CSI 0 c (DA requests), not other c-final sequences
-        if (params.length === 0 || (params.length === 1 && params[0] === 0)) {
-          __daHits.count++;
-          return true;
-        }
-        return false;
-      },
-    );
-    (window as any).__daHandlers = true;
-
-    // ── 0c. Defense-in-depth: regex filter + diagnostic ──
-    const __origWrite = term.write.bind(term);
-    (window as any).__filterHits = 0;
-    term.write = (data: string) => {
-      const before = data;
-      data = data.replace(/\x1b\[\?[^a-zA-Z]*c/g, '');
-      data = data.replace(/\[\?[^a-zA-Z]*c/g, '');
-      if (data !== before) {
-        (window as any).__filterHits = ((window as any).__filterHits || 0) + 1;
-        (window as any).__lastFiltered = { before: before.slice(0, 80), after: data.slice(0, 80), time: Date.now() };
-      }
-      if (data) __origWrite(data);
-    };
-
-    const osc7Disp = term.parser.registerOscHandler(7, (data: string) => {
-      const cwd = parseOsc7(data);
-      debugLog('OSC 7', { data, cwd });
-      if (cwd && cwd !== lastOsc7CwdRef.current) {
-        lastOsc7CwdRef.current = cwd;
-        onCwdChange(cwd);
-        setLastActiveDir(cwd);
-        onNavigatePath?.(cwd);
-      }
-      return true;
+    return createTerminalSession(term, fitAddon, {
+      coreSessionId,
+      core,
+      sessionFresh,
+      onCwdChange,
+      onNavigatePath,
+      setTabTitle,
+      setLastActiveDir,
+      inputBufRef,
+      termRef,
+      fitAddonRef,
     });
-
-
-        // ── 1b. OSC 0 / OSC 2 tab title change ──
-        // Programs like claude CLI send OSC 0 to set the terminal tab
-        // title (e.g. "]0;Claude CLI"). We forward this to the
-        // workbench state so the tab header updates in real time.
-        const oscTitleDisp = term.parser.registerOscHandler(0, (data: string) => {
-          if (data && setTabTitle) {
-            // Strip icon sequence if present: OSC 0 can be "icon?;title?"
-            const parts = data.split(';');
-            const title = parts[parts.length - 1] || parts[0];
-            const clean = title.replace(/[]/g, '').trim();
-            if (clean) setTabTitle(clean);
-          }
-          return true;
-        });
-        // OSC 2 is title-only (no icon component)
-        const oscTitleDisp2 = term.parser.registerOscHandler(2, (data: string) => {
-          if (data && setTabTitle) {
-            const clean = data.replace(/[]/g, '').trim();
-            if (clean) setTabTitle(clean);
-          }
-          return true;
-        });
-    // ── 2. Live output handler (subscribed AFTER replay) ────────
-    const chunkHandler = (event: any) => {
-      if (event.sessionId !== coreSessionId) return;
-      if (event.streamType === 'stderr') {
-        term.write('\x1b[91m' + event.data + '\x1b[0m');
-      } else {
-        term.write(event.data);
-      }
-    };
-    core.on('stream.chunk', chunkHandler);
-
-    // ── 4. Stdin buffer ───────────────────────────────────────
-    const buf = new TerminalInputBuffer({
-      write: (data: string) => core.call('stream.write', { sessionId: coreSessionId, streamType: 'stdin', data }).catch(() => {}),
-    });
-    inputBufRef.current = buf;
-
-    // ── 5. Banner + replay → anchor → subscribe ───────────────
-    if (sessionFresh) {
-      term.writeln('\x1b[36mConnected to core stream...\x1b[0m');
-    } else {
-      term.writeln('\x1b[36mReconnected to existing session\x1b[0m');
-    }
-
-    const fromSeq = sessionFresh ? 0 : 20;
-    const replayStdout = core.call<{ events?: Array<{ data: string }> }>('stream.replay', {
-      sessionId: coreSessionId, streamType: 'stdout', fromSeq,
-    }).then(r => {
-      if (r?.events) for (const evt of r.events) {
-        if (evt.data) term.write(evt.data);
-      }
-    });
-    const replayStderr = core.call<{ events?: Array<{ data: string }> }>('stream.replay', {
-      sessionId: coreSessionId, streamType: 'stderr', fromSeq,
-    }).then(r => {
-      if (r?.events) for (const evt of r.events) {
-        if (evt.data) term.write('\x1b[91m' + evt.data + '\x1b[0m');
-      }
-    });
-
-    // After both replays complete: scroll to bottom, THEN subscribe
-    // to live events. This prevents live data from interleaving with
-    // replay data, which causes duplicate prompts and cursor drift.
-    // PTY dimensions are fixed (120×40) so shell CUPs are always correct
-    // — no cursor anchoring or CUP interception needed.
-    Promise.all([replayStdout.catch(() => {}), replayStderr.catch(() => {})]).then(() => {
-      requestAnimationFrame(() => {
-        // scrollToBottom → scrollLines → needs renderer dimensions.
-        // If xterm's renderer hasn't initialized yet (fast replay),
-        // scrollToBottom throws. Catch and retry on next frame.
-        try {
-          term.scrollToBottom();
-        } catch {
-          requestAnimationFrame(() => {
-            try { term.scrollToBottom(); } catch { /* give up */ }
-          });
-        }
-        // Subscribe to live events AFTER viewport is anchored
-        core.call('stream.subscribe', { sessionId: coreSessionId, streamType: 'stdout' }).catch(() => {});
-        core.call('stream.subscribe', { sessionId: coreSessionId, streamType: 'stderr' }).catch(() => {});
-        // For restored sessions, send Enter to get a fresh prompt
-        if (!sessionFresh) {
-          setTimeout(() => buf.push('\r'), 150);
-        }
-      });
-    });
-
-    return {
-      dispose: () => {
-        daHandler1.dispose();
-        daHandler2.dispose();
-        daHandler3.dispose();
-        osc7Disp.dispose();
-        oscTitleDisp.dispose();
-        oscTitleDisp2.dispose();
-        core.off('stream.chunk', chunkHandler);
-        buf.dispose();
-        inputBufRef.current = null;
-      },
-    };
-  }, [coreSessionId, core, sessionFresh, onCwdChange, onNavigatePath, setTabTitle]);
+  }, [coreSessionId, core, sessionFresh, onCwdChange, onNavigatePath, setTabTitle, setLastActiveDir, inputBufRef, termRef, fitAddonRef]);
 
   // ── Font size effect ─────────────────────────────────────────
   // When the user adjusts font size locally, update xterm and refit.

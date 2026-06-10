@@ -50,6 +50,7 @@ import { appReducer, createAppInitialState, getActiveWorkbenchState, createIniti
 import { useBlockProcessor } from '../hooks/use-block-processor';
 import { useForkActions } from '../hooks/use-fork-actions';
 import type { Phase, Block, Message, Turn, ToolActivity, TaskInfo } from '../../lib/session-types';
+import type { CreateInstanceOptions } from '../../../lib/session-types';
 import { getTime, genId, shortenPath, toAppMessages, toStorageMessages, parseSessionBlocks } from '../../lib/message-utils';
 
 
@@ -520,7 +521,7 @@ export function useConsoleController({ wsUrl, setWsUrl, token, setToken, onRecon
     }
   }, [activeNodeWsUrl, wsUrl, projectInfo]);
 
-  const createNodeInstance = useCallback(async (opts: { dir: string; label?: string; adapterId?: string }) => {
+  const createNodeInstance = useCallback(async (opts: CreateInstanceOptions) => {
     if (activeNodeWsUrl !== wsUrl) {
       const errMsg = 'Remote instance creation now requires Core mesh run.create routing; legacy /api/instances removed.';
       addLog(`[Error] ${errMsg}`);

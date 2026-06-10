@@ -1,14 +1,13 @@
 #!/usr/bin/env node
-// ─── SessionBridge Launcher ──────────────────────────────
-// Go Core is the only runtime. Legacy Node relay has been retired.
+// ─── SessionBridge Web Launcher ──────────────────────────
+// Core is a separate product: github.com/PENG1028/sessionbridge-core
 //
 // Usage:
-//   node bin/bridge.js      — default: start Go Core
-//   node bin/bridge.js core — start Go Core
-//   node bin/bridge.js web  — start Next.js production from .next/ (needs build:web first)
-//   node bin/bridge.js dev  — start Go Core + Next.js dev
+//   node bin/bridge.js      — start Next.js production
+//   node bin/bridge.js web  — start Next.js production (.next/ required)
+//   node bin/bridge.js dev  — start Next.js dev server
 
-const { spawn, spawnSync } = require('child_process');
+const { spawn } = require('child_process');
 const { existsSync } = require('fs');
 const path = require('path');
 
@@ -17,20 +16,13 @@ const subcommand = process.argv[2] || '';
 
 function usage() {
   console.log(`
-SessionBridge — Go Core is the primary runtime. Legacy Node relay has been retired.
+SessionBridge Web — Web UI for SessionBridge Core nodes.
+Core is a separate product: github.com/PENG1028/sessionbridge-core
 
-Default:   node bin/bridge.js  →  start Go Core (same as "core")
+Default:   node bin/bridge.js  →  start Next.js production
 Commands:
-  core          Start Go Core (default runtime)
   web           Start Next.js production server (build first: npm run build:web)
-  dev           Start Go Core + Next.js dev server
-
-npm scripts:
-  npm start         → start Go Core (default)
-  npm run dev       → Go Core + Next.js dev
-  npm run dev:core  → Go Core dev mode
-  npm run dev:web   → Next.js dev only
-  npm run build     → build:web + build:core
+  dev           Start Next.js dev server
 
 Docs: docs/development.md
 `);
@@ -53,10 +45,6 @@ switch (subcommand) {
     break;
 
   case '':
-  case 'core':
-    runScript(path.join(projectRoot, 'scripts', 'start-core.js'), process.argv.slice(3));
-    break;
-
   case 'web': {
     // Check for Next.js production build (.next/)
     const nextDir = path.join(projectRoot, '.next');
@@ -86,9 +74,10 @@ switch (subcommand) {
     runScript(path.join(projectRoot, 'scripts', 'dev-all.js'), process.argv.slice(3));
     break;
 
-  case 'legacy-relay':
-  case 'legacy:relay':
-    console.error('Legacy Node relay has been retired. Use Go Core: npm start / npm run dev.');
+  case 'core':
+    console.log('[bridge] Core is a separate product.');
+    console.log('[bridge] Get it at: https://github.com/PENG1028/sessionbridge-core/releases');
+    console.log('[bridge] Or clone as sibling and run: node ../sessionbridge-core/cmd/node');
     process.exit(1);
 
   default:

@@ -1,15 +1,27 @@
-# SessionBridge Agent Rules
+# SessionBridge Web
 
+Web UI and plugin host for SessionBridge Core nodes.
 Read this first. These rules are active project constraints.
+
+## Repositories
+
+| Repo | Purpose |
+|---|---|
+| `sessionbridge-core` | Go Core runtime — node, mesh, sessions, streams |
+| `sessionbridge-web` | Next.js App UI + plugin host (this repo) |
+
+Core is a standalone product. Web UI is the official first-party frontend.
+They communicate through CoreClient / WebSocket / HTTP only.
+The web repo does not contain Core source code.
 
 ## Runtime Boundaries
 
 ```text
-go-core/   Go Core runtime and mesh/control plane
 app/       Next.js App UI
 lib/       browser/client helpers
 plugins/   plugin declarations; one plugin.yaml per plugin
 docs/      design and decision records
+sdk/       plugin SDK re-exports (public API surface for plugins)
 ```
 
 Deleted legacy runtimes:
@@ -18,6 +30,7 @@ Deleted legacy runtimes:
 - `agent-core/` old extension runtime
 - `extensions/` old extension directory and `sb-extension.json`
 - `flutter_app/` old Flutter app
+- `go-core/` extracted to `sessionbridge-core` repo
 
 Do not reintroduce these paths.
 
@@ -33,7 +46,7 @@ Core does not manage View sessions. App UI manages View sessions.
 
 ## Current Architecture
 
-- Go Core is the only Core runtime.
+- Go Core is the only Core runtime (separate repo: `sessionbridge-core`).
 - App UI is the first-party UI.
 - App UI talks to Go Core through CoreClient / WebSocket / HTTP only.
 - App UI must not import Go server code.
@@ -71,20 +84,30 @@ Do not add a second plugin declaration system.
 
 ## Deployment
 
-VPS has the project at `/home/ubuntu/sessionbridge/` with a `github` remote
-pointing to https://github.com/PENG1028/SessionBridge. Go Core runs via PM2
-as `sessionbridge-core`; Web UI runs as `sessionbridge-web`.
+VPS has two clones:
 
-### Update VPS
+- Core: `/home/ubuntu/sessionbridge-core/` (repo `PENG1028/sessionbridge-core`)
+- Web:  `/home/ubuntu/sessionbridge-web/`  (repo `PENG1028/sessionbridge-web`)
 
-1. Commit and push to GitHub (`origin` = `git@github.com:PENG1028/SessionBridge.git`)
-2. On VPS:
+Go Core runs via PM2 as `sessionbridge-core`; Web UI runs via PM2 as `sessionbridge-web`.
+
+### Update VPS Core
 
 ```bash
-cd /home/ubuntu/sessionbridge
-git pull github main
-cd go-core && go build -o ../dist/go-core/sessionnode ./cmd/node/
+cd /home/ubuntu/sessionbridge-core
+git pull origin main
+go build -o sessionnode ./cmd/node/
 pm2 restart sessionbridge-core
+```
+
+### Update VPS Web
+
+```bash
+cd /home/ubuntu/sessionbridge-web
+git pull origin main
+npm ci
+npm run build:web
+pm2 restart sessionbridge-web
 ```
 
 **Never upload binaries via SCP/SSH pipe.** The gzip pipe corrupts the file
@@ -93,9 +116,12 @@ the same pipe reads binary from stdin). Always use git push + VPS build.
 
 ### Update PC Core
 
+Clone and build from the Core repo:
+
 ```bash
-cd <project>/go-core && go build -o sessionnode.exe ./cmd/node/
-taskkill /f /im sessionnode.exe
+git clone git@github.com:PENG1028/sessionbridge-core.git
+cd sessionbridge-core
+go build -o sessionnode.exe ./cmd/node/
 ./sessionnode.exe
 ```
 
@@ -112,10 +138,10 @@ python3 /path/to/script.py  # script opens and writes the file
 
 ### Test Mesh Forwarding
 
-A test tool is in `go-core/cmd/ws-test/`. Run it on VPS directly:
+A test tool is in `sessionbridge-core/cmd/ws-test/`. Run it on VPS directly:
 
 ```bash
-cd /home/ubuntu/sessionbridge/go-core && go run ./cmd/ws-test/
+cd /home/ubuntu/sessionbridge-core && go run ./cmd/ws-test/
 ```
 
 This connects to the local Core at `ws://127.0.0.1:9090/ws`, sends a
@@ -128,15 +154,10 @@ managed by PM2. Do not touch those.
 ## Development Commands
 
 ```bash
-npm run dev       # Go Core + Next.js dev
-npm run dev:core  # Go Core only
-npm run dev:web   # Next.js only
-npm run build     # build web + Go Core
-npm start         # start Go Core
+npm run dev       # Next.js dev server (connects to local Core at ws://localhost:9090/ws)
+npm run dev:web   # Same as npm run dev
+npm run build     # Build web (Next.js production build)
+npm start         # Start Next.js production server
 ```
 
-If Go build cache fails on Windows, use:
-
-```powershell
-$env:GOCACHE='F:\Work Document\project\sessionBridge\go-core\.gocache'
-```
+Core must be running separately. Clone and build from `sessionbridge-core`:

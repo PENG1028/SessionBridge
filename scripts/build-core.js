@@ -1,68 +1,52 @@
-// ─── Build Go Core ──────────────────────────────────────
-// Builds the Go Core binary into dist/go-core/.
-// Usage: node scripts/build-core.js
+// ─── Build Core — download helper ──────────────────────
+// Core is now a separate product. This script prints download instructions.
+//
+// Pre-built binaries: https://github.com/PENG1028/sessionbridge-core/releases
+// Source:              https://github.com/PENG1028/sessionbridge-core
 
 const { execSync } = require('child_process');
-const { existsSync, mkdirSync } = require('fs');
 const path = require('path');
-
-const projectRoot = path.resolve(__dirname, '..');
-const goCoreDir = path.join(projectRoot, 'go-core');
-const outDir = path.join(projectRoot, 'dist', 'go-core');
-const goCmdDir = path.join(goCoreDir, 'cmd', 'node');
-const binaryName = process.platform === 'win32' ? 'sessionnode.exe' : 'sessionnode';
-const outPath = path.join(outDir, binaryName);
 
 // ── Help ─────────────────────────────────────────────────
 if (process.argv.includes('--help') || process.argv.includes('-h')) {
   console.log(`
-build-core — Build the Go Core binary.
+build-core — Download or build Core binary.
 
-Usage:
-  node scripts/build-core.js
-  npm run build:core
+Core is maintained in a separate repository:
+  https://github.com/PENG1028/sessionbridge-core
 
-Output:
-  dist/go-core/sessionnode     (Linux/macOS)
-  dist/go-core/sessionnode.exe (Windows)
-
-Requires:
-  Go ≥ 1.21 (https://go.dev/dl/)
+To get the Core binary:
+  1. Download from releases: https://github.com/PENG1028/sessionbridge-core/releases
+  2. Or build from source:
+       git clone git@github.com:PENG1028/sessionbridge-core.git
+       cd sessionbridge-core
+       go build -o sessionnode ./cmd/node/
 `);
   process.exit(0);
 }
 
-// Ensure output directory exists
-if (!existsSync(outDir)) {
-  mkdirSync(outDir, { recursive: true });
-}
+console.log('[build-core] Core is a separate product.');
+console.log('  Releases: https://github.com/PENG1028/sessionbridge-core/releases');
+console.log('');
 
-// Check Go availability
-try {
-  execSync('go version', { stdio: 'pipe' });
-} catch {
-  console.error('Go is required to build Go Core. Install Go (https://go.dev/dl/) or add it to PATH.');
-  process.exit(1);
-}
+// Try to build if sessionbridge-core exists as a sibling directory
+const projectRoot = path.resolve(__dirname, '..');
+const siblingCoreDir = path.join(projectRoot, '..', 'sessionbridge-core');
+const { existsSync, mkdirSync } = require('fs');
 
-// Clean previous binary so a broken build doesn't leave a stale file
-try {
-  const { unlinkSync: rm } = require('fs');
-  if (existsSync(outPath)) rm(outPath);
-} catch {}
-
-console.log(`[build-core] Building Go Core...`);
-console.log(`  Source: ${goCmdDir}`);
-console.log(`  Output: ${outPath}`);
-
-try {
-  execSync(`go build -o "${outPath}" ./cmd/node`, {
-    cwd: goCoreDir,
-    stdio: 'inherit',
-    env: { ...process.env, GO111MODULE: 'on' },
-  });
-  console.log(`[build-core] Done — ${outPath}`);
-} catch (err) {
-  console.error(`[build-core] Build failed: ${err.message}`);
-  process.exit(1);
+if (existsSync(siblingCoreDir)) {
+  console.log(`[build-core] Found sibling repo: ${siblingCoreDir}`);
+  console.log('[build-core] Building...');
+  try {
+    execSync('go build -o sessionnode ./cmd/node/', { cwd: siblingCoreDir, stdio: 'inherit' });
+    console.log('[build-core] Done.');
+  } catch (err) {
+    console.error(`[build-core] Build failed: ${err.message}`);
+    process.exit(1);
+  }
+} else {
+  console.log('[build-core] Clone Core repo as a sibling to build:');
+  console.log(`  cd ${path.join(projectRoot, '..')}`);
+  console.log('  git clone git@github.com:PENG1028/sessionbridge-core.git');
+  console.log('  cd sessionbridge-core && go build ./cmd/node/');
 }

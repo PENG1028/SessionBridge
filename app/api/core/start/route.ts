@@ -36,12 +36,11 @@ function isVps(): boolean {
   return !!(process.env.PM2_HOME);
 }
 
-/** Default binary path fallback: project dist/go-core/ */
+/** Default binary path: check user PATH for sessionnode. No bundled binary. */
 function defaultBinaryPath(): string | null {
-  const projectRoot = process.cwd();
-  const binaryName = process.platform === 'win32' ? 'sessionnode.exe' : 'sessionnode';
-  const binPath = join(projectRoot, 'dist', 'go-core', binaryName);
-  return existsSync(binPath) ? binPath : null;
+  // Core is a separate product. Users must install it independently.
+  // https://github.com/PENG1028/sessionbridge-core/releases
+  return null;
 }
 
 /** Resolve Core binary path: user-saved → project default → null. */
