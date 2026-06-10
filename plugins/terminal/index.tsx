@@ -258,10 +258,16 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
 
     // ── 0. Filter bare Device Attributes CSI (ESC stripped by PTY) ──
     const origWrite = term.write.bind(term);
+    (window as any).__filterHits = 0;
+    (window as any).__filterLast = '';
     term.write = (data: string) => {
-      // Strip Device Attributes CSI (with or without ESC prefix)
       let clean = data.replace(/\x1b\[\?1?;2c/g, '');
+      const n1 = clean.length;
       clean = clean.replace(/\[\?1?;2c/g, '');
+      if (clean.length !== n1) {
+        (window as any).__filterHits = ((window as any).__filterHits || 0) + 1;
+        (window as any).__filterLast = data.slice(0, 60);
+      }
       if (clean) origWrite(clean);
     };
 

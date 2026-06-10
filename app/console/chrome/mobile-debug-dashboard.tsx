@@ -173,6 +173,7 @@ export function MobileDebug() {
         <L n="buf" v={snap.xBufLen} />
         <S />
         <L n="s2b" v={snap.s2bCount} c={snap.s2bCount > 0 ? 'text-red-400' : 'text-green-400'} />
+        <L n="flt" v={typeof window!=='undefined' ? (window as any).__filterHits||0 : 0} c={(typeof window!=='undefined' && (window as any).__filterHits) ? 'text-green-400' : 'text-gray-500'} />
         <S />
         <L n="tM" v={snap.tMove} />
         <L n="kbH" v={snap.kbH} c={snap.kbH > 30 ? 'text-green-400' : 'text-gray-500'} />
