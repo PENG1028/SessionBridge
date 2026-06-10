@@ -42,6 +42,13 @@ export function useMobileTerminal(
     // Prevent browser from consuming touch events natively
     container.style.touchAction = 'none';
 
+    // Keep xterm scrollbar always visible on touch devices
+    const style = document.createElement('style');
+    style.dataset.sbScrollbar = '1';
+    style.textContent =
+      '.xterm .xterm-scrollable-element > .invisible{opacity:1!important;pointer-events:auto!important;transition:none!important}';
+    document.head.appendChild(style);
+
     // ── Touch scroll state ──
     let startY = 0;
     let scrolling = false;
@@ -138,6 +145,7 @@ export function useMobileTerminal(
     container.addEventListener('touchend', handleTouchEnd, { capture: true, passive: false });
 
     return () => {
+      document.head.querySelectorAll('style[data-sb-scrollbar]').forEach(s => s.remove());
       container.removeEventListener('touchstart', handleTouchStart, { capture: true });
       container.removeEventListener('touchmove', handleTouchMove, { capture: true });
       container.removeEventListener('touchend', handleTouchEnd, { capture: true });
