@@ -143,27 +143,24 @@ export function useMobileTerminal(
 
   // ── Keyboard-aware layout ──────────────────────────────────
   //
-  // Simply pad the container bottom when keyboard opens so the
-  // xterm viewport doesn't extend behind the toolbar. No translate,
-  // no scrollToBottom — xterm stays in its natural position.
+  // margin-bottom on the flex child pushes xterm up naturally —
+  // flex layout handles it synchronously. No JS measurement, no
+  // animation frame timing issues. The toolbar floats on top of
+  // the margin area via position:fixed.
   useEffect(() => {
     const container = containerRef.current;
     if (!container || !isTouchDevice()) return;
 
     if (keyboardHeight > 0) {
-      // Defer one frame so toolbar DOM is laid out before measuring
+      // rAF: MobileKeyboardSlot's effect runs after ours — toolbar
+      // is still display:none when we first measure. Defer one frame.
       requestAnimationFrame(() => {
         const bar = document.querySelector('[data-mobile-keyboard-toolbar]') as HTMLElement | null;
-        if (!bar) return;
-        const barTop = bar.getBoundingClientRect().top;
-        const cTop = container.getBoundingClientRect().top;
-        container.style.maxHeight = `${barTop - cTop}px`;
-        fitRef.current?.fit();
-        termRef.current?.scrollToBottom();
+        const barH = bar?.offsetHeight || 90;
+        container.style.marginBottom = `${barH}px`;
       });
     } else {
-      container.style.maxHeight = '';
-      fitRef.current?.fit();
+      container.style.marginBottom = '';
     }
   }, [keyboardHeight]);
 

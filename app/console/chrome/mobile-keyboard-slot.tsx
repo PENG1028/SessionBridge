@@ -211,7 +211,7 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
   return (
     <div
       ref={toolbarRef}
-      className="md:hidden flex flex-col gap-1 px-2 py-1.5 bg-[#0d0d0d]/98 border-t border-gray-800 z-40 shadow-[0_-8px_24px_rgba(0,0,0,0.35)]"
+      className="md:hidden flex flex-col gap-1 px-2 py-1.5 bg-[#0d0d0d] border-t border-gray-800 z-40 shadow-[0_-8px_24px_rgba(0,0,0,0.35)]"
       data-mobile-keyboard-toolbar
       style={{
         position: 'fixed',
