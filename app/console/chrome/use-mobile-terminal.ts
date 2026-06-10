@@ -42,6 +42,17 @@ export function useMobileTerminal(
     // Prevent browser from consuming touch events natively
     container.style.touchAction = 'none';
 
+    // Block pointerdown during touch — prevents xterm from focusing
+    // textarea and opening keyboard on every touch gesture
+    let touchActive = false;
+    const onPointerDown = (e: PointerEvent) => {
+      if (!touchActive) return; // mouse click → let through
+      if (startedOnScrollbar) return; // scrollbar drag → let through
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    };
+    document.addEventListener('pointerdown', onPointerDown, { capture: true });
+
     // ── Touch scroll state ──
     let startY = 0;
     let scrolling = false;
@@ -71,6 +82,7 @@ export function useMobileTerminal(
     };
 
     const handleTouchStart = (e: TouchEvent) => {
+      touchActive = true;
       if (e.touches.length === 1) {
         startedOnScrollbar = isScrollbarTouch(e.touches[0]);
         if (startedOnScrollbar) {
@@ -128,6 +140,7 @@ export function useMobileTerminal(
           ta.focus();  // keyboard closed → open it
         }
       }
+      touchActive = false;
       touchScrollingRef.current = false;
       scrolling = false;
       startedOnScrollbar = false;
@@ -135,12 +148,16 @@ export function useMobileTerminal(
     };
     container.addEventListener('touchstart', handleTouchStart, { capture: true, passive: true });
     container.addEventListener('touchmove', handleTouchMove, { capture: true, passive: false });
+    const handleTouchCancel = () => { touchActive = false; };
     container.addEventListener('touchend', handleTouchEnd, { capture: true, passive: false });
+    container.addEventListener('touchcancel', handleTouchCancel, { capture: true });
 
     return () => {
+      document.removeEventListener('pointerdown', onPointerDown, { capture: true });
       container.removeEventListener('touchstart', handleTouchStart, { capture: true });
       container.removeEventListener('touchmove', handleTouchMove, { capture: true });
       container.removeEventListener('touchend', handleTouchEnd, { capture: true });
+      container.removeEventListener('touchcancel', handleTouchCancel, { capture: true });
     };
   }, []);
 
