@@ -261,7 +261,15 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
     // xterm sends \x1b[c during open(), renders response internally.
     // term.reset() wipes the display; stream replay restores real content.
     term.reset();
-    // ── 1. OSC 7 CWD tracking ──
+
+    // ── 0b. Filter [?;2c from stream & replay (ESC may be stripped by PTY) ──
+    const __origWrite = term.write.bind(term);
+    term.write = (data: string) => {
+      data = data.replace(/\x1b\[\?1?;2c/g, '');
+      data = data.replace(/\[\?1?;2c/g, '');
+      if (data) __origWrite(data);
+    };
+
     const osc7Disp = term.parser.registerOscHandler(7, (data: string) => {
       const cwd = parseOsc7(data);
       debugLog('OSC 7', { data, cwd });
