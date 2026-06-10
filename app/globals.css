@@ -9,33 +9,6 @@
   }
 }
 
-/* ── xterm overrides — fill container ─────────────────────── */
-.xterm {
-  @apply h-full px-1;
-}
-
-.xterm-viewport {
-  scrollbar-width: thin;
-  scrollbar-color: #30363d transparent;
-}
-
-.xterm-viewport::-webkit-scrollbar {
-  width: 6px;
-}
-.xterm-viewport::-webkit-scrollbar-track {
-  background: transparent;
-}
-.xterm-viewport::-webkit-scrollbar-thumb {
-  @apply rounded-full bg-[#30363d];
-}
-
-/* Wider scrollbar on touch devices for easier finger targeting */
-@media (pointer: coarse) {
-  .xterm-viewport::-webkit-scrollbar {
-    width: 16px;
-  }
-}
-
 /* ── Animations ──────────────────────────────────────────── */
 @keyframes fadeIn {
   from { opacity: 0; transform: scale(0.95); }

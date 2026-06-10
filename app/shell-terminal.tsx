@@ -144,6 +144,22 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
     term.open(containerRef.current);
     fitAddon.fit();
 
+    // ══════ Xterm styles — moved from globals.css ══════
+    const xtermStyle = document.createElement('style');
+    xtermStyle.dataset.sbXterm = '1';
+    xtermStyle.textContent = [
+      '.xterm{height:100%;padding:0 .25rem}',
+      '.xterm-viewport{scrollbar-width:thin;scrollbar-color:#30363d transparent}',
+      '.xterm-viewport::-webkit-scrollbar{width:6px}',
+      '.xterm-viewport::-webkit-scrollbar-track{background:transparent}',
+      '.xterm-viewport::-webkit-scrollbar-thumb{border-radius:9999px;background:#30363d}',
+      '@media(pointer:coarse){.xterm-viewport::-webkit-scrollbar{width:16px}}',
+      // Keep custom overlay scrollbar always visible
+      '.xterm .xterm-scrollable-element>.invisible{opacity:1!important;pointer-events:auto!important;transition:none!important}',
+    ].join('');
+    document.head.appendChild(xtermStyle);
+    // ══════ END ══════
+
     // Plugin setup hook
     const pluginCleanup = onTerminalReadyRef.current(term, fitAddon);
 
@@ -189,6 +205,7 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
     focusRoot?.addEventListener('focusout', handleFocusOut);
 
     return () => {
+      xtermStyle.remove();
       console.error = origConsoleError;
       onDataDisposable.dispose();
       pluginCleanup?.dispose?.();
