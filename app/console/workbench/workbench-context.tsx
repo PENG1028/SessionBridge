@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useContext, type ReactNode, type RefObject } from 'react';
-import type { InstanceInfo } from '../../../lib/session-types';
+import type { InstanceInfo, CreateInstanceFn } from '../../../lib/session-types';
 
 // ── Context value type (remaining after Session/Input/ToolActivity split) ──
 
@@ -15,7 +15,7 @@ export interface WorkbenchContextValue {
 
   // Instance management (Phase 4F: explicit instance creation, no auto-bind)
   instances: InstanceInfo[];
-  createInstance: (dir: string, label?: string, adapterId?: string) => Promise<{ success: boolean; instance?: InstanceInfo; runId?: string; sessionId?: string; error?: string }>;
+  createInstance: CreateInstanceFn;
   bindCurrentTabInstance: (instanceId: string, surface?: string) => void;
   /** Set the title of the currently active tab. Used by plugins to
    *  respond to inner program title changes (e.g. OSC 0 from claude

@@ -82,7 +82,7 @@ function ClaudeChatEmptyState() {
           onClick={async () => {
             setCreating(true);
             try {
-              const result = await createInstance(projectCwd || '.', 'Claude Chat', 'claude-code');
+              const result = await createInstance({ dir: projectCwd || '.', label: 'Claude Chat', adapterId: 'claude-code' });
               if (result?.instance?.id) {
                 bindCurrentTabInstance(result.instance.id);
               }

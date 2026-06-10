@@ -43,6 +43,30 @@ export type QueueStatus = {
   queueDepth: number;
 };
 
+// ── Instance creation ──────────────────────────────────────────────
+// Options object — single source of truth for createInstance.
+// All callers import this type instead of inlining the signature.
+
+export interface CreateInstanceOptions {
+  dir: string;
+  label?: string;
+  /** Adapter type: 'terminal', 'shell', 'claude-code', etc. */
+  adapterId?: string;
+  /** Terminal geometry (terminal adapter only). */
+  cols?: number;
+  rows?: number;
+}
+
+export interface CreateInstanceResult {
+  success: boolean;
+  instance?: InstanceInfo;
+  runId?: string;
+  sessionId?: string;
+  error?: string;
+}
+
+export type CreateInstanceFn = (opts: CreateInstanceOptions) => Promise<CreateInstanceResult>;
+
 export type RunLike = {
   runId?: string;
   sessionId?: string;

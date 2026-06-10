@@ -13,7 +13,8 @@ import { getLastActiveDir, setLastActiveDir, getRestoreLastPath } from '../../sd
 import { useCore, useCoreStatus } from '../../sdk';
 import { useCoreErrors } from '../../sdk';
 import { classifyCoreError } from '../../sdk';
-import { TerminalInputBuffer, createDebouncedResize } from '../../sdk';
+import { TerminalInputBuffer } from '../../sdk';
+import type { FitAddon } from '@xterm/addon-fit';
 // Counter for generating distinguishable terminal labels
 let _termLabelCounter = 0;
 function nextTermLabel(baseCwd: string): string {
@@ -76,6 +77,9 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
   const [sessionFresh, setSessionFresh] = useState(true);
   const autoCreated = useRef(false);
   const prevInstanceId = useRef<string | undefined>(undefined);
+  // Font size — local display only, does NOT resize the PTY
+  const [fontSize, setFontSize] = useState(14);
+  const termRef = useRef<any>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
 
   // ── Multi-device session attach ──────────────────────────────
@@ -120,15 +124,21 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
     setError(null);
     try {
       const label = nextTermLabel(cwdRef.current);
-	      const result = await createInstance(cwdRef.current, label, 'shell');
+      const dims = fitAddonRef.current?.proposeDimensions();
+      // PTY size is fixed at a reasonable default (120×40) so all clients
+      // share the same terminal viewport size. Adjust font size locally
+      // via the ± controls to match your screen.
+      const cols = 120;
+      const rows = 40;
+      const result = await createInstance({ dir: cwdRef.current, label, adapterId: 'shell', cols, rows });
       if (result?.success && result?.instance) {
         const run = result.instance;
         const sessionId = result.sessionId;
-        debugLog('TerminalView createInstance SUCCESS', { runId: run.id, sessionId });
+        debugLog('TerminalView createInstance SUCCESS', { runId: run.id, sessionId, cols, rows });
         setCoreSessionId(sessionId ?? null);
         bindCurrentTabInstance(run.id, undefined);
-        // Resize terminal to proper dimensions
-        core.call('run.resize', { runId: run.id, cols: 80, rows: 24 }).catch(() => {});
+        // PTY dimensions are set by run.create (cols/rows passed above).
+        // No subsequent resize — the PTY size is fixed for the session lifetime.
         // Fetch ptyMode from run.info (createInstance doesn't return it)
         core.call<{ ptyMode?: string }>('run.info', { runId: run.id }).then(info => {
           if (info?.ptyMode) setPtyMode(info.ptyMode);
@@ -247,15 +257,18 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
 
   // ── Core session integration (all via onTerminalReady) ─────
   // ShellTerminal only provides the xterm instance. Everything below
-  // — stream subscription, OSC 7, stdin buffering, history replay,
-  // resize — is the plugin's responsibility.
+  // — stream subscription, OSC 7, stdin buffering, history replay —
+  // is the plugin's responsibility.
+  // PTY dimensions are fixed (120×40) so all clients share the same
+  // terminal viewport. Adjust local font size via the ± controls.
   const inputBufRef = useRef<TerminalInputBuffer | null>(null);
-  const debouncedResizeRef = useRef<ReturnType<typeof createDebouncedResize> | null>(null);
   const lastOsc7CwdRef = useRef('');
+  const fitAddonRef = useRef<FitAddon | null>(null);
 
-  const onTerminalReady = useCallback((term: any, _fitAddon: any) => {
+  const onTerminalReady = useCallback((term: any, fitAddon: any) => {
     lastOsc7CwdRef.current = '';
-
+    fitAddonRef.current = fitAddon;
+    termRef.current = term;
 
     // ── 0. Clear xterm Device Attributes response ──
     // term.reset() wipes any rendering artifacts from term.open().
@@ -344,47 +357,7 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
           }
           return true;
         });
-    // ── 2. Suppress stale CUP from old terminal dimensions ──────
-    // Shell reconnect emits CUP (\x1b[26;19H) to position cursor
-    // based on OLD terminal dimensions (e.g. desktop 80×24). On
-    // mobile (8-12 rows) this moves the cursor far from the prompt,
-    // causing first input to appear at the wrong row.
-    //
-    // Strategy: during replay, let all CUPs through (firstLiveCUP
-    // starts false). After replay, anchor cursor to buffer bottom
-    // via \x1b[999;1H (bypassing this handler), then set
-    // firstLiveCUP=true so the first live-stream CUP — the stale
-    // cursor restoration from the shell echo — is suppressed.
-    //
-    // cupBypass: temporary override for our own anchor writes so
-    // they reach the terminal without being intercepted.
-    let cupBypass = false;
-    let firstLiveCUP = false;
-    const cupHandler = term.parser.registerCsiHandler(
-      { final: 'H' },
-      (params: (number | number[])[]) => {
-        if (cupBypass) return false;
-        if (firstLiveCUP) {
-          firstLiveCUP = false;
-          const row = Array.isArray(params[0]) ? params[0][0] : params[0];
-          const col = Array.isArray(params[1]) ? params[1][0] : params[1];
-          (window as any).__firstChunkDiag = {
-            cupSuppressed: true,
-            targetRow: row,
-            targetCol: col,
-            currentCursorY: term.buffer.active.cursorY,
-            currentCursorX: term.buffer.active.cursorX,
-            baseY: term.buffer.active.baseY,
-            rows: term.rows,
-            bufLen: term.buffer.active.length,
-          };
-          return true;
-        }
-        return false;
-      },
-    );
-
-    // ── 3. Live output handler (subscribed AFTER replay) ────────
+    // ── 2. Live output handler (subscribed AFTER replay) ────────
     const chunkHandler = (event: any) => {
       if (event.sessionId !== coreSessionId) return;
       if (event.streamType === 'stderr') {
@@ -401,16 +374,7 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
     });
     inputBufRef.current = buf;
 
-    // ── 5. Debounced resize → Core ────────────────────────────
-    const dr = createDebouncedResize({
-      delayMs: 80,
-      onResize: (cols: number, rows: number) => {
-        core.call('process.resize', { sessionId: coreSessionId, cols, rows }).catch(() => {});
-      },
-    });
-    debouncedResizeRef.current = dr;
-
-    // ── 6. Banner + replay → anchor → subscribe ───────────────
+    // ── 5. Banner + replay → anchor → subscribe ───────────────
     if (sessionFresh) {
       term.writeln('\x1b[36mConnected to core stream...\x1b[0m');
     } else {
@@ -433,25 +397,12 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
       }
     });
 
-    // After both replays complete: anchor cursor + viewport, THEN
-    // subscribe to live events. This prevents live data from
-    // interleaving with replay data, which causes duplicate prompts
-    // and cursor drift.
+    // After both replays complete: scroll to bottom, THEN subscribe
+    // to live events. This prevents live data from interleaving with
+    // replay data, which causes duplicate prompts and cursor drift.
+    // PTY dimensions are fixed (120×40) so shell CUPs are always correct
+    // — no cursor anchoring or CUP interception needed.
     Promise.all([replayStdout.catch(() => {}), replayStderr.catch(() => {})]).then(() => {
-      // Step 1: Anchor cursor to buffer bottom. Replayed shell
-      // output may contain CUPs that position the cursor at rows
-      // from old (desktop) terminal dimensions. \x1b[999;1H
-      // moves cursor to the last row of the buffer regardless of
-      // its size — xterm.js clamps the row parameter.
-      cupBypass = true;
-      term.write('\x1b[999;1H');
-      cupBypass = false;
-      // Step 2: Enable interception of the first live-stream CUP.
-      // The shell echo (in response to user input or auto-sent
-      // Enter) often includes a stale cursor restoration from old
-      // dimensions — this is the CUP that causes the 2-3 line
-      // jump on mobile first input.
-      firstLiveCUP = true;
       requestAnimationFrame(() => {
         // scrollToBottom → scrollLines → needs renderer dimensions.
         // If xterm's renderer hasn't initialized yet (fast replay),
@@ -478,29 +429,32 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
         daHandler1.dispose();
         daHandler2.dispose();
         daHandler3.dispose();
-        cupHandler.dispose();
         osc7Disp.dispose();
         oscTitleDisp.dispose();
         oscTitleDisp2.dispose();
         core.off('stream.chunk', chunkHandler);
         buf.dispose();
-        dr.cancel();
         inputBufRef.current = null;
-        debouncedResizeRef.current = null;
       },
     };
   }, [coreSessionId, core, sessionFresh, onCwdChange, onNavigatePath, setTabTitle]);
+
+  // ── Font size effect ─────────────────────────────────────────
+  // When the user adjusts font size locally, update xterm and refit.
+  // This is purely local — it does NOT send process.resize to Core.
+  useEffect(() => {
+    const term = termRef.current;
+    const fit = fitAddonRef.current;
+    if (!term || !fit) return;
+    term.options.fontSize = fontSize;
+    try { fit.fit(); } catch { /* renderer not ready */ }
+  }, [fontSize]);
 
   // Feed stdin from ShellTerminal's local-echo handler
   // MobileKeyboardToolbar composes Ctrl/Alt sequences on its own.
   // handleUserInput receives pre-composed data (e.g. \x03 for Ctrl+C).
   const handleUserInput = useCallback((data: string) => {
     inputBufRef.current?.push(data);
-  }, []);
-
-  // Feed resize from ShellTerminal's ResizeObserver
-  const handleResize = useCallback((cols: number, rows: number) => {
-    debouncedResizeRef.current?.resize(cols, rows);
   }, []);
 
   // Send cd command to the terminal shell
@@ -541,10 +495,12 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
               <span className="text-[11px] font-mono max-w-[160px] truncate" title={absoluteCwd}>{middleTruncate(absoluteCwd || '.', 32)}</span>
             </button>
           </TitleBar>
-          <div className="flex-1 flex flex-col items-center justify-center bg-[#0a0a0a] min-h-0 gap-4 px-6">
+          <div className="flex-1 flex flex-col items-center bg-[#0a0a0a] min-h-0 gap-3 px-6 pt-4">
             <Terminal className="w-8 h-8 text-gray-700 shrink-0" />
-            <span className="text-[10px] text-gray-500 font-bold tracking-wider">EXISTING SESSIONS</span>
-            <div className="w-full max-w-sm space-y-1.5">
+            <span className="text-[10px] text-gray-500 font-bold tracking-wider">
+              EXISTING SESSIONS · {availableSessions.length}
+            </span>
+            <div className="w-full max-w-sm overflow-y-auto max-h-[55vh] space-y-1.5 min-h-0">
               {availableSessions.map(s => (
                 <div key={s.runId} className="flex items-center gap-1">
                   <button
@@ -648,6 +604,19 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
             {ptyMode.toUpperCase()}
           </span>
         )}
+        <span className="flex items-center gap-0.5 mr-1 shrink-0">
+          <button
+            onClick={() => setFontSize(s => Math.max(8, s - 1))}
+            className="px-1 py-0.5 rounded text-[10px] text-gray-400 hover:text-white hover:bg-gray-700/60 transition-colors leading-none"
+            title="Decrease font size"
+          >−</button>
+          <span className="text-[9px] text-gray-500 font-mono w-5 text-center tabular-nums select-none">{fontSize}</span>
+          <button
+            onClick={() => setFontSize(s => Math.min(48, s + 1))}
+            className="px-1 py-0.5 rounded text-[10px] text-gray-400 hover:text-white hover:bg-gray-700/60 transition-colors leading-none"
+            title="Increase font size"
+          >+</button>
+        </span>
         <button
           onClick={() => setPickerOpen(true)}
           className="flex items-center gap-1.5 px-2 py-0.5 rounded text-gray-300 hover:text-white bg-gray-800/60 hover:bg-gray-700/80 shrink-0 transition-colors border border-gray-700"
@@ -659,7 +628,7 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
       </TitleBar>
 
       <div className="flex-1 flex flex-col min-h-0">
-        <ShellTerminal key={coreSessionId ?? 'pending'} onTerminalReady={onTerminalReady} onResize={handleResize} onUserInput={handleUserInput} onOpenDirectoryPicker={handleOpenDirectoryPicker} />
+        <ShellTerminal key={coreSessionId ?? 'pending'} onTerminalReady={onTerminalReady} onUserInput={handleUserInput} onOpenDirectoryPicker={handleOpenDirectoryPicker} />
       </div>
 
       <DirectoryPicker

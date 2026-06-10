@@ -23,7 +23,7 @@ interface LeftSidebarProps {
   instances?: any[];
   activeInstanceId?: string | null;
   onActivateInstance?: (id: string) => void;
-  onCreateInstance?: (dir: string, label?: string, adapterId?: string) => void;
+  onCreateInstance?: (opts: { dir: string; label?: string; adapterId?: string }) => void;
   onKillInstance?: (id: string) => void;
 }
 

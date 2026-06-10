@@ -520,13 +520,13 @@ export function useConsoleController({ wsUrl, setWsUrl, token, setToken, onRecon
     }
   }, [activeNodeWsUrl, wsUrl, projectInfo]);
 
-  const createNodeInstance = useCallback(async (dir: string, label?: string, adapterId?: string) => {
+  const createNodeInstance = useCallback(async (opts: { dir: string; label?: string; adapterId?: string }) => {
     if (activeNodeWsUrl !== wsUrl) {
       const errMsg = 'Remote instance creation now requires Core mesh run.create routing; legacy /api/instances removed.';
       addLog(`[Error] ${errMsg}`);
       return { success: false, error: errMsg };
     }
-    return createInstance(dir, label, adapterId);
+    return createInstance(opts);
   }, [activeNodeWsUrl, wsUrl, createInstance, addLog]);
 
   const { messagesBySession, setMessagesBySession, messages, sessionKey, updateSession, handleNewSession, isRestoring, snapshots, saveSnapshot, loadSnapshot, forkFromSnapshot, knownFiles } = useMessageSessions(

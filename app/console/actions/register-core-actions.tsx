@@ -139,7 +139,7 @@ function def(
   // ══════════════════════════════════════════════════════════════
   registerAction(def('terminal.new', 'New Terminal',
     ['commandPalette', 'contextMenu'],
-    (ctx) => ctx.createInstance(ctx.projectCwd, undefined, 'shell'),
+    (ctx) => ctx.createInstance({ dir: ctx.projectCwd, adapterId: 'shell' }),
     { when: 'view == "terminal"', order: 10, category: 'Terminal' },
   ));
 

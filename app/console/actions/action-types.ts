@@ -6,6 +6,7 @@
 
 import type { WorkbenchAction as WbAction } from '../stage/workbench-state.types';
 import type { Message } from '../hooks/block-types';
+import type { CreateInstanceOptions } from '../../../lib/session-types';
 
 /** UI surfaces that can host actions. */
 export type ActionSurface =
@@ -30,7 +31,7 @@ export interface ActionRunContext {
   workbenchDispatch: (action: WbAction) => void;
   sendCommand: (cmd: string, args?: Record<string, unknown>, sessionId?: string) => void;
   sendInput: (text: string, sessionId?: string) => void;
-  createInstance: (dir: string, label?: string, adapterId?: string) => unknown;
+  createInstance: (opts: CreateInstanceOptions) => unknown;
   killInstance: (id: string) => void;
   openSettings: () => void;
   openSearch: () => void;

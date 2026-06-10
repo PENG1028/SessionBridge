@@ -5,6 +5,7 @@ import { buildMenuItems } from '../menus/context-menu-registry';
 import { getAction } from '../actions/action-registry';
 import type { ActionRunContext } from '../actions/action-types';
 import type { WhenContext } from '../../../lib/evaluate-when';
+import type { CreateInstanceOptions } from '../../../lib/session-types';
 import type {
   ContextMenuRequest,
   ContextMenuTarget,
@@ -36,7 +37,7 @@ export function useContextMenu(
   whenCtx: WhenContext,
   getAllAdapterTypes: () => { id: string; meta: { label: string } }[],
   projectCwd: string,
-  createInstance: (dir: string, label?: string, adapterId?: string) => unknown,
+  createInstance: (opts: CreateInstanceOptions) => unknown,
 ) {
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
 
@@ -110,7 +111,7 @@ export function useContextMenu(
         const adapterId = item.id.replace('new.', '');
         return {
           ...item,
-          action: () => createInstance(projectCwd || '.', undefined, adapterId),
+          action: () => createInstance({ dir: projectCwd || '.', adapterId }),
         };
       }
       return item;

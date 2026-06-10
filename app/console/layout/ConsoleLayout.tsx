@@ -170,7 +170,7 @@ export function ConsoleLayout(props: Record<string, any>) {
           instances={instances.filter((i: any) => appState.workbenchInstanceIds.includes(i.id) && (i.status === 'running' || i.status === 'starting'))}
           activeInstanceId={activeInstanceId}
           onActivateInstance={activateInstance}
-          onCreateInstance={(dir, label, adapterId) => createNodeInstance(dir, label, adapterId)}
+          onCreateInstance={(opts) => createNodeInstance(opts)}
           onKillInstance={killInstance}
         />
         </SidebarSlot>

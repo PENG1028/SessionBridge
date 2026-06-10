@@ -4,8 +4,8 @@ import { useEffect, useRef, useCallback, useMemo, useState } from 'react';
 import { useCore } from '../app/console/core/core-client-provider';
 
 // Re-export types for consumers
-export type { ConnStatus, MsgLog, SessionInfo, InstanceInfo, QueueStatus } from './session-types';
-import type { ConnStatus, MsgLog, SessionInfo, InstanceInfo, QueueStatus, RunLike } from './session-types';
+export type { ConnStatus, MsgLog, SessionInfo, InstanceInfo, QueueStatus, CreateInstanceOptions, CreateInstanceResult, CreateInstanceFn } from './session-types';
+import type { ConnStatus, MsgLog, SessionInfo, InstanceInfo, QueueStatus, RunLike, CreateInstanceOptions, CreateInstanceResult } from './session-types';
 
 function nowTime() {
   return new Date().toISOString().slice(11, 23);
@@ -215,7 +215,8 @@ export function useSession(
     setActiveSessionId(id);
   }, []);
 
-  const createInstance = useCallback(async (dir: string, label?: string, adapterId?: string) => {
+  const createInstance = useCallback(async (opts: CreateInstanceOptions): Promise<CreateInstanceResult> => {
+    const { dir, label, adapterId, cols, rows } = opts;
     if (!core.isConnected) {
       return { success: false, error: 'Core is not connected' };
     }
@@ -228,6 +229,8 @@ export function useSession(
         command,
         cwd: dir || '.',
         pty: true,
+        cols: cols || 80,
+        rows: rows || 24,
         policy: {
           onDisconnect: 'keep_running',
           onCoreShutdown: 'keep_running',
@@ -276,8 +279,8 @@ export function useSession(
     return { success: false, error: 'Core is not connected' };
   }, [core, addMsgLog]);
 
-  const spawnSession = useCallback(async (directory: string, label?: string) => {
-    return createInstance(directory, label, 'terminal');
+  const spawnSession = useCallback(async (dir: string, label?: string) => {
+    return createInstance({ dir, label, adapterId: 'terminal' });
   }, [createInstance]);
 
   const activeBlocks = useMemo(() => serverBlocks, [serverBlocks]);
