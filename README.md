@@ -1,105 +1,91 @@
-# SessionBridge
+# SessionBridge Web
 
-SessionBridge is a personal Core mesh and App UI for operating terminals,
-plugins, and long-running tasks across trusted machines.
+Web UI and plugin host for [SessionBridge Core](https://github.com/PENG1028/sessionbridge-core) nodes.
 
-Current runtime:
+> ⚠️ **Early stage.** The Web UI is under active development. Many Core capabilities
+> (68 registered) do not yet have UI surfaces. See [Current State](#current-state).
 
-- Go Core is the only Core runtime.
-- App UI is the first-party Next.js UI.
-- Plugins are declared with `plugins/*/plugin.yaml`.
-- Old Node relay, old extension runtime, and Flutter app have been removed.
+## Architecture
+
+```
+sessionbridge-core (Go)          sessionbridge-web (Next.js) ← this repo
+├── 68 capabilities              ├── app/        UI layer
+├── mesh / peer / invite         ├── plugins/    terminal, mesh, approvals...
+├── session / stream / run       ├── sdk/        plugin API surface
+└── ws://127.0.0.1:9090/ws       └── lib/        shared helpers
+           │
+           └── WebSocket ────────────── CoreClient / SSE bridge
+```
+
+The web repo does **not** contain Core source. Get Core separately:
+- [sessionbridge-core releases](https://github.com/PENG1028/sessionbridge-core/releases)
+- or `go install github.com/PENG1028/sessionbridge-core/cmd/node@latest`
 
 ## Quick Start
 
 ```bash
+# 1. Start Core (separate repo)
+git clone https://github.com/PENG1028/sessionbridge-core.git
+cd sessionbridge-core && go build ./cmd/node/ && ./sessionnode
+
+# 2. Start Web UI (this repo)
+git clone https://github.com/PENG1028/sessionbridge-web.git
+cd sessionbridge-web
 npm install
-npm run build
-npm start
+npm run dev        # → http://localhost:3000
 ```
 
-Development:
-
-```bash
-npm run dev       # Go Core + Next.js dev server
-npm run dev:core  # Go Core only
-npm run dev:web   # Next.js only
-```
+Development expects Core at `ws://127.0.0.1:9090/ws`. Override with `SESSIONBRIDGE_CORE_WS_URL`.
 
 ## Commands
 
 | Command | Purpose |
 |---|---|
-| `npm start` | Start Go Core |
-| `npm run dev` | Start Go Core and Next.js dev server |
-| `npm run build` | Build Next.js and Go Core |
-| `npm run build:core` | Build Go Core |
-| `npm run build:web` | Build Next.js |
-| `npm run package` | Assemble portable package |
+| `npm run dev` | Next.js dev server (LAN: 0.0.0.0:3000) |
+| `npm run dev:web` | Same as `npm run dev` |
+| `npm run build` | Next.js production build |
+| `npm start` | Start Next.js production server |
+| `npm test` | Run tests (vitest) |
 
-## Core Concepts
+Core-related scripts (`dev:core`, `start:core`) detect a sibling `sessionbridge-core` repo or fall back to `sessionnode` on PATH.
 
-| Term | Meaning |
-|---|---|
-| Core Node | A running Go Core instance with identity and capability handlers. |
-| Relay | A Core node that is publicly reachable or acts as a mesh entry/middle node. |
-| Leaf | A Core node that usually connects outbound to a Relay. |
-| View | A browser/client without Core identity. It accesses App UI and operates nodes through UI. |
+## Current State
 
-See [docs/access-model.md](docs/access-model.md) for the canonical definitions.
+### What works
+- **Terminal** — PTY-backed shell with xterm.js rendering, stream replay, resize
+- **Mesh** — peer invite/create/accept flow, node card with reconnect
+- **File tree** — browse and basic file write
+- **Plugin system** — manifest-based views, commands, configuration panels
+- **Settings** — Core binary path, port, update check, plugin configs
+- **Approvals** — notification center for permission requests
 
-## Runtime Layout
+### Known gaps
+- **Terminal is a work-in-progress** — mobile input, OSC 7 integration, and session restore need polish
+- **~50 Core capabilities have no UI** — logs, audit, env vars, session history, task manager, full file ops, node management, update policies
+- **Plugin management** (`plugin.*` capabilities) lives in Next.js API routes, not Core — the Core-side plugin system was planned but not built
+- **No static export** — requires `next start` with `.next/` build output
+- **Single-view focus** — multi-tab/pane layout exists but edge cases remain
 
-```text
-go-core/   Go Core runtime
-app/       App UI
-lib/       browser/client helpers
-plugins/   plugin.yaml declarations
-content/   web copy/content used by App UI
-examples/  plugin examples
-docs/      design and decision records
-```
-
-Removed legacy paths:
-
-```text
-src/          old Node relay runtime
-agent-core/   old extension runtime
-extensions/   old extension tree
-flutter_app/  old Flutter client
-```
-
-## Security Model
-
-There are two separate security layers:
-
-1. App UI access for humans and browser Views.
-2. Core-to-Core mesh trust for nodes.
-
-Core endpoints:
-
-| Endpoint | Purpose | Security |
-|---|---|---|
-| `/ws` | App UI/control WebSocket | `SESSIONNODE_TOKEN` when exposed |
-| `/peer/ws` | Core-to-Core mesh | ed25519 challenge-response |
-| `/peer/invite/accept` | One-time peer pairing | short-lived invite code |
-
-Do not expose `/ws` publicly without `SESSIONNODE_TOKEN`.
+### What's solid
+The [Core](https://github.com/PENG1028/sessionbridge-core) is production-quality — 68 capabilities with tests, mesh networking, PTY management, and self-update. The web UI is the official frontend but the Core can be used headless or with any WebSocket client.
 
 ## Plugin Model
 
-`plugins/*/plugin.yaml` is the only plugin declaration source. App UI reads
-plugin declarations from Core and renders host-provided or manifest-declared
-surfaces.
+`plugins/*/plugin.yaml` is the only plugin declaration source. Plugins contribute:
+- Views and panels
+- Commands
+- Configuration schemas
+- Core capability permissions
+
+Plugin SDK at `sdk/` re-exports hooks, components, and types for plugin authors.
 
 ## Documentation
 
 | Document | Purpose |
 |---|---|
-| [docs/access-model.md](docs/access-model.md) | Relay, Leaf, View, and connection semantics |
-| [docs/core-v2/core-kernel/PUBLIC_MESH_SECURITY.md](docs/core-v2/core-kernel/PUBLIC_MESH_SECURITY.md) | Core mesh security and pairing |
-| [docs/core-v2/app-ui/APP_UI_API_MAP.md](docs/core-v2/app-ui/APP_UI_API_MAP.md) | App UI to Core API map |
-| [docs/development.md](docs/development.md) | Development and deployment notes |
+| [docs/access-model.md](docs/access-model.md) | Relay, Leaf, View, connection semantics |
+| [docs/core-v2/core-kernel/PUBLIC_MESH_SECURITY.md](docs/core-v2/core-kernel/PUBLIC_MESH_SECURITY.md) | Mesh security and pairing |
+| [docs/development.md](docs/development.md) | Development and deployment |
 
 ## License
 
