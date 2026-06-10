@@ -16,7 +16,6 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useKeyboard } from '../../../lib/use-keyboard';
-import { setCtrlActive } from '../../../lib/input-router';
 import { getMobileKeyboardContributions } from './mobile-keyboard-registry';
 
 interface MobileKeyboardSlotProps {
@@ -124,14 +123,13 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
     if (!enabled) {
       setCtrlOn(false);
       setAltOn(false);
-      setCtrlActive(false);
     }
   }, [enabled]);
 
   useEffect(() => {
     if (ctrlOn) {
       if (ctrlTimerRef.current) clearTimeout(ctrlTimerRef.current);
-      ctrlTimerRef.current = setTimeout(() => { setCtrlOn(false); setCtrlActive(false); }, 5000);
+      ctrlTimerRef.current = setTimeout(() => { setCtrlOn(false); }, 5000);
     }
     return () => {
       if (ctrlTimerRef.current) clearTimeout(ctrlTimerRef.current);
@@ -150,11 +148,7 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
 
   const handleKey = useCallback((item: typeof items[number]) => {
     if (item.toggle && item.toggleKey === 'ctrl') {
-      setCtrlOn(on => {
-        const next = !on;
-        setCtrlActive(next);
-        return next;
-      });
+      setCtrlOn(on => !on);
       return;
     }
     if (item.toggle && item.toggleKey === 'alt') {
@@ -168,7 +162,6 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
     if (ctrlOnRef.current && data.length === 1) {
       data = ctrlSeq(data);
       setCtrlOn(false);
-      setCtrlActive(false);
     }
     if (altOnRef.current) {
       data = '\x1b' + data;

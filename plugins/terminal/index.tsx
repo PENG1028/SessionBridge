@@ -14,7 +14,6 @@ import { useCore, useCoreStatus } from '../../sdk';
 import { useCoreErrors } from '../../sdk';
 import { classifyCoreError } from '../../sdk';
 import { TerminalInputBuffer, createDebouncedResize } from '../../sdk';
-import { setInputHandler, isCtrlActive, ctrlSeq as routerCtrlSeq, setCtrlActive } from '../../lib/input-router';
 // Counter for generating distinguishable terminal labels
 let _termLabelCounter = 0;
 function nextTermLabel(baseCwd: string): string {
@@ -298,10 +297,14 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
     core.call('stream.subscribe', { sessionId: coreSessionId, streamType: 'stderr' }).catch(() => {});
     const chunkHandler = (event: any) => {
       if (event.sessionId !== coreSessionId) return;
+      let data = event.data;
+      // Filter bare Device Attributes responses (ESC stripped by PTY)
+      data = data.replace(/(?<!\x1b)\[\?1?;2c/g, '');
+      if (!data) return;
       if (event.streamType === 'stderr') {
-        term.write('\x1b[91m' + event.data + '\x1b[0m');
+        term.write('\x1b[91m' + data + '\x1b[0m');
       } else {
-        term.write(event.data);
+        term.write(data);
       }
       // Let xterm.js handle auto-scroll: it only scrolls on write()
       // when the viewport is already at the bottom. If the user scrolled
@@ -367,14 +370,9 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
   }, [coreSessionId, core, sessionFresh, onCwdChange, onNavigatePath, setTabTitle]);
 
   // Feed stdin from ShellTerminal's local-echo handler
+  // MobileKeyboardToolbar composes Ctrl/Alt sequences on its own.
+  // handleUserInput receives pre-composed data (e.g. \x03 for Ctrl+C).
   const handleUserInput = useCallback((data: string) => {
-    // When the toolbar's Ctrl toggle is active, intercept physical
-    // keyboard input and compose Ctrl+letter sequences. The user taps
-    // Ctrl on the toolbar, then types "c" on their phone keyboard → Ctrl+C.
-    if (isCtrlActive() && data.length === 1 && data >= ' ') {
-      data = routerCtrlSeq(data);
-      setCtrlActive(false);
-    }
     inputBufRef.current?.push(data);
   }, []);
 
