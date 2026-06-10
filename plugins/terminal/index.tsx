@@ -258,15 +258,54 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
 
 
     // ── 0. Clear xterm Device Attributes response ──
-    // xterm sends \x1b[c during open(), renders response internally.
-    // term.reset() wipes the display; stream replay restores real content.
+    // term.reset() wipes any rendering artifacts from term.open().
     term.reset();
 
-    // ── 0b. Filter [?;2c from stream & replay (ESC may be stripped by PTY) ──
+    // ── 0b. Intercept DA (Device Attributes) responses at parser level ──
+    const __daHits = { count: 0 };
+    (window as any).__daHits = __daHits;
+
+    // Handler 1: CSI ? ... c  (primary DA response)
+    const daHandler1 = term.parser.registerCsiHandler(
+      { prefix: '?', final: 'c' },
+      (_params: (number | number[])[]) => {
+        __daHits.count++;
+        return true;
+      },
+    );
+    // Handler 2: CSI > ... c  (secondary DA response)
+    const daHandler2 = term.parser.registerCsiHandler(
+      { prefix: '>', final: 'c' },
+      (_params: (number | number[])[]) => {
+        __daHits.count++;
+        return true;
+      },
+    );
+    // Handler 3: CSI 0 c / CSI c  (DA request — don't display)
+    const daHandler3 = term.parser.registerCsiHandler(
+      { final: 'c' },
+      (params: (number | number[])[]) => {
+        // Only consume bare CSI c / CSI 0 c (DA requests), not other c-final sequences
+        if (params.length === 0 || (params.length === 1 && params[0] === 0)) {
+          __daHits.count++;
+          return true;
+        }
+        return false;
+      },
+    );
+    (window as any).__daHandlers = true;
+
+    // ── 0c. Defense-in-depth: regex filter + diagnostic ──
     const __origWrite = term.write.bind(term);
+    (window as any).__filterHits = 0;
     term.write = (data: string) => {
-      data = data.replace(/\x1b\[\?1?;2c/g, '');
-      data = data.replace(/\[\?1?;2c/g, '');
+      const before = data;
+      data = data.replace(/\x1b\[\?[^a-zA-Z]*c/g, '');
+      data = data.replace(/\[\?[^a-zA-Z]*c/g, '');
+      if (data !== before) {
+        (window as any).__filterHits = ((window as any).__filterHits || 0) + 1;
+        (window as any).__lastFiltered = { before: before.slice(0, 80), after: data.slice(0, 80), time: Date.now() };
+      }
       if (data) __origWrite(data);
     };
 
@@ -368,7 +407,12 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
 
     return {
       dispose: () => {
+        daHandler1.dispose();
+        daHandler2.dispose();
+        daHandler3.dispose();
         osc7Disp.dispose();
+        oscTitleDisp.dispose();
+        oscTitleDisp2.dispose();
         core.off('stream.chunk', chunkHandler);
         buf.dispose();
         dr.cancel();

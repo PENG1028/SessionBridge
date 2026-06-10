@@ -26,6 +26,10 @@ interface Snap {
   xBufLen: number;      // buffer length
   // scrollToBottom calls (monkey-patched)
   s2bCount: number;     // how many times scrollToBottom was called
+  // DA response diagnostics
+  daHits: number;       // CSI handler invocations
+  filterHits: number;   // write filter matches
+  lastFiltered: any;    // last filtered data snapshot
   // Touch
   tMove: number;
   // Keyboard
@@ -37,6 +41,7 @@ interface Snap {
 const INIT: Snap = {
   xBaseY: 0, dxBaseY: 0, xBufLen: 0,
   s2bCount: 0,
+  daHits: 0, filterHits: 0, lastFiltered: null,
   tMove: 0,
   kbH: 0, vpT: 0,
   barDisp: '-',
@@ -112,6 +117,9 @@ export function MobileDebug() {
       const xBaseY = (window as any).__baseY ?? 0;
       const xBufLen = (window as any).__bufLen ?? 0;
       const s2bCount = (window as any).__s2b || 0;
+      const daHits = (window as any).__daHits?.count ?? 0;
+      const filterHits = (window as any).__filterHits || 0;
+      const lastFiltered = (window as any).__lastFiltered || null;
 
       const dxBaseY = lastBaseY >= 0 ? xBaseY - lastBaseY : 0;
       lastBaseY = xBaseY;
@@ -127,7 +135,8 @@ export function MobileDebug() {
 
       setSnap({
         xBaseY, dxBaseY, xBufLen,
-        s2bCount,
+        s2bCount, daHits, filterHits,
+        lastFiltered,
         tMove,
         kbH,
         vpT: Math.round(window.visualViewport?.offsetTop ?? 0),
@@ -173,7 +182,8 @@ export function MobileDebug() {
         <L n="buf" v={snap.xBufLen} />
         <S />
         <L n="s2b" v={snap.s2bCount} c={snap.s2bCount > 0 ? 'text-red-400' : 'text-green-400'} />
-        <L n="flt" v={typeof window!=='undefined' ? (window as any).__filterHits||0 : 0} c={(typeof window!=='undefined' && (window as any).__filterHits) ? 'text-green-400' : 'text-gray-500'} />
+        <L n="da" v={snap.daHits} c={snap.daHits > 0 ? 'text-green-400' : 'text-red-400'} />
+        <L n="flt" v={snap.filterHits} c={snap.filterHits > 0 ? 'text-green-400' : 'text-gray-500'} />
         <S />
         <L n="tM" v={snap.tMove} />
         <L n="kbH" v={snap.kbH} c={snap.kbH > 30 ? 'text-green-400' : 'text-gray-500'} />
