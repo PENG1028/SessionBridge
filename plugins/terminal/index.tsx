@@ -256,21 +256,11 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
   const onTerminalReady = useCallback((term: any, _fitAddon: any) => {
     lastOsc7CwdRef.current = '';
 
-    // ── 0. Filter bare Device Attributes CSI (ESC stripped by PTY) ──
-    const origWrite = term.write.bind(term);
-    (window as any).__filterHits = 0;
-    (window as any).__filterLast = '';
-    term.write = (data: string) => {
-      let clean = data.replace(/\x1b\[\?1?;2c/g, '');
-      const n1 = clean.length;
-      clean = clean.replace(/\[\?1?;2c/g, '');
-      if (clean.length !== n1) {
-        (window as any).__filterHits = ((window as any).__filterHits || 0) + 1;
-        (window as any).__filterLast = data.slice(0, 60);
-      }
-      if (clean) origWrite(clean);
-    };
 
+    // ── 0. Clear xterm Device Attributes response ──
+    // xterm sends \x1b[c during open(), renders response internally.
+    // term.reset() wipes the display; stream replay restores real content.
+    term.reset();
     // ── 1. OSC 7 CWD tracking ──
     const osc7Disp = term.parser.registerOscHandler(7, (data: string) => {
       const cwd = parseOsc7(data);
