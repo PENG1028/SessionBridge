@@ -155,21 +155,32 @@ export function useMobileTerminal(
     if (!container || !isTouchDevice()) return;
 
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
     if (keyboardHeight > 0) {
-      requestAnimationFrame(() => {
-        const bar = document.querySelector('[data-mobile-keyboard-toolbar]') as HTMLElement | null;
-        const barH = bar?.offsetHeight || 90;
-        container.style.marginBottom = `${barH}px`;
-        // Deferred scrollToBottom — margin change triggers ResizeObserver
-        // → fit, but the final layout may need an extra push
-        timer = setTimeout(() => {
-          termRef.current?.scrollToBottom();
-        }, 300);
-      });
+      // rAF chain: set margin → let layout settle → let ResizeObserver fire
+      // → then safety scrollToBottom in case ResizeObserver was suppressed
+      const schedule = () => {
+        if (cancelled) return;
+        requestAnimationFrame(() => {
+          if (cancelled) return;
+          const bar = document.querySelector('[data-mobile-keyboard-toolbar]') as HTMLElement | null;
+          const barH = bar?.offsetHeight || 90;
+          container.style.marginBottom = `${barH}px`;
+          // Second rAF: margin applied, ResizeObserver has fired, layout done
+          requestAnimationFrame(() => {
+            if (cancelled) return;
+            requestAnimationFrame(() => {
+              if (cancelled) return;
+              termRef.current?.scrollToBottom();
+            });
+          });
+        });
+      };
+      schedule();
     } else {
       container.style.marginBottom = '';
     }
-    return () => { if (timer) clearTimeout(timer); };
+    return () => { cancelled = true; };
   }, [keyboardHeight]);
 
   return { touchScrollingRef };
