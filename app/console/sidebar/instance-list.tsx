@@ -70,18 +70,13 @@ export function InstanceList({ instances, activeInstanceId, onActivate, onKill }
             </span>
 
             {/* Kill — visible on hover only */}
-            {/* Phase 4F: Always show kill button. Active instances require confirmation. */}
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                if (isActive) {
-                  if (window.confirm(`Kill active instance "${inst.label}"?`)) onKill(inst.id);
-                } else {
-                  onKill(inst.id);
-                }
+                onKill(inst.id);
               }}
               className="text-gray-700 hover:text-red-400 transition-colors shrink-0 opacity-30 group-hover:opacity-100 focus-visible:opacity-100"
-              title={isActive ? 'Kill active instance (requires confirmation)' : 'Kill instance'}
+              title="Kill instance"
             >
               <X className="w-3 h-3" />
             </button>
