@@ -344,9 +344,47 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
           }
           return true;
         });
-    // ── 2. Stream subscription + live output → xterm ──
-    core.call('stream.subscribe', { sessionId: coreSessionId, streamType: 'stdout' }).catch(() => {});
-    core.call('stream.subscribe', { sessionId: coreSessionId, streamType: 'stderr' }).catch(() => {});
+    // ── 2. Suppress stale CUP from old terminal dimensions ──────
+    // Shell reconnect emits CUP (\x1b[26;19H) to position cursor
+    // based on OLD terminal dimensions (e.g. desktop 80×24). On
+    // mobile (8-12 rows) this moves the cursor far from the prompt,
+    // causing first input to appear at the wrong row.
+    //
+    // Strategy: during replay, let all CUPs through (firstLiveCUP
+    // starts false). After replay, anchor cursor to buffer bottom
+    // via \x1b[999;1H (bypassing this handler), then set
+    // firstLiveCUP=true so the first live-stream CUP — the stale
+    // cursor restoration from the shell echo — is suppressed.
+    //
+    // cupBypass: temporary override for our own anchor writes so
+    // they reach the terminal without being intercepted.
+    let cupBypass = false;
+    let firstLiveCUP = false;
+    const cupHandler = term.parser.registerCsiHandler(
+      { final: 'H' },
+      (params: (number | number[])[]) => {
+        if (cupBypass) return false;
+        if (firstLiveCUP) {
+          firstLiveCUP = false;
+          const row = Array.isArray(params[0]) ? params[0][0] : params[0];
+          const col = Array.isArray(params[1]) ? params[1][0] : params[1];
+          (window as any).__firstChunkDiag = {
+            cupSuppressed: true,
+            targetRow: row,
+            targetCol: col,
+            currentCursorY: term.buffer.active.cursorY,
+            currentCursorX: term.buffer.active.cursorX,
+            baseY: term.buffer.active.baseY,
+            rows: term.rows,
+            bufLen: term.buffer.active.length,
+          };
+          return true;
+        }
+        return false;
+      },
+    );
+
+    // ── 3. Live output handler (subscribed AFTER replay) ────────
     const chunkHandler = (event: any) => {
       if (event.sessionId !== coreSessionId) return;
       if (event.streamType === 'stderr') {
@@ -354,19 +392,16 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
       } else {
         term.write(event.data);
       }
-      // Let xterm.js handle auto-scroll: it only scrolls on write()
-      // when the viewport is already at the bottom. If the user scrolled
-      // up to read history, we must NOT force them back down.
     };
     core.on('stream.chunk', chunkHandler);
 
-    // ── 3. Stdin buffer (fed by ShellTerminal's onUserInput) ──
+    // ── 4. Stdin buffer ───────────────────────────────────────
     const buf = new TerminalInputBuffer({
       write: (data: string) => core.call('stream.write', { sessionId: coreSessionId, streamType: 'stdin', data }).catch(() => {}),
     });
     inputBufRef.current = buf;
 
-    // ── 4. Debounced resize → Core ──
+    // ── 5. Debounced resize → Core ────────────────────────────
     const dr = createDebouncedResize({
       delayMs: 80,
       onResize: (cols: number, rows: number) => {
@@ -375,41 +410,75 @@ export default function TerminalView({ _surfaceId: _surfaceIdProp, ..._unused }:
     });
     debouncedResizeRef.current = dr;
 
-    // ── 5. Connection banner + history replay ──
+    // ── 6. Banner + replay → anchor → subscribe ───────────────
     if (sessionFresh) {
       term.writeln('\x1b[36mConnected to core stream...\x1b[0m');
     } else {
       term.writeln('\x1b[36mReconnected to existing session\x1b[0m');
     }
-    // Always replay history regardless of fresh/restore.
-    // For restored sessions, skip the first 20 events — they contain
-    // terminal init handshake (CSI DA, cursor queries) whose raw bytes
-    // render as garbage in a fresh xterm.js instance.
+
     const fromSeq = sessionFresh ? 0 : 20;
-    core.call<{ events?: Array<{ data: string }> }>('stream.replay', {
+    const replayStdout = core.call<{ events?: Array<{ data: string }> }>('stream.replay', {
       sessionId: coreSessionId, streamType: 'stdout', fromSeq,
     }).then(r => {
       if (r?.events) for (const evt of r.events) {
         if (evt.data) term.write(evt.data);
       }
-    }).catch(() => {});
-    core.call<{ events?: Array<{ data: string }> }>('stream.replay', {
+    });
+    const replayStderr = core.call<{ events?: Array<{ data: string }> }>('stream.replay', {
       sessionId: coreSessionId, streamType: 'stderr', fromSeq,
     }).then(r => {
       if (r?.events) for (const evt of r.events) {
         if (evt.data) term.write('\x1b[91m' + evt.data + '\x1b[0m');
       }
-    }).catch(() => {});
-    // On restore, send Enter after replay so the shell prints a fresh prompt
-    if (!sessionFresh) {
-      setTimeout(() => buf.push('\r'), 300);
-    }
+    });
+
+    // After both replays complete: anchor cursor + viewport, THEN
+    // subscribe to live events. This prevents live data from
+    // interleaving with replay data, which causes duplicate prompts
+    // and cursor drift.
+    Promise.all([replayStdout.catch(() => {}), replayStderr.catch(() => {})]).then(() => {
+      // Step 1: Anchor cursor to buffer bottom. Replayed shell
+      // output may contain CUPs that position the cursor at rows
+      // from old (desktop) terminal dimensions. \x1b[999;1H
+      // moves cursor to the last row of the buffer regardless of
+      // its size — xterm.js clamps the row parameter.
+      cupBypass = true;
+      term.write('\x1b[999;1H');
+      cupBypass = false;
+      // Step 2: Enable interception of the first live-stream CUP.
+      // The shell echo (in response to user input or auto-sent
+      // Enter) often includes a stale cursor restoration from old
+      // dimensions — this is the CUP that causes the 2-3 line
+      // jump on mobile first input.
+      firstLiveCUP = true;
+      requestAnimationFrame(() => {
+        // scrollToBottom → scrollLines → needs renderer dimensions.
+        // If xterm's renderer hasn't initialized yet (fast replay),
+        // scrollToBottom throws. Catch and retry on next frame.
+        try {
+          term.scrollToBottom();
+        } catch {
+          requestAnimationFrame(() => {
+            try { term.scrollToBottom(); } catch { /* give up */ }
+          });
+        }
+        // Subscribe to live events AFTER viewport is anchored
+        core.call('stream.subscribe', { sessionId: coreSessionId, streamType: 'stdout' }).catch(() => {});
+        core.call('stream.subscribe', { sessionId: coreSessionId, streamType: 'stderr' }).catch(() => {});
+        // For restored sessions, send Enter to get a fresh prompt
+        if (!sessionFresh) {
+          setTimeout(() => buf.push('\r'), 150);
+        }
+      });
+    });
 
     return {
       dispose: () => {
         daHandler1.dispose();
         daHandler2.dispose();
         daHandler3.dispose();
+        cupHandler.dispose();
         osc7Disp.dispose();
         oscTitleDisp.dispose();
         oscTitleDisp2.dispose();

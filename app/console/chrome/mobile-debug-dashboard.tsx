@@ -30,6 +30,16 @@ interface Snap {
   daHits: number;       // CSI handler invocations
   filterHits: number;   // write filter matches
   lastFiltered: any;    // last filtered data snapshot
+  // Keyboard diagnostics
+  kbRaw: number;        // screen.height - vp.height
+  kbHCalc: number;      // h = raw - baseline
+  kbOffsetTop: number;  // vp.offsetTop
+  kbBaseline: number;   // captured baseline
+  kbTransitions: number; // state flip count
+  // xterm position shift on keyboard open
+  preVY: number; postVY: number; preCY: number; postCY: number;
+  kbdS1: string; kbdS2: string; kbdS3: string; kbdAbs: string;
+  firstChunk: string;
   // Touch
   tMove: number;
   // Keyboard
@@ -42,6 +52,10 @@ const INIT: Snap = {
   xBaseY: 0, dxBaseY: 0, xBufLen: 0,
   s2bCount: 0,
   daHits: 0, filterHits: 0, lastFiltered: null,
+  kbRaw: 0, kbHCalc: 0, kbOffsetTop: 0, kbBaseline: 0, kbTransitions: 0,
+  preVY: 0, postVY: 0, preCY: 0, postCY: 0,
+  kbdS1: '-', kbdS2: '-', kbdS3: '-', kbdAbs: '-',
+  firstChunk: '-',
   tMove: 0,
   kbH: 0, vpT: 0,
   barDisp: '-',
@@ -120,6 +134,9 @@ export function MobileDebug() {
       const daHits = (window as any).__daHits?.count ?? 0;
       const filterHits = (window as any).__filterHits || 0;
       const lastFiltered = (window as any).__lastFiltered || null;
+      const kbDiag = (window as any).__kbDiag || null;
+      const kbd = (window as any).__keyboardDiag || null;
+      const firstChunk = (window as any).__firstChunkDiag || null;
 
       const dxBaseY = lastBaseY >= 0 ? xBaseY - lastBaseY : 0;
       lastBaseY = xBaseY;
@@ -137,6 +154,22 @@ export function MobileDebug() {
         xBaseY, dxBaseY, xBufLen,
         s2bCount, daHits, filterHits,
         lastFiltered,
+        kbRaw: kbDiag?.raw ?? 0,
+        kbHCalc: kbDiag?.h ?? 0,
+        kbOffsetTop: kbDiag?.offsetTop ?? 0,
+        kbBaseline: kbDiag?.baseline ?? 0,
+        kbTransitions: kbDiag?.transitions?.length ?? 0,
+        preVY: kbd?.s1?.viewportY ?? 0,
+        postVY: kbd?.s3?.viewportY ?? 0,
+        preCY: kbd?.s1?.cursorY ?? 0,
+        postCY: kbd?.s3?.cursorY ?? 0,
+        kbdS1: kbd?.s1 ? `r${kbd.s1.rows}v${kbd.s1.viewportY}c${kbd.s1.cursorY}` : '-',
+        kbdS2: kbd?.s2 ? `r${kbd.s2.rows}v${kbd.s2.viewportY}c${kbd.s2.cursorY}` : '-',
+        kbdS3: kbd?.s3 ? `r${kbd.s3.rows}v${kbd.s3.viewportY}c${kbd.s3.cursorY}` : '-',
+        kbdAbs: kbd?.s1 && kbd?.s3 ? `${kbd.s1.absCursor}→${kbd.s3.absCursor}` : '-',
+        firstChunk: firstChunk?.cupSuppressed
+          ? `CUP→${firstChunk.targetRow}:${firstChunk.targetCol} (was cY=${firstChunk.currentCursorY} rows=${firstChunk.rows})`
+          : (firstChunk ? JSON.stringify(firstChunk).slice(0, 50) : '-'),
         tMove,
         kbH,
         vpT: Math.round(window.visualViewport?.offsetTop ?? 0),
@@ -187,6 +220,13 @@ export function MobileDebug() {
         <S />
         <L n="tM" v={snap.tMove} />
         <L n="kbH" v={snap.kbH} c={snap.kbH > 30 ? 'text-green-400' : 'text-gray-500'} />
+        <L n="raw" v={snap.kbRaw} />
+        <L n="h" v={snap.kbHCalc} c={snap.kbHCalc > 60 ? 'text-red-400' : 'text-gray-400'} />
+        <L n="oS" v={snap.kbOffsetTop} c={snap.kbOffsetTop > 3 ? 'text-red-400' : 'text-gray-400'} />
+        <L n="bl" v={snap.kbBaseline} />
+        <L n="tx" v={snap.kbTransitions} c={snap.kbTransitions > 0 ? 'text-yellow-400' : 'text-gray-500'} />
+        <S />
+        <L n="1st" v={typeof snap.firstChunk === 'string' && snap.firstChunk !== '-' ? snap.firstChunk.slice(0, 50) : '-'} c={snap.firstChunk !== '-' ? 'text-yellow-400' : 'text-gray-500'} />
         <L n="vpT" v={snap.vpT} />
         <L n="bar" v={snap.barDisp} c={snap.barDisp === 'flex' ? 'text-green-400' : 'text-gray-500'} />
       </div>

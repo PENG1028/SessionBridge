@@ -29,8 +29,8 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
   const [terminalFocused, setTerminalFocused] = useState(false);
 
-  // ── Mobile: touch scroll, keyboard padding, textarea ──────────
-  const { touchScrollingRef } = useMobileTerminal(containerRef, termRef, fitRef);
+  // ── Mobile: touch scroll, keyboard padding ──────────────────
+  useMobileTerminal(containerRef, termRef, fitRef);
 
   // Stable refs so callbacks don't cause unnecessary re-registration
   const onTerminalReadyRef = useRef(onTerminalReady);
@@ -40,19 +40,11 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
   const onUserInputRef = useRef(onUserInput);
   onUserInputRef.current = onUserInput;
 
-  // ── Local echo + user-input bridge ──────────────────────────
+  // ── User-input bridge ─────────────────────────────────────
+  // No local echo — the shell echoes back via stream.chunk with
+  // proper ANSI formatting. Dual echo (local + shell) causes
+  // ghost text and cursor position drift on mobile.
   const handleUserInput = useCallback((data: string) => {
-    const term = termRef.current;
-    if (term && !data.startsWith('\x1b') && data !== '\t') {
-      try {
-        let echo = data;
-        echo = echo.replace(/\r/g, '\n');
-        echo = echo.replace(/\x03/g, '^C\r\n');
-        if (echo) term.write(echo);
-      } catch (_e) {
-        // Local echo is best-effort; shell echo will cover it
-      }
-    }
     onUserInputRef.current?.(data);
   }, []);
 
@@ -179,11 +171,14 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
     }
 
     // ── Resize observer ──
+    // fit() adjusts column/row count to the container. xterm.js
+    // internally preserves the viewport position — users scrolled
+    // up stay scrolled up, users at bottom stay at bottom.
+    // DO NOT call scrollToBottom() here — it would disrupt xterm's
+    // internal render state and cause cursor position drift on both
+    // mobile and desktop.
     const ro = new ResizeObserver(() => {
       fitAddon.fit();
-      if (!touchScrollingRef.current) {
-        term.scrollToBottom();
-      }
       const dims = fitAddon.proposeDimensions();
       if (dims) onResizeRef.current?.(dims.cols, dims.rows);
     });
@@ -275,7 +270,14 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
         ref={containerRef}
         className="flex-1 w-full min-h-0"
         style={containerStyle}
-        onClick={() => termRef.current?.focus()}
+        onClick={() => {
+          // Touch devices manage focus via touchend handler in
+          // useMobileTerminal. onClick fires after every touch
+          // (including scroll/close-keyboard taps) and would
+          // refocus the textarea → reopen the keyboard.
+          if (typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0) return;
+          termRef.current?.focus();
+        }}
         onContextMenu={handleContextMenu}
       />
       {ctxMenu && (

@@ -102,7 +102,7 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
       window.visualViewport?.removeEventListener('resize', reposition);
       window.removeEventListener('scroll', reposition);
     };
-  }, [keyboardVisible, keyboardHeight]);
+  }, [keyboardVisible]);
 
   // Read contributed items from registry
   const items = useMemo(() => getMobileKeyboardContributions(), []);
