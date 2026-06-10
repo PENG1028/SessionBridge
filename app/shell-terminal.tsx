@@ -6,23 +6,23 @@ import { FitAddon } from '@xterm/addon-fit';
 import type { IDisposable } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { ContextMenu, type ContextMenuItem } from './console/shell/context-menu';
-import { MobileKeyboardSlot } from './console/chrome/mobile-keyboard-slot';
+import { MobileKeyboardSlot, consumeMobileModifiers } from './console/chrome/mobile-keyboard-slot';
 import { useMobileTerminal } from './console/chrome/use-mobile-terminal';
 
 // ─── ShellTerminal — pure xterm.js host ────────────────────────────
 // Owns: xterm init/theme/fit, keyboard shortcuts, context menu, resize observer.
 // Mobile touch/scroll/padding → useMobileTerminal hook.
 // Does NOT know about Core, streams, stdin buffering, or OSC protocols.
-// All Core integration goes through onTerminalReady / onUserInput / onResize.
+// All Core integration goes through onTerminalReady / onUserInput.
+// PTY dimensions are fixed at session creation — local fit() does not resize the shell.
 
 export interface ShellTerminalProps {
   onTerminalReady: (term: Terminal, fitAddon: FitAddon) => IDisposable | void;
-  onResize?: (cols: number, rows: number) => void;
   onUserInput?: (data: string) => void;
   onOpenDirectoryPicker?: () => void;
 }
 
-export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, onOpenDirectoryPicker }: ShellTerminalProps) {
+export default function ShellTerminal({ onTerminalReady, onUserInput, onOpenDirectoryPicker }: ShellTerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -35,8 +35,6 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
   // Stable refs so callbacks don't cause unnecessary re-registration
   const onTerminalReadyRef = useRef(onTerminalReady);
   onTerminalReadyRef.current = onTerminalReady;
-  const onResizeRef = useRef(onResize);
-  onResizeRef.current = onResize;
   const onUserInputRef = useRef(onUserInput);
   onUserInputRef.current = onUserInput;
 
@@ -45,7 +43,7 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
   // proper ANSI formatting. Dual echo (local + shell) causes
   // ghost text and cursor position drift on mobile.
   const handleUserInput = useCallback((data: string) => {
-    onUserInputRef.current?.(data);
+    onUserInputRef.current?.(consumeMobileModifiers(data));
   }, []);
 
   // ── xterm.js initialization ─────────────────────────────────
@@ -174,13 +172,10 @@ export default function ShellTerminal({ onTerminalReady, onResize, onUserInput, 
     // fit() adjusts column/row count to the container. xterm.js
     // internally preserves the viewport position — users scrolled
     // up stay scrolled up, users at bottom stay at bottom.
-    // DO NOT call scrollToBottom() here — it would disrupt xterm's
-    // internal render state and cause cursor position drift on both
-    // mobile and desktop.
+    // PTY dimensions are fixed at session creation time; fit() only
+    // updates the local xterm viewport — it does NOT notify the shell.
     const ro = new ResizeObserver(() => {
       fitAddon.fit();
-      const dims = fitAddon.proposeDimensions();
-      if (dims) onResizeRef.current?.(dims.cols, dims.rows);
     });
     ro.observe(containerRef.current);
 

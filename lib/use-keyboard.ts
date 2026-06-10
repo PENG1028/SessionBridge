@@ -30,6 +30,7 @@ let _state: KeyboardState = {
   isSupported: false,
 };
 let _keyboardHasOpened = false;
+let _wasPushedUp = false;         // true once offsetTop > 0 while keyboard detected → push mode
 
 const _subs = new Set<() => void>();
 
@@ -58,31 +59,49 @@ function sync() {
   const prevVisible = _state.isVisible;
 
   // ── Hysteresis ──────────────────────────────────────────────
-  // Open:  requires BOTH height > 100 AND offsetTop > 25 (keyboard
-  //        pushes viewport up 200+px; scroll stays < 20px).
-  //        Exception: first-time detection with h > 180.
-  // Close: h < 40, OR viewport not pushed up (offsetTop < 5).
-  //        offsetTop is the definitive signal — if the viewport
-  //        isn't pushed up, the keyboard cannot be open. This
-  //        handles system keyboard dismiss where vp.height doesn't
-  //        immediately recover.
+  //
+  // Two keyboard modes on Android:
+  //   Push:   keyboard pushes viewport up   → offsetTop > 0 when open
+  //   Overlay: keyboard overlays viewport   → offsetTop = 0 always
+  //
+  // Open:  push mode: h > 100 AND offsetTop > 25
+  //        overlay mode (first time): h > 100 (offsetTop may be 0)
+  // Close: both modes: h < 40 (keyboard height dropped)
+  //        push mode only: offsetTop < 5 (fast close signal — viewport
+  //        returned to top before h recovers; system back-button dismiss)
+
   let visible: boolean;
   if (prevVisible) {
-    if (offsetTop < 5) {
+    // Primary close: keyboard height is negligible
+    if (h < KEYBOARD_CLOSE_THRESHOLD) {
+      visible = false;
+    } else if (_wasPushedUp && offsetTop < 5) {
+      // Push mode only: viewport returned to top before h recovered.
+      // Do NOT use for overlay mode — offsetTop is always 0 there.
       visible = false;
     } else {
-      visible = h > KEYBOARD_CLOSE_THRESHOLD;
+      visible = true;
     }
   } else {
     if (h > KEYBOARD_OPEN_THRESHOLD && offsetTop > OFFSET_TOP_OPEN_MIN) {
+      // Push mode open
       visible = true;
+      _wasPushedUp = true;
       _keyboardHasOpened = true;
-    } else if (h > KEYBOARD_OPEN_THRESHOLD + 80 && !_keyboardHasOpened) {
+    } else if (h > KEYBOARD_OPEN_THRESHOLD && !_keyboardHasOpened) {
+      // First-ever open: accept h alone (overlay mode offsetTop=0).
+      // _wasPushedUp stays false → close won't use offsetTop signal.
       visible = true;
       _keyboardHasOpened = true;
     } else {
       visible = false;
     }
+  }
+
+  // Track push mode: once offsetTop rises, we're in push mode
+  // and can use offsetTop < 5 as a fast-close signal.
+  if (offsetTop > OFFSET_TOP_OPEN_MIN) {
+    _wasPushedUp = true;
   }
 
   const next: KeyboardState = {

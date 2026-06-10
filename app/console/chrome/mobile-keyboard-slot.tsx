@@ -9,18 +9,46 @@
 //   onSend   — sends characters to the active input
 //
 // Toggle keys (Ctrl/Alt) use sticky-on semantics with a 5s auto-reset
-// timer. When a toggle is active and a regular key is pressed, the
-// character is composed (Ctrl+X → ASCII control char, Alt+X → ESC+X).
+// timer. When a toggle is active and a character is typed (toolbar button
+// OR system keyboard), consumeMobileModifiers() composes the character
+// (Ctrl+X → ASCII control char, Alt+X → ESC+X) and clears the toggle.
+// Both input paths are unified through this single composition point.
 
 'use client';
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useKeyboard } from '../../../lib/use-keyboard';
-import { getMobileKeyboardContributions } from './mobile-keyboard-registry';
+import { getSnapshotMobileKeyboardItems, subscribeMobileKeyboardItems } from './mobile-keyboard-registry';
 
-interface MobileKeyboardSlotProps {
-  enabled: boolean;
-  onSend: (data: string) => void;
+// ── Module-level modifier state ──────────────────────────────────
+// Singleton like useKeyboard — one set of modifiers, consumable from
+// any input path (toolbar button or system keyboard).
+let _ctrlOn = false;
+let _altOn = false;
+let _ctrlTimer: ReturnType<typeof setTimeout> | null = null;
+let _altTimer: ReturnType<typeof setTimeout> | null = null;
+const _modSubs = new Set<() => void>();
+
+function notifyMods() { for (const cb of _modSubs) cb(); }
+
+function clearCtrlTimer() {
+  if (_ctrlTimer) { clearTimeout(_ctrlTimer); _ctrlTimer = null; }
+}
+function clearAltTimer() {
+  if (_altTimer) { clearTimeout(_altTimer); _altTimer = null; }
+}
+
+export function setCtrlOn(v: boolean) {
+  _ctrlOn = v;
+  clearCtrlTimer();
+  if (v) _ctrlTimer = setTimeout(() => { _ctrlOn = false; notifyMods(); }, 5000);
+  notifyMods();
+}
+export function setAltOn(v: boolean) {
+  _altOn = v;
+  clearAltTimer();
+  if (v) _altTimer = setTimeout(() => { _altOn = false; notifyMods(); }, 5000);
+  notifyMods();
 }
 
 function ctrlSeq(key: string): string {
@@ -28,6 +56,29 @@ function ctrlSeq(key: string): string {
   if (c >= 0x40 && c <= 0x5f) return String.fromCharCode(c - 0x40);
   if (c >= 0x61 && c <= 0x7a) return String.fromCharCode(c - 0x60);
   return key;
+}
+
+/** Compose modifiers into the next input character, then clear modifiers.
+ *  Call this at the single entry point where all input passes through
+ *  (both toolbar buttons and system keyboard). */
+export function consumeMobileModifiers(data: string): string {
+  if (_ctrlOn && data.length === 1) {
+    data = ctrlSeq(data);
+    clearCtrlTimer();
+    _ctrlOn = false;
+  }
+  if (_altOn) {
+    data = '\x1b' + data;
+    clearAltTimer();
+    _altOn = false;
+  }
+  notifyMods();
+  return data;
+}
+
+interface MobileKeyboardSlotProps {
+  enabled: boolean;
+  onSend: (data: string) => void;
 }
 
 function isTouchDevice(): boolean {
@@ -45,15 +96,18 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
     if (typeof window === 'undefined') return false;
     return isTouchDevice();
   });
-  const [ctrlOn, setCtrlOn] = useState(false);
-  const [altOn, setAltOn] = useState(false);
-  const ctrlTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const altTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [ctrlOn, _setCtrlOn] = useState(_ctrlOn);
+  const [altOn, _setAltOn] = useState(_altOn);
   const toolbarRef = useRef<HTMLDivElement>(null);
-  const ctrlOnRef = useRef(false);
-  const altOnRef = useRef(false);
 
   const { keyboardHeight, isVisible: keyboardVisible } = useKeyboard();
+
+  // Subscribe to module-level modifier changes
+  useEffect(() => {
+    const cb = () => { _setCtrlOn(_ctrlOn); _setAltOn(_altOn); };
+    _modSubs.add(cb);
+    return () => { _modSubs.delete(cb); };
+  }, []);
 
   // Ensure touchDevice is set before the first paint. useEffect fires
   // after paint, which is too late — the toolbar DOM must exist before
@@ -65,30 +119,24 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
     }
   }, [touchDevice]);
 
-  ctrlOnRef.current = ctrlOn;
-  altOnRef.current = altOn;
+  // Toolbar visibility: driven by terminal focus on touch devices.
+  // The tap that opens the keyboard is the same action that should
+  // show the toolbar. Passive visualViewport detection (keyboardVisible)
+  // is only an auxiliary signal for positioning/margins.
+  const visible = enabled && touchDevice;
 
-  // Direct DOM update for toolbar position.
-  // Uses keyboardVisible from useKeyboard() — the hook now uses stable
-  // innerHeight reference instead of a moving baseline, fixing false
-  // positives when browser chrome (address bar) shows/hides.
+  // Toolbar positioning
   useEffect(() => {
     const el = toolbarRef.current;
-    if (!el) return;
+    if (!el || !visible) return;
 
     const reposition = () => {
-      if (keyboardVisible) {
-        el.style.display = 'flex';
-        const vp = window.visualViewport;
-        if (vp) {
-          const th = el.offsetHeight || 90;
-          el.style.top = `${vp.offsetTop + vp.height - th}px`;
-          el.style.left = '0';
-          el.style.right = '0';
-        }
-      } else {
-        el.style.display = 'none';
-      }
+      const vp = window.visualViewport;
+      if (!vp) return;
+      const th = el.offsetHeight || 90;
+      el.style.top = `${vp.offsetTop + vp.height - th}px`;
+      el.style.left = '0';
+      el.style.right = '0';
     };
 
     reposition();
@@ -102,10 +150,11 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
       window.visualViewport?.removeEventListener('resize', reposition);
       window.removeEventListener('scroll', reposition);
     };
-  }, [keyboardVisible]);
+  }, [visible, keyboardVisible]);
 
-  // Read contributed items from registry
-  const items = useMemo(() => getMobileKeyboardContributions(), []);
+  // Reactive subscription — recomputes when plugins sync (async).
+  // useMemo([], []) would cache the empty initial array forever.
+  const items = useSyncExternalStore(subscribeMobileKeyboardItems, getSnapshotMobileKeyboardItems);
 
   // Group by row for rendering
   const rows = useMemo(() => {
@@ -119,6 +168,7 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
   }, [items]);
   const rowKeys = useMemo(() => Object.keys(rows).map(Number).sort((a, b) => a - b), [rows]);
 
+  // Clear modifiers when terminal loses focus
   useEffect(() => {
     if (!enabled) {
       setCtrlOn(false);
@@ -126,48 +176,20 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
     }
   }, [enabled]);
 
-  useEffect(() => {
-    if (ctrlOn) {
-      if (ctrlTimerRef.current) clearTimeout(ctrlTimerRef.current);
-      ctrlTimerRef.current = setTimeout(() => { setCtrlOn(false); }, 5000);
-    }
-    return () => {
-      if (ctrlTimerRef.current) clearTimeout(ctrlTimerRef.current);
-    };
-  }, [ctrlOn]);
-
-  useEffect(() => {
-    if (altOn) {
-      if (altTimerRef.current) clearTimeout(altTimerRef.current);
-      altTimerRef.current = setTimeout(() => setAltOn(false), 5000);
-    }
-    return () => {
-      if (altTimerRef.current) clearTimeout(altTimerRef.current);
-    };
-  }, [altOn]);
-
   const handleKey = useCallback((item: typeof items[number]) => {
     if (item.toggle && item.toggleKey === 'ctrl') {
-      setCtrlOn(on => !on);
+      setCtrlOn(!_ctrlOn);
       return;
     }
     if (item.toggle && item.toggleKey === 'alt') {
-      setAltOn(on => !on);
+      setAltOn(!_altOn);
       return;
     }
 
-    // Use refs for immediate modifier state (avoids stale closure issue
-    // when Ctrl is toggled and a letter key is pressed in the same frame)
-    let data = item.send ?? '';
-    if (ctrlOnRef.current && data.length === 1) {
-      data = ctrlSeq(data);
-      setCtrlOn(false);
-    }
-    if (altOnRef.current) {
-      data = '\x1b' + data;
-      setAltOn(false);
-    }
-    onSend(data);
+    // Modifier composition is done by consumeMobileModifiers() in
+    // handleUserInput — the single entry point for both toolbar
+    // buttons and system keyboard.
+    onSend(item.send ?? '');
   }, [onSend]);
 
   // Always render the outer div so toolbarRef is attached even before
@@ -208,7 +230,7 @@ export function MobileKeyboardSlot({ enabled, onSend }: MobileKeyboardSlotProps)
       data-mobile-keyboard-toolbar
       style={{
         position: 'fixed',
-        display: 'none',
+        display: visible ? 'flex' : 'none',
         paddingBottom: 'calc(0.375rem + env(safe-area-inset-bottom))',
       }}
       onPointerDown={(e) => e.preventDefault()}

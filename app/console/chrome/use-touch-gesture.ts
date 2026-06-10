@@ -88,12 +88,19 @@ export function useTouchGesture({
       return !!(el && (el as HTMLElement).closest('.scrollbar'));
     };
 
-    // ── pointerdown: block all touch pointer events ───────────
-    // Fires BEFORE touchstart. Check scrollbar directly — the
-    // gesture state isn't set yet.
+    const isToolbarTarget = (x: number, y: number): boolean => {
+      const el = document.elementFromPoint(x, y);
+      return !!(el && (el as HTMLElement).closest('[data-mobile-keyboard-toolbar]'));
+    };
+
+    // ── pointerdown: block touch pointer events on xterm area ──
+    // Fires BEFORE touchstart. Exempt scrollbar and toolbar so
+    // their own handlers can fire. Block everything else to
+    // prevent xterm from auto-focusing the textarea.
     const handlePointerDown = (e: PointerEvent) => {
       if (e.pointerType !== 'touch') return;
       if (isScrollbarTarget(e.clientX, e.clientY)) return;
+      if (isToolbarTarget(e.clientX, e.clientY)) return;
       e.preventDefault();
       e.stopImmediatePropagation();
     };

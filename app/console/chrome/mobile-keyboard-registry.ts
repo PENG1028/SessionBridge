@@ -32,12 +32,32 @@ export interface MobileKeyboardContribution {
 // ─── Registry ───────────────────────────────────────────────────
 
 let items: MobileKeyboardContribution[] = [];
+let _listeners: Array<() => void> = [];
+let _cachedSorted: MobileKeyboardContribution[] = [];
+
+function rebuildCache() {
+  _cachedSorted = [...items].sort(sortByRowOrder);
+}
+
+/** Subscribe to contribution changes. Returns unsubscribe function. */
+export function subscribeMobileKeyboardItems(listener: () => void): () => void {
+  _listeners.push(listener);
+  return () => { _listeners = _listeners.filter(l => l !== listener); };
+}
+
+/** Get sorted snapshot of current items (no filter). Compatible with useSyncExternalStore.
+ *  MUST return a stable reference when items haven't changed — otherwise infinite loop. */
+export function getSnapshotMobileKeyboardItems(): MobileKeyboardContribution[] {
+  return _cachedSorted;
+}
 
 /** Replace all mobile keyboard contributions. Used by plugin-sync. */
 export function syncMobileKeyboardContributions(
   contributions: MobileKeyboardContribution[],
 ): void {
   items = contributions;
+  rebuildCache();
+  for (const l of _listeners) l();
 }
 
 /** Get all active mobile keyboard contributions, sorted by row then order. */
@@ -59,4 +79,5 @@ function sortByRowOrder(a: MobileKeyboardContribution, b: MobileKeyboardContribu
 /** Clear all contributions (for testing / reset). */
 export function clearMobileKeyboardContributions(): void {
   items = [];
+  rebuildCache();
 }
