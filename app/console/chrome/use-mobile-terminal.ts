@@ -114,16 +114,19 @@ export function useMobileTerminal(
 
     const handleTouchEnd = (e: TouchEvent) => {
       if (anyTouchMove) {
-        // Finger moved → scroll gesture. Block touchend + blur textarea
-        // to prevent keyboard from popping up after scroll.
+        // Scroll gesture: block xterm's click handler. Keep keyboard
+        // open — textarea stays focused, user is just scrolling.
         e.preventDefault();
         e.stopPropagation();
-        const ta = container.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null;
-        if (ta) ta.blur();
       } else {
-        // Pure tap (no movement). Focus textarea to show keyboard.
+        // Pure tap: toggle keyboard.
         const ta = container.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null;
-        if (ta) ta.focus();
+        if (!ta) return;
+        if (document.activeElement === ta) {
+          ta.blur();   // keyboard open → close it
+        } else {
+          ta.focus();  // keyboard closed → open it
+        }
       }
       touchScrollingRef.current = false;
       scrolling = false;
@@ -151,17 +154,22 @@ export function useMobileTerminal(
     const container = containerRef.current;
     if (!container || !isTouchDevice()) return;
 
+    let timer: ReturnType<typeof setTimeout> | null = null;
     if (keyboardHeight > 0) {
-      // rAF: MobileKeyboardSlot's effect runs after ours — toolbar
-      // is still display:none when we first measure. Defer one frame.
       requestAnimationFrame(() => {
         const bar = document.querySelector('[data-mobile-keyboard-toolbar]') as HTMLElement | null;
         const barH = bar?.offsetHeight || 90;
         container.style.marginBottom = `${barH}px`;
+        // Deferred scrollToBottom — margin change triggers ResizeObserver
+        // → fit, but the final layout may need an extra push
+        timer = setTimeout(() => {
+          termRef.current?.scrollToBottom();
+        }, 300);
       });
     } else {
       container.style.marginBottom = '';
     }
+    return () => { if (timer) clearTimeout(timer); };
   }, [keyboardHeight]);
 
   return { touchScrollingRef };
