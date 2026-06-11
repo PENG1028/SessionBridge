@@ -1,76 +1,47 @@
-# ─── SessionBridge Web Release Workflow ───────────────────────────
-# On git tag push: build → package → create GitHub Release
-#
-# Core is released separately from sessionbridge-core repo.
-# This workflow packages only the Web UI + launcher scripts.
-#
-# Usage:
-#   git tag v0.7.0
-#   git push origin v0.7.0
-
 name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    tags: ['v*']
 
 jobs:
   build:
-    name: Build and Package (linux-x64)
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: 'npm'
 
-      - name: Install dependencies
-        run: npm ci
+      - run: npm ci
 
-      - name: Build frontend
-        run: npm run build
+      - run: npm run build
 
-      - name: Package portable
+      - name: Package
         run: |
           VERSION=${GITHUB_REF_NAME#v}
           PKG_DIR="dist/sessionbridge-web-${VERSION}"
-
           mkdir -p "$PKG_DIR"/{bin,scripts,.next,public,plugins}
 
-          # Launcher
           cp bin/bridge.js "$PKG_DIR/bin/"
-
-          # Scripts
           cp scripts/start-core.js "$PKG_DIR/scripts/"
-          cp scripts/check-update.js "$PKG_DIR/scripts/"
-          cp scripts/update.js "$PKG_DIR/scripts/"
-
-          # Next.js production build (.next/)
           cp -r .next "$PKG_DIR/"
-
-          # Public assets
-          cp -r public/* "$PKG_DIR/public/"
-
-          # Plugin manifests
           cp -r plugins/* "$PKG_DIR/plugins/"
-
-          # Lockfile
           cp package-lock.json "$PKG_DIR/"
 
-          # Portable package.json
+          # public/ may be empty
+          if [ "$(ls -A public 2>/dev/null)" ]; then
+            cp -r public/* "$PKG_DIR/public/"
+          fi
+
           node -e "
             const p = require('./package.json');
             require('fs').writeFileSync('$PKG_DIR/package.json', JSON.stringify({
               name: 'sessionbridge-web',
               version: '\$VERSION',
               private: true,
-              description: p.description,
               scripts: {
                 start: 'node bin/bridge.js',
                 'start:web': 'next start',
@@ -79,30 +50,11 @@ jobs:
             }, null, 2));
           "
 
-          # Production modules
-          npm ci --omit=dev --prefix "$PKG_DIR" 2>/dev/null || true
-
-          # Version info
-          node -e "
-            require('fs').writeFileSync('$PKG_DIR/.bridge-info',
-              JSON.stringify({
-                version: '\$VERSION',
-                builtAt: new Date().toISOString(),
-                runtime: 'Next.js',
-                coreRepo: 'github.com/PENG1028/sessionbridge-core',
-              }, null, 2));
-          "
-
-          # Zip it
           cd dist
-          zip -r "sessionbridge-web-v\${VERSION}.zip" "sessionbridge-web-${VERSION}"
-          echo "artifact=dist/sessionbridge-web-v\${VERSION}.zip" >> \$GITHUB_OUTPUT
+          zip -r "sessionbridge-web-v${VERSION}.zip" "sessionbridge-web-${VERSION}"
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v2
         with:
-          name: SessionBridge Web v\${{ github.ref_name }}
-          body_path: .github/release-template.md
-          files: |
-            dist/sessionbridge-web-*.zip
+          name: v${{ github.ref_name }}
+          files: dist/sessionbridge-web-*.zip
           generate_release_notes: true
